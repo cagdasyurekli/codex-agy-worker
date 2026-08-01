@@ -9,7 +9,6 @@ tools:
     - write_to_file
     - replace_file_content
     - multi_replace_file_content
-    - run_command
 hidden: true
 inheritMcp: false
 ---
@@ -37,14 +36,20 @@ Write tests that characterise what the code ACTUALLY does today, not what it oug
 2. Use the project's existing test framework, conventions, fixtures and naming. Match
    the surrounding style — find a neighbouring test file and follow it.
 3. Cover the real branches: happy path, boundaries, error paths, empty/nil inputs.
-4. Run the suite. Report the exact command and the honest result.
+4. Do NOT run the test suite. Your shell tools execute in a scratch directory, not this
+   repository, so any result you got would be meaningless. Name the command you believe
+   should be run in `open_questions` and let the driver run it.
 
 ## The one rule that matters
 
-**If a test you write fails, that is a finding, not a problem to hide.** Do not weaken
-an assertion, add a skip, or adjust the test until it passes. Report it: the test is
-evidence you found a real bug. Reporting `passed: true` for a test that fails is the
-worst possible outcome — the driver re-runs everything and will catch it.
+**Write tests that assert what the code actually does — never soften one so it would
+pass.** You cannot run them, so you will not know which fail; that is deliberate. The
+driver runs them and treats a failure as a finding, which is exactly what you want if
+the code is genuinely broken.
 
-Return the JSON envelope with every test file listed in `files_changed` and the true
-pass/fail state of every command in `tests_run`.
+Reporting a test as passing is therefore always wrong here: you have no evidence for
+it. Leave `tests_run` empty. The driver re-runs everything and a false claim fails the
+whole job.
+
+Return the JSON envelope with every test file listed in `files_changed` and
+`tests_run` as an empty array.

@@ -47,9 +47,13 @@ Unknown agy subcommands exit 0 and print usage, so you cannot probe by exit code
 ## Backlog, highest value first
 
 1. **Exercise `bulk-test-writer` on a real repo.** Give it a module with untested
-   error paths in a throwaway worktree. It must write tests ONLY under a test dir —
-   confirm with `qa-gate.sh` that it touched no production file. If it edits
-   production source, tighten the persona rather than loosening the gate.
+   error paths in a throwaway worktree. It must write tests ONLY under a test dir.
+   Note the gate does **not** currently enforce "test directories only" — it checks
+   declared-vs-actual files, not their location. For this experiment either pass a
+   driver-owned `--verify` that greps the diff for production paths, or add a real
+   `--only PATHGLOB` gate policy with both an accept and a reject test. If the worker
+   edits production source, tighten the persona rather than loosening the gate.
+   Pick any small repo with a test framework; you do not need permission to choose one.
 2. **Exercise `diff-reviewer`.** Plant a real defect (a suppressed exception, an
    `assert True`, a hardcoded value that passes the current case) in a worktree diff
    and check it is found. It must report findings without editing anything.
