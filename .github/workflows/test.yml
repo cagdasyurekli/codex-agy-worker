@@ -20,10 +20,22 @@ jobs:
       - name: shellcheck
         if: matrix.os == 'ubuntu-latest'   # preinstalled there; not worth installing twice
         continue-on-error: true            # advisory: style findings shouldn't gate the suite
-        run: shellcheck -S warning agy-worker.sh qa-gate.sh ground-truth.sh tests/test-qa-gate.sh
+        run: shellcheck -S warning ./*.sh tests/*.sh
 
       - name: syntax
-        run: for f in agy-worker.sh qa-gate.sh ground-truth.sh tests/test-qa-gate.sh; do bash -n "$f"; done
+        run: for f in ./*.sh tests/*.sh; do bash -n "$f"; done
+
+      - name: Python syntax
+        run: python3 -m py_compile scripts/*.py
 
       - name: qa-gate suite
         run: ./tests/test-qa-gate.sh
+
+      - name: dispatcher suite
+        run: ./tests/test-agy-worker.sh
+
+      - name: updater suite
+        run: ./tests/test-update.sh
+
+      - name: reporting suite
+        run: ./tests/test-reporting.sh

@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose an evidence-backed improvement for maintainer review
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are proposals, not commitments. Maintainers review value,
+        scope, safety, maintenance cost, and fit with the project's trust model.
+        Do not paste prompts, private source code, envelopes, credentials, absolute
+        paths, or raw logs. Use synthetic examples and sanitized details only.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user problem without prescribing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Concrete use case
+      description: Who needs this, how often, and what is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What observable behavior would prove the feature works?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include existing tools, manual workflows, or doing nothing.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope and non-goals
+      description: State the smallest useful slice and what should remain out of scope.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and privacy impact
+      description: Cover network access, uploaded data, credentials, permissions, updates, and trust boundaries.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy checklist
+      options:
+        - label: I removed prompts, private source code, envelopes, credentials, paths, and raw logs.
+          required: true
+        - label: Any example data is synthetic or non-sensitive.
+          required: true
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Project fit
+      options:
+        - label: This does not weaken independent verification of worker claims.
+          required: true
+        - label: This does not require dangerous bypass flags or silent external writes.
+          required: true

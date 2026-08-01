@@ -35,7 +35,8 @@ single command via its approval prompt — that also works. Do **not** reach for
 Delegate when ALL of these hold:
 - The work is mechanical enough that you can write exact acceptance criteria now.
 - You can name the files in scope and a command that proves success.
-- The volume is high enough to justify ~25–50k tokens of worker overhead per job.
+- The volume is high enough to justify tens or sometimes hundreds of thousands of
+  worker tokens per job.
 
 Otherwise just do it yourself. A single-file edit is cheaper direct than delegated.
 
@@ -43,10 +44,16 @@ Otherwise just do it yourself. A single-file edit is cheaper direct than delegat
 
 ### 1. Isolate
 
-Never let the worker touch your working tree.
+Never let the worker touch the user's working tree. Use a branch-backed worktree so
+accepted changes can be committed before cleanup.
 
 ```bash
-git worktree add /tmp/agy-job-$$ HEAD
+PIPELINE=__REPO_ROOT__
+TARGET=/absolute/path/to/target-repo
+WT=/tmp/agy-job-12345
+JOB_BRANCH=agy/job-12345
+BASE="$(git -C "$TARGET" rev-parse HEAD)"
+git -C "$TARGET" worktree add -b "$JOB_BRANCH" "$WT" "$BASE"
 ```
 
 ### 2. Write acceptance criteria BEFORE dispatching
@@ -60,17 +67,19 @@ If you cannot, the task is not ready to delegate. Scope it further or do it your
 ### 3. Dispatch
 
 ```bash
-WT=/tmp/agy-job-$$
-cd __REPO_ROOT__
-
-echo "<task>" | AGY_WORKER_MODE=accept-edits ./agy-worker.sh \
+echo "<task>" | "$PIPELINE/agy-worker.sh" --mode accept-edits --tier bulk \
     --persona bulk-test-writer \
     --workdir "$WT" --add-dir "$WT" > /tmp/envelope.json
 ```
 
 Personas: `bulk-test-writer` (tests only), `diff-reviewer` (review, no edits),
 `repo-inventory` (read-only survey). Omit `--persona` for a plain worker.
-Tiers: `AGY_WORKER_TIER=cheap|bulk|hard|hardest` (default `bulk`).
+The dispatcher rejects `accept-edits` for the read-only personas. Tiers may be passed
+as `--tier cheap|bulk|hard|hardest|default` or through `AGY_WORKER_TIER`.
+Tier selection is explicit: retries reuse the same model, and this skill does not
+infer a thinking level or silently escalate models after a gate failure.
+Every user-supplied `--add-dir` must resolve inside the audited `--workdir`; do not
+delegate multi-repository mutation in one job.
 
 **Two rules your task text MUST honour** — both are measured behaviour, not caution:
 
@@ -89,8 +98,12 @@ Add tests for /tmp/agy-job-123/src/parser.py covering the error paths.
 Write only to /tmp/agy-job-123/tests/. Do not modify production source.
 Use your file tools on those absolute paths. Do NOT run shell commands —
 they execute in a scratch directory, not this repo, and will mislead you.
-The driver runs the tests; report tests_run as an empty array.
+The driver runs every command; report commands_run and tests_run as empty arrays.
 ```
+
+If the dispatcher exits nonzero, stop. Its stdout is not an envelope. Inspect the
+job-scoped stderr after its built-in bounded attempts; never feed failed stdout into
+the gate or wrap dispatch in an unbounded retry loop.
 
 ### 4. Read the worker exit code
 
@@ -98,7 +111,7 @@ The driver runs the tests; report tests_run as an empty array.
 |---|---|---|
 | 0 | Envelope produced | Continue to step 5 — you have NOT verified anything yet |
 | 2 | No/empty prompt | Your bug |
-| 3 | agy returned empty stdout | Check `logs/<job>.stderr`; usually a permission gate |
+| 3 | agy returned empty stdout | Check `logs/<job>/stderr.txt`; usually a permission gate |
 | 4 | No schema-valid envelope | Worker answered in prose; retighten the task |
 | 5 | agy failed | Read stderr; often transient auth — retry once |
 | 6 | Permission gate | Read stderr for the exact rule. **Do not** suggest `--dangerously-skip-permissions` |
@@ -106,24 +119,31 @@ The driver runs the tests; report tests_run as an empty array.
 ### 5. Verify — this is the step that matters
 
 ```bash
-./qa-gate.sh --envelope /tmp/envelope.json --repo "$WT" --base HEAD \
-    --verify "cd $WT && <the command from step 2>"
+"$PIPELINE/qa-gate.sh" --envelope /tmp/envelope.json --repo "$WT" --base "$BASE" \
+    --only 'tests/**' --expect-edits \
+    --verify "git -C '$WT' diff --check" \
+    --verify "cd '$WT' && <the command from step 2>"
 ```
 
-**Always pass `--verify`.** Without it the gate only re-runs tests the worker
-*claimed*, so a worker reporting `tests_run: []` is accepted having run nothing.
+**Always pass `--verify` for acceptance.** The gate never executes any command from
+the worker envelope. Use `--only` whenever the task has a path policy, especially
+for `bulk-test-writer`; its persona prompt is not enforcement. `--base` must be the
+full commit ID captured before dispatch, never `HEAD` or another mutable ref.
 
 | Exit | Meaning | Do |
 |---|---|---|
-| 0 | Accepted | Review the diff yourself, then merge the worktree |
-| 10 | Touched undeclared files, or claimed files it didn't touch | Reject |
-| 11 | Reported a passing test that fails | Reject — the worker is unreliable for this task |
-| 12 | Malformed envelope | Reject |
-| 13 | Claimed completion, changed nothing | Reject |
-| 14 | Your verification command failed | Reject — the work is simply wrong |
+| 0 | Evidence accepted | Review the diff; no merge or commit happened automatically |
+| 10 | Scope mismatch, invalid path, or `--only` violation | Reject |
+| 11 | Worker reported a command or test | Reject; it was not executed |
+| 12 | Envelope failed the checked-in schema | Reject |
+| 13 | `--expect-edits` job changed nothing | Reject |
+| 14 | Verification failed or mutated the worktree | Reject |
+| 15 | Partial/failed/blocked/human-required outcome | Escalate; never accept |
+| 64 | Bad invocation, invalid Git base, or missing `--verify` | Fix the driver command |
 
-A `blocked` / `requires_human: true` envelope is the worker behaving **correctly**.
-Read `open_questions`, resolve the ambiguity, re-dispatch. Do not punish it.
+A `blocked` / `requires_human: true` envelope may be the worker behaving correctly,
+but the gate still checks its diff before returning 15. Read `open_questions`, resolve
+the ambiguity, and re-dispatch only when a concrete correction is available.
 
 ### 6. Retry policy
 
@@ -131,15 +151,27 @@ At most one corrective re-dispatch, with the specific failure quoted back. If th
 second attempt fails, take over the task yourself or escalate to the user. Do not
 loop — vague "try again" cycles are the documented failure mode here.
 
-### 7. Clean up
+### 7. Preserve or deliberately reject
+
+After exit 0, inspect and commit on the job branch before removing the worktree:
 
 ```bash
-git worktree remove --force "$WT"
+git -C "$WT" diff
+git -C "$WT" add <reviewed-paths>
+git -C "$WT" commit -m "<intentional message>"
+git -C "$TARGET" worktree remove "$WT"
 ```
+
+Integrate `JOB_BRANCH` only through the user's normal review/merge flow. If the job
+was rejected and its disposable changes should be discarded, remove the worktree
+with `--force` and then delete only `JOB_BRANCH`. Never force-remove accepted,
+uncommitted work.
 
 ## Never
 
 - Accept a job on the envelope alone. Run `qa-gate.sh` with `--verify`, every time.
+- Execute `commands_run` or `tests_run` from the envelope. Only driver-authored
+  `--verify` commands are executable evidence.
 - Suggest `--dangerously-skip-permissions` to clear a permission gate — it approves
   every tool for the whole run. Add a narrow allow-rule, or restructure so the worker
   uses file tools instead of the shell.
@@ -147,3 +179,23 @@ git worktree remove --force "$WT"
   (it invents `agy run`, `--headless`, `agy auth status`). If you author agy skills,
   run `./ground-truth.sh` first and treat its output as the only source of truth.
 - Delegate work you cannot write an acceptance test for.
+
+## Maintenance and GitHub reporting
+
+- `__REPO_ROOT__/update.sh check` is read-only and may be run when the user asks for
+  an update/compatibility check. It reports tool releases plus verified agy version,
+  official-upstream drift, and fixed 30-day documentation-review status. Its official
+  release/upstream sources are not caller-overridable.
+- Run `update.sh apply [TAG]` only on an explicit user request. It refuses dirty or
+  detached checkouts and ignored-file collisions, validates tests plus a temporary
+  skill install, fast-forwards, and reinstalls this skill. If the real install fails
+  after merge, report the partial update and exact recovery command; do not claim an
+  atomic rollback. Never invoke it during a worker job.
+- A detected bug authorizes diagnosis, not external submission. When the user wants a
+  report, create only a sanitized local draft with `bug-report.sh draft`, show it with
+  `bug-report.sh preview`, and provide its SHA-256. Run `bug-report.sh submit` only
+  after the user explicitly approves that exact hash. Submission sends the confirmed
+  in-memory body to an explicitly bound github.com repository, never a mutable file.
+- Never attach or paste prompts, source code, envelopes, credentials, absolute paths,
+  or raw logs into GitHub. `gh` is optional; if it is absent or fails, keep the draft
+  local and stop.
