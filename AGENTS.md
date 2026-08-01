@@ -34,7 +34,8 @@ Unknown agy subcommands exit 0 and print usage, so you cannot probe by exit code
 Keep these counts current when their suites change:
 
 - `qa-gate.sh`: 41 offline cases.
-- `agy-worker.sh` / `install.sh`: 22 offline fake-agy cases.
+- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 57 offline
+  fake-agy/routing cases.
 - `update.sh`: 26 offline local-remote cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 
@@ -104,6 +105,9 @@ only a passing test has not been shown to catch anything.
   Document what the user should change; let them do it.
 - Do not add a runtime dependency (Node, Bun, a package manager). Bash + Python 3 +
   git is the whole point; competing projects already occupy the MCP-server niche.
+- Model recommendations are advisory only: never apply them automatically, change the
+  caller-selected tier, invent a thinking-level flag, or escalate permission,
+  authentication, scope-policy, or human-required outcomes.
 - Do not auto-pull during a worker job, auto-submit an issue, install `gh`, or make
   GitHub CLI a runtime dependency.
 - Do not overstate the project in README. It is one differentiated idea among several

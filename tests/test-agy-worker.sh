@@ -5,6 +5,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$HERE/.."
 WORKER="$ROOT/agy-worker.sh"
+RECOMMENDER="$ROOT/model-recommendation.sh"
 TMP="$(mktemp -d -t agyworker-dispatch.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
@@ -23,6 +24,54 @@ parts = [part for part in open(sys.argv[1], "rb").read().split(b"\0") if part]
 raise SystemExit(0 if len(parts) >= 2 and parts[-2] == b"--print" else 1)
 PY
     then ok "$name"; else bad "$name"; fi
+}
+expect_recommendation() {
+    local name="$1" stage="$2" tier="$3" evidence="$4"
+    local decision="$5" recommended="$6" direction="$7" steps="$8"
+    local output="$TMP/recommendation-$pass.json" rc
+    "$RECOMMENDER" --stage "$stage" --selected-tier "$tier" --evidence "$evidence" \
+        > "$output" 2> "$output.err"
+    rc=$?
+    if [[ "$rc" == "0" ]] && python3 - "$output" "$stage" "$tier" "$evidence" \
+        "$decision" "$recommended" "$direction" "$steps" <<'PY'
+import json
+import sys
+
+path, stage, tier, evidence, decision, recommended, direction, steps = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    result = json.load(handle)
+assert result["schema_version"] == 1
+assert result["kind"] == "model-tier-recommendation"
+assert result["stage"] == stage
+assert result["selected_tier"] == tier
+assert result["evidence"]["owner"] == "driver"
+assert result["evidence"]["code"] == evidence
+assert result["evidence"]["description"]
+assert result["recommendation_only"] is True
+assert result["applied"] is False
+assert result["decision"] == decision
+assert result["recommended_tier"] == (None if recommended == "null" else recommended)
+assert result["rationale"]
+assert result["cost_impact"]["direction"] == direction
+assert result["cost_impact"]["relative_tier_steps"] == int(steps)
+assert result["cost_impact"]["summary"]
+PY
+    then
+        ok "$name"
+    else
+        bad "$name"
+    fi
+}
+expect_recommendation_reject() {
+    local name="$1"; shift
+    local output="$TMP/recommendation-reject-$pass.out" rc
+    "$RECOMMENDER" "$@" > "$output" 2> "$output.err"
+    rc=$?
+    if [[ "$rc" == "64" && ! -s "$output" ]]; then
+        ok "$name (exit $rc)"
+    else
+        bad "$name (exit $rc, wanted 64 with empty stdout)"
+    fi
 }
 
 mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/logs"
@@ -166,6 +215,98 @@ printf 'bad envelope\n' | PATH="$TMP/bin:$PATH" \
     "$WORKER" --workdir "$TMP/repo" > "$TMP/bad.out" 2>/dev/null
 rc=$?
 expect_exit "dispatcher independently rejects schema-invalid output" 4 "$rc"
+
+echo
+echo "model-recommendation.sh offline policy tests:"
+expect_recommendation "pre-dispatch routine work needs no escalation" \
+    pre-dispatch cheap bounded-routine no-escalation null none 0
+expect_recommendation "pre-dispatch mechanical batch recommends bulk" \
+    pre-dispatch cheap batched-mechanical consider-higher-tier bulk increase 1
+expect_recommendation "pre-dispatch bounded cross-file work recommends hard" \
+    pre-dispatch bulk cross-file-bounded consider-higher-tier hard increase 1
+expect_recommendation "pre-dispatch bounded high-complexity work recommends hardest" \
+    pre-dispatch hard high-complexity-bounded consider-higher-tier hardest increase 1
+expect_recommendation "pre-dispatch recommendation can span named tier steps" \
+    pre-dispatch cheap high-complexity-bounded consider-higher-tier hardest increase 3
+expect_recommendation "pre-dispatch never escalates the highest named tier" \
+    pre-dispatch hardest high-complexity-bounded no-escalation null none 0
+expect_recommendation "pre-dispatch default tier stays non-rankable" \
+    pre-dispatch default high-complexity-bounded no-escalation null none 0
+expect_recommendation "pre-dispatch custom model stays non-rankable" \
+    pre-dispatch vendor/model-v1 high-complexity-bounded no-escalation null none 0
+
+expect_recommendation "accepted gate result needs no escalation" \
+    post-gate bulk gate-accepted no-escalation null none 0
+expect_recommendation "driver verification failure recommends one higher tier" \
+    post-gate bulk driver-verification-failed consider-higher-tier hard increase 1
+expect_recommendation "driver quality review failure recommends one higher tier" \
+    post-gate cheap driver-quality-review-failed consider-higher-tier bulk increase 1
+expect_recommendation "missing expected edits recommends one higher tier" \
+    post-gate hard expected-edits-missing consider-higher-tier hardest increase 1
+expect_recommendation "permission failures are non-escalatable" \
+    post-gate cheap permission-failed no-escalation null none 0
+expect_recommendation "authentication failures are non-escalatable" \
+    post-gate cheap authentication-failed no-escalation null none 0
+expect_recommendation "scope-policy failures are non-escalatable" \
+    post-gate cheap scope-policy-failed no-escalation null none 0
+expect_recommendation "human-required outcomes are non-escalatable" \
+    post-gate cheap human-required no-escalation null none 0
+expect_recommendation "untrusted noncompleted outcomes are non-escalatable" \
+    post-gate cheap noncompleted-worker-outcome no-escalation null none 0
+expect_recommendation "untrusted worker claims are non-escalatable" \
+    post-gate cheap untrusted-worker-claim no-escalation null none 0
+expect_recommendation "invalid envelopes are non-escalatable" \
+    post-gate cheap invalid-envelope no-escalation null none 0
+expect_recommendation "post-gate never escalates the highest named tier" \
+    post-gate hardest driver-verification-failed no-escalation null none 0
+expect_recommendation "post-gate default tier stays non-rankable" \
+    post-gate default driver-verification-failed no-escalation null none 0
+expect_recommendation "post-gate custom model stays non-rankable" \
+    post-gate vendor:model-v1 driver-verification-failed no-escalation null none 0
+
+expect_recommendation_reject "pre-dispatch rejects post-gate evidence" \
+    --stage pre-dispatch --selected-tier bulk --evidence permission-failed
+expect_recommendation_reject "post-gate rejects pre-dispatch evidence" \
+    --stage post-gate --selected-tier bulk --evidence batched-mechanical
+expect_recommendation_reject "unknown evidence is rejected" \
+    --stage post-gate --selected-tier bulk --evidence worker-says-hard
+expect_recommendation_reject "invalid selected tier syntax is rejected" \
+    --stage pre-dispatch --selected-tier 'hard tier' --evidence high-complexity-bounded
+expect_recommendation_reject "duplicate stage is rejected as ambiguous" \
+    --stage pre-dispatch --stage post-gate --selected-tier bulk --evidence gate-accepted
+expect_recommendation_reject "duplicate selected tier is rejected as ambiguous" \
+    --stage pre-dispatch --selected-tier cheap --selected-tier hard --evidence bounded-routine
+expect_recommendation_reject "duplicate evidence is rejected as ambiguous" \
+    --stage pre-dispatch --selected-tier bulk --evidence bounded-routine --evidence batched-mechanical
+expect_recommendation_reject "missing stage is rejected" \
+    --selected-tier bulk --evidence bounded-routine
+expect_recommendation_reject "missing selected tier is rejected" \
+    --stage pre-dispatch --evidence bounded-routine
+expect_recommendation_reject "missing evidence is rejected" \
+    --stage pre-dispatch --selected-tier bulk
+expect_recommendation_reject "thinking-level flags are not an interface" \
+    --stage pre-dispatch --selected-tier bulk --evidence bounded-routine --thinking-level high
+expect_recommendation_reject "positional arguments are rejected" \
+    --stage pre-dispatch --selected-tier bulk --evidence bounded-routine hardest
+
+mkdir -p "$TMP/route-bin"
+cat > "$TMP/route-bin/agy" <<EOF
+#!/usr/bin/env bash
+touch "$TMP/recommender-called-agy"
+EOF
+cat > "$TMP/route-bin/qa-gate.sh" <<EOF
+#!/usr/bin/env bash
+touch "$TMP/recommender-called-gate"
+EOF
+chmod +x "$TMP/route-bin/agy" "$TMP/route-bin/qa-gate.sh"
+PATH="$TMP/route-bin:$PATH" "$RECOMMENDER" --stage post-gate --selected-tier bulk \
+    --evidence driver-verification-failed > "$TMP/side-effect.json" 2>/dev/null
+rc=$?
+if [[ "$rc" == "0" && ! -e "$TMP/recommender-called-agy" && ! -e "$TMP/recommender-called-gate" ]]; then
+    ok "recommender invokes neither agy nor qa-gate"
+else
+    bad "recommender invokes neither agy nor qa-gate"
+fi
 
 echo
 echo "installer path handling:"

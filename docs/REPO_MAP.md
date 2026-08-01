@@ -8,17 +8,21 @@ from Graphify or another indexer.
 
 ```text
 driver task
+  -> model-recommendation.sh --stage pre-dispatch (visible advisory only)
   -> agy-worker.sh (bounded prompt, sandbox/mode/model, job artifacts)
   -> agy (untrusted worker)
   -> structured envelope
   -> scripts/validate-envelope.py (shape and contract only)
   -> qa-gate.sh (Git scope, immutable base, policy, escalation)
   -> driver-owned --verify commands
+  -> model-recommendation.sh --stage post-gate (visible advisory only)
   -> human diff review and deliberate integration
 ```
 
-The task, path policy, immutable base commit, and verification commands belong to the
-driver. The worker may edit only the isolated worktree and may report claims, but its
+The task, path policy, immutable base commit, verification commands, selected tier,
+and routing evidence belong to the driver. A routing recommendation is display-only:
+it does not alter the selected tier or participate in gate acceptance. The worker may
+edit only the isolated worktree and may report claims, but its
 commands never execute. Schema validation proves shape, not truth. The gate derives
 Git-visible state independently, rejects undeclared, phantom, wrong-kind, outside-
 policy, and verifier-created changes, and routes non-completed outcomes without
@@ -40,7 +44,8 @@ accepting them.
 
 | Path | Responsibility | Owning offline suite |
 |---|---|---|
-| `agy-worker.sh` | Dispatch, model/mode selection, bounded retries, prompt staging, envelope extraction | `tests/test-agy-worker.sh` (22 cases) |
+| `agy-worker.sh` | Dispatch, model/mode selection, bounded retries, prompt staging, envelope extraction | `tests/test-agy-worker.sh` (57 cases) |
+| `model-recommendation.sh`, `scripts/model-recommendation.py` | Side-effect-free pre-dispatch and post-gate tier recommendations from controlled driver evidence | `tests/test-agy-worker.sh` (57 cases) |
 | `install.sh`, `codex-skill/SKILL.md` | Render and install the repository-local Codex workflow | `tests/test-agy-worker.sh` |
 | `schemas/worker-result.schema.json`, `scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
 | `qa-gate.sh` | Immutable-base Git audit, path policy, escalation, driver verification | `tests/test-qa-gate.sh` (41 cases) |
@@ -56,6 +61,10 @@ accepting them.
 - `agy` and every envelope field are untrusted. The driver's immutable base, path
   policy, and verification commands are trusted inputs and must be authored before
   dispatch.
+- Model-routing evidence is a driver-owned classification, not worker prose. The
+  recommender is outside the dispatch and acceptance paths, cannot execute either,
+  and never applies its output. Default/custom tiers and the highest named tier fail
+  safely to `no-escalation` when no ordered higher tier can be proved.
 - `--workdir` is the single audited repository. User-supplied `--add-dir` roots must
   resolve inside it; multi-repository mutation is unsupported.
 - Release tags are trusted only through the fixed official origin and exact ref/commit

@@ -59,10 +59,18 @@ prompts, source, envelopes, credentials, private paths, or raw logs automaticall
 ## Model routing is explicit
 
 The caller selects the tier. Built-in retries reuse the same model; gate failures do
-not silently increase cost or reasoning effort. If adaptive routing is added later,
-it must remain recommendation-only or explicitly opt-in, budget-capped, visible in
-job artifacts, and driven by classified gate outcomes. A stronger model cannot fix a
-permission problem, path-policy violation, or unresolved human decision.
+not silently increase cost or reasoning effort. Keep recommendation policy outside
+both dispatch and gate acceptance: its output must be visible, state the current tier,
+show controlled driver-owned evidence and relative cost impact, and say explicitly
+that it was not applied. Do not add a separate thinking-level abstraction; where agy
+exposes thinking, it is already part of the caller-selected model label.
+
+Only an independently observed, bounded quality or verification gap can justify
+recommending a higher named tier. Permission, authentication, scope-policy, contract,
+untrusted-claim, and human-required failures need correction at their own boundary,
+not more model spend. Do not infer ordering for agy's `default` choice or a custom
+model label, and do not invent a tier above the highest named tier. Reject ambiguous
+or cross-stage evidence rather than guessing.
 
 ## A rejected worker can prove the gate works
 

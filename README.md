@@ -234,7 +234,7 @@ Personas are injected as prompt text, **not** via agy's `--agent` flag, because
 Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid ·
 `5` agy failed · `6` permission gate.
 
-### Model selection is explicit, not adaptive
+### Model selection is explicit; recommendations are advisory
 
 The dispatcher does not infer difficulty or score the gap between worker output and
 the expected result. The caller chooses a tier; the default is `bulk`:
@@ -255,11 +255,45 @@ corrective dispatch, also at the caller-selected tier. It never silently escalat
 cost or changes model in response to failed tests, scope violations, or malformed
 output.
 
-Adaptive routing could be added as a separate policy layer, but it should classify
-gate outcomes first: a stronger model is potentially appropriate for a bounded
-quality failure, not for a permission problem, path-policy violation, or human
-decision. Any such feature should be opt-in, budget-capped, and visible in the job
-artifacts.
+`model-recommendation.sh` is a separate, read-only policy layer. It prints a visible
+JSON recommendation before dispatch or after a gate result, but never calls `agy`,
+runs `qa-gate.sh`, changes job state, or applies its recommendation. Every successful
+result includes the caller's selected tier, a recommended named tier or explicit
+`no-escalation`, rationale, controlled driver-owned evidence, relative cost impact,
+and both `recommendation_only: true` and `applied: false`.
+
+For example, a driver that has classified a task as a mechanical batch can ask for a
+pre-dispatch recommendation without changing `--tier cheap` (or any other caller
+choice):
+
+```bash
+./model-recommendation.sh --stage pre-dispatch \
+  --selected-tier cheap --evidence batched-mechanical
+```
+
+Pre-dispatch evidence is deliberately finite: `bounded-routine`,
+`batched-mechanical`, `cross-file-bounded`, or `high-complexity-bounded`.
+The policy maps those profiles to `cheap`, `bulk`, `hard`, or `hardest`; it recommends
+a higher tier only when the selected named tier is below that profile. `default` and
+custom model labels are non-rankable and therefore never escalated.
+
+After independent verification, the driver can classify the observed outcome:
+
+```bash
+./model-recommendation.sh --stage post-gate \
+  --selected-tier bulk --evidence driver-verification-failed
+```
+
+Only `driver-verification-failed`, `driver-quality-review-failed`, and
+`expected-edits-missing` may recommend one higher named tier. `gate-accepted`,
+`permission-failed`, `authentication-failed`, `scope-policy-failed`,
+`human-required`, `noncompleted-worker-outcome`, `untrusted-worker-claim`, and
+`invalid-envelope` always produce
+`no-escalation`. Permission, authentication, scope policy, and human authorization
+must be resolved at their own boundaries; extra model spend cannot fix them. The
+evidence code must be selected from driver-observed state, never copied from a worker
+claim. Unsupported, cross-stage, repeated, missing, or ambiguous inputs fail with
+exit 64 and no JSON output.
 
 Gate controls:
 
@@ -418,11 +452,13 @@ output, not its own recollection.
 ```
 agy-worker.sh                 dispatch a job, return a schema-valid envelope
 qa-gate.sh                    verify an envelope against the repo — the evidence
+model-recommendation.sh       print a read-only pre-dispatch/post-gate tier advisory
 ground-truth.sh               dump live agy facts for skill authoring
 update.sh                     explicit release + agy compatibility check/apply
 bug-report.sh                 sanitized local draft/preview/optional submission
 compat/                       reviewed agy version, upstream, date, and sources
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
+scripts/model-recommendation.py  controlled recommendation policy and JSON rendering
 scripts/validate-envelope.py  dependency-free full envelope validation
 schemas/worker-result.*.json  the worker contract
 agents/*.md                   personas, inlined via --persona
@@ -430,7 +466,7 @@ codex-skill/SKILL.md          the Codex skill installed by ./install.sh
 docs/REPO_MAP.md              hand-maintained ownership, data flow, and trust map
 docs/lessons_learned.md       durable architectural mistakes and prevention rules
 tests/test-qa-gate.sh         offline adversarial suite
-tests/test-agy-worker.sh       offline fake-agy dispatcher/installer suite
+tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          offline local-remote updater suite
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 ```

@@ -64,10 +64,27 @@ You must be able to fill in both blanks:
 
 If you cannot, the task is not ready to delegate. Scope it further or do it yourself.
 
-### 3. Dispatch
+### 3. Show the pre-dispatch recommendation, then dispatch unchanged
+
+Record the caller-selected tier and classify the task using driver-owned facts. Print
+the advisory before dispatch; do not assign `TIER` from its output or otherwise apply
+the recommendation automatically.
 
 ```bash
-echo "<task>" | "$PIPELINE/agy-worker.sh" --mode accept-edits --tier bulk \
+TIER=bulk  # caller-selected; keep this value unless the caller explicitly changes it
+"$PIPELINE/model-recommendation.sh" --stage pre-dispatch \
+    --selected-tier "$TIER" --evidence batched-mechanical
+```
+
+The other valid pre-dispatch evidence codes are `bounded-routine`,
+`cross-file-bounded`, and `high-complexity-bounded`. Choose one from the task,
+scope, and acceptance criteria you established—not from worker prose. Every result is
+JSON with `recommendation_only: true` and `applied: false`.
+
+Then dispatch using exactly `TIER`:
+
+```bash
+echo "<task>" | "$PIPELINE/agy-worker.sh" --mode accept-edits --tier "$TIER" \
     --persona bulk-test-writer \
     --workdir "$WT" --add-dir "$WT" > /tmp/envelope.json
 ```
@@ -77,7 +94,8 @@ Personas: `bulk-test-writer` (tests only), `diff-reviewer` (review, no edits),
 The dispatcher rejects `accept-edits` for the read-only personas. Tiers may be passed
 as `--tier cheap|bulk|hard|hardest|default` or through `AGY_WORKER_TIER`.
 Tier selection is explicit: retries reuse the same model, and this skill does not
-infer a thinking level or silently escalate models after a gate failure.
+infer a thinking level or silently escalate models after a gate failure. The
+recommendation helper has no thinking-level option and never invokes the dispatcher.
 Every user-supplied `--add-dir` must resolve inside the audited `--workdir`; do not
 delegate multi-repository mutation in one job.
 
@@ -144,6 +162,27 @@ full commit ID captured before dispatch, never `HEAD` or another mutable ref.
 A `blocked` / `requires_human: true` envelope may be the worker behaving correctly,
 but the gate still checks its diff before returning 15. Read `open_questions`, resolve
 the ambiguity, and re-dispatch only when a concrete correction is available.
+
+After recording the gate exit, print the post-gate advisory with the same selected
+tier. Map independently observed outcomes to controlled evidence: exit 0 to
+`gate-accepted`, 10 to `scope-policy-failed`, 11 to `untrusted-worker-claim`, 12 to
+`invalid-envelope`, and 13 to `expected-edits-missing`. For exit 14, use
+`driver-verification-failed` only when a driver-authored check exposed a bounded
+candidate quality gap; fix a verifier that mutated the worktree instead. For exit 15,
+use `human-required` when a human decision is actually required and otherwise use
+`noncompleted-worker-outcome`. An independent review that finds a bounded quality
+defect may use `driver-quality-review-failed`. Driver-
+classified permission and authentication failures use `permission-failed` and
+`authentication-failed`; neither is escalatable.
+
+```bash
+"$PIPELINE/model-recommendation.sh" --stage post-gate \
+    --selected-tier "$TIER" --evidence driver-verification-failed
+```
+
+Do not pass worker-written rationale as evidence. Do not change `TIER` from this
+output. Default/custom model labels and the highest named tier produce
+`no-escalation` when no ordered higher tier can be proved.
 
 ### 6. Retry policy
 
