@@ -1,0 +1,6 @@
+logs/
+*.stream.ndjson
+*.stderr
+*.prompt.txt
+.DS_Store
+__pycache__/

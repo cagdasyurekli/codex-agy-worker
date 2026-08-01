@@ -1,0 +1,29 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # The suite is deliberately offline — no agy, no API keys, no network — so it
+    # runs on any box and on every PR.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        if: matrix.os == 'ubuntu-latest'   # preinstalled there; not worth installing twice
+        continue-on-error: true            # advisory: style findings shouldn't gate the suite
+        run: shellcheck -S warning agy-worker.sh qa-gate.sh ground-truth.sh tests/test-qa-gate.sh
+
+      - name: syntax
+        run: for f in agy-worker.sh qa-gate.sh ground-truth.sh tests/test-qa-gate.sh; do bash -n "$f"; done
+
+      - name: qa-gate suite
+        run: ./tests/test-qa-gate.sh
