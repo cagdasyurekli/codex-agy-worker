@@ -311,18 +311,20 @@ fi
 echo
 echo "installer path handling:"
 SPECIAL="$TMP/repo&with|chars"
-mkdir -p "$SPECIAL/codex-skill" "$TMP/installed"
+mkdir -p "$SPECIAL/skills" "$TMP/installed"
 cp "$ROOT/install.sh" "$SPECIAL/install.sh"
-cp "$ROOT/codex-skill/SKILL.md" "$SPECIAL/codex-skill/SKILL.md"
+cp -R "$ROOT/skills/agy-worker" "$SPECIAL/skills/agy-worker"
 chmod +x "$SPECIAL/install.sh"
 PATH="$TMP/bin:$PATH" CODEX_SKILLS_DIR="$TMP/installed" "$SPECIAL/install.sh" > "$TMP/install.out" 2>/dev/null
 rc=$?
 expect_exit "installer accepts replacement metacharacters in clone path" 0 "$rc"
-if grep -Fq "$SPECIAL" "$TMP/installed/agy-worker/SKILL.md" \
-        && ! grep -Fq '__REPO_ROOT__' "$TMP/installed/agy-worker/SKILL.md"; then
-    ok "installer renders the exact clone path"
+SPECIAL_REAL="$(cd "$SPECIAL" && pwd -P)"
+if [[ "$(<"$TMP/installed/agy-worker/.pipeline-root")" == "$SPECIAL_REAL" ]] \
+        && [[ -f "$TMP/installed/agy-worker/agents/openai.yaml" ]] \
+        && [[ -x "$TMP/installed/agy-worker/scripts/resolve-pipeline.sh" ]]; then
+    ok "installer copies the canonical bundle and records the exact clone path"
 else
-    bad "installer renders the exact clone path"
+    bad "installer copies the canonical bundle and records the exact clone path"
 fi
 
 echo

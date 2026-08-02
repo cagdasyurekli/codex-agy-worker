@@ -28,9 +28,9 @@ INSTALL_FAIL_CLIENT="$TMP/install-fail-client"
 SKILLS="$TMP/skills"
 OFFICIAL_TOOL_URL="https://github.com/cagdasyurekli/codex-agy-worker.git"
 OFFICIAL_UPSTREAM_URL="https://github.com/google-antigravity/antigravity-cli.git"
-mkdir -p "$SOURCE/codex-skill" "$SOURCE/tests" "$SOURCE/compat" "$TMP/bin" "$SKILLS"
+mkdir -p "$SOURCE/skills" "$SOURCE/tests" "$SOURCE/compat" "$TMP/bin" "$SKILLS"
 cp "$ROOT/update.sh" "$ROOT/install.sh" "$SOURCE/"
-cp "$ROOT/codex-skill/SKILL.md" "$SOURCE/codex-skill/SKILL.md"
+cp -R "$ROOT/skills/agy-worker" "$SOURCE/skills/agy-worker"
 cp "$ROOT/compat/"*.txt "$SOURCE/compat/"
 
 mkdir -p "$UPSTREAM_SOURCE"
@@ -191,7 +191,13 @@ if [[ "$(git -C "$CLIENT" rev-parse HEAD)" == "$V2_COMMIT" ]] \
 else
     bad "apply lands the verified release commit"
 fi
-if grep -Fq "$CLIENT" "$SKILLS/agy-worker/SKILL.md"; then ok "apply reinstalls the Codex skill"; else bad "apply reinstalls the Codex skill"; fi
+CLIENT_REAL="$(cd "$CLIENT" && pwd -P)"
+if [[ "$(<"$SKILLS/agy-worker/.pipeline-root")" == "$CLIENT_REAL" ]] \
+        && [[ -f "$SKILLS/agy-worker/agents/openai.yaml" ]]; then
+    ok "apply reinstalls the canonical Codex skill bundle"
+else
+    bad "apply reinstalls the canonical Codex skill bundle"
+fi
 if [[ "$(<"$CLIENT/harmless.cache")" == "harmless local cache" ]]; then ok "harmless ignored cache is preserved"; else bad "harmless ignored cache is preserved"; fi
 
 BLOCKED_SKILLS="$TMP/not-a-directory"
