@@ -55,7 +55,7 @@ else
     bad "draft redacts secrets, paths, artifacts, and code blocks"
 fi
 if [[ ! -e "$TMP/gh.args" ]]; then ok "draft does not submit anything"; else bad "draft does not submit anything"; fi
-if [[ "$(stat -f '%Lp' "$DRAFT" 2>/dev/null || stat -c '%a' "$DRAFT")" == "600" ]]; then
+if [[ "$(python3 -c 'import os, stat, sys; print(f"{stat.S_IMODE(os.stat(sys.argv[1]).st_mode):03o}")' "$DRAFT")" == "600" ]]; then
     ok "draft is atomically published with mode 0600"
 else
     bad "draft is atomically published with mode 0600"
