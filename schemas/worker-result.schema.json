@@ -44,11 +44,11 @@
     "commands_run": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Shell commands actually executed, verbatim."
+      "description": "Worker-reported shell activity. Bounded workers leave this empty; the hardened gate never executes these strings."
     },
     "tests_run": {
       "type": "array",
-      "description": "Worker's test claims. QA gate re-runs these independently.",
+      "description": "Worker-reported test claims. The hardened gate never executes these commands; bounded workers leave this empty and the driver supplies --verify.",
       "items": {
         "type": "object",
         "additionalProperties": false,
