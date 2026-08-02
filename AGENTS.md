@@ -1,8 +1,8 @@
 # AGENTS.md — working on codex-agy-worker
 
-You are continuing development of this repo. Read `README.md` first; it is accurate
-and current. This file covers what the README deliberately leaves out: what is
-actually proven, what is merely written, and what to do next.
+Read `README.md` first. Use `docs/REPO_MAP.md` for ownership and data flow, and
+`docs/lessons_learned.md` for the architectural mistakes this project must not
+repeat.
 
 ## The one principle
 
@@ -12,7 +12,13 @@ tests pass or output prettier. If you find yourself weakening a check to get a g
 run, stop — the failing check is probably right.
 
 Corollary for your own work: do not report a task done because it looks done. Run
-`./tests/test-qa-gate.sh` and paste the output.
+the completion checks below and report their exact summaries.
+
+After material changes to commands, architecture, trust boundaries, tests, or
+verified/untested claims, use the `agents-md-auditor` skill before declaring
+completion. Re-read the effective instruction hierarchy, keep this root file
+concise and repository-wide, and keep release notes or one-off run history out of
+`AGENTS.md`.
 
 ## Ground truth about agy
 
@@ -23,55 +29,37 @@ None exist. Verify with `agy --help` before writing any flag into code.
 
 Unknown agy subcommands exit 0 and print usage, so you cannot probe by exit code.
 
-## What is actually verified vs merely written
+## Evidence boundaries
 
-**Verified by running it (trust these):**
-- `qa-gate.sh` — all 13 offline tests, including 4 adversarial rejection cases.
-- `agy-worker.sh` — real `accept-edits` job fixed a real bug end-to-end; envelope
-  parsed; bounded retry fired on a genuine transient auth failure.
-- Full pipeline driven by `codex exec` under `workspace-write`, accepted by the gate.
-- Codex sandbox config: `network_access = true` **and** `--add-dir ~/.gemini`. Each
-  alone fails with exit 5 and empty stderr.
-- `repo-inventory` persona: measurably changed behaviour (returned `blocked` /
-  `requires_human` on an under-specified job instead of confabulating).
-- `install.sh` against a fake `CODEX_SKILLS_DIR`.
+Keep these counts current when their suites change:
 
-**Written but NEVER exercised (do not claim these work):**
-- `bulk-test-writer` and `diff-reviewer` personas — never run against a real job.
-- `AGY_WORKER_TIER` values other than `bulk`.
-- The oversized-prompt branch in `agy-worker.sh` (>100 KB → staged to file + `--add-dir`).
-- `QA_EXPECT_EDITS=1` → exit 13 path.
-- Windows anything.
-- Headless skill expansion, `agy -p "/skill-name ..."`.
+- `qa-gate.sh`: 41 offline cases.
+- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 57 offline
+  fake-agy/routing cases.
+- `update.sh`: 26 offline local-remote cases.
+- `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 
-## Backlog, highest value first
+Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
+Codex sandbox requirements, and an honest `repo-inventory` escalation. The
+Playbook-Gemini exercise proved that the gate rejects a worker even after focused
+tests pass when diff hygiene fails; it did not produce an accepted
+`bulk-test-writer` delivery.
 
-1. **Exercise `bulk-test-writer` on a real repo.** Give it a module with untested
-   error paths in a throwaway worktree. It must write tests ONLY under a test dir.
-   Note the gate does **not** currently enforce "test directories only" — it checks
-   declared-vs-actual files, not their location. For this experiment either pass a
-   driver-owned `--verify` that greps the diff for production paths, or add a real
-   `--only PATHGLOB` gate policy with both an accept and a reject test. If the worker
-   edits production source, tighten the persona rather than loosening the gate.
-   Pick any small repo with a test framework; you do not need permission to choose one.
-2. **Exercise `diff-reviewer`.** Plant a real defect (a suppressed exception, an
-   `assert True`, a hardcoded value that passes the current case) in a worktree diff
-   and check it is found. It must report findings without editing anything.
-3. **Test the oversized-prompt branch.** Generate a >100 KB task, confirm agy is
-   pointed at the staged file and still returns a valid envelope.
-4. **Test `QA_EXPECT_EDITS=1`** → a worker claiming `completed` with an empty diff
-   must exit 13. Add it to `tests/test-qa-gate.sh`.
-5. **Flip shellcheck to blocking** in `.github/workflows/test.yml` once it passes
-   (it is `continue-on-error: true` only because it was never run locally).
-6. **Test `agy -p "/skill-name ..."`.** If headless skill expansion works, a fourth
-   integration approach opens up (agy's own skill system instead of prompt injection).
-   If it does not, say so in the README's limitations.
+Do not claim real coverage for an accepted `bulk-test-writer` delivery,
+`diff-reviewer`, non-`bulk` tiers, oversized live dispatch, Windows, headless skill
+expansion, a public tagged update, or a live GitHub issue submission. Their current
+coverage is offline, partial, or absent as described in `README.md`.
 
 ## Testing
 
 ```bash
 ./tests/test-qa-gate.sh        # offline, no agy, no network — must stay that way
-bash -n *.sh tests/*.sh        # syntax
+./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
+./tests/test-update.sh          # offline local Git remotes; no public fetch
+./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
+bash -n ./*.sh tests/*.sh      # syntax
+python3 -m py_compile scripts/*.py
+git diff --check
 ./ground-truth.sh              # regenerate agy facts before touching agy behaviour
 ```
 
@@ -96,6 +84,16 @@ only a passing test has not been shown to catch anything.
   both. If you touch that code, keep the `tests/test-qa-gate.sh` absolute-path case.
 - **Under `--sandbox`, agy's shell tools run in `~/.gemini/antigravity-cli/scratch`**,
   not the repo. File tools do reach the repo. Never ask a worker to run shell commands.
+- **Never execute `commands_run` or `tests_run` from the envelope.** They are worker
+  claims. The gate accepts executable input only through driver-owned `--verify`.
+- **`update.sh check` may need network, but must remain read-only.** Compatibility
+  metadata changes only after a human reconciles official docs, upstream source,
+  `ground-truth.sh`, and a bounded real job. Production origins, upstream, and review
+  cadence are not environment-overridable. `apply` is always an explicit action.
+- **Bug reports are local drafts first.** Never gather prompts, source, envelopes,
+  paths, credentials, or raw logs automatically. Submission must show the exact body
+  and require the matching SHA-256 confirmation token; send those validated bytes,
+  not a mutable path, to an explicitly bound github.com destination.
 
 ## Boundaries
 
@@ -107,6 +105,11 @@ only a passing test has not been shown to catch anything.
   Document what the user should change; let them do it.
 - Do not add a runtime dependency (Node, Bun, a package manager). Bash + Python 3 +
   git is the whole point; competing projects already occupy the MCP-server niche.
+- Model recommendations are advisory only: never apply them automatically, change the
+  caller-selected tier, invent a thinking-level flag, or escalate permission,
+  authentication, scope-policy, or human-required outcomes.
+- Do not auto-pull during a worker job, auto-submit an issue, install `gh`, or make
+  GitHub CLI a runtime dependency.
 - Do not overstate the project in README. It is one differentiated idea among several
   existing tools, and the prior-art section stays.
 - Ask before pushing to `main` or publishing a release.

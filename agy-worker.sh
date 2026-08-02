@@ -23,19 +23,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCHEMA="${AGY_WORKER_SCHEMA:-$SCRIPT_DIR/schemas/worker-result.schema.json}"
 LOG_DIR="${AGY_WORKER_LOG_DIR:-$SCRIPT_DIR/logs}"
 
-# Model tiering (rec #10). Bulk work should NOT burn pro/opus quota; those groups are
-# exhaustible and agy returns empty when they are — indistinguishable from any other
-# silent-empty failure, which is why the cheap tier is the default.
+# Model tiering. Resolve the selected model only after CLI arguments are parsed so
+# --tier and AGY_WORKER_TIER have identical behavior.
 tier="${AGY_WORKER_TIER:-bulk}"
-case "$tier" in
-    bulk)    model="gemini-3.6-flash-medium" ;;
-    cheap)   model="gemini-3.6-flash-low" ;;
-    hard)    model="gemini-3.1-pro-high" ;;
-    hardest) model="claude-opus-4-6-thinking" ;;
-    default) model="" ;;                      # use whatever agy's own /model UI picked
-    *)       model="$tier" ;;                 # explicit model label passthrough
-esac
-
 mode="${AGY_WORKER_MODE:-plan}"               # plan | accept-edits  (rec: plan is the safe default)
 print_timeout="${AGY_WORKER_TIMEOUT:-5m0s}"
 max_attempts="${AGY_WORKER_MAX_ATTEMPTS:-2}"  # bounded retries, then fail closed (rec #11)
@@ -43,7 +33,8 @@ job_id="${AGY_WORKER_JOB_ID:-job-$$}"
 
 usage() {
     cat >&2 <<'EOF'
-usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits] [--tier bulk|cheap|hard|hardest]
+usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
+                     [--tier bulk|cheap|hard|hardest|default|MODEL]
                      [--add-dir DIR]... [--allow-slash-commands]
        ... task prompt on stdin ...
 
@@ -66,22 +57,49 @@ disable_slash=1
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --workdir) workdir="$2"; shift 2 ;;
+        --workdir) [[ $# -ge 2 ]] || usage; workdir="$2"; shift 2 ;;
         # Persona by PROMPT INJECTION, not by --agent. Measured 2026-08-01: passing
         # --agent silently disables --json-schema enforcement (result.structured_output
         # comes back null and the worker answers in prose), which breaks the entire
         # driver contract. agy also accepts any --agent name without error, so a typo
         # yields a default worker that believes it is a specialist. Inlining the
         # persona body keeps structured output working.
-        --persona) persona="$2"; shift 2 ;;
-        --mode) mode="$2"; shift 2 ;;
-        --tier) tier="$2"; shift 2 ;;
-        --add-dir) extra_dirs+=("$2"); shift 2 ;;
+        --persona) [[ $# -ge 2 ]] || usage; persona="$2"; shift 2 ;;
+        --mode) [[ $# -ge 2 ]] || usage; mode="$2"; shift 2 ;;
+        --tier) [[ $# -ge 2 ]] || usage; tier="$2"; shift 2 ;;
+        --add-dir) [[ $# -ge 2 ]] || usage; extra_dirs+=("$2"); shift 2 ;;
         --allow-slash-commands) disable_slash=0; shift ;;
         -h|--help) usage ;;
         *) echo "agy-worker.sh: unknown arg: $1" >&2; usage ;;
     esac
 done
+
+case "$persona" in
+    ''|bulk-test-writer|repo-inventory|diff-reviewer) ;;
+    *) echo "agy-worker.sh: invalid persona: $persona" >&2; exit 64 ;;
+esac
+case "$mode" in
+    plan|accept-edits) ;;
+    *) echo "agy-worker.sh: invalid mode: $mode" >&2; exit 64 ;;
+esac
+case "$tier" in
+    bulk)    model="gemini-3.6-flash-medium" ;;
+    cheap)   model="gemini-3.6-flash-low" ;;
+    hard)    model="gemini-3.1-pro-high" ;;
+    hardest) model="claude-opus-4-6-thinking" ;;
+    default) model="" ;;                      # use agy's own selected model
+    *)       model="$tier" ;;                 # explicit model label passthrough
+esac
+case "$max_attempts" in
+    ''|*[!0-9]*|0) echo "agy-worker.sh: AGY_WORKER_MAX_ATTEMPTS must be a positive integer" >&2; exit 64 ;;
+esac
+case "$job_id" in
+    ''|.|..|*[!A-Za-z0-9._-]*) echo "agy-worker.sh: invalid AGY_WORKER_JOB_ID: $job_id" >&2; exit 64 ;;
+esac
+if [[ "$mode" != "plan" && ( "$persona" == "repo-inventory" || "$persona" == "diff-reviewer" ) ]]; then
+    echo "agy-worker.sh: persona '$persona' is read-only and requires --mode plan" >&2
+    exit 64
+fi
 
 mkdir -p "$LOG_DIR"
 # agy operates on its CWD as the workspace, so the dispatcher must actually move
@@ -89,12 +107,36 @@ mkdir -p "$LOG_DIR"
 # SCRIPT_DIR, but a caller-supplied relative AGY_WORKER_LOG_DIR would otherwise
 # silently follow us into the worktree and scatter artifacts.
 LOG_DIR="$(cd "$LOG_DIR" && pwd)"
+[[ -f "$SCHEMA" ]] || { echo "agy-worker.sh: schema not found: $SCHEMA" >&2; exit 64; }
+SCHEMA="$(cd "$(dirname "$SCHEMA")" && pwd)/$(basename "$SCHEMA")"
 [[ -d "$workdir" ]] || { echo "agy-worker.sh: --workdir not a directory: $workdir" >&2; exit 64; }
+workdir="$(cd "$workdir" && pwd -P)"
+normalized_dirs=()
+for d in ${extra_dirs+"${extra_dirs[@]}"}; do
+    [[ -d "$d" ]] || { echo "agy-worker.sh: --add-dir not a directory: $d" >&2; exit 64; }
+    resolved_dir="$(cd "$d" && pwd -P)"
+    case "$resolved_dir/" in
+        "$workdir/"*) normalized_dirs+=("$resolved_dir") ;;
+        *)
+            echo "agy-worker.sh: --add-dir must resolve inside the audited --workdir: $d" >&2
+            exit 64 ;;
+    esac
+done
+extra_dirs=()
+if (( ${#normalized_dirs[@]} > 0 )); then
+    extra_dirs=("${normalized_dirs[@]}")
+fi
 cd "$workdir"
 
-stdout_file="$LOG_DIR/$job_id.stream.ndjson"
-stderr_file="$LOG_DIR/$job_id.stderr"
-prompt_file="$LOG_DIR/$job_id.prompt.txt"
+job_dir="$LOG_DIR/$job_id"
+mkdir -p "$job_dir"
+stdout_file="$job_dir/stream.ndjson"
+stderr_file="$job_dir/stderr.txt"
+prompt_file="$job_dir/task.txt"
+full_prompt_file="$job_dir/full-prompt.txt"
+envelope_file="$job_dir/envelope.json"
+staged_dir="$job_dir/staged"
+staged_prompt_file="$staged_dir/full-prompt.txt"
 
 # --- read the task -----------------------------------------------------------
 # stdin is consumed once; cache it so a retry can replay it verbatim.
@@ -125,8 +167,8 @@ OUTPUT CONTRACT — non-negotiable:
 - Do NOT reply "see the artifact" or reference an external document.
 - List EVERY file you touched in files_changed. The driver diffs the repo; an
   omission reads as a scope violation and fails the job.
-- Report tests honestly in tests_run. The driver re-runs them. A false "passed"
-  is the single worst outcome here.
+- Do NOT run shell commands or tests. The driver's environment is the only trusted
+  execution context. Leave commands_run and tests_run as empty arrays.
 - If a permission gate, missing tool, or ambiguity blocks you: set
   status="blocked", requires_human=true, and explain in open_questions.
   Do not silently work around it.
@@ -148,6 +190,7 @@ fi
 full_prompt="$PREAMBLE
 $persona_text
 $task"
+printf '%s' "$full_prompt" > "$full_prompt_file"
 
 # --- build the command -------------------------------------------------------
 # --sandbox is deliberately unconditional: see the auth note in the header.
@@ -161,10 +204,19 @@ build_cmd() {
     # to the cached file and agy is pointed at it instead of failing the job.
     local LC_ALL=C
     if (( ${#full_prompt} > 100000 )); then
-        cmd+=(--add-dir "$LOG_DIR")
-        cmd+=(--print "$PREAMBLE
-Read the file '$prompt_file' and execute the instructions in it as your task. You may
-read ONLY that file. Do not summarize it; perform it. Return the JSON envelope inline.")
+        # The automatic out-of-repo root contains only one read-only staged prompt.
+        # Logs and envelopes remain outside agy's granted roots.
+        [[ -d "$staged_dir" ]] && chmod 0755 "$staged_dir"
+        [[ -f "$staged_prompt_file" ]] && chmod 0644 "$staged_prompt_file"
+        mkdir -p "$staged_dir"
+        printf '%s' "$full_prompt" > "$staged_prompt_file"
+        chmod 0444 "$staged_prompt_file"
+        chmod 0555 "$staged_dir"
+        cmd+=(--add-dir "$staged_dir")
+        cmd+=(--print "Read '$staged_prompt_file' as the complete prompt, including its
+output contract, persona, and task. Follow it exactly. The staged job directory is
+read-only context; target files named in that prompt remain readable and editable
+according to --mode and --add-dir. Return the JSON envelope inline.")
     else
         cmd+=(--print "$full_prompt")   # ALWAYS last, prompt as the value
     fi
@@ -217,8 +269,10 @@ if not isinstance(result, dict):
     sys.exit(4)
 
 # agy's own run status, distinct from our envelope's status field.
-if str(result.get("status", "")).upper() not in ("SUCCESS", ""):
-    print(f"agy-worker: agy reported status={result.get('status')}", file=sys.stderr)
+if str(result.get("status", "")).upper() != "SUCCESS":
+    print(f"agy-worker: agy reported non-success status={result.get('status')}",
+          file=sys.stderr)
+    sys.exit(4)
 
 envelope = result.get("structured_output")
 if not isinstance(envelope, dict):
@@ -246,6 +300,10 @@ while (( attempt <= max_attempts )); do
     set +e
     "${cmd[@]}" > "$stdout_file" 2> "$stderr_file" < /dev/null
     agy_rc=$?
+    if [[ -d "$staged_dir" ]]; then
+        chmod 0755 "$staged_dir"
+        [[ -f "$staged_prompt_file" ]] && chmod 0644 "$staged_prompt_file"
+    fi
     classify "$agy_rc"
     verdict=$?
     set -e
@@ -254,7 +312,9 @@ while (( attempt <= max_attempts )); do
         exit 6                       # permission gate: retrying reproduces it exactly
     fi
     if (( verdict == 0 )); then
-        if extract_envelope; then
+        if extract_envelope > "$envelope_file" \
+                && "$SCRIPT_DIR/scripts/validate-envelope.py" "$SCHEMA" "$envelope_file"; then
+            cat "$envelope_file"
             exit 0
         fi
         echo "agy-worker.sh: attempt $attempt produced no schema-valid envelope" >&2
