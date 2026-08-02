@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Print a recommendation-only model-tier decision. This wrapper never dispatches a
-# worker, runs the QA gate, or changes the caller-selected tier.
+# Compatibility entry point; the distributable skill owns the canonical advisory.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$SCRIPT_DIR/scripts/model-recommendation.py" "$@"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+exec "$SCRIPT_DIR/skills/agy-worker/runtime/model-recommendation.sh" "$@"

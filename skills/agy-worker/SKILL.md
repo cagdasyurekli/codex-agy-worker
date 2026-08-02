@@ -15,9 +15,10 @@ directory containing this `SKILL.md`, then run:
 PIPELINE="$(bash "$SKILL_ROOT/scripts/resolve-pipeline.sh")" || exit $?
 ```
 
-Do not guess a checkout path. The resolver supports both a plugin cache, where the
-pipeline is two directories above this skill, and the explicit standalone install
-created by `install.sh`.
+Do not guess a checkout path. The resolver supports a complete plugin checkout, the
+explicit standalone install created by `install.sh`, and a portable skill-folder copy
+using its bundled `runtime/`. It never downloads a missing runtime; an incomplete
+bundle fails closed.
 
 ## Data boundary and sandbox requirement (read first)
 
@@ -27,8 +28,9 @@ roots. Before the first dispatch for a repository, tell the user what repository
 paths will be in scope and obtain explicit approval unless that exact transmission
 was already approved. Never include credentials, private keys, or unrelated files.
 The pipeline stores job prompts, streams, stderr, and envelopes in local `logs/`;
-treat them as private artifacts. See the repository's `PRIVACY.md` for the complete
-project disclosure.
+treat them as private artifacts. See the
+[public privacy disclosure](https://github.com/cagdasyurekli/codex-agy-worker/blob/main/PRIVACY.md)
+for the complete project disclosure.
 
 The following sandbox settings apply to Codex. In another Agent Skills client,
 follow that client's own permission and network controls; do not copy Codex-specific
@@ -243,18 +245,21 @@ uncommitted work.
 
 ## Maintenance and GitHub reporting
 
-- `$PIPELINE/update.sh check` is read-only and may be run when the user asks for
-  an update/compatibility check. It reports tool releases plus verified agy version,
-  official-upstream drift, and fixed 30-day documentation-review status. Its official
-  release/upstream sources are not caller-overridable.
+- When `$PIPELINE/update.sh` exists, `update.sh check` is read-only and may be run
+  when the user asks for an update/compatibility check. It reports tool releases plus
+  verified agy version, official-upstream drift, and fixed 30-day documentation-review
+  status. A folder-only install intentionally has no checkout updater: do not fetch or
+  pull code automatically to manufacture one.
 - Run `update.sh apply [TAG]` only on an explicit user request. It refuses dirty or
   detached checkouts and ignored-file collisions, validates tests plus a temporary
   skill install, fast-forwards, and reinstalls this skill. If the real install fails
   after merge, report the partial update and exact recovery command; do not claim an
   atomic rollback. Never invoke it during a worker job.
-- A detected bug authorizes diagnosis, not external submission. When the user wants a
-  report, create only a sanitized local draft with `bug-report.sh draft`, show it with
-  `bug-report.sh preview`, and provide its SHA-256. Run `bug-report.sh submit` only
+- A detected bug authorizes diagnosis, not external submission. When
+  `$PIPELINE/bug-report.sh` exists and the user wants a report, create only a sanitized
+  local draft with `bug-report.sh draft`, show it with `bug-report.sh preview`, and
+  provide its SHA-256. A folder-only install may instead direct the user to the public
+  support page; it must not fetch reporting tools. Run `bug-report.sh submit` only
   after the user explicitly approves that exact hash. Submission sends the confirmed
   in-memory body to an explicitly bound github.com repository, never a mutable file.
 - Never attach or paste prompts, source code, envelopes, credentials, absolute paths,
