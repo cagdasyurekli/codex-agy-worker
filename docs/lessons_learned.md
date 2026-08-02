@@ -122,3 +122,13 @@ Pages source, sitemap, policy, or preview recommendation does not prove that Pag
 About metadata, topics, homepage, private reporting, search indexing, or a social
 preview is enabled. Treat each external setting as a deliberate owner action and
 verify live state after any separately approved change.
+
+Treat brand assets as an interface with size-specific responsibilities. Use the
+light/dark master SVGs for large surfaces, the pixel-hinted micro variants for
+favicon-sized rendering, and an opaque, exact-size raster for social previews. Keep
+all variants on the same geometry and palette, reject external SVG references and
+vendor marks mechanically, allow only the SVG elements and attributes the masters
+need, and compare light/dark path geometry in order. Verify every PNG chunk and CRC,
+then boundedly decode the scanlines so valid framing cannot hide transparency or a
+broken image stream. Do not imply that a checked-in preview is active in GitHub
+repository settings.

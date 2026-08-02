@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/logo-dark.svg">
+  <img src="docs/assets/brand/logo-light.svg" alt="" width="132" height="132">
+</picture>
+
 # codex-agy-worker
 
 Delegate bounded coding work from **Codex CLI** to **Antigravity CLI (`agy`)**, then
