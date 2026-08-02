@@ -14,9 +14,8 @@ command -v agy >/dev/null || {
 }
 
 mkdir -p "$DEST"
-# Marketplace installs resolve the runtime beside the cached plugin. A standalone
-# install copies the same canonical skill bundle and records this checkout in a local
-# marker that is not part of the public package.
+# A standalone install copies the canonical skill bundle and records this checkout in
+# a local marker that is not part of the public package.
 python3 - "$HERE/skills/agy-worker" "$DEST" "$HERE" <<'PY'
 import os
 import pathlib

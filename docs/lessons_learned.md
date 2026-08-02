@@ -93,16 +93,32 @@ incomplete bundles and invalid markers, and preserve the root CLI's observable
 defaults. Do not duplicate the runtime across packages or introduce a daemon merely
 to make installation look uniform.
 
-Plugin installation is not consent to transmit a repository. Before dispatch, name
+Skill installation is not consent to transmit a repository. Before dispatch, name
 the repository and allowed paths and obtain explicit approval for sending the prompt
 and worker-read content through agy to Google/Gemini. Keep local logs private and make
-privacy, support, and usage terms public before marketplace review.
+privacy, support, and usage terms public alongside the GitHub distribution.
 
-Checked-in marketplace metadata proves package shape, not listing status. Submission,
-review, publication, GitHub Pages enablement, and search-console ownership are external
-state changes with their own approval and verification. Use accurate natural-language
-landing copy, a canonical URL, and a sitemap that the owner explicitly submits through
-Search Console; do not trade the project's evidence boundary for keyword stuffing or
-unsupported product claims. Do not place `robots.txt` under a GitHub Pages project
-subpath and call it crawler control: robots rules are host-root metadata owned by the
-site owner, outside this repository's publication slice.
+Keep distribution surfaces no broader than the maintained product. A Codex package
+manifest can validate local package shape without creating a listing; do not retain
+Claude or marketplace catalogs after choosing a GitHub-first, Codex-only product.
+GitHub Pages enablement and search-console ownership are external state changes with
+their own approval and verification. Use accurate natural-language landing copy, a
+canonical URL, and a sitemap that the owner explicitly submits through Search Console;
+do not trade the project's evidence boundary for keyword stuffing or unsupported
+product claims. Do not place `robots.txt` under a GitHub Pages project subpath and call
+it crawler control: robots rules are host-root metadata owned by the site owner,
+outside this repository's publication slice.
+
+## Public discovery claims need the same evidence discipline
+
+The landing page and README are part of the trust boundary because users choose
+whether to install before reading the implementation. Lead with the bounded mechanism:
+Codex delegates to agy, then the driver independently checks Git scope and runs its own
+verification commands. Do not turn those checks into claims that the project proves
+general correctness, security, or official endorsement.
+
+Keep GitHub repository files separate from GitHub repository settings. A checked-in
+Pages source, sitemap, policy, or preview recommendation does not prove that Pages,
+About metadata, topics, homepage, private reporting, search indexing, or a social
+preview is enabled. Treat each external setting as a deliberate owner action and
+verify live state after any separately approved change.

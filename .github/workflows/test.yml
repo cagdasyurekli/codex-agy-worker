@@ -31,5 +31,5 @@ jobs:
       - name: reporting suite
         run: ./tests/test-reporting.sh
 
-      - name: marketplace packaging suite
+      - name: Codex distribution suite
         run: ./tests/test-packaging.sh

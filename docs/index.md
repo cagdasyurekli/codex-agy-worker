@@ -1,21 +1,22 @@
 ---
 layout: default
-title: "Verified agy Worker — evidence-gated AI coding delegation"
-description: "Delegate bounded mechanical coding work to Google Antigravity CLI, then verify repository scope and driver-owned tests before accepting the result."
+title: "codex-agy-worker — bounded Codex to agy delegation"
+description: "Delegate bounded coding work from Codex to Antigravity CLI, then independently check Git scope and driver-owned verification before acceptance."
 canonical_url: "https://cagdasyurekli.github.io/codex-agy-worker/"
 ---
 
-# Delegate to agy. Verify before you trust.
+# Bounded Codex to agy delegation, independently checked
 
-**Verified agy Worker** is an open-source Agent Skill and command-line pipeline for
-delegating bounded, mechanical coding tasks from Codex or Claude Code to Google's
-Antigravity CLI (`agy`). Its differentiator is not another bridge: it treats every
-worker report as an untrusted claim and re-derives acceptance evidence from Git and
-driver-owned verification commands.
+**codex-agy-worker** is an open-source Agent Skill and command-line pipeline for
+delegating bounded coding tasks from Codex to Google's Antigravity CLI (`agy`). It
+treats every worker report as an untrusted claim, independently checks Git scope, and
+runs only driver-owned verification commands before accepting a candidate.
 
 <div class="callout">
 The worker can propose changes. Only the evidence gate can accept them, and exit 0
-still does not commit, push, merge, or release anything.
+means only that the configured scope and verification checks passed. It does not
+prove general correctness or security, and it does not commit, push, merge, or
+release anything.
 </div>
 
 ## What it is for
@@ -43,7 +44,10 @@ before use.
 
 ## Install and explore
 
-Clone and install the standalone Codex skill:
+Use the GitHub repository as the source of truth. Review the cloned commit—or the
+exact release tag selected from
+[GitHub Releases](https://github.com/cagdasyurekli/codex-agy-worker/releases)—before
+installing the standalone Codex skill:
 
 ```bash
 git clone https://github.com/cagdasyurekli/codex-agy-worker.git
@@ -51,10 +55,9 @@ cd codex-agy-worker
 ./install.sh
 ```
 
-The same canonical Agent Skill is packaged for Codex/ChatGPT plugins and Claude Code
-marketplaces. Public-directory listings require their platform reviews; until then,
-use the repository-backed instructions in the
-[marketplace runbook](https://github.com/cagdasyurekli/codex-agy-worker/blob/main/docs/MARKETPLACE.md).
+Checked-in repository files do not alter GitHub About fields, topics, homepage
+metadata, or social-preview settings. Those remain deliberate repository-owner
+actions.
 
 [Read the full documentation](https://github.com/cagdasyurekli/codex-agy-worker#readme)
 or [inspect the source and offline tests](https://github.com/cagdasyurekli/codex-agy-worker).
