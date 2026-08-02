@@ -61,7 +61,7 @@ accepting them.
 | `.codex-plugin/`, `.agents/plugins/`, `.claude-plugin/` | Skills-only plugin identity and opt-in repository marketplace catalogs | `tests/test-packaging.sh` (16 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md`, `docs/MARKETPLACE.md` | Public data disclosure, project policy, support route, and external submission gates | `tests/test-packaging.sh` (16 cases) plus review |
 | `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (16 cases) plus rendered review |
-| `.github/workflows/test.yml` | Linux/macOS CI for syntax and all five offline suites | exercised by GitHub Actions |
+| `.github/workflows/test.yml` | macOS CI for syntax and all five offline suites | exercised by GitHub Actions |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
 | `AGENTS.md`, `docs/lessons_learned.md`, this file | Durable contributor rules and architecture | `agents-md-auditor` after material changes |
 
