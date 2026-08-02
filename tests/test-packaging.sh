@@ -104,6 +104,48 @@ else
     bad "plugin-cache resolver finds the adjacent canonical runtime"
 fi
 
+mkdir -p "$TMP/skill-folder-copy" "$TMP/no-network-bin"
+cp -R "$ROOT/skills/agy-worker" "$TMP/skill-folder-copy/agy-worker"
+for command_name in agy curl wget git npm npx; do
+    printf '#!/usr/bin/env bash\n: > "$NETWORK_MARKER"\nexit 99\n' \
+        > "$TMP/no-network-bin/$command_name"
+    chmod +x "$TMP/no-network-bin/$command_name"
+done
+copied_pipeline="$(PATH="$TMP/no-network-bin:$PATH" \
+    NETWORK_MARKER="$TMP/network-called" \
+    bash "$TMP/skill-folder-copy/agy-worker/scripts/resolve-pipeline.sh" 2>/dev/null)"
+PATH="$TMP/no-network-bin:$PATH" NETWORK_MARKER="$TMP/network-called" \
+    "$copied_pipeline/model-recommendation.sh" --stage pre-dispatch \
+    --selected-tier cheap --evidence bounded-routine \
+    > "$TMP/copied-recommendation.json" 2> "$TMP/copied-recommendation.err"
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && [[ "$copied_pipeline" == "$(cd "$TMP/skill-folder-copy/agy-worker/runtime" && pwd -P)" ]] \
+        && grep -Fq '"recommendation_only": true' "$TMP/copied-recommendation.json" \
+        && grep -Fq '"applied": false' "$TMP/copied-recommendation.json" \
+        && [[ ! -e "$TMP/network-called" ]]; then
+    ok "skill-folder-only copy resolves and runs a bounded offline advisory"
+else
+    bad "skill-folder-only copy resolves and runs a bounded offline advisory"
+fi
+
+mkdir -p "$TMP/incomplete-skill/agy-worker/agents" \
+    "$TMP/incomplete-skill/agy-worker/scripts"
+cp "$ROOT/skills/agy-worker/SKILL.md" "$TMP/incomplete-skill/agy-worker/SKILL.md"
+cp "$ROOT/skills/agy-worker/agents/openai.yaml" \
+    "$TMP/incomplete-skill/agy-worker/agents/openai.yaml"
+cp "$ROOT/skills/agy-worker/scripts/resolve-pipeline.sh" \
+    "$TMP/incomplete-skill/agy-worker/scripts/resolve-pipeline.sh"
+bash "$TMP/incomplete-skill/agy-worker/scripts/resolve-pipeline.sh" \
+    > "$TMP/incomplete.out" 2> "$TMP/incomplete.err"
+rc=$?
+if [[ "$rc" == "2" && ! -s "$TMP/incomplete.out" ]] \
+        && grep -Fq 'complete agy-worker skill bundle' "$TMP/incomplete.err"; then
+    ok "skill-folder-only resolver rejects an incomplete runtime bundle"
+else
+    bad "skill-folder-only resolver rejects an incomplete runtime bundle"
+fi
+
 mkdir -p "$TMP/bin" "$TMP/installed"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/agy"
 chmod +x "$TMP/bin/agy"

@@ -4,7 +4,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GATE="$HERE/../qa-gate.sh"
-SCHEMA="$HERE/../schemas/worker-result.schema.json"
+SCHEMA="$HERE/../skills/agy-worker/runtime/schemas/worker-result.schema.json"
 TMP="$(mktemp -d -t agyworker-tests.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 

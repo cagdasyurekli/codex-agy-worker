@@ -241,7 +241,7 @@ PY
     echo "update: validating candidate in $candidate_wt"
     (
         cd "$candidate_wt"
-        bash -n ./*.sh tests/*.sh || exit $?
+        bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh || exit $?
         preflight_skills="$(mktemp -d -t agy-worker-skill-preflight.XXXXXX)"
         trap 'rm -rf -- "$preflight_skills"' EXIT
         CODEX_SKILLS_DIR="$preflight_skills" ./install.sh || exit $?

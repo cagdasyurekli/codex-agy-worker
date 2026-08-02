@@ -83,12 +83,15 @@ green result.
 
 ## Distribution must preserve the trust boundary
 
-A public skill cannot depend on a developer's absolute checkout path. Keep one
-canonical Agent Skills bundle, resolve the runtime relative to a cached plugin, and
-use a local install marker only for the explicit standalone installer. Test both
-accepted layouts and reject relative or missing markers. Do not copy the core runtime
-into each marketplace package or introduce a daemon merely to make installation look
-uniform.
+A public skill cannot depend on a developer's absolute checkout path or assume that
+an installer copied the surrounding repository. Keep the core runtime once, inside
+the canonical Agent Skills bundle, and make repository-root commands compatibility
+wrappers. A complete plugin may resolve those wrappers and an explicit standalone
+install may use a local checkout marker, but a skill-folder-only copy must fall back
+to its bundled runtime without fetching code. Test every accepted layout, reject
+incomplete bundles and invalid markers, and preserve the root CLI's observable
+defaults. Do not duplicate the runtime across packages or introduce a daemon merely
+to make installation look uniform.
 
 Plugin installation is not consent to transmit a repository. Before dispatch, name
 the repository and allowed paths and obtain explicit approval for sending the prompt

@@ -15,10 +15,13 @@ until the relevant marketplace owner reviews and publishes it.
   suppresses the repository's agy persona files as Claude agents.
   `.claude-plugin/marketplace.json` exposes the repository as a Claude marketplace.
 - **Standalone Codex:** `install.sh` copies the canonical bundle and creates only a
-  local runtime pointer. It does not rewrite the public `SKILL.md`.
+  local checkout pointer for maintenance commands. It does not rewrite the public
+  `SKILL.md`.
 
-The Bash + Python 3 + git runtime remains canonical at the plugin root. No MCP daemon,
-Node runtime, or duplicated implementation is added by packaging.
+The Bash + Python 3 + git runtime is canonical inside the skill folder, so a skills
+client that copies only `skills/agy-worker/` still receives a complete core pipeline.
+Invocation never fetches missing code: an incomplete package fails closed. No MCP
+daemon, Node runtime, or duplicated implementation is added by packaging.
 
 ## Install before public-directory approval
 
@@ -27,6 +30,16 @@ Direct Codex skill install from a clone:
 ```bash
 ./install.sh
 ```
+
+Portable folder-only install through the third-party skills CLI:
+
+```bash
+DO_NOT_TRACK=1 npx skills add cagdasyurekli/codex-agy-worker \
+  --skill agy-worker --copy
+```
+
+Here `npx` is only the installer; the copied skill runs without Node. Inspect the
+copied bundle before enabling it.
 
 Codex marketplace source:
 
@@ -144,9 +157,10 @@ Validate the package with `claude plugin validate .`, then submit it through the
 [Console submission form](https://platform.claude.com/plugins/submit). Inclusion is
 reviewed by Anthropic and is not implied by the checked-in marketplace file.
 
-The root `agents/` directory contains prompt-injected roles for agy, not native Claude
-subagents. Keep `.claude-plugin/plugin.json` configured with an empty `agents` list
-unless those roles are deliberately redesigned and tested for Claude Code.
+The canonical `skills/agy-worker/runtime/agents/` directory contains prompt-injected
+roles for agy, not native Claude subagents. Keep `.claude-plugin/plugin.json`
+configured with an empty `agents` list unless those roles are deliberately redesigned
+and tested for Claude Code.
 
 ## Release discipline
 
