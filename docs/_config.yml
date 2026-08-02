@@ -3,6 +3,7 @@ description: "Bounded delegation from Codex to Antigravity CLI, with independent
 url: "https://cagdasyurekli.github.io"
 baseurl: "/codex-agy-worker"
 canonical_url: "https://cagdasyurekli.github.io/codex-agy-worker/"
+social_image_url: "https://cagdasyurekli.github.io/codex-agy-worker/assets/brand/social-preview-1280x640.png"
 repository: "cagdasyurekli/codex-agy-worker"
 markdown: "kramdown"
 exclude:

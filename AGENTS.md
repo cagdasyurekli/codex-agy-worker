@@ -38,7 +38,7 @@ Keep these counts current when their suites change:
   fake-agy/routing cases.
 - `update.sh`: 26 offline local-remote cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 14 offline manifest/runtime-copy/relocation/landing cases.
+- Codex package/skill distribution: 21 offline manifest/runtime-copy/relocation/landing cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
 Codex sandbox requirements, and an honest `repo-inventory` escalation. The
