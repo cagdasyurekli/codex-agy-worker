@@ -38,7 +38,7 @@ Keep these counts current when their suites change:
   fake-agy/routing cases.
 - `update.sh`: 26 offline local-remote cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- plugin/skill packaging: 16 offline runtime-copy/relocation/marketplace/landing cases.
+- Codex package/skill distribution: 14 offline manifest/runtime-copy/relocation/landing cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
 Codex sandbox requirements, and an honest `repo-inventory` escalation. The
@@ -58,7 +58,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
-./tests/test-packaging.sh       # offline plugin manifests, relocation, policy, landing
+./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
 python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
 git diff --check
@@ -119,5 +119,5 @@ only a passing test has not been shown to catch anything.
   GitHub CLI a runtime dependency.
 - Do not overstate the project in README. It is one differentiated idea among several
   existing tools, and the prior-art section stays.
-- Ask before pushing to `main`, publishing a release, submitting a marketplace
-  listing, or enabling an external distribution/search service.
+- Ask before pushing to `main`, publishing a release, or enabling an external
+  distribution/search service.

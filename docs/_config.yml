@@ -1,5 +1,5 @@
-title: "Verified agy Worker"
-description: "Verification-first delegation from Codex or Claude Code to Google Antigravity CLI, with isolated Git worktrees and driver-owned acceptance checks."
+title: "codex-agy-worker"
+description: "Bounded delegation from Codex to Antigravity CLI, with independent Git-scope checks and driver-owned verification before acceptance."
 url: "https://cagdasyurekli.github.io"
 baseurl: "/codex-agy-worker"
 canonical_url: "https://cagdasyurekli.github.io/codex-agy-worker/"

@@ -1,9 +1,9 @@
 # codex-agy-worker
 
-Delegate bulk coding work from **Codex CLI or another Agent Skills client** to
-**Antigravity CLI (`agy`)** — then prove the driver-defined acceptance checks pass
-before accepting it. The same verification-first workflow is packaged as an OpenAI
-skills-only plugin and a Claude Code marketplace plugin.
+Delegate bounded coding work from **Codex CLI** to **Antigravity CLI (`agy`)**, then
+independently check Git scope and run driver-owned verification commands before
+accepting the candidate. The gate verifies those specific conditions; it does not
+prove general correctness or security.
 
 Bash + Python 3 + git. No Node, no MCP daemon, no polling loop.
 
@@ -30,9 +30,9 @@ and [antigravity-for-claude-code](https://github.com/VKirill/antigravity-for-cla
 Most are MCP servers; several are more featureful than this one. If you want async
 job polling, Windows support, or multiple worker backends, use one of those.
 
-**This one exists for a single reason: it assumes the worker may be wrong or dishonest,
-and checks.** The worker's JSON report is treated as a *claim*, never as evidence. The
-gate re-derives the truth from the repository itself:
+**This one exists for a single reason: it does not accept the worker's self-report as
+evidence.** The worker's JSON report is treated as a *claim*. The gate independently
+derives a bounded set of facts from the repository:
 
 | The worker... | Gate | Exit |
 |---|---|---|
@@ -54,7 +54,7 @@ The five offline suites need no agy process, network access, API key, or GitHub 
 
 ---
 
-## Install
+## Install from GitHub
 
 ```bash
 git clone https://github.com/cagdasyurekli/codex-agy-worker.git
@@ -62,6 +62,12 @@ cd codex-agy-worker
 ./install.sh          # installs the Codex skill only; touches nothing else
 for suite in tests/test-*.sh; do "$suite"; done
 ```
+
+The GitHub repository is the source of truth. Review the commit you cloned before
+installation. For a released snapshot, check out the exact reviewed
+`vMAJOR.MINOR.PATCH` tag from the
+[GitHub Releases page](https://github.com/cagdasyurekli/codex-agy-worker/releases)
+before running `./install.sh`; do not substitute an unverified tag.
 
 Requires `agy` (Antigravity CLI) on `PATH`, `git`, `python3`, and bash.
 Tested on macOS with agy 1.1.9 and codex-cli 0.146.0. Not tested on Windows.
@@ -73,18 +79,9 @@ compatibility wrappers for clone users. `install.sh` copies the same bundle and 
 a local pointer so checkout-only maintenance commands remain available; it does not
 rewrite the public `SKILL.md`.
 
-The repository also contains marketplace metadata for direct testing and later public
-submission. These commands install from the repository; they do **not** imply that a
-public marketplace has approved the listing:
-
-```text
-# Codex: add the source, then inspect/install it in /plugins
-codex plugin marketplace add cagdasyurekli/codex-agy-worker --ref main
-
-# Claude Code
-/plugin marketplace add cagdasyurekli/codex-agy-worker
-/plugin install codex-agy-worker@codex-agy-worker
-```
+The repository retains `.codex-plugin/plugin.json` so the Codex skills-only package
+shape can be validated locally. It is not a marketplace listing: GitHub clone plus
+`./install.sh` is the supported distribution path.
 
 The portable Agent Skill can also be copied through the third-party skills CLI:
 
@@ -96,12 +93,9 @@ DO_NOT_TRACK=1 npx skills add cagdasyurekli/codex-agy-worker \
 `npx` is only an optional installer here; the installed skill has no Node runtime
 dependency. Review the copied files before use.
 
-See [the marketplace runbook](docs/MARKETPLACE.md) for distribution status, platform
-review prerequisites, and reviewer-ready positive/negative cases. The public landing
-page source lives at `docs/index.md`; GitHub Pages and search-engine verification are
-separate repository-owner actions. After Pages is live, submit the checked-in
-`sitemap.xml` through Google Search Console; a repository file alone does not request
-indexing.
+The public landing page source lives at `docs/index.md`. GitHub Pages configuration,
+repository About fields, topics, and search-engine verification are separate
+repository-owner actions; checked-in files do not change those settings.
 
 ### Codex sandbox settings — required
 
@@ -507,17 +501,18 @@ scripts/bug-report.py         privacy filter and SHA-bound gh submission
 skills/agy-worker/            canonical self-contained Agent Skill and runtime
 skills/agy-worker/runtime/    dispatcher, gate, advisory, personas, schema, Python helpers
 .codex-plugin/plugin.json     OpenAI skills-only plugin package metadata
-.agents/plugins/marketplace.json  Codex repository marketplace source
-.claude-plugin/               Claude plugin and repository marketplace metadata
 docs/REPO_MAP.md              hand-maintained ownership, data flow, and trust map
 docs/lessons_learned.md       durable architectural mistakes and prevention rules
-docs/index.md                 SEO-friendly GitHub Pages landing source
-docs/MARKETPLACE.md           marketplace status, submission gates, review cases
+docs/index.md                 GitHub Pages landing source
+CONTRIBUTING.md               contributor workflow and evidence expectations
+SECURITY.md                   private vulnerability reporting policy
+CODE_OF_CONDUCT.md            enforceable participation standards
+.github/pull_request_template.md  review and verification checklist
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          offline local-remote updater suite
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       offline plugin/marketplace/relocation/landing suite
+tests/test-packaging.sh       offline Codex package/relocation/landing suite
 ```
 
 Contributors should start with [the repository map](docs/REPO_MAP.md) and use
@@ -528,7 +523,7 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
 
 - No async/polling; jobs are synchronous and bounded by `--print-timeout`.
 - Not tested on Windows.
-- Single worker backend (agy). No Claude Code / Codex worker support.
+- Single worker backend: agy; no alternative worker backend is implemented.
 - One audited worktree per job. User-supplied `--add-dir` roots outside `--workdir`
   are rejected; multi-repository mutation is intentionally unsupported.
 - `bulk-test-writer` has been exercised but has not yet produced an accepted real job;

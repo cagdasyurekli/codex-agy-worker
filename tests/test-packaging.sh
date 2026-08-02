@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline plugin, marketplace, skill-bundle, and landing-page contract tests.
+# Offline Codex package, skill-bundle, and landing-page contract tests.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,7 @@ pass=0; fail=0
 ok() { printf '  ok   %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail+1)); }
 
-echo "marketplace packaging offline test suite"
+echo "Codex distribution offline test suite"
 echo
 
 if python3 - "$ROOT" <<'PY'
@@ -30,49 +30,14 @@ assert not ({"apps", "mcpServers", "hooks"} & manifest.keys())
 PY
 then ok "Codex plugin is a skills-only package with public legal links"; else bad "Codex plugin is a skills-only package with public legal links"; fi
 
-if python3 - "$ROOT" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-manifest = json.loads((Path(sys.argv[1]) / ".claude-plugin/plugin.json").read_text())
-assert manifest["name"] == "codex-agy-worker"
-assert manifest["skills"] == "./skills/"
-assert manifest["agents"] == []
-assert manifest["version"] == "0.1.0"
-PY
-then ok "Claude plugin versions the shared skill and suppresses incompatible agy personas"; else bad "Claude plugin versions the shared skill and suppresses incompatible agy personas"; fi
-
-if python3 - "$ROOT" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-catalog = json.loads((Path(sys.argv[1]) / ".agents/plugins/marketplace.json").read_text())
-entry = catalog["plugins"][0]
-assert catalog["name"] == "codex-agy-worker"
-assert entry["name"] == "codex-agy-worker"
-assert entry["source"] == {
-    "source": "url",
-    "url": "https://github.com/cagdasyurekli/codex-agy-worker.git",
-    "ref": "main",
-}
-assert entry["policy"] == {"installation": "AVAILABLE", "authentication": "ON_INSTALL"}
-PY
-then ok "Codex marketplace entry is explicit and remotely installable"; else bad "Codex marketplace entry is explicit and remotely installable"; fi
-
-if python3 - "$ROOT" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-catalog = json.loads((Path(sys.argv[1]) / ".claude-plugin/marketplace.json").read_text())
-entry = catalog["plugins"][0]
-assert catalog["name"] == "codex-agy-worker"
-assert entry["name"] == "codex-agy-worker"
-assert entry["source"] == {"source": "github", "repo": "cagdasyurekli/codex-agy-worker"}
-PY
-then ok "Claude marketplace entry resolves the public repository"; else bad "Claude marketplace entry resolves the public repository"; fi
+if [[ ! -e "$ROOT/.claude-plugin" ]] \
+        && [[ ! -e "$ROOT/CLAUDE.md" ]] \
+        && [[ ! -e "$ROOT/.agents/plugins/marketplace.json" ]] \
+        && [[ ! -e "$ROOT/docs/MARKETPLACE.md" ]]; then
+    ok "removed Claude and marketplace distribution surfaces stay absent"
+else
+    bad "removed Claude and marketplace distribution surfaces stay absent"
+fi
 
 if python3 - "$ROOT" <<'PY'
 from pathlib import Path
@@ -99,9 +64,22 @@ fi
 
 resolved="$(bash "$ROOT/skills/agy-worker/scripts/resolve-pipeline.sh" 2>/dev/null)"
 if [[ "$resolved" == "$(cd "$ROOT" && pwd -P)" ]]; then
-    ok "plugin-cache resolver finds the adjacent canonical runtime"
+    ok "Codex package resolver finds the adjacent canonical runtime"
 else
-    bad "plugin-cache resolver finds the adjacent canonical runtime"
+    bad "Codex package resolver finds the adjacent canonical runtime"
+fi
+
+mkdir -p "$TMP/legacy-claude-only/.claude-plugin" \
+    "$TMP/legacy-claude-only/skills"
+cp "$ROOT/agy-worker.sh" "$ROOT/qa-gate.sh" \
+    "$ROOT/model-recommendation.sh" "$TMP/legacy-claude-only/"
+cp -R "$ROOT/skills/agy-worker" "$TMP/legacy-claude-only/skills/agy-worker"
+printf '{}\n' > "$TMP/legacy-claude-only/.claude-plugin/plugin.json"
+legacy_resolved="$(bash "$TMP/legacy-claude-only/skills/agy-worker/scripts/resolve-pipeline.sh" 2>/dev/null)"
+if [[ "$legacy_resolved" == "$(cd "$TMP/legacy-claude-only/skills/agy-worker/runtime" && pwd -P)" ]]; then
+    ok "resolver ignores a removed Claude-only package marker"
+else
+    bad "resolver ignores a removed Claude-only package marker"
 fi
 
 mkdir -p "$TMP/skill-folder-copy" "$TMP/no-network-bin"
@@ -193,27 +171,14 @@ else
     bad "public policy pages disclose external transfer, local artifacts, and support"
 fi
 
-if python3 - "$ROOT/docs/MARKETPLACE.md" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-text = Path(sys.argv[1]).read_text()
-positive = re.findall(r"^### Positive [1-5]$", text, re.M)
-negative = re.findall(r"^### Negative [1-3]$", text, re.M)
-assert len(positive) == 5
-assert len(negative) == 3
-PY
-then ok "submission runbook contains five positive and three negative cases"; else bad "submission runbook contains five positive and three negative cases"; fi
-
 if grep -Fq 'https://cagdasyurekli.github.io/codex-agy-worker/' "$ROOT/docs/_config.yml" \
         && grep -Fq 'canonical' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq '<loc>https://cagdasyurekli.github.io/codex-agy-worker/</loc>' "$ROOT/docs/sitemap.xml" \
-        && grep -Fq 'explicitly submit' "$ROOT/docs/MARKETPLACE.md" \
+        && grep -Fq 'GitHub repository as the source of truth' "$ROOT/docs/index.md" \
         && [[ ! -e "$ROOT/docs/robots.txt" ]]; then
-    ok "GitHub Pages landing exposes a canonical URL and explicitly submitted sitemap"
+    ok "GitHub Pages landing exposes a canonical URL and GitHub-first install path"
 else
-    bad "GitHub Pages landing exposes a canonical URL and explicitly submitted sitemap"
+    bad "GitHub Pages landing exposes a canonical URL and GitHub-first install path"
 fi
 
 if [[ ! -e "$ROOT/codex-skill/SKILL.md" ]] \
