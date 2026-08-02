@@ -1,0 +1,24 @@
+{
+  "name": "codex-agy-worker",
+  "description": "Verification-first delegation workflows for Antigravity CLI.",
+  "owner": {
+    "name": "cagdasyurekli",
+    "url": "https://github.com/cagdasyurekli"
+  },
+  "plugins": [
+    {
+      "name": "codex-agy-worker",
+      "source": {
+        "source": "github",
+        "repo": "cagdasyurekli/codex-agy-worker"
+      },
+      "description": "Delegate bounded coding work to agy and verify repository evidence before acceptance.",
+      "category": "Development",
+      "tags": [
+        "agent-skills",
+        "antigravity-cli",
+        "verification"
+      ]
+    }
+  ]
+}
