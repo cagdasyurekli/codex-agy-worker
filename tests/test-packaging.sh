@@ -171,14 +171,212 @@ else
     bad "public policy pages disclose external transfer, local artifacts, and support"
 fi
 
-if grep -Fq 'https://cagdasyurekli.github.io/codex-agy-worker/' "$ROOT/docs/_config.yml" \
+python3 "$ROOT/scripts/validate-brand-assets.py" "$ROOT/docs/assets/brand" \
+    > "$TMP/brand-valid.out" 2> "$TMP/brand-valid.err"
+brand_valid_rc=$?
+if [[ "$brand_valid_rc" == "0" ]] \
+        && grep -Fq '4 SVG, 7 PNG' "$TMP/brand-valid.out" \
+        && grep -Fq 'https://cagdasyurekli.github.io/codex-agy-worker/' "$ROOT/docs/_config.yml" \
+        && grep -Fq 'https://cagdasyurekli.github.io/codex-agy-worker/assets/brand/social-preview-1280x640.png' "$ROOT/docs/_config.yml" \
         && grep -Fq 'canonical' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'property="og:image"' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'name="twitter:card" content="summary_large_image"' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'sizes="16x16"' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'sizes="32x32"' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq '<picture aria-hidden="true">' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq '<loc>https://cagdasyurekli.github.io/codex-agy-worker/</loc>' "$ROOT/docs/sitemap.xml" \
         && grep -Fq 'GitHub repository as the source of truth' "$ROOT/docs/index.md" \
+        && grep -Fq '<picture>' "$ROOT/README.md" \
+        && grep -Fq 'srcset="docs/assets/brand/logo-dark.svg"' "$ROOT/README.md" \
+        && grep -Fq 'src="docs/assets/brand/logo-light.svg" alt=""' "$ROOT/README.md" \
         && [[ ! -e "$ROOT/docs/robots.txt" ]]; then
-    ok "GitHub Pages landing exposes a canonical URL and GitHub-first install path"
+    ok "approved brand assets and GitHub Pages wiring pass the production contract"
 else
-    bad "GitHub Pages landing exposes a canonical URL and GitHub-first install path"
+    bad "approved brand assets and GitHub Pages wiring pass the production contract"
+fi
+
+cp -R "$ROOT/docs/assets/brand" "$TMP/reject-brand-image"
+python3 - "$TMP/reject-brand-image/logo-light.svg" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(
+    text.replace("</svg>", '<image href="https://invalid.example/logo.svg"/></svg>'),
+    encoding="utf-8",
+)
+PY
+python3 "$ROOT/scripts/validate-brand-assets.py" "$TMP/reject-brand-image" \
+    > "$TMP/brand-image.out" 2> "$TMP/brand-image.err"
+brand_image_rc=$?
+if [[ "$brand_image_rc" == "1" ]] \
+        && grep -Fq 'forbidden image element' "$TMP/brand-image.err"; then
+    ok "brand validator rejects an external SVG image reference"
+else
+    bad "brand validator rejects an external SVG image reference"
+fi
+
+cp -R "$ROOT/docs/assets/brand" "$TMP/reject-brand-onload"
+python3 - "$TMP/reject-brand-onload/logo-light.svg" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace("<svg ", '<svg onload="alert(1)" ', 1), encoding="utf-8")
+PY
+python3 "$ROOT/scripts/validate-brand-assets.py" "$TMP/reject-brand-onload" \
+    > "$TMP/brand-onload.out" 2> "$TMP/brand-onload.err"
+brand_onload_rc=$?
+if [[ "$brand_onload_rc" == "1" ]] \
+        && grep -Fq 'event attributes are forbidden' "$TMP/brand-onload.err"; then
+    ok "brand validator rejects an SVG root event attribute"
+else
+    bad "brand validator rejects an SVG root event attribute"
+fi
+
+cp -R "$ROOT/docs/assets/brand" "$TMP/reject-brand-style"
+python3 - "$TMP/reject-brand-style/logo-light.svg" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(
+    text.replace(
+        "</svg>",
+        '<style>@import url("https://invalid.example/brand.css");</style></svg>',
+    ),
+    encoding="utf-8",
+)
+PY
+python3 "$ROOT/scripts/validate-brand-assets.py" "$TMP/reject-brand-style" \
+    > "$TMP/brand-style.out" 2> "$TMP/brand-style.err"
+brand_style_rc=$?
+if [[ "$brand_style_rc" == "1" ]] \
+        && grep -Fq 'forbidden style element' "$TMP/brand-style.err"; then
+    ok "brand validator rejects SVG style imports and external CSS"
+else
+    bad "brand validator rejects SVG style imports and external CSS"
+fi
+
+cp -R "$ROOT/docs/assets/brand" "$TMP/reject-brand-truncated"
+python3 - "$TMP/reject-brand-truncated/social-preview-1280x640.png" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+data = path.read_bytes()
+path.write_bytes(data[:-5])
+PY
+python3 "$ROOT/scripts/validate-brand-assets.py" "$TMP/reject-brand-truncated" \
+    > "$TMP/brand-truncated.out" 2> "$TMP/brand-truncated.err"
+brand_truncated_rc=$?
+if [[ "$brand_truncated_rc" == "1" ]] \
+        && grep -Fq 'truncated PNG chunk' "$TMP/brand-truncated.err"; then
+    ok "brand validator rejects a truncated social-preview PNG"
+else
+    bad "brand validator rejects a truncated social-preview PNG"
+fi
+
+cp -R "$ROOT/docs/assets/brand" "$TMP/reject-brand-geometry"
+python3 - "$TMP/reject-brand-geometry/logo-dark.svg" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(text.replace("M160 224", "M161 224", 1), encoding="utf-8")
+PY
+python3 "$ROOT/scripts/validate-brand-assets.py" "$TMP/reject-brand-geometry" \
+    > "$TMP/brand-geometry.out" 2> "$TMP/brand-geometry.err"
+brand_geometry_rc=$?
+if [[ "$brand_geometry_rc" == "1" ]] \
+        && grep -Fq 'ordered geometry diverged' "$TMP/brand-geometry.err"; then
+    ok "brand validator rejects light and dark SVG geometry divergence"
+else
+    bad "brand validator rejects light and dark SVG geometry divergence"
+fi
+
+cp -R "$ROOT/docs/assets/brand" "$TMP/reject-brand-trns"
+python3 - "$TMP/reject-brand-trns/social-preview-1280x640.png" <<'PY'
+from pathlib import Path
+import struct
+import sys
+import zlib
+
+path = Path(sys.argv[1])
+data = path.read_bytes()
+output = bytearray(data[:8])
+cursor = 8
+inserted = False
+while cursor < len(data):
+    length = struct.unpack(">I", data[cursor : cursor + 4])[0]
+    chunk_end = cursor + 12 + length
+    chunk_type = data[cursor + 4 : cursor + 8]
+    if chunk_type == b"IDAT" and not inserted:
+        transparent_color = b"\x00\x00\x00\x00\x00\x00"
+        trns_type = b"tRNS"
+        output.extend(struct.pack(">I", len(transparent_color)))
+        output.extend(trns_type)
+        output.extend(transparent_color)
+        output.extend(
+            struct.pack(">I", zlib.crc32(trns_type + transparent_color) & 0xFFFFFFFF)
+        )
+        inserted = True
+    output.extend(data[cursor:chunk_end])
+    cursor = chunk_end
+assert inserted
+path.write_bytes(output)
+PY
+python3 "$ROOT/scripts/validate-brand-assets.py" "$TMP/reject-brand-trns" \
+    > "$TMP/brand-trns.out" 2> "$TMP/brand-trns.err"
+brand_trns_rc=$?
+if [[ "$brand_trns_rc" == "1" ]] \
+        && grep -Fq 'tRNS is forbidden' "$TMP/brand-trns.err"; then
+    ok "brand validator rejects a valid-CRC tRNS transparency chunk"
+else
+    bad "brand validator rejects a valid-CRC tRNS transparency chunk"
+fi
+
+cp -R "$ROOT/docs/assets/brand" "$TMP/reject-brand-idat"
+python3 - "$TMP/reject-brand-idat/social-preview-1280x640.png" <<'PY'
+from pathlib import Path
+import struct
+import sys
+import zlib
+
+path = Path(sys.argv[1])
+data = path.read_bytes()
+output = bytearray(data[:8])
+cursor = 8
+replaced = False
+while cursor < len(data):
+    length = struct.unpack(">I", data[cursor : cursor + 4])[0]
+    chunk_end = cursor + 12 + length
+    chunk_type = data[cursor + 4 : cursor + 8]
+    if chunk_type == b"IDAT" and not replaced:
+        payload = b"\x00" * length
+        output.extend(struct.pack(">I", length))
+        output.extend(chunk_type)
+        output.extend(payload)
+        output.extend(struct.pack(">I", zlib.crc32(chunk_type + payload) & 0xFFFFFFFF))
+        replaced = True
+    else:
+        output.extend(data[cursor:chunk_end])
+    cursor = chunk_end
+assert replaced
+path.write_bytes(output)
+PY
+python3 "$ROOT/scripts/validate-brand-assets.py" "$TMP/reject-brand-idat" \
+    > "$TMP/brand-idat.out" 2> "$TMP/brand-idat.err"
+brand_idat_rc=$?
+if [[ "$brand_idat_rc" == "1" ]] \
+        && grep -Fq 'invalid IDAT zlib stream' "$TMP/brand-idat.err"; then
+    ok "brand validator rejects a re-CRCed invalid IDAT zlib stream"
+else
+    bad "brand validator rejects a re-CRCed invalid IDAT zlib stream"
 fi
 
 if [[ ! -e "$ROOT/codex-skill/SKILL.md" ]] \

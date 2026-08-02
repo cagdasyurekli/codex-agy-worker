@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">codex-agy-worker supervisor spine v2.1 light</title>
+  <desc id="desc">One continuous navy supervisor plane stands beside a bounded teal worker field; a separate amber evidence token returns below it.</desc>
+  <path fill="#0A192F" d="M160 224 432 160v424l-56 56 56 56v168l-272-64Z"/>
+  <path fill="#008C95" d="M536 240h272q56 0 56 56v288q0 56-56 56H520q-40 0-40-40V296q0-56 56-56Z"/>
+  <path fill="#F59E0B" d="M512 704h168q40 0 40 40v32q0 40-40 40H512q-32 0-32-32v-48q0-32 32-32Z"/>
+</svg>
