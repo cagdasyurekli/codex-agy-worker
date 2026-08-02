@@ -13,8 +13,7 @@ is_pipeline() {
 
 PLUGIN_ROOT="$(CDPATH= cd -- "$SKILL_DIR/../.." 2>/dev/null && pwd -P)" || PLUGIN_ROOT=""
 if [[ -n "$PLUGIN_ROOT" ]] \
-        && [[ -f "$PLUGIN_ROOT/.codex-plugin/plugin.json" \
-            || -f "$PLUGIN_ROOT/.claude-plugin/plugin.json" ]] \
+        && [[ -f "$PLUGIN_ROOT/.codex-plugin/plugin.json" ]] \
         && is_pipeline "$PLUGIN_ROOT"; then
     printf '%s\n' "$PLUGIN_ROOT"
     exit 0

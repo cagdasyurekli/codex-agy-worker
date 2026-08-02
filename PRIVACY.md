@@ -9,7 +9,7 @@ not a claim about every version or configuration of the third-party tools it cal
 The repository does not operate a hosted service, collect analytics, or send
 telemetry on its own. Model-tier recommendations and all offline test suites run
 locally. Installing the skill copies its public workflow files and a local pointer to
-the checkout; it does not contact a network service or change agy, Codex, or Claude
+the checkout; it does not contact a network service or change agy or Codex
 configuration.
 
 ## When data can leave the machine
@@ -44,4 +44,4 @@ their own policy. Do not commit or paste raw logs into public reports.
 
 Questions about this disclosure can be opened through the route in
 [SUPPORT.md](SUPPORT.md) without including private content. Material changes to the
-project's data flow should update this document before a marketplace release.
+project's data flow should update this document before a public release.

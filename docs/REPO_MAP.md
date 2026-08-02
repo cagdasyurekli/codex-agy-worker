@@ -43,8 +43,8 @@ accepting them.
   A skill-folder-only copy resolves `runtime/` without the repository or a network
   fetch. Repository-root commands are compatibility wrappers; `install.sh` copies the
   same bundle and adds a local `.pipeline-root` marker so checkout maintenance remains
-  available. Codex and Claude manifests expose this one implementation without
-  auto-publishing a listing.
+  available. `.codex-plugin/plugin.json` describes the same skill for local package
+  validation; GitHub clone plus explicit install is the supported public path.
 
 ## Ownership and test coverage
 
@@ -58,9 +58,10 @@ accepting them.
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
 | `update.sh`, `compat/` | Explicit releases and fixed-source agy compatibility review | `tests/test-update.sh` (26 cases) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
-| `.codex-plugin/`, `.agents/plugins/`, `.claude-plugin/` | Skills-only plugin identity and opt-in repository marketplace catalogs | `tests/test-packaging.sh` (16 cases) plus platform validators |
-| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md`, `docs/MARKETPLACE.md` | Public data disclosure, project policy, support route, and external submission gates | `tests/test-packaging.sh` (16 cases) plus review |
-| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (16 cases) plus rendered review |
+| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (14 cases) plus platform validators |
+| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (14 cases) plus review |
+| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (14 cases) plus rendered review |
+| `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
 | `.github/workflows/test.yml` | macOS CI for syntax and all five offline suites | exercised by GitHub Actions |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
 | `AGENTS.md`, `docs/lessons_learned.md`, this file | Durable contributor rules and architecture | `agents-md-auditor` after material changes |
@@ -84,8 +85,13 @@ accepting them.
 - A plugin install is local enablement, not consent to send repository content.
   Dispatch through agy can expose the approved prompt and worker-read files to
   Google/Gemini; the skill must obtain explicit approval for that named scope first.
-- Marketplace metadata is not publication evidence. OpenAI and Anthropic submission,
-  review, and publication remain separate human-approved external actions.
+- The Codex package manifest is not publication evidence. This project is distributed
+  from its public GitHub repository and does not maintain Claude or marketplace
+  catalogs.
+- README and Pages copy may describe only the checks this repository actually runs:
+  independent Git-scope inspection and driver-owned verification. Passing them is not
+  proof of general correctness or security. GitHub About fields, topics, homepage,
+  and social-preview settings are external repository-owner state.
 
 ## Generated and private artifacts
 

@@ -6,7 +6,7 @@ and its packaged Agent Skill. They are provided for project clarity and are not 
 ## License and external services
 
 The project code is licensed under the [MIT License](LICENSE). Antigravity CLI,
-Google/Gemini, Codex, Claude Code, GitHub, and any other third-party service remain
+Google/Gemini, Codex, GitHub, and any other third-party service remain
 subject to their own licenses, terms, availability, authentication, and usage costs.
 This project does not grant access to those services or include their credentials.
 
@@ -25,8 +25,8 @@ the tests, approvals, and release controls appropriate to the target project.
 ## No automatic publication authority
 
 Installing or invoking the skill does not authorize committing, pushing, merging,
-releasing, submitting issues, or publishing marketplace listings. Those actions need
-the user's separate, explicit approval.
+releasing, submitting issues, or enabling external distribution services. Those
+actions need the user's separate, explicit approval.
 
 The MIT License contains the project's warranty and liability disclaimer. If these
 project terms conflict with the license, the license governs the licensed code.
