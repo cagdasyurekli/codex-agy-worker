@@ -144,6 +144,29 @@ else
 fi
 expect_print_last "small prompt keeps --print and its value last" "$TMP/tier.argv"
 
+WRAPPER_FIXTURE="$TMP/root-wrapper"
+mkdir -p "$WRAPPER_FIXTURE/skills"
+cp "$ROOT/agy-worker.sh" "$WRAPPER_FIXTURE/agy-worker.sh"
+cp -R "$ROOT/skills/agy-worker" "$WRAPPER_FIXTURE/skills/agy-worker"
+chmod +x "$WRAPPER_FIXTURE/agy-worker.sh"
+printf 'empty log override\n' | PATH="$TMP/bin:$PATH" \
+    AGY_WORKER_LOG_DIR= AGY_WORKER_JOB_ID=empty-log-override \
+    FAKE_MODEL_FILE="$TMP/empty-log.model" \
+    FAKE_PROMPT_FILE="$TMP/empty-log.prompt" \
+    FAKE_DIRS_FILE="$TMP/empty-log.dirs" \
+    FAKE_ARGV_FILE="$TMP/empty-log.argv" \
+    FAKE_STAGE_RESULT_FILE="$TMP/empty-log.stage-result" \
+    "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+    > "$TMP/empty-log.out" 2> "$TMP/empty-log.err"
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && [[ -f "$WRAPPER_FIXTURE/logs/empty-log-override/task.txt" ]] \
+        && [[ ! -e "$WRAPPER_FIXTURE/skills/agy-worker/runtime/logs/empty-log-override" ]]; then
+    ok "root wrapper treats an empty log override as the historical root logs default"
+else
+    bad "root wrapper treats an empty log override as the historical root logs default"
+fi
+
 printf 'must not edit\n' | run_worker readonly --mode accept-edits --persona diff-reviewer > "$TMP/readonly.out" 2>/dev/null
 rc=$?
 expect_exit "read-only persona rejects accept-edits" 64 "$rc"

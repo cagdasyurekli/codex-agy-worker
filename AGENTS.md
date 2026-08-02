@@ -34,11 +34,11 @@ Unknown agy subcommands exit 0 and print usage, so you cannot probe by exit code
 Keep these counts current when their suites change:
 
 - `qa-gate.sh`: 41 offline cases.
-- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 57 offline
+- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 58 offline
   fake-agy/routing cases.
 - `update.sh`: 26 offline local-remote cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- plugin/skill packaging: 14 offline relocation/marketplace/landing cases.
+- plugin/skill packaging: 16 offline runtime-copy/relocation/marketplace/landing cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
 Codex sandbox requirements, and an honest `repo-inventory` escalation. The
@@ -59,8 +59,8 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline plugin manifests, relocation, policy, landing
-bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh  # syntax
-python3 -m py_compile scripts/*.py
+bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
+python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
 git diff --check
 ./ground-truth.sh              # regenerate agy facts before touching agy behaviour
 ```
@@ -96,9 +96,11 @@ only a passing test has not been shown to catch anything.
   paths, credentials, or raw logs automatically. Submission must show the exact body
   and require the matching SHA-256 confirmation token; send those validated bytes,
   not a mutable path, to an explicitly bound github.com destination.
-- **The public skill is relocatable.** Keep `skills/agy-worker/` canonical. Plugin
-  caches resolve the adjacent runtime; standalone installs use only their generated
-  `.pipeline-root`. Never publish that local marker or bake in a checkout path.
+- **The public skill is self-contained.** Keep the core runtime canonical under
+  `skills/agy-worker/runtime/`; repository-root commands are compatibility wrappers.
+  Complete plugins and explicit standalone installs may resolve the checkout, while
+  skill-folder-only copies use the bundled runtime. Never publish a local
+  `.pipeline-root`, bake in a checkout path, or add an automatic fetch fallback.
 
 ## Boundaries
 

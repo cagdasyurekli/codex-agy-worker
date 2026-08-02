@@ -66,10 +66,12 @@ for suite in tests/test-*.sh; do "$suite"; done
 Requires `agy` (Antigravity CLI) on `PATH`, `git`, `python3`, and bash.
 Tested on macOS with agy 1.1.9 and codex-cli 0.146.0. Not tested on Windows.
 
-`skills/agy-worker/` is the one canonical, open-standard Agent Skill. `install.sh`
-copies that bundle and writes a local runtime pointer; it does not rewrite the public
-`SKILL.md`. Plugin-cache installs resolve the same Bash/Python/git runtime relative to
-the package root.
+`skills/agy-worker/` is the one canonical, open-standard Agent Skill and contains its
+own Bash/Python/git runtime. A folder-only copy therefore works without the rest of
+the checkout and never downloads code when invoked. The repository-root commands are
+compatibility wrappers for clone users. `install.sh` copies the same bundle and writes
+a local pointer so checkout-only maintenance commands remain available; it does not
+rewrite the public `SKILL.md`.
 
 The repository also contains marketplace metadata for direct testing and later public
 submission. These commands install from the repository; they do **not** imply that a
@@ -83,6 +85,16 @@ codex plugin marketplace add cagdasyurekli/codex-agy-worker --ref main
 /plugin marketplace add cagdasyurekli/codex-agy-worker
 /plugin install codex-agy-worker@codex-agy-worker
 ```
+
+The portable Agent Skill can also be copied through the third-party skills CLI:
+
+```bash
+DO_NOT_TRACK=1 npx skills add cagdasyurekli/codex-agy-worker \
+  --skill agy-worker --copy
+```
+
+`npx` is only an optional installer here; the installed skill has no Node runtime
+dependency. Review the copied files before use.
 
 See [the marketplace runbook](docs/MARKETPLACE.md) for distribution status, platform
 review prerequisites, and reviewer-ready positive/negative cases. The public landing
@@ -240,7 +252,8 @@ fi
 ### Personas
 
 `--persona repo-inventory|diff-reviewer|bulk-test-writer` inlines a role brief from
-`agents/`. `repo-inventory` measurably changed an under-specified job from a false
+`skills/agy-worker/runtime/agents/`. `repo-inventory` measurably changed an
+under-specified job from a false
 survey into an honest escalation. `bulk-test-writer` has now been exercised on a real
 Playbook-Gemini test task: the gate caught a bad first test and rejected the retry on
 diff hygiene even though its focused tests passed. That proves the gate, not reliable
@@ -485,17 +498,14 @@ output, not its own recollection.
 ```
 agy-worker.sh                 dispatch a job, return a schema-valid envelope
 qa-gate.sh                    verify an envelope against the repo — the evidence
-model-recommendation.sh       print a read-only pre-dispatch/post-gate tier advisory
+model-recommendation.sh       repository compatibility wrapper for the advisory
 ground-truth.sh               dump live agy facts for skill authoring
 update.sh                     explicit release + agy compatibility check/apply
 bug-report.sh                 sanitized local draft/preview/optional submission
 compat/                       reviewed agy version, upstream, date, and sources
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
-scripts/model-recommendation.py  controlled recommendation policy and JSON rendering
-scripts/validate-envelope.py  dependency-free full envelope validation
-schemas/worker-result.*.json  the worker contract
-agents/*.md                   personas, inlined via --persona
-skills/agy-worker/            canonical Agent Skill, OpenAI metadata, runtime resolver
+skills/agy-worker/            canonical self-contained Agent Skill and runtime
+skills/agy-worker/runtime/    dispatcher, gate, advisory, personas, schema, Python helpers
 .codex-plugin/plugin.json     OpenAI skills-only plugin package metadata
 .agents/plugins/marketplace.json  Codex repository marketplace source
 .claude-plugin/               Claude plugin and repository marketplace metadata
