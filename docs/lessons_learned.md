@@ -80,3 +80,26 @@ still failed, so the candidate was correctly rejected. Passing tests do not over
 scope or diff hygiene. Report such an outcome as successful enforcement by the gate,
 not as a successful worker delivery, and never weaken independent checks to obtain a
 green result.
+
+## Distribution must preserve the trust boundary
+
+A public skill cannot depend on a developer's absolute checkout path. Keep one
+canonical Agent Skills bundle, resolve the runtime relative to a cached plugin, and
+use a local install marker only for the explicit standalone installer. Test both
+accepted layouts and reject relative or missing markers. Do not copy the core runtime
+into each marketplace package or introduce a daemon merely to make installation look
+uniform.
+
+Plugin installation is not consent to transmit a repository. Before dispatch, name
+the repository and allowed paths and obtain explicit approval for sending the prompt
+and worker-read content through agy to Google/Gemini. Keep local logs private and make
+privacy, support, and usage terms public before marketplace review.
+
+Checked-in marketplace metadata proves package shape, not listing status. Submission,
+review, publication, GitHub Pages enablement, and search-console ownership are external
+state changes with their own approval and verification. Use accurate natural-language
+landing copy, a canonical URL, and a sitemap that the owner explicitly submits through
+Search Console; do not trade the project's evidence boundary for keyword stuffing or
+unsupported product claims. Do not place `robots.txt` under a GitHub Pages project
+subpath and call it crawler control: robots rules are host-root metadata owned by the
+site owner, outside this repository's publication slice.

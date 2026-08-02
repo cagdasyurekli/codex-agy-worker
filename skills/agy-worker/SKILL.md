@@ -1,6 +1,6 @@
 ---
 name: agy-worker
-description: Delegate bulk, mechanical code work to the Antigravity CLI (agy) as a bounded worker, then independently verify the result before accepting it. Use when a task is large but repetitive — backfilling tests, applying the same edit across many files, mechanical refactors, or repo surveys — and you want to conserve your own context. Do not use for tasks requiring judgment, architecture decisions, or anything where you cannot state acceptance criteria up front.
+description: Delegate bulk, mechanical coding work to Google Antigravity CLI (agy) as a bounded worker, then independently verify Git scope and driver-owned acceptance checks before accepting it. Use for test backfills, repeated cross-file edits, mechanical refactors, repository inventories, or a verification-gated agy delegation. Do not use for architecture or judgment-heavy work, or when acceptance criteria cannot be stated before dispatch.
 ---
 
 # Delegate to agy, then verify
@@ -8,9 +8,31 @@ description: Delegate bulk, mechanical code work to the Antigravity CLI (agy) as
 You are the driver. `agy` is a worker whose self-report is a **claim, never evidence**.
 You decide what "done" means, and you prove it yourself.
 
-Pipeline lives at `__REPO_ROOT__`.
+Resolve the pipeline from this skill's installed location. Set `SKILL_ROOT` to the
+directory containing this `SKILL.md`, then run:
 
-## Sandbox requirement (read first)
+```bash
+PIPELINE="$(bash "$SKILL_ROOT/scripts/resolve-pipeline.sh")" || exit $?
+```
+
+Do not guess a checkout path. The resolver supports both a plugin cache, where the
+pipeline is two directories above this skill, and the explicit standalone install
+created by `install.sh`.
+
+## Data boundary and sandbox requirement (read first)
+
+`agy` is an external CLI backed by Google/Gemini services. A dispatch can transmit
+the task text and repository content that the worker reads from driver-approved
+roots. Before the first dispatch for a repository, tell the user what repository and
+paths will be in scope and obtain explicit approval unless that exact transmission
+was already approved. Never include credentials, private keys, or unrelated files.
+The pipeline stores job prompts, streams, stderr, and envelopes in local `logs/`;
+treat them as private artifacts. See the repository's `PRIVACY.md` for the complete
+project disclosure.
+
+The following sandbox settings apply to Codex. In another Agent Skills client,
+follow that client's own permission and network controls; do not copy Codex-specific
+configuration into it.
 
 agy starts a local language server and writes state under `~/.gemini`. Under Codex's
 default `workspace-write` sandbox it fails with **exit 5 and empty stderr** — no useful
@@ -48,7 +70,7 @@ Never let the worker touch the user's working tree. Use a branch-backed worktree
 accepted changes can be committed before cleanup.
 
 ```bash
-PIPELINE=__REPO_ROOT__
+PIPELINE="$(bash "$SKILL_ROOT/scripts/resolve-pipeline.sh")" || exit $?
 TARGET=/absolute/path/to/target-repo
 WT=/tmp/agy-job-12345
 JOB_BRANCH=agy/job-12345
@@ -221,7 +243,7 @@ uncommitted work.
 
 ## Maintenance and GitHub reporting
 
-- `__REPO_ROOT__/update.sh check` is read-only and may be run when the user asks for
+- `$PIPELINE/update.sh check` is read-only and may be run when the user asks for
   an update/compatibility check. It reports tool releases plus verified agy version,
   official-upstream drift, and fixed 30-day documentation-review status. Its official
   release/upstream sources are not caller-overridable.

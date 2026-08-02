@@ -1,7 +1,9 @@
 # codex-agy-worker
 
-Delegate bulk coding work from **Codex CLI** to **Antigravity CLI (`agy`)** — then
-prove the driver-defined acceptance checks pass before accepting it.
+Delegate bulk coding work from **Codex CLI or another Agent Skills client** to
+**Antigravity CLI (`agy`)** — then prove the driver-defined acceptance checks pass
+before accepting it. The same verification-first workflow is packaged as an OpenAI
+skills-only plugin and a Claude Code marketplace plugin.
 
 Bash + Python 3 + git. No Node, no MCP daemon, no polling loop.
 
@@ -48,7 +50,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The four offline suites need no agy process, network access, API key, or GitHub login.
+The five offline suites need no agy process, network access, API key, or GitHub login.
 
 ---
 
@@ -63,6 +65,31 @@ for suite in tests/test-*.sh; do "$suite"; done
 
 Requires `agy` (Antigravity CLI) on `PATH`, `git`, `python3`, and bash.
 Tested on macOS with agy 1.1.9 and codex-cli 0.146.0. Not tested on Windows.
+
+`skills/agy-worker/` is the one canonical, open-standard Agent Skill. `install.sh`
+copies that bundle and writes a local runtime pointer; it does not rewrite the public
+`SKILL.md`. Plugin-cache installs resolve the same Bash/Python/git runtime relative to
+the package root.
+
+The repository also contains marketplace metadata for direct testing and later public
+submission. These commands install from the repository; they do **not** imply that a
+public marketplace has approved the listing:
+
+```text
+# Codex: add the source, then inspect/install it in /plugins
+codex plugin marketplace add cagdasyurekli/codex-agy-worker --ref main
+
+# Claude Code
+/plugin marketplace add cagdasyurekli/codex-agy-worker
+/plugin install codex-agy-worker@codex-agy-worker
+```
+
+See [the marketplace runbook](docs/MARKETPLACE.md) for distribution status, platform
+review prerequisites, and reviewer-ready positive/negative cases. The public landing
+page source lives at `docs/index.md`; GitHub Pages and search-engine verification are
+separate repository-owner actions. After Pages is live, submit the checked-in
+`sitemap.xml` through Google Search Console; a repository file alone does not request
+indexing.
 
 ### Codex sandbox settings — required
 
@@ -104,6 +131,12 @@ After `./install.sh`, start a new Codex session and ask in normal language:
 
 Codex should create an isolated worktree, dispatch agy, run the gate, inspect the
 diff, and report evidence. You do not need to remember the shell interface.
+
+Before the first dispatch for a repository, the skill identifies the paths in scope
+and requires explicit approval for sending that task and any worker-read repository
+content through agy to Google/Gemini, unless the user already approved that exact
+transmission. Read [PRIVACY.md](PRIVACY.md) before use; support and project terms are
+in [SUPPORT.md](SUPPORT.md) and [TERMS.md](TERMS.md).
 
 ## Manual end-to-end example
 
@@ -462,13 +495,19 @@ scripts/model-recommendation.py  controlled recommendation policy and JSON rende
 scripts/validate-envelope.py  dependency-free full envelope validation
 schemas/worker-result.*.json  the worker contract
 agents/*.md                   personas, inlined via --persona
-codex-skill/SKILL.md          the Codex skill installed by ./install.sh
+skills/agy-worker/            canonical Agent Skill, OpenAI metadata, runtime resolver
+.codex-plugin/plugin.json     OpenAI skills-only plugin package metadata
+.agents/plugins/marketplace.json  Codex repository marketplace source
+.claude-plugin/               Claude plugin and repository marketplace metadata
 docs/REPO_MAP.md              hand-maintained ownership, data flow, and trust map
 docs/lessons_learned.md       durable architectural mistakes and prevention rules
+docs/index.md                 SEO-friendly GitHub Pages landing source
+docs/MARKETPLACE.md           marketplace status, submission gates, review cases
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          offline local-remote updater suite
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
+tests/test-packaging.sh       offline plugin/marketplace/relocation/landing suite
 ```
 
 Contributors should start with [the repository map](docs/REPO_MAP.md) and use

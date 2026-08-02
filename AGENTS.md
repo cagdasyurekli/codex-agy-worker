@@ -38,6 +38,7 @@ Keep these counts current when their suites change:
   fake-agy/routing cases.
 - `update.sh`: 26 offline local-remote cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
+- plugin/skill packaging: 14 offline relocation/marketplace/landing cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
 Codex sandbox requirements, and an honest `repo-inventory` escalation. The
@@ -57,7 +58,8 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
-bash -n ./*.sh tests/*.sh      # syntax
+./tests/test-packaging.sh       # offline plugin manifests, relocation, policy, landing
+bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh  # syntax
 python3 -m py_compile scripts/*.py
 git diff --check
 ./ground-truth.sh              # regenerate agy facts before touching agy behaviour
@@ -94,6 +96,9 @@ only a passing test has not been shown to catch anything.
   paths, credentials, or raw logs automatically. Submission must show the exact body
   and require the matching SHA-256 confirmation token; send those validated bytes,
   not a mutable path, to an explicitly bound github.com destination.
+- **The public skill is relocatable.** Keep `skills/agy-worker/` canonical. Plugin
+  caches resolve the adjacent runtime; standalone installs use only their generated
+  `.pipeline-root`. Never publish that local marker or bake in a checkout path.
 
 ## Boundaries
 
@@ -112,4 +117,5 @@ only a passing test has not been shown to catch anything.
   GitHub CLI a runtime dependency.
 - Do not overstate the project in README. It is one differentiated idea among several
   existing tools, and the prior-art section stays.
-- Ask before pushing to `main` or publishing a release.
+- Ask before pushing to `main`, publishing a release, submitting a marketplace
+  listing, or enabling an external distribution/search service.

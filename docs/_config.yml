@@ -1,0 +1,10 @@
+title: "Verified agy Worker"
+description: "Verification-first delegation from Codex or Claude Code to Google Antigravity CLI, with isolated Git worktrees and driver-owned acceptance checks."
+url: "https://cagdasyurekli.github.io"
+baseurl: "/codex-agy-worker"
+canonical_url: "https://cagdasyurekli.github.io/codex-agy-worker/"
+repository: "cagdasyurekli/codex-agy-worker"
+markdown: "kramdown"
+exclude:
+  - "REPO_MAP.md"
+  - "lessons_learned.md"
