@@ -144,6 +144,21 @@ else
 fi
 expect_print_last "small prompt keeps --print and its value last" "$TMP/tier.argv"
 
+printf 'raw custom model\n' | run_worker raw-flash-high \
+    --tier gemini-3.6-flash-high > "$TMP/raw-flash-high.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "0" && "$(<"$TMP/raw-flash-high.model")" == "gemini-3.6-flash-high" ]] \
+        && python3 - "$TMP/raw-flash-high.argv" <<'PY'
+import sys
+parts = [part for part in open(sys.argv[1], "rb").read().split(b"\0") if part]
+raise SystemExit(0 if b"--effort" not in parts else 1)
+PY
+then
+    ok "raw flash-high stays exact pass-through with no effort argument"
+else
+    bad "raw flash-high stays exact pass-through with no effort argument"
+fi
+
 WRAPPER_FIXTURE="$TMP/root-wrapper"
 mkdir -p "$WRAPPER_FIXTURE/skills"
 cp "$ROOT/agy-worker.sh" "$WRAPPER_FIXTURE/agy-worker.sh"
@@ -257,6 +272,8 @@ expect_recommendation "pre-dispatch default tier stays non-rankable" \
     pre-dispatch default high-complexity-bounded no-escalation null none 0
 expect_recommendation "pre-dispatch custom model stays non-rankable" \
     pre-dispatch vendor/model-v1 high-complexity-bounded no-escalation null none 0
+expect_recommendation "raw flash-high stays custom, unranked, and recommendation-only" \
+    pre-dispatch gemini-3.6-flash-high high-complexity-bounded no-escalation null none 0
 
 expect_recommendation "accepted gate result needs no escalation" \
     post-gate bulk gate-accepted no-escalation null none 0

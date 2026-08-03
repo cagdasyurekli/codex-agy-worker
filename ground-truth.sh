@@ -17,7 +17,7 @@ echo
 echo "## version"
 agy --version 2>&1 || echo "(agy --version failed)"
 echo
-echo "## flags and subcommands (authoritative — nothing outside this list exists)"
+echo "## documented installed flags and subcommands"
 agy --help 2>&1 || echo "(agy --help failed)"
 echo
 echo "## models available to --model"
@@ -61,6 +61,7 @@ cat <<'EOF'
 - Baseline cost: a trivial no-tool job consumed ~24.8k input tokens. agy loads a
   large standing context per invocation regardless of task size, so many tiny jobs
   are far more expensive than one batched job.
-- Unknown subcommands (`agy run`, `agy exec`, `agy auth`) do not error — they print
-  top-level usage and exit 0. Never probe for a subcommand by exit code.
+- The observed unsupported examples `agy run`, `agy exec`, and `agy auth` print
+  top-level usage and exit 0. Probe documented commands and their expected semantic
+  content; never infer support from an exit code or generic usage text.
 EOF

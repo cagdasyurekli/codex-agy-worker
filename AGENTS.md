@@ -27,16 +27,17 @@ and use its output. The project exists because models asked to describe agy's
 interface invented `agy run`, `--headless`, `--slim`, and `agy auth status --json`.
 None exist. Verify with `agy --help` before writing any flag into code.
 
-Unknown agy subcommands exit 0 and print usage, so you cannot probe by exit code.
+Probe documented commands and validate their expected semantic content. Do not treat
+an unknown subcommand's exit code or generic usage text as compatibility evidence.
 
 ## Evidence boundaries
 
 Keep these counts current when their suites change:
 
 - `qa-gate.sh`: 41 offline cases.
-- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 58 offline
+- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 60 offline
   fake-agy/routing cases.
-- `update.sh`: 26 offline local-remote cases.
+- `update.sh`: 92 offline local-remote/matrix/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution: 21 offline manifest/runtime-copy/relocation/landing cases.
 
@@ -89,9 +90,12 @@ only a passing test has not been shown to catch anything.
 - **Never execute `commands_run` or `tests_run` from the envelope.** They are worker
   claims. The gate accepts executable input only through driver-owned `--verify`.
 - **`update.sh check` may need network, but must remain read-only.** Compatibility
-  metadata changes only after a human reconciles official docs, upstream source,
-  `ground-truth.sh`, and a bounded real job. Production origins, upstream, and review
-  cadence are not environment-overridable. `apply` is always an explicit action.
+  evidence for agy and Codex is reported as unchanged, drift-review, or
+  evidence-unavailable; inconclusive evidence is never green. Metadata changes only
+  after a human reconciles official docs, upstream source, command inventories, and a
+  bounded real job when behavior changed. Production origins, release channels, and
+  review cadence are not environment-overridable. The weekly watcher never advances
+  metadata or takes an external action. `apply` is always an explicit action.
 - **Bug reports are local drafts first.** Never gather prompts, source, envelopes,
   paths, credentials, or raw logs automatically. Submission must show the exact body
   and require the matching SHA-256 confirmation token; send those validated bytes,
@@ -115,6 +119,9 @@ only a passing test has not been shown to catch anything.
 - Model recommendations are advisory only: never apply them automatically, change the
   caller-selected tier, invent a thinking-level flag, or escalate permission,
   authentication, scope-policy, or human-required outcomes.
+- agy has a real `--effort`, but the wrapper exposes none until G1. The checked-in
+  matrix is validated metadata, not routing or gate authority; disabled, stale, or
+  version/source-mismatched metadata must never resolve a model/effort pair.
 - Do not auto-pull during a worker job, auto-submit an issue, install `gh`, or make
   GitHub CLI a runtime dependency.
 - Do not overstate the project in README. It is one differentiated idea among several

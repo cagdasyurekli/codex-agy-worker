@@ -290,7 +290,7 @@ Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid 
 The dispatcher does not infer difficulty or score the gap between worker output and
 the expected result. The caller chooses a tier; the default is `bulk`:
 
-| Tier | Current verified model label |
+| Tier | Current configured model label |
 |---|---|
 | `cheap` | `gemini-3.6-flash-low` |
 | `bulk` | `gemini-3.6-flash-medium` |
@@ -298,13 +298,14 @@ the expected result. The caller chooses a tier; the default is `bulk`:
 | `hardest` | `claude-opus-4-6-thinking` |
 | `default` | no `--model`; let agy choose |
 
-Any other tier value is passed through as an explicit agy model label. Thinking is
-therefore part of a selected model label where agy exposes one; this wrapper has no
-separate thinking-level control. Its built-in retry handles dispatch failure with the
-same model. After a gate failure, the Codex skill permits at most one targeted
-corrective dispatch, also at the caller-selected tier. It never silently escalates
-cost or changes model in response to failed tests, scope violations, or malformed
-output.
+These are existing wrapper constants, not evidence that the disabled G0 matrix may
+resolve new inputs. Any other tier value is passed through as an explicit agy model
+label. agy has a real `--effort`, but this wrapper has neither an effort input nor a
+separate thinking-level control. Thinking/effort-labelled compound slugs remain exact
+selected model labels. Its built-in retry handles dispatch failure with the same
+model. After a gate failure, the Codex skill permits at most one targeted corrective
+dispatch, also at the caller-selected tier. It never silently escalates cost or
+changes model in response to failed tests, scope violations, or malformed output.
 
 `model-recommendation.sh` is a separate, read-only policy layer. It prints a visible
 JSON recommendation before dispatch or after a gate result, but never calls `agy`,
@@ -365,7 +366,7 @@ derived from a repository or another model.
 
 ---
 
-## Explicit updates and agy compatibility checks
+## Explicit updates and tool compatibility checks
 
 There is no background updater. Checking is read-only:
 
@@ -373,13 +374,18 @@ There is no background updater. Checking is read-only:
 ./update.sh check
 ```
 
-It reports the latest stable `vMAJOR.MINOR.PATCH` tag without fetching it, compares
-the installed agy version to the verified version, checks whether the 30-day
-compatibility review is due, and compares the official Antigravity CLI repository's
-HEAD with the reviewed snapshot. Exit 3 means a human compatibility review is due;
-the command still changed no files. The release origin, upstream source, and 30-day
-window are fixed in the updater rather than overridable through environment variables;
-a future `last-reviewed.txt` date is invalid rather than silently postponing review.
+It reports the latest stable project tag without fetching it, then reports installed,
+verified, official stable-release/source drift, and 30-day documentation-review age
+separately for agy and Codex CLI. Exit `0` means all required evidence is available
+and unchanged. Exit `3` means established drift, a due review, or a missing installed
+tool. Exit `2` means evidence is unavailable or malformed, so the result is
+inconclusive—not green. Both tools are reported before those results are aggregated,
+with `2` taking precedence over `3`.
+
+The release origins, upstream sources, release channels, and 30-day cadence are fixed
+in the updater rather than overridable through environment variables. The check never
+fetches, pulls, applies, or writes a baseline. A future per-tool review date is
+inconclusive rather than silently postponing review.
 
 Apply is always explicit:
 
@@ -402,12 +408,21 @@ UPDATE**, and tells you to fix the destination and rerun this checkout's `instal
 This verifies GitHub transport/ref consistency; release maintainers must still protect
 the GitHub account and tag-publishing process.
 
-Compatibility review sources are recorded in `compat/sources.md`: Google's
-[official CLI docs](https://antigravity.google/docs/cli-overview),
-[usage guidance](https://antigravity.google/docs/cli-using), the
-[official source repository](https://github.com/google-antigravity/antigravity-cli),
-and live `./ground-truth.sh` output. When behavior changes, update the compatibility
-snapshot only after reconciling all four and rerunning a bounded real-job check.
+The fixed primary sources and exact reviewed revisions are recorded in
+[`compat/sources.md`](compat/sources.md). A separate weekly/manual macOS compatibility
+watch runs the official-evidence-only mode without installing agy or Codex. It writes
+only a bounded Step Summary, preserves the same `0`/`3`/`2` meanings, is not a required
+pull-request check, and cannot advance metadata or open an issue or pull request.
+
+agy's real CLI exposes `--effort`, but this wrapper exposes no effort control until a
+separately approved G1. The checked-in model/effort matrix is validated metadata, not
+routing or gate authority. Its agy `1.1.10` inventory is explicitly disabled candidate
+evidence because official `1.1.9` release/source evidence does not substantiate those
+exact rows; version/source drift keeps resolution disabled. The wrapper does not send
+both a compound model slug and agy's separate effort flag. `qa-gate.sh` remains the
+sole acceptance authority, and model recommendations remain visible, advisory-only,
+and unable to escalate permission, authentication, scope-policy, or human-required
+outcomes.
 
 ## Sanitized bug reports and feature requests
 
@@ -505,9 +520,10 @@ agy-worker.sh                 dispatch a job, return a schema-valid envelope
 qa-gate.sh                    verify an envelope against the repo — the evidence
 model-recommendation.sh       repository compatibility wrapper for the advisory
 ground-truth.sh               dump live agy facts for skill authoring
-update.sh                     explicit release + agy compatibility check/apply
+update.sh                     explicit release + agy/Codex compatibility check/apply
 bug-report.sh                 sanitized local draft/preview/optional submission
-compat/                       reviewed agy version, upstream, date, and sources
+compat/                       per-tool baselines, sources, and disabled candidate matrix
+scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
 skills/agy-worker/            canonical self-contained Agent Skill and runtime
 skills/agy-worker/runtime/    dispatcher, gate, advisory, personas, schema, Python helpers
@@ -524,6 +540,7 @@ tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          offline local-remote updater suite
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       offline Codex package/relocation/landing suite
+.github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```
 
 Contributors should start with [the repository map](docs/REPO_MAP.md) and use
@@ -543,6 +560,9 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
   update behavior is proven with local offline release remotes.
 - GitHub submission is tested with a fake `gh`; no live issue was created.
 - Headless skill expansion (`agy -p "/skill-name ..."`) is untested.
+- Model/effort resolution is intentionally disabled until a future human reconciliation
+  can bind official evidence to the exact installed inventory; no wrapper `--effort`
+  input exists in this release.
 
 ## License
 
