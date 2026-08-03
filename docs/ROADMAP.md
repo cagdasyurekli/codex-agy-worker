@@ -5,12 +5,11 @@ surface and verified limitations remain in [README.md](../README.md). A roadmap 
 becomes current only after its own implementation, adversarial tests, documentation
 review, and an accepted pull request.
 
-The first recommended implementation is **G0 Compatibility Reconciliation & Watch
-only**. G1 Explicit Model & Effort Selection follows as a separate slice; P0-A
-Evidence Receipt v1 follows separately after the compatibility baseline is current.
-Starting any slice requires a fresh, explicit approval; this roadmap does not
-authorize code, commit, push, pull-request, merge, release, live model use, or another
-external action.
+Compatibility reconciliation remains a prerequisite for model/effort selection and
+portable receipt work. The offline starter proof depends only on the maintained gate
+and can remain an independent slice. Starting any slice requires a fresh, explicit
+approval; this roadmap does not authorize code, commit, push, pull-request, merge,
+release, live model use, or another external action.
 
 ## Product direction
 
@@ -843,12 +842,10 @@ reviews, or automated promotional submissions.
 - Reassess P2 from observed friction. Do not build profiles, pruning, quota, or
   signing merely because they appear on this roadmap.
 
-## First implementation recommendation
+## Sequencing reminder
 
-Implement **G0 Compatibility Reconciliation & Watch only** as the next isolated
-feature slice. Do not include G1 selectors, a `flash-high` alias, routing/ranking
-changes, P0-A receipts, the renderer, Doctor, proof demo, lifecycle, CI report formats,
-profiles, usage, benchmarking, or signing in that change. After G0 is accepted, G1
-may proceed under its own fresh approval and pull request; P0-A follows separately.
-Never mix G0 and P0-A even if they touch shared documentation. Preserve the normal
-independent implementation and verification-agent split for every slice.
+Keep compatibility reconciliation separate from model/effort selection and receipt
+work. The offline starter proof may evolve independently because it relies only on
+the maintained gate. Do not mix otherwise independent slices merely because they
+touch shared documentation, and require fresh approval and independent verification
+for each implementation.
