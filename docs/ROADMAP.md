@@ -75,12 +75,13 @@ Every roadmap slice must preserve all of these rules:
    human diff review.
 3. No receipt, report, persona, profile, benchmark, usage number, or CI rendering may
    become an alternative acceptance path.
-4. The caller selects the model tier. Recommendations remain visible and advisory,
-   with `recommendation_only: true` and `applied: false`.
+4. The caller selects the tier or explicit model/effort input. Recommendations remain
+   visible and advisory, with `recommendation_only: true` and `applied: false`.
 5. Never add automatic tier/model/effort changes or invent a `--thinking-level`
    control. After G0 reconciles the exact agy contract, G1 may expose agy's real
-   `--model MODEL` and `--effort low|medium|high` as explicit caller choices only.
-   Retries keep the caller's resolved selection byte-for-byte.
+   model and effort vocabulary as explicit wrapper choices only. The wrapper resolves
+   a verified pair to one exact agy model slug; it does not assume agy's two CLI
+   selectors compose. Retries keep the caller's resolved selection byte-for-byte.
 6. Permission, authentication, scope-policy, invalid-contract, untrusted-claim, and
    human-required outcomes are non-escalatable.
 7. No feature may automatically commit, push, open a pull request, merge, release,
@@ -110,15 +111,18 @@ This corrects the current inventory without claiming that locally advertised fla
 or historical failure behavior are the verified agy `1.1.10` contract:
 
 - Do not expose `--effort` before G0 reconciles official releases/source/docs with a
-  sandbox-correct inventory and bounded behavior tests. G1 may then expose the real
-  agy flag; it must not infer effort or invent a thinking-level flag.
+  sandbox-correct inventory and bounded behavior tests. G1 may then expose the same
+  vocabulary as a wrapper input; it must not infer effort, invent a thinking-level
+  flag, or imply that both agy selectors are forwarded.
 - Do not add dynamic model/persona discovery from help text alone.
 - Do not infer authentication from a single failure or invent `agy auth`. Probe only
   documented commands and validate their expected semantic output; neither an unknown
   subcommand's exit code nor generic usage text is compatibility evidence.
-- Do not assume a full model slug ending in an effort-like suffix composes safely with
-  `--effort`. Until official source plus a bounded test proves an exact combination,
-  the wrapper must reject it rather than send two possibly conflicting selectors.
+- Do not assume agy's separate `--model` and `--effort` flags compose safely.
+  Subsequent bounded `1.1.10` inventory evidence advertises compound slugs, while
+  public source does not establish dual-selector composition or precedence. G1
+  therefore resolves a verified base/effort pair to one exact advertised slug and
+  sends one `--model`.
 - Any exposure of newly advertised agy behavior remains a separate slice requiring
   official docs, official source, a sandbox-correct live inventory, a bounded real
   job, paired offline tests, and explicit approval.
@@ -136,8 +140,10 @@ an earlier implementation because it shares a schema or helper.
   `compat/sources.md`, and dependency-free metadata from agy to both agy and Codex.
   Use one explicit version, reviewed upstream revision, and last-reviewed date per
   tool; migrate the current shared `compat/last-reviewed.txt` to unambiguous per-tool
-  records. Add a human-reviewed, dependency-free model/effort capability matrix bound
-  to the exact verified agy version and source revision. Add
+  records. Add a human-reviewed, dependency-free model/effort resolution matrix bound
+  to the exact verified agy version and source revision. Each adjustable input pair
+  maps to one exact advertised compound slug; fixed/no-level entries are recorded as
+  non-adjustable. Add
   `.github/workflows/compatibility-watch.yml` as a separate weekly and
   `workflow_dispatch` macOS workflow. It is observational and is not a required pull
   request check.
@@ -176,19 +182,23 @@ an earlier implementation because it shares a schema or helper.
   The watch never performs this reconciliation. If an official agy `1.1.10` release
   and matching source cannot both be established, the verified baseline stays `1.1.9`
   and the result remains AMBER/review-due rather than speculatively advancing.
-- **Capability-matrix rule:** G0 derives model-specific effort support from the exact
-  verified agy docs/source and bounded CLI behavior, not from a provider API table or
-  a model-name guess. The matrix records its agy version and source revision. Any agy
-  version/source drift makes the matrix stale and keeps effort dispatch disabled until
-  human reconciliation. The current candidate inventory to verify is Gemini 3.6 Flash
-  with low/medium/high and Gemini 3.1 Pro with low/high but **not medium**; it is not a
-  runtime promise until G0 establishes the exact agy model identifiers and pairs.
+- **Resolution-matrix rule:** G0 derives model-specific effort support and its single
+  exact output slug from the verified `agy models` inventory, agy docs/source, and
+  bounded CLI behavior—not from a provider API table or a model-name guess. The
+  matrix records its agy version and source revision. Any agy version/source drift
+  makes it stale and keeps effort resolution disabled until human reconciliation.
+  The current `1.1.10` candidate inventory to verify exposes compound slugs: Gemini
+  3.6 Flash has low/medium/high and Gemini 3.1 Pro has low/high but **not medium**.
+  Sonnet is no-level; the advertised Opus thinking slug and GPT medium-labelled slug
+  are fixed model choices, not adjustable effort pairs. These are not runtime promises
+  until G0 binds every exact input and output slug to the verified inventory.
 - **Current-behavior correction:** Implementation updates README and AGENTS guidance
   to say that probes must validate documented commands and expected semantic content,
   never an unknown subcommand's exit or usage output. It also records that agy has a
-  real `--effort`, while this wrapper exposes no effort control until G1. No code may
-  combine `--effort` with a full slug that may already encode effort without exact
-  compatibility evidence.
+  real `--effort`, while this wrapper exposes no effort control until G1. G0 records
+  that the public source does not yet prove dual-selector composition: production code
+  sends one resolved model slug and cannot combine an effort-bearing slug with agy's
+  separate effort flag without a later, separately approved evidence gate.
 - **Model option decision gate:** `gemini-3.6-flash-high` is already selectable as a
   raw custom `--tier` label. It remains unranked and non-escalating; no `bulk`/`hard`
   mapping changes and no effort flag are part of G0. Google's official
@@ -198,7 +208,7 @@ an earlier implementation because it shares a schema or helper.
   [thinking guide](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
   shows real but model-specific effort levels, and
   [pricing](https://ai.google.dev/gemini-api/docs/pricing) distinguishes model and
-  thinking usage. Those API facts must not be copied into the agy capability matrix;
+  thinking usage. Those API facts must not be copied into the agy resolution matrix;
   they do not prove the agy CLI composition, relative quality, or effective
   subscription cost for this wrapper. A discoverable `flash-high` alias is a later
   isolated decision after G0/G1 compatibility tests; changing a default or
@@ -213,8 +223,9 @@ an earlier implementation because it shares a schema or helper.
 - **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
   versus verified differences and stale review dates are reported separately and
   return `3`; unavailable network returns `2` with an inconclusive label; absent
-  official `1.1.10` evidence retains `1.1.9` and AMBER; version-bound capability
-  fixtures reproduce every documented supported pair and mark drift stale; a raw
+  official `1.1.10` evidence retains `1.1.9` and AMBER; version-bound resolution
+  fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
+  no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,
   and non-escalating; workflow fixtures prove weekly/manual triggers, macOS, read-only
   permission, bounded summary, and no mutation.
@@ -224,7 +235,8 @@ an earlier implementation because it shares a schema or helper.
   calls, `apply`, `pull`, GitHub writes, or required-PR-check coupling in the watcher;
   automatic issue/PR creation; tier remapping; alias creation; or an effort flag.
   Reject a matrix with an unbound/mismatched version or revision, an unsupported pair,
-  a provider-table-only claim, or an inferred capability for an unknown model.
+  a provider-table-only claim, an inferred capability for an unknown model, a missing
+  exact output slug, or an adjustable effort entry for a fixed/no-level model.
 - **Docs and AGENTS impact:** README compatibility semantics and limitations,
   `compat/sources.md`, REPO_MAP ownership/data flow, lessons learned on inconclusive
   evidence, and concise durable AGENTS probing rules. Run `agents-md-auditor` before
@@ -241,14 +253,17 @@ an earlier implementation because it shares a schema or helper.
 
 ### G1 — Explicit Model & Effort Selection
 
-- **User job:** Select an exact agy model and its verified supported effort directly,
-  without disguising the choice as a tier or allowing a recommendation to change it.
+- **User job:** Select an exact advertised agy model or a verified base-model/effort
+  pair directly, without disguising the choice as a tier or allowing a recommendation
+  to change it.
 - **Sequence gate:** Start only after G0 has reconciled the exact agy `1.1.10` (or
   later explicitly verified) CLI/source behavior. G1 precedes any `flash-high` alias,
   performance ranking, or default/recommendation remap and must be its own pull request.
-- **Intended surface:** Add wrapper CLI `--model MODEL` and agy's real
-  `--effort low|medium|high`; never add `--thinking-level`. Preserve `--tier` named
-  values, raw-label pass-through, and the no-option default exactly. Add
+- **Intended surface:** Add wrapper CLI `--model MODEL` and
+  `--effort low|medium|high`, using agy's real vocabulary but never inventing
+  `--thinking-level`. These are wrapper inputs, not a promise to forward both agy
+  flags. Preserve `--tier` named values, raw-label pass-through, and the no-option
+  default exactly. Add
   `AGY_WORKER_MODEL` and `AGY_WORKER_EFFORT` only with the strict conflict contract
   below. Canonical runtime, root compatibility wrapper, public skill copy, validators,
   recommendation schemas/renderers, and later receipt/report schemas carry the same
@@ -258,55 +273,66 @@ an earlier implementation because it shares a schema or helper.
   the values match. Any explicit tier source (`--tier` or `AGY_WORKER_TIER`) is mutually
   exclusive with every explicit model/effort source. With no explicit selector, the
   existing implicit `bulk` default remains. Direct mode uses one exact model source;
-  an effort source requires that model unless the G0 evidence explicitly proves and
-  pins safe effort-only behavior. Duplicate CLI occurrences, empty values, unknown
-  effort values, and cross-source conflicts fail before dispatch with usage exit `64`.
-- **Composition safety:** Pass `--model MODEL` and `--effort VALUE` as separate agy
-  arguments only for that exact pair in the G0 matrix whose agy version and source
-  revision still match the verified baseline. The globally accepted effort spelling
-  does not imply every model accepts all three values: the candidate matrix must, for
-  example, verify Flash low/medium/high separately and Pro low/high separately while
-  rejecting Pro medium. Unknown model/version, unsupported pair, or stale matrix fails
-  before dispatch. Until official source and a bounded test prove otherwise, also
-  reject effort combined with a slug ending in a known effort suffix such as `-low`,
-  `-medium`, `-high`, or another registered effort-bearing form, and reject every
-  other ambiguous combination. Do not strip, rewrite, normalize, or guess a base
-  model from the slug.
+  effort always requires a base-model input. Duplicate CLI occurrences, empty values,
+  unknown effort values, and cross-source conflicts fail before dispatch with usage
+  exit `64`.
+- **Resolution and dispatch safety:** Exact advertised compound/no-level slugs supplied
+  through `--model` alone remain allowed and unranked; agy receives one
+  `--model EXACT_SLUG`. A base-model plus effort is allowed only when the G0 matrix for
+  the installed verified agy version maps that exact pair to one exact advertised
+  compound slug; agy again receives only `--model RESOLVED_SLUG`. The globally accepted
+  effort spelling does not imply every model accepts all three values: verify Flash
+  low/medium/high separately and Pro low/high separately while rejecting Pro medium.
+  Sonnet no-level, Opus thinking-labelled, and GPT medium-labelled slugs are fixed
+  exact-model choices and reject any effort input. Compound slug plus effort, unknown
+  model/version, unsupported pair, stale matrix, missing mapping, or ambiguous form
+  fails before dispatch with no fallback, slug surgery, normalization, or base-model
+  guess.
+- **Dual-selector evidence gate:** G1 never forwards agy's `--effort`. Passing both
+  `--model` and `--effort` to agy requires a later isolated slice with official source
+  or a separately approved bounded test proving exact composition, precedence, failure
+  semantics, and retry behavior for the pinned version. That future evidence cannot
+  silently replace the safe single-selector mapping.
 - **Persistence and evidence:** Resolve selection once before attempt one and retain
-  the exact tier/model/effort provenance and values across every retry. Pre-dispatch
-  and post-gate recommendations, Evidence Receipt v1, and the Human Report represent
-  selected tier, model, and effort as distinct optional fields. A custom model or
-  effort remains unranked; recommendation output stays `recommendation_only: true`,
-  `applied: false`, and cannot alter or redispatch the selection.
+  the exact tier or user model/effort provenance, matrix revision, and resolved agy
+  slug across every retry. Pre-dispatch and post-gate recommendations, Evidence Receipt
+  v1, and the Human Report represent selected tier, user model, user effort, and
+  resolved agy model as distinct optional fields. A custom model or effort remains
+  unranked; recommendation output stays `recommendation_only: true`, `applied: false`,
+  and cannot alter or redispatch the selection.
 - **Non-escalatable outcomes:** Permission, authentication, scope-policy,
   invalid-contract, untrusted-claim, and human-required failures remain
   non-escalatable regardless of selected model or effort. Higher effort is never
   proposed as a repair for those outcomes.
-- **Dependencies:** Completed G0 baseline and composition matrix, existing dispatcher
+- **Dependencies:** Completed G0 baseline and resolution matrix, existing dispatcher
   parsing/model assembly, advisory recommender, and the schema/report surfaces present
   when G1 starts. No new dependency or provider lookup.
 - **Minimum accept tests:** Legacy named tiers, raw `--tier` labels, and implicit bulk
-  remain byte-compatible; one CLI or one environment model reaches agy exactly; every
-  matrix-admitted pair has its own test and reaches agy as two exact arguments; retries
-  preserve the resolved selection; recommendations and receipts/reports label custom
-  selection without ranking or applying it.
+  remain byte-compatible; each exact advertised slug reaches agy as one exact
+  `--model`; every matrix-admitted base/effort pair has its own test and reaches agy as
+  one exact resolved compound `--model`; fixed Sonnet/Opus/GPT choices remain exact and
+  non-adjustable; retries preserve the same matrix revision and resolved slug;
+  recommendations and receipts/reports label user and resolved selection without
+  ranking or applying it.
 - **Minimum reject tests:** CLI/env duplicates; tier plus model or effort across any
-  source; repeated selector; empty/invalid model or effort; effort without a model
-  unless explicitly verified; known effort-bearing slug plus `--effort`; unverified
-  composition; unsupported model/effort pair (including Pro medium when absent from
-  the verified matrix); unknown model or version; stale/unbound matrix; inferred
-  capability; invented thinking flag; retry mutation; recommendation-driven change;
-  or escalation of a non-escalatable failure. Assert that fake agy is never invoked
-  for every preflight rejection.
+  source; repeated selector; empty/invalid model or effort; effort without a base
+  model; compound/fixed/no-level slug plus effort; unsupported pair (including Pro
+  medium); adjustable Sonnet, Opus, or GPT; unknown model or version; stale/unbound
+  matrix; missing exact output; inferred capability; dual-selector forwarding;
+  invented thinking flag; fallback to a nearby level/model; retry mutation;
+  recommendation-driven change; or escalation of a non-escalatable failure. Assert
+  that fake agy is never invoked for every preflight rejection.
 - **Docs and AGENTS impact:** README option/precedence tables and examples, public
-  skill SKILL.md, REPO_MAP data flow, lessons learned on dual selectors, compatibility
-  metadata, and a concise AGENTS rule forbidding inferred effort and silent override.
+  skill SKILL.md, REPO_MAP data flow, lessons learned on single-slug resolution and
+  unproven dual selectors, compatibility metadata, and a concise AGENTS rule forbidding
+  inferred effort, silent override, and unverified two-argument composition.
   Run `agents-md-auditor` before and after those future guidance edits.
 - **Size:** M.
-- **Done/exit criteria:** Exact G0-backed arguments and conflict behavior are documented
-  and adversarially tested on macOS Bash 3.2; all prior suites stay green; raw tier
-  compatibility remains; no recommendation changes selection; and independent
-  verification confirms no ambiguous or automatic model/effort path.
+- **Done/exit criteria:** Exact G0-backed single-slug mappings and conflict behavior are
+  documented and adversarially tested on macOS Bash 3.2; all prior suites stay green;
+  raw tier compatibility remains; agy receives no separate effort argument; no
+  recommendation changes selection; and independent verification confirms no
+  ambiguous, automatic, fallback, or dual-selector model/effort path.
 - **Later alias/ranking gate:** A named `flash-high` alias can be proposed only after
   G0/G1 prove its exact agy composition. Mapping `bulk`/`hard`, recommending Flash-high
   over Pro-high, or changing a default additionally requires a pre-registered bounded
@@ -343,9 +369,10 @@ an earlier implementation because it shares a schema or helper.
   exact envelope snapshot validated by the gate; ordered path-policy hash; verifier
   labels and command hashes; the gate-supplied initial and final candidate-state
   digests; actual gate exit/outcome; a verdict restricted to `gate-passed`, `rejected`,
-  or `routed`; optional caller-selection object with exactly one resolved mode and
-  distinct tier/model/effort values plus CLI/environment/default provenance under the
-  accepted G1 contract; optional validated pre-dispatch advisory retaining its
+  or `routed`; optional caller-selection object with exactly one resolved mode,
+  distinct tier/user-model/user-effort values, CLI/environment/default provenance,
+  matrix revision when used, and exact resolved agy model slug under the accepted G1
+  contract; optional validated pre-dispatch advisory retaining its
   rationale, controlled driver evidence, relative cost impact,
   `recommendation_only: true`, `applied: false`, and `stage: pre-dispatch`;
   `gate_authority: qa-gate`; and an explicit statement that the receipt is unsigned
@@ -382,18 +409,18 @@ an earlier implementation because it shares a schema or helper.
   initial/final state digests; the wrapper returns `0`. Each normal gate result
   `10`–`14` durably publishes verdict `rejected`, result `15` publishes `routed`, and
   the wrapper returns that exact gate exit. A valid pre-dispatch advisory is bound
-  without changing the selected tier/model/effort or gate result. The tests never call
-  a candidate accepted before human review. Direct `qa-gate.sh` calls without
-  `--evidence-fd`
-  retain their current stdout/stderr and exit contract.
+  without changing the selected input, matrix revision, resolved agy slug, or gate
+  result. The tests never call a candidate accepted before human review. Direct
+  `qa-gate.sh` calls without `--evidence-fd` retain their current stdout/stderr and
+  exit contract.
 - **Minimum reject tests:** Scope failure, malformed envelope, untrusted command/test
   claim, missing edits, verifier failure/mutation, and human-required outcome retain
   their gate classification and are never rendered as acceptance. Reject overwrite,
   symlink target, in-repository output, unknown schema version, inconsistent receipt,
   separately bound artifact/digest mismatch, malformed or duplicate handoff, envelope
   snapshot/base/state/outcome/exit mismatch, post-gate or cross-stage advisory input,
-  selected tier/model/effort mismatch, ambiguous selector provenance, or an advisory
-  that claims it was applied. Wrapper/gate
+  selected-input/matrix/resolved-slug mismatch, ambiguous selector provenance, or an
+  advisory that claims it was applied. Wrapper/gate
   preflight `64`, unknown exit, signal, missing evidence, internal `70`, and durable
   publication `74` paths publish no receipt; injected validation, `fsync`, rename, and
   parent-directory durability failures leave no final or partial receipt. An unsigned
@@ -555,21 +582,22 @@ receipt or creating chronology ambiguity.
 
 #### P1-C — Reproducible benchmark harness
 
-- **User job:** Compare releases, caller-selected tiers, or personas on fixed bounded
-  tasks using gate observations rather than subjective worker summaries.
+- **User job:** Compare releases, caller-selected model inputs, or personas on fixed
+  bounded tasks using gate observations rather than subjective worker summaries.
 - **Intended surface:** `benchmark.sh prepare|run|report`, frozen
   `benchmarks/v1/manifest.json`, ignored local result directory, and
   `docs/BENCHMARKING.md`. Paid work requires an explicit `--live` boundary.
 - **Dependencies:** Receipt v1; lifecycle is useful but optional.
 - **Trust boundary:** Every result binds exact fixture/base, tool versions, selected
-  tier/model/effort, attempt count, policy, and verification. No hidden retries or
-  selector changes. Competitor comparisons require identical public tasks and rules.
-  No leaderboard by default.
+  tier/user-model/user-effort, matrix revision, resolved agy slug, attempt count,
+  policy, and verification. No hidden retries or selector changes. Competitor
+  comparisons require identical public tasks and rules. No leaderboard by default.
 - **Minimum accept tests:** Frozen offline fixture produces a deterministic report and
-  receipt; live-mode parser preserves selected tier/model/effort and attempt count.
+  receipt; live-mode parser preserves selected input, matrix revision, resolved slug,
+  and attempt count.
 - **Minimum reject tests:** Changed fixture hash, missing verifier, unpublished input,
-  partial task set described as complete, hidden retry/model/effort change, or result
-  without exact version binding.
+  partial task set described as complete, hidden retry/input/resolution change, or
+  result without exact version binding.
 - **Docs and AGENTS impact:** Add BENCHMARKING document and README evidence link;
   update REPO_MAP. AGENTS updates only verified real/offline evidence boundaries, not
   one-off results.
@@ -793,7 +821,8 @@ reviews, or automated promotional submissions.
 - Require the full conformance kit to reject every deliberately trusting reference
   gate and accept the maintained implementation.
 - Publish benchmark claims only when every result binds exact public fixture, base,
-  selected tier, attempts, tool versions, policy, and driver verification.
+  selected input, matrix revision and resolved agy slug when applicable, attempts,
+  tool versions, policy, and driver verification.
 - Track accepted-real-candidate evidence per persona without converting one success
   into a universal quality percentage.
 - Reassess P2 from observed friction. Do not build profiles, pruning, quota, or
