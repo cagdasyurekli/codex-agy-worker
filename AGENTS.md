@@ -37,7 +37,7 @@ Keep these counts current when their suites change:
 - `qa-gate.sh`: 41 offline cases.
 - `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 60 offline
   fake-agy/routing cases.
-- `update.sh`: 92 offline local-remote/matrix/watch-policy cases.
+- `update.sh`: 164 offline local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution: 21 offline manifest/runtime-copy/relocation/landing cases.
 
@@ -96,6 +96,10 @@ only a passing test has not been shown to catch anything.
   bounded real job when behavior changed. Production origins, release channels, and
   review cadence are not environment-overridable. The weekly watcher never advances
   metadata or takes an external action. `apply` is always an explicit action.
+- **The agy distribution manifest is only a canary.** Its endpoint is fixed; reject
+  proxies, redirects, oversized/malformed responses, and unexpected archive URLs.
+  Never request the archive. The checked-in tuple detects drift but cannot advance a
+  baseline, prove source/behavior, or activate model/effort resolution.
 - **Bug reports are local drafts first.** Never gather prompts, source, envelopes,
   paths, credentials, or raw logs automatically. Submission must show the exact body
   and require the matching SHA-256 confirmation token; send those validated bytes,

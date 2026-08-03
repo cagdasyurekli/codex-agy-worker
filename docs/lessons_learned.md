@@ -44,6 +44,14 @@ usage is not semantic evidence. The weekly watcher observes the same fixed sourc
 it never updates a baseline, installs a tool, dispatches a model, or takes a GitHub
 write action. A bounded real job remains separately approved when behavior changed.
 
+An official installer channel can move before a public release/source repository.
+Observe that difference through one fixed, bounded manifest canary, but do not turn a
+distribution version or checksum into source or behavior evidence. Disable proxies,
+reject redirects, cap and validate the JSON response, structurally bind its archive
+URL to the expected host/path/version, and make no archive request. Keep the recorded
+tuple explicitly observational: version or same-version build/hash drift asks for
+human review and cannot advance a baseline or activate model routing.
+
 A disposable candidate worktree isolates files, not execution. Candidate validation
 runs release-owned scripts with the invoking user's privileges. Exact tag/ref and
 fast-forward checks prove transport consistency, not that candidate code is harmless.

@@ -376,15 +376,18 @@ There is no background updater. Checking is read-only:
 
 It reports the latest stable project tag without fetching it, then reports installed,
 verified, official stable-release/source drift, and 30-day documentation-review age
-separately for agy and Codex CLI. Exit `0` means all required evidence is available
-and unchanged. Exit `3` means established drift, a due review, or a missing installed
-tool. Exit `2` means evidence is unavailable or malformed, so the result is
-inconclusive—not green. Both tools are reported before those results are aggregated,
-with `2` taking precedence over `3`.
+separately for agy and Codex CLI. The agy section also checks one fixed official
+`darwin_arm64` distribution-manifest canary. It validates only that small JSON
+document and never requests, downloads, hashes, or executes the referenced archive.
+Exit `0` means all required evidence is available and unchanged. Exit `3` means
+established drift, a due review, or a missing installed tool. Exit `2` means evidence
+is unavailable or malformed, so the result is inconclusive—not green. Both tools are
+reported before those results are aggregated, with `2` taking precedence over `3`.
 
-The release origins, upstream sources, release channels, and 30-day cadence are fixed
-in the updater rather than overridable through environment variables. The check never
-fetches, pulls, applies, or writes a baseline. A future per-tool review date is
+The release origins, upstream sources, distribution-manifest endpoint, release
+channels, and 30-day cadence are fixed in the updater rather than overridable through
+arguments, environment variables, or configuration. The check never fetches into
+Git, pulls, applies, or writes a baseline. A future per-tool review date is
 inconclusive rather than silently postponing review.
 
 Apply is always explicit:
@@ -413,6 +416,13 @@ The fixed primary sources and exact reviewed revisions are recorded in
 watch runs the official-evidence-only mode without installing agy or Codex. It writes
 only a bounded Step Summary, preserves the same `0`/`3`/`2` meanings, is not a required
 pull-request check, and cannot advance metadata or open an issue or pull request.
+
+The official distribution manifest currently advertises agy `1.1.10`, while the
+public GitHub stable release and reviewed source remain `1.1.9`. That is established
+distribution drift, not authority to advance the verified baseline. The checked-in
+manifest tuple is an observational change detector rather than a trust root: a
+same-version archive build, URL, or SHA-512 change also requires review. Neither the
+live manifest nor its snapshot activates the disabled `1.1.10` model/effort matrix.
 
 agy's real CLI exposes `--effort`, but this wrapper exposes no effort control until a
 separately approved G1. The checked-in model/effort matrix is validated metadata, not
@@ -524,6 +534,7 @@ update.sh                     explicit release + agy/Codex compatibility check/a
 bug-report.sh                 sanitized local draft/preview/optional submission
 compat/                       per-tool baselines, sources, and disabled candidate matrix
 scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
+scripts/official_distribution.py  fixed, bounded agy distribution-manifest canary
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
 skills/agy-worker/            canonical self-contained Agent Skill and runtime
 skills/agy-worker/runtime/    dispatcher, gate, advisory, personas, schema, Python helpers
@@ -537,7 +548,8 @@ CODE_OF_CONDUCT.md            enforceable participation standards
 .github/pull_request_template.md  review and verification checklist
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
-tests/test-update.sh          offline local-remote updater suite
+tests/test-update.sh          164-case offline local-remote/matrix/manifest updater suite
+tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       offline Codex package/relocation/landing suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
