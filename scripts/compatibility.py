@@ -189,25 +189,120 @@ def exact_keys(value: Any, expected: set[str], label: str) -> dict[str, Any]:
     return value
 
 
+def canonical_schema() -> dict[str, Any]:
+    """Return the complete schema contract supported by this validator."""
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://cagdasyurekli.github.io/codex-agy-worker/schemas/model-effort-matrix-v1.json",
+        "title": "agy model and effort resolution matrix v1",
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "schema_version",
+            "resolution_status",
+            "inventory",
+            "adjustable_models",
+            "fixed_models",
+        ],
+        "properties": {
+            "schema_version": {"const": 1},
+            "resolution_status": {
+                "enum": ["active", "disabled-unverified-source"]
+            },
+            "inventory": {"$ref": "#/$defs/inventory"},
+            "adjustable_models": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {"$ref": "#/$defs/adjustableModel"},
+            },
+            "fixed_models": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {"$ref": "#/$defs/fixedModel"},
+            },
+        },
+        "$defs": {
+            "inventory": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "agy_version",
+                    "reviewed_source_revision",
+                    "evidence",
+                ],
+                "properties": {
+                    "agy_version": {
+                        "type": "string",
+                        "pattern": (
+                            "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\."
+                            "(0|[1-9][0-9]*)$"
+                        ),
+                    },
+                    "reviewed_source_revision": {
+                        "type": ["string", "null"],
+                        "pattern": "^[0-9a-f]{40}$",
+                    },
+                    "evidence": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "items": {
+                            "enum": ACTIVE_EVIDENCE + CANDIDATE_EVIDENCE
+                        },
+                        "uniqueItems": True,
+                    },
+                },
+            },
+            "adjustableModel": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["model", "resolutions", "unsupported_efforts"],
+                "properties": {
+                    "model": {"enum": list(ADJUSTABLE_MODELS)},
+                    "resolutions": {
+                        "type": "object",
+                        "minProperties": 2,
+                        "maxProperties": 3,
+                        "propertyNames": {"enum": list(EFFORTS)},
+                        "additionalProperties": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+                        },
+                    },
+                    "unsupported_efforts": {
+                        "type": "array",
+                        "items": {"enum": list(EFFORTS)},
+                        "uniqueItems": True,
+                    },
+                },
+            },
+            "fixedModel": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["model_slug", "classification"],
+                "properties": {
+                    "model_slug": {"enum": list(FIXED_MODELS)},
+                    "classification": {
+                        "enum": [
+                            "no-level",
+                            "thinking-labelled",
+                            "effort-labelled",
+                        ]
+                    },
+                },
+            },
+        },
+    }
+
+
 def validate_schema_document(path: Path) -> None:
-    schema = exact_keys(
-        load_json(path),
-        {"$schema", "$id", "title", "type", "additionalProperties", "required", "properties", "$defs"},
-        "matrix schema",
-    )
-    if schema["$schema"] != "https://json-schema.org/draft/2020-12/schema":
-        raise CompatibilityError("matrix schema draft is not pinned")
-    if schema["$id"] != "https://cagdasyurekli.github.io/codex-agy-worker/schemas/model-effort-matrix-v1.json":
-        raise CompatibilityError("matrix schema id is unexpected")
-    if schema["type"] != "object" or schema["additionalProperties"] is not False:
-        raise CompatibilityError("matrix schema must reject unknown root fields")
-    required = schema["required"]
-    expected = ["schema_version", "resolution_status", "inventory", "adjustable_models", "fixed_models"]
-    if required != expected:
-        raise CompatibilityError("matrix schema required fields changed")
-    properties = schema["properties"]
-    if not isinstance(properties, dict) or properties.get("schema_version", {}).get("const") != 1:
-        raise CompatibilityError("matrix schema version contract changed")
+    schema = load_json(path)
+    if schema != canonical_schema():
+        raise CompatibilityError(
+            "matrix schema differs from the complete supported canonical policy"
+        )
 
 
 def validate_matrix_structure(matrix_path: Path, schema_path: Path) -> dict[str, Any]:
@@ -220,7 +315,10 @@ def validate_matrix_structure(matrix_path: Path, schema_path: Path) -> dict[str,
     if root["schema_version"] != 1:
         raise CompatibilityError("unsupported matrix schema_version")
     status = root["resolution_status"]
-    if status not in ("active", "disabled-unverified-source"):
+    if not isinstance(status, str) or status not in (
+        "active",
+        "disabled-unverified-source",
+    ):
         raise CompatibilityError("unsupported matrix resolution_status")
 
     inventory = exact_keys(
@@ -252,14 +350,21 @@ def validate_matrix_structure(matrix_path: Path, schema_path: Path) -> dict[str,
     for index, item in enumerate(rows):
         row = exact_keys(item, {"model", "resolutions", "unsupported_efforts"}, f"adjustable_models[{index}]")
         model = row["model"]
-        if model not in ADJUSTABLE_MODELS or model in seen_models:
+        if (
+            not isinstance(model, str)
+            or model not in ADJUSTABLE_MODELS
+            or model in seen_models
+        ):
             raise CompatibilityError(f"unknown or duplicate adjustable model: {model!r}")
         seen_models.add(model)
         resolutions = row["resolutions"]
         unsupported = row["unsupported_efforts"]
         if not isinstance(resolutions, dict) or not isinstance(unsupported, list):
             raise CompatibilityError(f"invalid effort contract for {model}")
-        if len(set(unsupported)) != len(unsupported) or any(value not in EFFORTS for value in unsupported):
+        if any(
+            not isinstance(value, str) or value not in EFFORTS
+            for value in unsupported
+        ) or len(set(unsupported)) != len(unsupported):
             raise CompatibilityError(f"invalid unsupported effort list for {model}")
         covered = set(resolutions) | set(unsupported)
         if covered != set(EFFORTS) or set(resolutions) & set(unsupported):
@@ -278,7 +383,11 @@ def validate_matrix_structure(matrix_path: Path, schema_path: Path) -> dict[str,
     for index, item in enumerate(fixed_rows):
         row = exact_keys(item, {"model_slug", "classification"}, f"fixed_models[{index}]")
         slug = row["model_slug"]
-        if slug not in FIXED_MODELS or slug in seen_fixed:
+        if (
+            not isinstance(slug, str)
+            or slug not in FIXED_MODELS
+            or slug in seen_fixed
+        ):
             raise CompatibilityError(f"unknown or duplicate fixed model: {slug!r}")
         if row["classification"] != FIXED_MODELS[slug]:
             raise CompatibilityError(f"invalid fixed-model classification for {slug}")

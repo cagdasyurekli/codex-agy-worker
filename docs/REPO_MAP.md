@@ -53,13 +53,13 @@ accepting them.
 
 | Path | Responsibility | Owning offline suite |
 |---|---|---|
-| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus canonical dispatch, model/mode selection, bounded retries, prompt staging, envelope extraction | `tests/test-agy-worker.sh` (58 cases) |
-| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre-dispatch and post-gate recommendations | `tests/test-agy-worker.sh` (58 cases) |
+| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus canonical dispatch, model/mode selection, bounded retries, prompt staging, envelope extraction | `tests/test-agy-worker.sh` (60 cases) |
+| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre-dispatch and post-gate recommendations | `tests/test-agy-worker.sh` (60 cases) |
 | `install.sh`, `skills/agy-worker/`, `skills/agy-worker/scripts/resolve-pipeline.sh` | Install and resolve complete-plugin, explicit-checkout, or folder-only skill layouts without fetching code | dispatcher and packaging suites |
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
 | `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, path policy, escalation, driver verification | `tests/test-qa-gate.sh` (41 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
-| `update.sh`, `scripts/compatibility.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; strict per-tool metadata and disabled-on-drift model/effort matrix | `tests/test-update.sh` (64 cases) |
+| `update.sh`, `scripts/compatibility.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; strict per-tool metadata and disabled-on-drift model/effort matrix | `tests/test-update.sh` (92 cases) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
 | `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (21 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (21 cases) plus review |

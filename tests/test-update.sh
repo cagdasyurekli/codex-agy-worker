@@ -14,6 +14,68 @@ expect_exit() {
     local name="$1" want="$2" got="$3"
     if [[ "$got" == "$want" ]]; then ok "$name (exit $got)"; else bad "$name (exit $got, wanted $want)"; fi
 }
+snapshot_repo() {
+    local repo="$1" output="$2"
+    python3 - "$repo" "$output" <<'PY'
+import hashlib
+import json
+import os
+import subprocess
+import sys
+
+repo, output = sys.argv[1:]
+
+def git(*args):
+    return subprocess.run(
+        ["git", "-C", repo, *args],
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+
+paths = {
+    item
+    for item in git(
+        "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"
+    ).split(b"\0")
+    if item
+}
+files = []
+for encoded in sorted(paths):
+    relative = os.fsdecode(encoded)
+    path = os.path.join(repo, relative)
+    if os.path.islink(path):
+        kind = "symlink"
+        digest = hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()
+    elif os.path.isfile(path):
+        kind = "file"
+        with open(path, "rb") as handle:
+            digest = hashlib.sha256(handle.read()).hexdigest()
+    elif os.path.isdir(path):
+        kind = "directory"
+        digest = ""
+    else:
+        kind = "missing"
+        digest = ""
+    files.append([relative, kind, digest])
+
+state = {
+    "head": git("rev-parse", "HEAD").decode("ascii").strip(),
+    "head_ref": git("symbolic-ref", "-q", "HEAD").decode("utf-8").strip(),
+    "refs_hex": git("for-each-ref", "--format=%(refname)%00%(objectname)").hex(),
+    "index_hex": git("ls-files", "--stage", "-z", "--").hex(),
+    "status_hex": git(
+        "status", "--porcelain=v1", "-z", "--untracked-files=all"
+    ).hex(),
+    "tracked_and_untracked_bytes": files,
+}
+with open(output, "w", encoding="utf-8") as handle:
+    json.dump(state, handle, sort_keys=True, separators=(",", ":"))
+PY
+}
+expect_same_snapshot() {
+    local name="$1" before="$2" after="$3"
+    if cmp -s "$before" "$after"; then ok "$name"; else bad "$name"; fi
+}
 
 SOURCE="$TMP/source"
 REMOTE="$TMP/remote.git"
@@ -143,21 +205,19 @@ configure_official_urls "$NO_TAG_CLIENT" "$NO_TAG_REMOTE"
 echo "update.sh offline test suite"
 echo
 
+snapshot_repo "$CLIENT" "$TMP/check-zero.before"
 PATH="$TMP/bin:$PATH" \
     "$CLIENT/update.sh" check > "$TMP/check.out" 2> "$TMP/check.err"
 rc=$?
+snapshot_repo "$CLIENT" "$TMP/check-zero.after"
 expect_exit "check reports without changing files" 0 "$rc"
 if grep -Fq 'tool update: available v1.0.0 -> v1.1.0' "$TMP/check.out"; then
     ok "check identifies the latest stable release"
 else
     bad "check identifies the latest stable release"
 fi
-if ! git -C "$CLIENT" show-ref --verify --quiet refs/tags/v1.1.0 \
-        && [[ -z "$(git -C "$CLIENT" status --porcelain --untracked-files=all)" ]]; then
-    ok "check does not fetch tags or mutate the checkout"
-else
-    bad "check does not fetch tags or mutate the checkout"
-fi
+expect_same_snapshot "exit 0 preserves HEAD, refs, index, and all worktree bytes/status" \
+    "$TMP/check-zero.before" "$TMP/check-zero.after"
 if grep -Fq 'agy compatibility:' "$TMP/check.out" \
         && grep -Fq 'codex compatibility:' "$TMP/check.out" \
         && grep -Fq 'stable release: unchanged' "$TMP/check.out" \
@@ -192,15 +252,23 @@ else
     bad "ignored source overrides are never disclosed"
 fi
 
+snapshot_repo "$CLIENT" "$TMP/check-three.before"
 PATH="$TMP/bin:$PATH" FAKE_CODEX_VERSION=9.9.9 \
     "$CLIENT/update.sh" check > "$TMP/codex-version-drift.out" 2> "$TMP/codex-version-drift.err"
 rc=$?
+snapshot_repo "$CLIENT" "$TMP/check-three.after"
 expect_exit "installed Codex version drift requires review" 3 "$rc"
+expect_same_snapshot "exit 3 preserves HEAD, refs, index, and all worktree bytes/status" \
+    "$TMP/check-three.before" "$TMP/check-three.after"
 
+snapshot_repo "$CLIENT" "$TMP/check-two.before"
 PATH="$TMP/bin:$PATH" FAKE_AGY_MODE=usage \
     "$CLIENT/update.sh" check > "$TMP/agy-usage.out" 2> "$TMP/agy-usage.err"
 rc=$?
+snapshot_repo "$CLIENT" "$TMP/check-two.after"
 expect_exit "agy usage text is inconclusive, not version evidence" 2 "$rc"
+expect_same_snapshot "exit 2 preserves HEAD, refs, index, and all worktree bytes/status" \
+    "$TMP/check-two.before" "$TMP/check-two.after"
 
 PATH="$TMP/bin:$PATH" FAKE_CODEX_MODE=empty \
     "$CLIENT/update.sh" check > "$TMP/codex-empty.out" 2> "$TMP/codex-empty.err"
@@ -232,12 +300,6 @@ if grep -Fq 'agy compatibility:' "$TMP/aggregate.out" \
 else
     bad "aggregation still reports both tools"
 fi
-if [[ -z "$(git -C "$CLIENT" status --porcelain --untracked-files=all)" ]]; then
-    ok "check exits 0, 3, and 2 without changing repository state"
-else
-    bad "check exits 0, 3, and 2 without changing repository state"
-fi
-
 PATH="$TMP/bin:$PATH" FAKE_AGY_VERSION=9.9.9 \
     "$CLIENT/update.sh" check > "$TMP/version-drift.out" 2> "$TMP/version-drift.err"
 rc=$?
@@ -448,6 +510,98 @@ fi
 MATRIX_TOOL="$ROOT/scripts/compatibility.py"
 MATRIX="$ROOT/compat/agy-model-effort-matrix.json"
 MATRIX_SCHEMA="$ROOT/compat/model-effort-matrix.schema.json"
+expect_matrix_validation() {
+    local name="$1" want="$2" matrix="$3" schema="$4" stem="$5"
+    local version_file="${6:-$TMP/matrix-version.txt}"
+    local revision_file="${7:-$TMP/matrix-revision.txt}" got
+    python3 "$MATRIX_TOOL" validate-matrix --matrix "$matrix" --schema "$schema" \
+        --verified-version-file "$version_file" \
+        --reviewed-revision-file "$revision_file" \
+        > "$TMP/$stem.out" 2> "$TMP/$stem.err"
+    got=$?
+    if [[ "$got" == "$want" ]] && ! grep -Fq 'Traceback' "$TMP/$stem.err"; then
+        ok "$name (exit $got, controlled)"
+    else
+        bad "$name (exit $got, wanted $want without traceback)"
+    fi
+}
+expect_matrix_resolution() {
+    local name="$1" model="$2" effort="$3" expected="$4" stem="$5" got
+    python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" \
+        --schema "$MATRIX_SCHEMA" \
+        --verified-version-file "$TMP/matrix-version.txt" \
+        --reviewed-revision-file "$TMP/matrix-revision.txt" \
+        --model "$model" --effort "$effort" \
+        > "$TMP/$stem.out" 2> "$TMP/$stem.err"
+    got=$?
+    if [[ "$got" == 0 && "$(<"$TMP/$stem.out")" == "$expected" ]] \
+            && ! grep -Fq 'Traceback' "$TMP/$stem.err"; then
+        ok "$name"
+    else
+        bad "$name (exit $got, expected exact $expected)"
+    fi
+}
+expect_matrix_reject() {
+    local name="$1" want="$2" matrix="$3" model="$4" effort="$5" stem="$6"
+    local version_file="${7:-$TMP/matrix-version.txt}"
+    local revision_file="${8:-$TMP/matrix-revision.txt}" got
+    python3 "$MATRIX_TOOL" resolve-matrix --matrix "$matrix" \
+        --schema "$MATRIX_SCHEMA" \
+        --verified-version-file "$version_file" \
+        --reviewed-revision-file "$revision_file" \
+        --model "$model" --effort "$effort" \
+        > "$TMP/$stem.out" 2> "$TMP/$stem.err"
+    got=$?
+    if [[ "$got" == "$want" && ! -s "$TMP/$stem.out" ]] \
+            && ! grep -Fq 'Traceback' "$TMP/$stem.err"; then
+        ok "$name (exit $got, no fallback)"
+    else
+        bad "$name (exit $got, wanted $want without output/traceback)"
+    fi
+}
+make_json_variant() {
+    local source="$1" output="$2" mode="$3"
+    python3 - "$source" "$output" "$mode" <<'PY'
+import copy
+import json
+import sys
+
+source, output, mode = sys.argv[1:]
+with open(source, encoding="utf-8") as handle:
+    data = json.load(handle)
+
+if mode == "schema-malformed-type":
+    data["properties"]["schema_version"] = "not-an-object"
+elif mode == "schema-unknown-nested":
+    data["$defs"]["inventory"]["properties"]["evidence"]["unknown"] = True
+elif mode == "schema-missing-node":
+    del data["$defs"]["fixedModel"]["properties"]["classification"]
+elif mode == "schema-changed-policy":
+    data["$defs"]["adjustableModel"]["additionalProperties"] = True
+elif mode == "matrix-duplicate-adjustable":
+    data["adjustable_models"][1] = copy.deepcopy(data["adjustable_models"][0])
+elif mode == "matrix-duplicate-fixed":
+    data["fixed_models"][1] = copy.deepcopy(data["fixed_models"][0])
+elif mode == "matrix-duplicate-output":
+    data["adjustable_models"][1]["resolutions"]["low"] = data["adjustable_models"][0]["resolutions"]["low"]
+elif mode == "matrix-unknown-model":
+    data["adjustable_models"][0]["model"] = "gemini-inferred-flash"
+elif mode == "matrix-missing-coverage":
+    del data["adjustable_models"][0]["resolutions"]["medium"]
+elif mode == "matrix-missing-output":
+    data["adjustable_models"][0]["resolutions"]["medium"] = ""
+elif mode == "matrix-inferred-output":
+    data["adjustable_models"][0]["resolutions"]["high"] = "gemini-3.6-flash-thinking"
+elif mode == "matrix-malformed-nested-type":
+    data["adjustable_models"][2]["unsupported_efforts"] = [{}]
+else:
+    raise SystemExit(f"unknown fixture mode: {mode}")
+
+with open(output, "w", encoding="utf-8") as handle:
+    json.dump(data, handle, indent=2)
+    handle.write("\n")
+PY
+}
 python3 "$MATRIX_TOOL" validate-matrix --matrix "$MATRIX" --schema "$MATRIX_SCHEMA" \
     --verified-version-file "$ROOT/compat/agy-verified-version.txt" \
     --reviewed-revision-file "$ROOT/compat/agy-upstream-head.txt" \
@@ -462,74 +616,133 @@ sed -e 's/"resolution_status": "disabled-unverified-source"/"resolution_status":
     "$MATRIX" > "$ACTIVE_MATRIX"
 printf '1.1.10\n' > "$TMP/matrix-version.txt"
 printf '%s\n' "$UPSTREAM_HEAD" > "$TMP/matrix-revision.txt"
-python3 "$MATRIX_TOOL" validate-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/matrix-version.txt" \
-    --reviewed-revision-file "$TMP/matrix-revision.txt" > "$TMP/active-matrix.out" 2> "$TMP/active-matrix.err"
-rc=$?
-expect_exit "active matrix is exactly version/source bound" 0 "$rc"
+expect_matrix_validation "canonical schema and active matrix are exactly bound" 0 \
+    "$ACTIVE_MATRIX" "$MATRIX_SCHEMA" active-matrix
 
-python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/matrix-version.txt" \
-    --reviewed-revision-file "$TMP/matrix-revision.txt" \
-    --model gemini-3.6-flash --effort high > "$TMP/resolved.out" 2> "$TMP/resolved.err"
-rc=$?
-expect_exit "adjustable pair resolves to one exact compound slug" 0 "$rc"
-if [[ "$(<"$TMP/resolved.out")" == "gemini-3.6-flash-high" ]]; then
-    ok "matrix resolution preserves the advertised exact slug"
-else
-    bad "matrix resolution preserves the advertised exact slug"
-fi
+expect_matrix_resolution "3.6 Flash low resolves exactly" \
+    gemini-3.6-flash low gemini-3.6-flash-low pair-36-low
+expect_matrix_resolution "3.6 Flash medium resolves exactly" \
+    gemini-3.6-flash medium gemini-3.6-flash-medium pair-36-medium
+expect_matrix_resolution "3.6 Flash high resolves exactly" \
+    gemini-3.6-flash high gemini-3.6-flash-high pair-36-high
+expect_matrix_resolution "3.5 Flash low resolves exactly" \
+    gemini-3.5-flash low gemini-3.5-flash-low pair-35-low
+expect_matrix_resolution "3.5 Flash medium resolves exactly" \
+    gemini-3.5-flash medium gemini-3.5-flash-medium pair-35-medium
+expect_matrix_resolution "3.5 Flash high resolves exactly" \
+    gemini-3.5-flash high gemini-3.5-flash-high pair-35-high
+expect_matrix_resolution "3.1 Pro low resolves exactly" \
+    gemini-3.1-pro low gemini-3.1-pro-low pair-pro-low
+expect_matrix_resolution "3.1 Pro high resolves exactly" \
+    gemini-3.1-pro high gemini-3.1-pro-high pair-pro-high
 
-python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/matrix-version.txt" \
-    --reviewed-revision-file "$TMP/matrix-revision.txt" \
-    --model gemini-3.1-pro --effort medium > "$TMP/pro-medium.out" 2> "$TMP/pro-medium.err"
-rc=$?
-expect_exit "Pro medium is explicitly unsupported" 64 "$rc"
+expect_matrix_reject "Pro medium is explicitly unsupported" 64 "$ACTIVE_MATRIX" \
+    gemini-3.1-pro medium pro-medium
 
-python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/matrix-version.txt" \
-    --reviewed-revision-file "$TMP/matrix-revision.txt" \
-    --model claude-sonnet-4-6 --effort high > "$TMP/fixed-model.out" 2> "$TMP/fixed-model.err"
-rc=$?
-expect_exit "fixed model rejects adjustable effort" 64 "$rc"
+for fixed_entry in \
+    "claude-sonnet-4-6:no-level" \
+    "claude-opus-4-6-thinking:thinking-labelled" \
+    "gpt-oss-120b-medium:effort-labelled"
+do
+    fixed_slug="${fixed_entry%%:*}"
+    fixed_classification="${fixed_entry#*:}"
+    if python3 - "$ACTIVE_MATRIX" "$fixed_slug" "$fixed_classification" <<'PY'
+import json
+import sys
+matrix, slug, classification = sys.argv[1:]
+with open(matrix, encoding="utf-8") as handle:
+    rows = json.load(handle)["fixed_models"]
+matches = [row for row in rows if row == {
+    "model_slug": slug,
+    "classification": classification,
+}]
+raise SystemExit(0 if len(matches) == 1 else 1)
+PY
+    then
+        fixed_exact=0
+    else
+        fixed_exact=1
+    fi
+    python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" \
+        --schema "$MATRIX_SCHEMA" \
+        --verified-version-file "$TMP/matrix-version.txt" \
+        --reviewed-revision-file "$TMP/matrix-revision.txt" \
+        --model "$fixed_slug" --effort high \
+        > "$TMP/fixed-$fixed_slug.out" 2> "$TMP/fixed-$fixed_slug.err"
+    rc=$?
+    if [[ "$fixed_exact" == 0 && "$rc" == 64 \
+            && ! -s "$TMP/fixed-$fixed_slug.out" ]] \
+            && ! grep -Fq 'Traceback' "$TMP/fixed-$fixed_slug.err"; then
+        ok "$fixed_slug is exact and non-adjustable"
+    else
+        bad "$fixed_slug is exact and non-adjustable"
+    fi
+done
+
+expect_matrix_reject "unknown model input has no inferred fallback" 64 \
+    "$ACTIVE_MATRIX" gemini-unknown high unknown-model-input
+expect_matrix_reject "uppercase effort is not normalized" 64 \
+    "$ACTIVE_MATRIX" gemini-3.6-flash HIGH effort-uppercase
+expect_matrix_reject "padded effort is not normalized" 64 \
+    "$ACTIVE_MATRIX" gemini-3.6-flash ' high' effort-padded
+expect_matrix_reject "thinking-like effort is not inferred" 64 \
+    "$ACTIVE_MATRIX" gemini-3.6-flash thinking-high effort-inferred
+expect_matrix_reject "unknown effort has no fallback" 64 \
+    "$ACTIVE_MATRIX" gemini-3.6-flash extreme effort-unknown
+
+expect_matrix_reject "disabled candidate matrix cannot resolve" 3 "$MATRIX" \
+    gemini-3.6-flash high disabled-matrix
 
 printf '9.9.9\n' > "$TMP/stale-version.txt"
-python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/stale-version.txt" \
-    --reviewed-revision-file "$TMP/matrix-revision.txt" \
-    --model gemini-3.6-flash --effort high > "$TMP/stale-matrix.out" 2> "$TMP/stale-matrix.err"
-rc=$?
-expect_exit "version-stale matrix cannot resolve" 3 "$rc"
+expect_matrix_reject "version-stale matrix cannot resolve" 3 "$ACTIVE_MATRIX" \
+    gemini-3.6-flash high stale-matrix "$TMP/stale-version.txt"
 
 printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' > "$TMP/mismatched-revision.txt"
-python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/matrix-version.txt" \
-    --reviewed-revision-file "$TMP/mismatched-revision.txt" \
-    --model gemini-3.6-flash --effort high > "$TMP/mismatch-matrix.out" 2> "$TMP/mismatch-matrix.err"
-rc=$?
-expect_exit "source-mismatched matrix cannot resolve" 3 "$rc"
+expect_matrix_reject "source-mismatched matrix cannot resolve" 3 "$ACTIVE_MATRIX" \
+    gemini-3.6-flash high mismatch-matrix \
+    "$TMP/matrix-version.txt" "$TMP/mismatched-revision.txt"
+
+for matrix_variant in \
+    duplicate-adjustable \
+    duplicate-fixed \
+    duplicate-output \
+    unknown-model \
+    missing-coverage \
+    missing-output \
+    inferred-output \
+    malformed-nested-type
+do
+    make_json_variant "$ACTIVE_MATRIX" "$TMP/$matrix_variant.json" \
+        "matrix-$matrix_variant"
+    expect_matrix_validation "$matrix_variant matrix policy fails closed" 2 \
+        "$TMP/$matrix_variant.json" "$MATRIX_SCHEMA" "$matrix_variant"
+done
 
 awk 'NR == 2 { print "  \"schema_version\": 1," } { print }' "$ACTIVE_MATRIX" > "$TMP/duplicate-matrix.json"
-python3 "$MATRIX_TOOL" validate-matrix --matrix "$TMP/duplicate-matrix.json" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/matrix-version.txt" \
-    --reviewed-revision-file "$TMP/matrix-revision.txt" > "$TMP/duplicate-matrix.out" 2> "$TMP/duplicate-matrix.err"
-rc=$?
-expect_exit "duplicate matrix keys fail closed" 2 "$rc"
+expect_matrix_validation "duplicate matrix keys fail closed" 2 \
+    "$TMP/duplicate-matrix.json" "$MATRIX_SCHEMA" duplicate-matrix
 
 awk 'NR == 2 { print "  \"unknown_policy\": true," } { print }' "$ACTIVE_MATRIX" > "$TMP/unknown-matrix.json"
-python3 "$MATRIX_TOOL" validate-matrix --matrix "$TMP/unknown-matrix.json" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/matrix-version.txt" \
-    --reviewed-revision-file "$TMP/matrix-revision.txt" > "$TMP/unknown-matrix.out" 2> "$TMP/unknown-matrix.err"
-rc=$?
-expect_exit "unknown matrix keys fail closed" 2 "$rc"
+expect_matrix_validation "unknown matrix keys fail closed" 2 \
+    "$TMP/unknown-matrix.json" "$MATRIX_SCHEMA" unknown-matrix
 
 printf '{ malformed\n' > "$TMP/malformed-matrix.json"
-python3 "$MATRIX_TOOL" validate-matrix --matrix "$TMP/malformed-matrix.json" --schema "$MATRIX_SCHEMA" \
-    --verified-version-file "$TMP/matrix-version.txt" \
-    --reviewed-revision-file "$TMP/matrix-revision.txt" > "$TMP/malformed-matrix.out" 2> "$TMP/malformed-matrix.err"
-rc=$?
-expect_exit "malformed matrix JSON fails closed" 2 "$rc"
+expect_matrix_validation "malformed matrix JSON fails closed" 2 \
+    "$TMP/malformed-matrix.json" "$MATRIX_SCHEMA" malformed-matrix
+
+for schema_variant in malformed-type unknown-nested missing-node changed-policy
+do
+    make_json_variant "$MATRIX_SCHEMA" "$TMP/schema-$schema_variant.json" \
+        "schema-$schema_variant"
+    expect_matrix_validation "$schema_variant schema fails closed" 2 \
+        "$ACTIVE_MATRIX" "$TMP/schema-$schema_variant.json" \
+        "schema-$schema_variant"
+done
+
+awk 'NR == 2 { print "  \"$schema\": \"duplicate\"," } { print }' \
+    "$MATRIX_SCHEMA" > "$TMP/schema-duplicate-key.json"
+expect_matrix_validation "duplicate schema key fails closed" 2 \
+    "$ACTIVE_MATRIX" "$TMP/schema-duplicate-key.json" schema-duplicate-key
 
 WORKFLOW="$ROOT/.github/workflows/compatibility-watch.yml"
 if grep -Fq 'schedule:' "$WORKFLOW" && grep -Fq 'workflow_dispatch:' "$WORKFLOW" \
