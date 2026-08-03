@@ -32,10 +32,17 @@ cleanup.
 
 `update.sh check` is read-only. `update.sh apply` is an explicit human-authorized
 operation; never run it in the background or as part of a worker job. Production
-release origin, agy upstream, and review cadence must not be environment-overridable.
-Reconcile the official CLI documentation, official source repository, live
-`ground-truth.sh` output, and a bounded real job before advancing compatibility
-metadata.
+release origins, agy/Codex upstreams, release channels, and review cadence must not be
+environment-overridable. Report established drift separately from unavailable or
+malformed evidence: the latter is inconclusive and must outrank a known drift result
+rather than becoming green. Always report both tools before aggregating.
+
+Reconcile each tool's official CLI documentation, stable release, exact source
+revision, and installed semantic command inventory before advancing its separate
+version/revision/review-date metadata. An unknown command that exits zero or prints
+usage is not semantic evidence. The weekly watcher observes the same fixed sources;
+it never updates a baseline, installs a tool, dispatches a model, or takes a GitHub
+write action. A bounded real job remains separately approved when behavior changed.
 
 A disposable candidate worktree isolates files, not execution. Candidate validation
 runs release-owned scripts with the invoking user's privileges. Exact tag/ref and
@@ -62,8 +69,12 @@ The caller selects the tier. Built-in retries reuse the same model; gate failure
 not silently increase cost or reasoning effort. Keep recommendation policy outside
 both dispatch and gate acceptance: its output must be visible, state the current tier,
 show controlled driver-owned evidence and relative cost impact, and say explicitly
-that it was not applied. Do not add a separate thinking-level abstraction; where agy
-exposes thinking, it is already part of the caller-selected model label.
+that it was not applied. agy exposes a real `--effort`, but this wrapper exposes none
+until G1. A validated model/effort matrix remains metadata, never routing or gate
+authority. Only an active matrix bound to the exact verified agy version and source
+may resolve a pair; disabled candidate, stale, unknown, duplicate, unsupported, and
+fixed/no-level inputs fail closed. Do not add a separate thinking-level abstraction
+or assume that agy's separate model and effort arguments compose safely.
 
 Only an independently observed, bounded quality or verification gap can justify
 recommending a higher named tier. Permission, authentication, scope-policy, contract,

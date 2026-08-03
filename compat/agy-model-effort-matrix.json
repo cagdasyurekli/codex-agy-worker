@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "resolution_status": "disabled-unverified-source",
+  "inventory": {
+    "agy_version": "1.1.10",
+    "reviewed_source_revision": null,
+    "evidence": ["installed-agy-models"]
+  },
+  "adjustable_models": [
+    {
+      "model": "gemini-3.6-flash",
+      "resolutions": {
+        "low": "gemini-3.6-flash-low",
+        "medium": "gemini-3.6-flash-medium",
+        "high": "gemini-3.6-flash-high"
+      },
+      "unsupported_efforts": []
+    },
+    {
+      "model": "gemini-3.5-flash",
+      "resolutions": {
+        "low": "gemini-3.5-flash-low",
+        "medium": "gemini-3.5-flash-medium",
+        "high": "gemini-3.5-flash-high"
+      },
+      "unsupported_efforts": []
+    },
+    {
+      "model": "gemini-3.1-pro",
+      "resolutions": {
+        "low": "gemini-3.1-pro-low",
+        "high": "gemini-3.1-pro-high"
+      },
+      "unsupported_efforts": ["medium"]
+    }
+  ],
+  "fixed_models": [
+    {
+      "model_slug": "claude-sonnet-4-6",
+      "classification": "no-level"
+    },
+    {
+      "model_slug": "claude-opus-4-6-thinking",
+      "classification": "thinking-labelled"
+    },
+    {
+      "model_slug": "gpt-oss-120b-medium",
+      "classification": "effort-labelled"
+    }
+  ]
+}
