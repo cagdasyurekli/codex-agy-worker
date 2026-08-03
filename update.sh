@@ -112,6 +112,33 @@ compat_metadata() {
     python3 "$SCRIPT_DIR/scripts/compatibility.py" metadata --kind "$1" --file "$2"
 }
 
+agy_distribution_manifest_check() {
+    local output="" status=0
+    output="$(python3 "$SCRIPT_DIR/scripts/official_distribution.py" 2>/dev/null)" || status=$?
+    case "$status" in
+        0)
+            if [[ "$output" == "  distribution manifest: unchanged ("*')' ]]; then
+                printf '%s\n' "$output"
+                return 0
+            fi
+            ;;
+        3)
+            if [[ "$output" == "  distribution manifest: drift-review ("*')' ]]; then
+                printf '%s\n' "$output"
+                return 3
+            fi
+            ;;
+        2)
+            if [[ "$output" == "  distribution manifest: evidence-unavailable ("*')' ]]; then
+                printf '%s\n' "$output"
+                return 2
+            fi
+            ;;
+    esac
+    echo "  distribution manifest: evidence-unavailable (invalid helper result)"
+    return 2
+}
+
 tool_compatibility_check() {
     local tool="$1" mode="$2" upstream verified_file reviewed_file revision_file
     local verified_version="" review_date="" reviewed_head="" installed_output="" installed_version=""
@@ -179,6 +206,12 @@ tool_compatibility_check() {
         fi
     else
         echo "  installed: not required in watch mode"
+    fi
+
+    if [[ "$tool" == "agy" ]]; then
+        step_rc=0
+        agy_distribution_manifest_check || step_rc=$?
+        rc="$(merge_status "$rc" "$step_rc")"
     fi
 
     step_rc=0
