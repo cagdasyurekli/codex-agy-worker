@@ -57,6 +57,12 @@ candidate.
 
 The five offline suites need no agy process, network access, API key, or GitHub login.
 
+## Roadmap
+
+[The product roadmap](docs/ROADMAP.md) lists proposed, dependency-ordered feature
+slices. Those items are plans, not current CLI behavior or implementation claims;
+each slice requires its own approval, tests, review, and pull request.
+
 ---
 
 ## Install from GitHub

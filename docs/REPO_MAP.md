@@ -65,6 +65,7 @@ accepting them.
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
 | `.github/workflows/test.yml` | macOS CI for syntax and all five offline suites | exercised by GitHub Actions |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
+| `docs/ROADMAP.md` | Planned dependency-ordered product slices, approval gates, and honest success measures; not current behavior | human review; implementation claims remain prohibited until their slices land |
 | `AGENTS.md`, `docs/lessons_learned.md`, this file | Durable contributor rules and architecture | `agents-md-auditor` after material changes |
 
 ## Trust boundaries
