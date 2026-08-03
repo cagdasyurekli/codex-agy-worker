@@ -20,6 +20,35 @@ explicit standalone install created by `install.sh`, and a portable skill-folder
 using its bundled `runtime/`. It never downloads a missing runtime; an incomplete
 bundle fails closed.
 
+## Check readiness without dispatching
+
+Before spending provider quota on a repository, run the resolved pipeline's offline
+doctor:
+
+```bash
+"$PIPELINE/doctor.sh" --repo /absolute/path/to/target
+# Machine-readable output, with the same outcome:
+"$PIPELINE/doctor.sh" --repo /absolute/path/to/target --format json
+```
+
+Exit `0` is `ready`; exit `3` is either `review-required` (semantic agy-version drift
+or a due compatibility review) or `not-ready` (a failed prerequisite, repository,
+bundle, semantic probe, or metadata record); exit `64` is invalid usage. Inspect the
+reported `overall` value when the exit is `3`.
+
+The doctor is read-only and offline. It checks the resolved bundle, Bash 3.2,
+Python 3, git/worktree support, the target Git worktree, exact `agy --version`
+semantics, and portable reviewed metadata. It does not scan personal configuration,
+repair anything, call an auth or unknown subcommand, invoke a provider, dispatch a
+job, run the updater, or access the network. Green means only that offline
+prerequisites passed; it says nothing about authentication, provider availability,
+sandbox permission, task quality, or the next live dispatch. A folder-only copy runs
+the same bundled doctor and metadata without a checkout or fetch. Caller temp paths
+are ignored; HUP, INT, or TERM stops the active probe and descendants, removes the
+private workspace, prints only `doctor: interrupted`, and exits `3` without a report.
+The bundle's `scripts`, `agents`, `schemas`, and `compat` parents must be contained
+real directories; parent-directory symlinks fail closed even when they point inward.
+
 ## Data boundary and sandbox requirement (read first)
 
 `agy` is an external CLI backed by Google/Gemini services. A dispatch can transmit
