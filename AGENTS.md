@@ -39,7 +39,8 @@ Keep these counts current when their suites change:
   fake-agy/routing cases.
 - `update.sh`: 164 offline local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 21 offline manifest/runtime-copy/relocation/landing cases.
+- Codex package/skill distribution: 82 offline manifest/runtime-copy/relocation/landing cases.
+- `doctor.sh`: 143 offline fake-tool/read-only cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
 Codex sandbox requirements, and an honest `repo-inventory` escalation. The
@@ -60,6 +61,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
+./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
 bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
 python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
 git diff --check
@@ -109,6 +111,13 @@ only a passing test has not been shown to catch anything.
   Complete plugins and explicit standalone installs may resolve the checkout, while
   skill-folder-only copies use the bundled runtime. Never publish a local
   `.pipeline-root`, bake in a checkout path, or add an automatic fetch fallback.
+- **The doctor observes; it never repairs.** Keep it offline and read-only, probe only
+  exact semantic version/repository commands, expose no paths or raw output, and do
+  not scan personal configuration. Green covers offline prerequisites only—not auth,
+  provider, sandbox, task quality, or future dispatch. Portable agy metadata must
+  remain byte-identical to the canonical `compat/` records. Ignore caller temp paths;
+  use a private external workspace and propagate HUP/INT/TERM to the active probe.
+  Runtime parent directories are bundle-owned real directories, never symlinks.
 
 ## Boundaries
 

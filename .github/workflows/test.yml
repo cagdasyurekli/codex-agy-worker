@@ -33,3 +33,6 @@ jobs:
 
       - name: Codex distribution suite
         run: ./tests/test-packaging.sh
+
+      - name: read-only doctor suite
+        run: ./tests/test-doctor.sh
