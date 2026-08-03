@@ -30,8 +30,11 @@ accepting them.
 
 ## Opt-in maintenance flows
 
-- `update.sh check` queries the fixed official tool origin and agy compatibility
-  sources without changing files. `update.sh apply [TAG]` is explicit: it verifies a
+- `update.sh check` queries fixed official agy and Codex stable-release/source
+  evidence, per-tool review age, and (locally) installed versions without changing
+  files. Its `--watch` mode needs no installed tools and preserves the same
+  unchanged/drift-review/evidence-unavailable exit contract. `update.sh apply [TAG]`
+  remains explicit: it verifies a
   stable tag and fast-forward, protects ignored-path collisions, runs the candidate
   suites and install preflight in a temporary worktree, then fast-forwards and
   reinstalls the skill. Candidate scripts still execute with user privileges; the
@@ -56,7 +59,7 @@ accepting them.
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
 | `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, path policy, escalation, driver verification | `tests/test-qa-gate.sh` (41 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
-| `update.sh`, `compat/` | Explicit releases and fixed-source agy compatibility review | `tests/test-update.sh` (26 cases) |
+| `update.sh`, `scripts/compatibility.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; strict per-tool metadata and disabled-on-drift model/effort matrix | `tests/test-update.sh` (64 cases) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
 | `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (21 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (21 cases) plus review |
@@ -64,6 +67,7 @@ accepting them.
 | `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (21 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
 | `.github/workflows/test.yml` | macOS CI for syntax and all five offline suites | exercised by GitHub Actions |
+| `.github/workflows/compatibility-watch.yml` | Weekly/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
 | `docs/ROADMAP.md` | Planned dependency-ordered product slices, approval gates, and honest success measures; not current behavior | human review; implementation claims remain prohibited until their slices land |
 | `AGENTS.md`, `docs/lessons_learned.md`, this file | Durable contributor rules and architecture | `agents-md-auditor` after material changes |
@@ -77,6 +81,13 @@ accepting them.
   recommender is outside the dispatch and acceptance paths, cannot execute either,
   and never applies its output. Default/custom tiers and the highest named tier fail
   safely to `no-escalation` when no ordered higher tier can be proved.
+- The model/effort matrix is compatibility metadata only. It cannot select a tier,
+  dispatch a worker, recommend escalation, or accept a candidate. Its current
+  `1.1.10` inventory is disabled candidate evidence; only an active exact
+  version/source binding may resolve a pair, and the wrapper exposes no effort input.
+- Scheduled compatibility evidence is observational. Missing or malformed official
+  evidence is inconclusive, and neither the watcher nor a release/version name can
+  advance a human-reviewed baseline.
 - `--workdir` is the single audited repository. User-supplied `--add-dir` roots must
   resolve inside it; multi-repository mutation is unsupported.
 - Release tags are trusted only through the fixed official origin and exact ref/commit

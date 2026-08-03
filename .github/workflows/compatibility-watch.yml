@@ -1,0 +1,42 @@
+name: compatibility-watch
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility-watch:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check fixed official compatibility evidence
+        shell: bash
+        run: |
+          set +e
+          output="$(./update.sh check --watch 2>&1)"
+          status=$?
+          set -e
+          case "$status" in
+            0) label="unchanged" ;;
+            3) label="drift-review" ;;
+            2) label="evidence-unavailable" ;;
+            *) label="evidence-unavailable"; status=2 ;;
+          esac
+          {
+            echo "## Compatibility watch: $label"
+            echo
+            echo '```text'
+            printf '%s\n' "$output" | head -80
+            echo '```'
+            echo
+            echo "Read-only result: exit $status. Metadata was not advanced."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

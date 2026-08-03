@@ -20,6 +20,8 @@ REMOTE="$TMP/remote.git"
 NO_TAG_REMOTE="$TMP/no-tag-remote.git"
 UPSTREAM_SOURCE="$TMP/agy-upstream-source"
 UPSTREAM_REMOTE="$TMP/agy-upstream.git"
+CODEX_UPSTREAM_SOURCE="$TMP/codex-upstream-source"
+CODEX_UPSTREAM_REMOTE="$TMP/codex-upstream.git"
 CLIENT="$TMP/client"
 DIRTY_CLIENT="$TMP/dirty-client"
 NO_TAG_CLIENT="$TMP/no-tag-client"
@@ -28,10 +30,12 @@ INSTALL_FAIL_CLIENT="$TMP/install-fail-client"
 SKILLS="$TMP/skills"
 OFFICIAL_TOOL_URL="https://github.com/cagdasyurekli/codex-agy-worker.git"
 OFFICIAL_UPSTREAM_URL="https://github.com/google-antigravity/antigravity-cli.git"
-mkdir -p "$SOURCE/skills" "$SOURCE/tests" "$SOURCE/compat" "$TMP/bin" "$SKILLS"
+OFFICIAL_CODEX_UPSTREAM_URL="https://github.com/openai/codex.git"
+mkdir -p "$SOURCE/skills" "$SOURCE/tests" "$SOURCE/compat" "$SOURCE/scripts" "$TMP/bin" "$SKILLS"
 cp "$ROOT/update.sh" "$ROOT/install.sh" "$SOURCE/"
 cp -R "$ROOT/skills/agy-worker" "$SOURCE/skills/agy-worker"
-cp "$ROOT/compat/"*.txt "$SOURCE/compat/"
+cp "$ROOT/compat/"* "$SOURCE/compat/"
+cp "$ROOT/scripts/compatibility.py" "$SOURCE/scripts/"
 
 mkdir -p "$UPSTREAM_SOURCE"
 git -C "$UPSTREAM_SOURCE" init -q -b main
@@ -40,14 +44,30 @@ git -C "$UPSTREAM_SOURCE" config user.name test
 printf 'reviewed upstream\n' > "$UPSTREAM_SOURCE/README.md"
 git -C "$UPSTREAM_SOURCE" add README.md
 git -C "$UPSTREAM_SOURCE" commit -qm 'reviewed upstream fixture'
+git -C "$UPSTREAM_SOURCE" tag v1.1.9
 UPSTREAM_HEAD="$(git -C "$UPSTREAM_SOURCE" rev-parse HEAD)"
 git init -q --bare "$UPSTREAM_REMOTE"
 git -C "$UPSTREAM_SOURCE" remote add publish "$UPSTREAM_REMOTE"
-git -C "$UPSTREAM_SOURCE" push -q publish main
+git -C "$UPSTREAM_SOURCE" push -q publish main --tags
 git --git-dir="$UPSTREAM_REMOTE" symbolic-ref HEAD refs/heads/main
 printf '%s\n' "$UPSTREAM_HEAD" > "$SOURCE/compat/agy-upstream-head.txt"
-python3 -c 'from datetime import date; print(date.today().isoformat())' \
-    > "$SOURCE/compat/last-reviewed.txt"
+python3 -c 'from datetime import date; print(date.today().isoformat())' > "$SOURCE/compat/agy-last-reviewed.txt"
+
+mkdir -p "$CODEX_UPSTREAM_SOURCE"
+git -C "$CODEX_UPSTREAM_SOURCE" init -q -b main
+git -C "$CODEX_UPSTREAM_SOURCE" config user.email test@example.com
+git -C "$CODEX_UPSTREAM_SOURCE" config user.name test
+printf 'reviewed Codex upstream\n' > "$CODEX_UPSTREAM_SOURCE/README.md"
+git -C "$CODEX_UPSTREAM_SOURCE" add README.md
+git -C "$CODEX_UPSTREAM_SOURCE" commit -qm 'reviewed Codex upstream fixture'
+git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.146.0
+CODEX_UPSTREAM_HEAD="$(git -C "$CODEX_UPSTREAM_SOURCE" rev-parse HEAD)"
+git init -q --bare "$CODEX_UPSTREAM_REMOTE"
+git -C "$CODEX_UPSTREAM_SOURCE" remote add publish "$CODEX_UPSTREAM_REMOTE"
+git -C "$CODEX_UPSTREAM_SOURCE" push -q publish main --tags
+git --git-dir="$CODEX_UPSTREAM_REMOTE" symbolic-ref HEAD refs/heads/main
+printf '%s\n' "$CODEX_UPSTREAM_HEAD" > "$SOURCE/compat/codex-upstream-head.txt"
+python3 -c 'from datetime import date; print(date.today().isoformat())' > "$SOURCE/compat/codex-last-reviewed.txt"
 cat > "$SOURCE/tests/test-qa-gate.sh" <<'STUB'
 #!/usr/bin/env bash
 echo "fixture qa suite passed"
@@ -58,9 +78,23 @@ echo "fixture dispatcher suite passed"
 STUB
 cat > "$TMP/bin/agy" <<'STUB'
 #!/usr/bin/env bash
-printf '%s\n' "${FAKE_AGY_VERSION:-1.1.9}"
+case "${FAKE_AGY_MODE:-version}" in
+  empty) exit 0 ;;
+  usage) printf 'Usage: agy [options] [command]\n'; exit 0 ;;
+  fail) exit 7 ;;
+esac
+printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.1.9}}"
 STUB
-chmod +x "$SOURCE/"*.sh "$SOURCE/tests/"*.sh "$TMP/bin/agy"
+cat > "$TMP/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+case "${FAKE_CODEX_MODE:-version}" in
+  empty) exit 0 ;;
+  usage) printf 'Usage: codex [OPTIONS]\n'; exit 0 ;;
+  fail) exit 7 ;;
+esac
+printf '%s\n' "${FAKE_CODEX_OUTPUT:-codex-cli ${FAKE_CODEX_VERSION:-0.146.0}}"
+STUB
+chmod +x "$SOURCE/"*.sh "$SOURCE/tests/"*.sh "$TMP/bin/agy" "$TMP/bin/codex" "$SOURCE/scripts/compatibility.py"
 
 git -C "$SOURCE" init -q -b main
 git -C "$SOURCE" config user.email test@example.com
@@ -96,6 +130,7 @@ configure_official_urls() {
     git -C "$checkout" remote set-url origin "$OFFICIAL_TOOL_URL"
     git -C "$checkout" config "url.$release_remote.insteadOf" "$OFFICIAL_TOOL_URL"
     git -C "$checkout" config "url.$UPSTREAM_REMOTE.insteadOf" "$OFFICIAL_UPSTREAM_URL"
+    git -C "$checkout" config "url.$CODEX_UPSTREAM_REMOTE.insteadOf" "$OFFICIAL_CODEX_UPSTREAM_URL"
 }
 
 for checkout in "$CLIENT" "$DIRTY_CLIENT" "$IGNORED_CLIENT" "$INSTALL_FAIL_CLIENT"; do
@@ -123,27 +158,178 @@ if ! git -C "$CLIENT" show-ref --verify --quiet refs/tags/v1.1.0 \
 else
     bad "check does not fetch tags or mutate the checkout"
 fi
+if grep -Fq 'agy compatibility:' "$TMP/check.out" \
+        && grep -Fq 'codex compatibility:' "$TMP/check.out" \
+        && grep -Fq 'stable release: unchanged' "$TMP/check.out" \
+        && grep -Fq 'source revision: unchanged' "$TMP/check.out"; then
+    ok "local check always reports both tools and official evidence"
+else
+    bad "local check always reports both tools and official evidence"
+fi
+
+WATCH_BEFORE="$(git -C "$CLIENT" status --porcelain --untracked-files=all)"
+PATH="$TMP/bin:$PATH" FAKE_AGY_MODE=fail FAKE_CODEX_MODE=fail \
+    "$CLIENT/update.sh" check --watch > "$TMP/watch.out" 2> "$TMP/watch.err"
+rc=$?
+expect_exit "watch mode needs no installed-tool evidence" 0 "$rc"
+WATCH_AFTER="$(git -C "$CLIENT" status --porcelain --untracked-files=all)"
+if [[ "$WATCH_BEFORE" == "$WATCH_AFTER" ]] \
+        && grep -Fq 'installed: not required in watch mode' "$TMP/watch.out"; then
+    ok "watch mode is read-only and bounded to official evidence"
+else
+    bad "watch mode is read-only and bounded to official evidence"
+fi
+
+PATH="$TMP/bin:$PATH" OFFICIAL_AGY_UPSTREAM=https://example.invalid/secret \
+    OFFICIAL_CODEX_UPSTREAM=https://example.invalid/secret \
+    COMPATIBILITY_REVIEW_DAYS=9999 \
+    "$CLIENT/update.sh" check > "$TMP/fixed-policy.out" 2> "$TMP/fixed-policy.err"
+rc=$?
+expect_exit "environment cannot override fixed sources or cadence" 0 "$rc"
+if ! grep -Fq 'example.invalid' "$TMP/fixed-policy.out" "$TMP/fixed-policy.err"; then
+    ok "ignored source overrides are never disclosed"
+else
+    bad "ignored source overrides are never disclosed"
+fi
+
+PATH="$TMP/bin:$PATH" FAKE_CODEX_VERSION=9.9.9 \
+    "$CLIENT/update.sh" check > "$TMP/codex-version-drift.out" 2> "$TMP/codex-version-drift.err"
+rc=$?
+expect_exit "installed Codex version drift requires review" 3 "$rc"
+
+PATH="$TMP/bin:$PATH" FAKE_AGY_MODE=usage \
+    "$CLIENT/update.sh" check > "$TMP/agy-usage.out" 2> "$TMP/agy-usage.err"
+rc=$?
+expect_exit "agy usage text is inconclusive, not version evidence" 2 "$rc"
+
+PATH="$TMP/bin:$PATH" FAKE_CODEX_MODE=empty \
+    "$CLIENT/update.sh" check > "$TMP/codex-empty.out" 2> "$TMP/codex-empty.err"
+rc=$?
+expect_exit "empty Codex output is inconclusive" 2 "$rc"
+
+PATH="$TMP/bin:$PATH" FAKE_AGY_MODE=fail \
+    "$CLIENT/update.sh" check > "$TMP/agy-fail.out" 2> "$TMP/agy-fail.err"
+rc=$?
+expect_exit "failed documented version command is inconclusive" 2 "$rc"
+
+NO_AGY_BIN="$TMP/no-agy-bin"
+mkdir -p "$NO_AGY_BIN"
+for required_tool in bash git python3 dirname; do
+    ln -s "$(command -v "$required_tool")" "$NO_AGY_BIN/$required_tool"
+done
+cp "$TMP/bin/codex" "$NO_AGY_BIN/codex"
+PATH="$NO_AGY_BIN" "$CLIENT/update.sh" check > "$TMP/missing-agy.out" 2> "$TMP/missing-agy.err"
+rc=$?
+expect_exit "missing installed tool is established drift" 3 "$rc"
+
+PATH="$TMP/bin:$PATH" FAKE_AGY_MODE=usage FAKE_CODEX_VERSION=9.9.9 \
+    "$CLIENT/update.sh" check > "$TMP/aggregate.out" 2> "$TMP/aggregate.err"
+rc=$?
+expect_exit "inconclusive evidence outranks established drift" 2 "$rc"
+if grep -Fq 'agy compatibility:' "$TMP/aggregate.out" \
+        && grep -Fq 'codex compatibility:' "$TMP/aggregate.out"; then
+    ok "aggregation still reports both tools"
+else
+    bad "aggregation still reports both tools"
+fi
+if [[ -z "$(git -C "$CLIENT" status --porcelain --untracked-files=all)" ]]; then
+    ok "check exits 0, 3, and 2 without changing repository state"
+else
+    bad "check exits 0, 3, and 2 without changing repository state"
+fi
 
 PATH="$TMP/bin:$PATH" FAKE_AGY_VERSION=9.9.9 \
     "$CLIENT/update.sh" check > "$TMP/version-drift.out" 2> "$TMP/version-drift.err"
 rc=$?
 expect_exit "installed agy version drift requires review" 3 "$rc"
 
-printf '2000-01-01\n' > "$CLIENT/compat/last-reviewed.txt"
+printf '2000-01-01\n' > "$CLIENT/compat/agy-last-reviewed.txt"
 PATH="$TMP/bin:$PATH" \
     "$CLIENT/update.sh" check > "$TMP/review-due.out" 2> "$TMP/review-due.err"
 rc=$?
 expect_exit "periodic compatibility review becomes due" 3 "$rc"
-if grep -Fq 'REVIEW DUE' "$TMP/review-due.out"; then ok "review age is fixed at 30 days"; else bad "review age is fixed at 30 days"; fi
-git -C "$CLIENT" checkout -q -- compat/last-reviewed.txt
+if grep -Fq 'documentation review: drift-review' "$TMP/review-due.out"; then ok "review age is fixed at 30 days"; else bad "review age is fixed at 30 days"; fi
+git -C "$CLIENT" checkout -q -- compat/agy-last-reviewed.txt
 
-printf '2999-01-01\n' > "$CLIENT/compat/last-reviewed.txt"
+printf '2000-01-01\n' > "$CLIENT/compat/codex-last-reviewed.txt"
+PATH="$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check > "$TMP/codex-review-due.out" 2> "$TMP/codex-review-due.err"
+rc=$?
+expect_exit "Codex documentation review age is enforced" 3 "$rc"
+git -C "$CLIENT" checkout -q -- compat/codex-last-reviewed.txt
+
+printf '2999-01-01\n' > "$CLIENT/compat/agy-last-reviewed.txt"
 PATH="$TMP/bin:$PATH" \
     "$CLIENT/update.sh" check > "$TMP/future-review.out" 2> "$TMP/future-review.err"
 rc=$?
-expect_exit "future compatibility review date fails closed" 3 "$rc"
-if grep -Fq 'invalid compatibility review metadata' "$TMP/future-review.err"; then ok "future review date is identified"; else bad "future review date is identified"; fi
-git -C "$CLIENT" checkout -q -- compat/last-reviewed.txt
+expect_exit "future compatibility review date is inconclusive" 2 "$rc"
+if grep -Fq 'evidence-unavailable' "$TMP/future-review.out"; then ok "future review date is identified"; else bad "future review date is identified"; fi
+git -C "$CLIENT" checkout -q -- compat/agy-last-reviewed.txt
+
+git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.147.0
+git -C "$CODEX_UPSTREAM_SOURCE" push -q publish rust-v0.147.0
+PATH="$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check > "$TMP/codex-stable-drift.out" 2> "$TMP/codex-stable-drift.err"
+rc=$?
+expect_exit "Codex stable release drift requires review" 3 "$rc"
+if grep -Fq 'official 0.147.0; verified 0.146.0' "$TMP/codex-stable-drift.out"; then
+    ok "Codex stable release drift is reported separately"
+else
+    bad "Codex stable release drift is reported separately"
+fi
+PATH="$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check --watch > "$TMP/watch-drift.out" 2> "$TMP/watch-drift.err"
+rc=$?
+expect_exit "watch mode preserves drift-review exit semantics" 3 "$rc"
+
+git -C "$UPSTREAM_SOURCE" tag v1.1.10
+git -C "$UPSTREAM_SOURCE" push -q publish v1.1.10
+PATH="$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check > "$TMP/agy-stable-drift.out" 2> "$TMP/agy-stable-drift.err"
+rc=$?
+expect_exit "agy stable release drift requires review without baseline advance" 3 "$rc"
+
+printf 'Codex upstream moved\n' >> "$CODEX_UPSTREAM_SOURCE/README.md"
+git -C "$CODEX_UPSTREAM_SOURCE" add README.md
+git -C "$CODEX_UPSTREAM_SOURCE" commit -qm 'Codex upstream drift fixture'
+git -C "$CODEX_UPSTREAM_SOURCE" push -q publish main
+PATH="$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check > "$TMP/codex-source-drift.out" 2> "$TMP/codex-source-drift.err"
+rc=$?
+expect_exit "Codex source revision drift requires review" 3 "$rc"
+
+printf 'not-a-version\n' > "$CLIENT/compat/agy-verified-version.txt"
+PATH="$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check > "$TMP/malformed-version.out" 2> "$TMP/malformed-version.err"
+rc=$?
+expect_exit "malformed baseline metadata is inconclusive" 2 "$rc"
+git -C "$CLIENT" checkout -q -- compat/agy-verified-version.txt
+
+printf 'credential-bearing-not-a-revision\n' > "$CLIENT/compat/codex-upstream-head.txt"
+PATH="$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check > "$TMP/malformed-revision.out" 2> "$TMP/malformed-revision.err"
+rc=$?
+expect_exit "malformed source metadata is inconclusive" 2 "$rc"
+if ! grep -Fq 'credential-bearing' "$TMP/malformed-revision.out" "$TMP/malformed-revision.err"; then
+    ok "malformed metadata bytes are not disclosed"
+else
+    bad "malformed metadata bytes are not disclosed"
+fi
+git -C "$CLIENT" checkout -q -- compat/codex-upstream-head.txt
+
+MISSING_UPSTREAM="$TMP/missing-upstream.git"
+git -C "$CLIENT" config --unset-all "url.$UPSTREAM_REMOTE.insteadOf"
+git -C "$CLIENT" config "url.$MISSING_UPSTREAM.insteadOf" "$OFFICIAL_UPSTREAM_URL"
+PATH="$TMP/bin:$PATH" FAKE_CODEX_VERSION=9.9.9 \
+    "$CLIENT/update.sh" check > "$TMP/unavailable-source.out" 2> "$TMP/unavailable-source.err"
+rc=$?
+expect_exit "unavailable official evidence outranks drift" 2 "$rc"
+PATH="$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check --watch > "$TMP/watch-unavailable.out" 2> "$TMP/watch-unavailable.err"
+rc=$?
+expect_exit "watch mode preserves evidence-unavailable exit semantics" 2 "$rc"
+git -C "$CLIENT" config --unset-all "url.$MISSING_UPSTREAM.insteadOf"
+git -C "$CLIENT" config "url.$UPSTREAM_REMOTE.insteadOf" "$OFFICIAL_UPSTREAM_URL"
 
 printf 'upstream moved\n' >> "$UPSTREAM_SOURCE/README.md"
 git -C "$UPSTREAM_SOURCE" add README.md
@@ -251,7 +437,120 @@ PATH="$TMP/bin:$PATH" \
     "$CLIENT/update.sh" check > "$TMP/unexpected-origin.out" 2> "$TMP/unexpected-origin.err"
 rc=$?
 expect_exit "default updater refuses an unexpected origin" 2 "$rc"
-if ! grep -Fq 'credential-value' "$TMP/unexpected-origin.err"; then ok "unexpected origin credentials are not printed"; else bad "unexpected origin credentials are not printed"; fi
+if ! grep -Fq 'credential-value' "$TMP/unexpected-origin.err" \
+        && grep -Fq 'agy compatibility:' "$TMP/unexpected-origin.out" \
+        && grep -Fq 'codex compatibility:' "$TMP/unexpected-origin.out"; then
+    ok "unexpected origin credentials are redacted while both tools are reported"
+else
+    bad "unexpected origin credentials are redacted while both tools are reported"
+fi
+
+MATRIX_TOOL="$ROOT/scripts/compatibility.py"
+MATRIX="$ROOT/compat/agy-model-effort-matrix.json"
+MATRIX_SCHEMA="$ROOT/compat/model-effort-matrix.schema.json"
+python3 "$MATRIX_TOOL" validate-matrix --matrix "$MATRIX" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$ROOT/compat/agy-verified-version.txt" \
+    --reviewed-revision-file "$ROOT/compat/agy-upstream-head.txt" \
+    > "$TMP/candidate-matrix.out" 2> "$TMP/candidate-matrix.err"
+rc=$?
+expect_exit "candidate inventory validates but remains disabled" 3 "$rc"
+
+ACTIVE_MATRIX="$TMP/active-matrix.json"
+sed -e 's/"resolution_status": "disabled-unverified-source"/"resolution_status": "active"/' \
+    -e "s/\"reviewed_source_revision\": null/\"reviewed_source_revision\": \"$UPSTREAM_HEAD\"/" \
+    -e 's/"evidence": \["installed-agy-models"\]/"evidence": ["agy-models", "official-release", "official-source"]/' \
+    "$MATRIX" > "$ACTIVE_MATRIX"
+printf '1.1.10\n' > "$TMP/matrix-version.txt"
+printf '%s\n' "$UPSTREAM_HEAD" > "$TMP/matrix-revision.txt"
+python3 "$MATRIX_TOOL" validate-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/matrix-version.txt" \
+    --reviewed-revision-file "$TMP/matrix-revision.txt" > "$TMP/active-matrix.out" 2> "$TMP/active-matrix.err"
+rc=$?
+expect_exit "active matrix is exactly version/source bound" 0 "$rc"
+
+python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/matrix-version.txt" \
+    --reviewed-revision-file "$TMP/matrix-revision.txt" \
+    --model gemini-3.6-flash --effort high > "$TMP/resolved.out" 2> "$TMP/resolved.err"
+rc=$?
+expect_exit "adjustable pair resolves to one exact compound slug" 0 "$rc"
+if [[ "$(<"$TMP/resolved.out")" == "gemini-3.6-flash-high" ]]; then
+    ok "matrix resolution preserves the advertised exact slug"
+else
+    bad "matrix resolution preserves the advertised exact slug"
+fi
+
+python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/matrix-version.txt" \
+    --reviewed-revision-file "$TMP/matrix-revision.txt" \
+    --model gemini-3.1-pro --effort medium > "$TMP/pro-medium.out" 2> "$TMP/pro-medium.err"
+rc=$?
+expect_exit "Pro medium is explicitly unsupported" 64 "$rc"
+
+python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/matrix-version.txt" \
+    --reviewed-revision-file "$TMP/matrix-revision.txt" \
+    --model claude-sonnet-4-6 --effort high > "$TMP/fixed-model.out" 2> "$TMP/fixed-model.err"
+rc=$?
+expect_exit "fixed model rejects adjustable effort" 64 "$rc"
+
+printf '9.9.9\n' > "$TMP/stale-version.txt"
+python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/stale-version.txt" \
+    --reviewed-revision-file "$TMP/matrix-revision.txt" \
+    --model gemini-3.6-flash --effort high > "$TMP/stale-matrix.out" 2> "$TMP/stale-matrix.err"
+rc=$?
+expect_exit "version-stale matrix cannot resolve" 3 "$rc"
+
+printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' > "$TMP/mismatched-revision.txt"
+python3 "$MATRIX_TOOL" resolve-matrix --matrix "$ACTIVE_MATRIX" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/matrix-version.txt" \
+    --reviewed-revision-file "$TMP/mismatched-revision.txt" \
+    --model gemini-3.6-flash --effort high > "$TMP/mismatch-matrix.out" 2> "$TMP/mismatch-matrix.err"
+rc=$?
+expect_exit "source-mismatched matrix cannot resolve" 3 "$rc"
+
+awk 'NR == 2 { print "  \"schema_version\": 1," } { print }' "$ACTIVE_MATRIX" > "$TMP/duplicate-matrix.json"
+python3 "$MATRIX_TOOL" validate-matrix --matrix "$TMP/duplicate-matrix.json" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/matrix-version.txt" \
+    --reviewed-revision-file "$TMP/matrix-revision.txt" > "$TMP/duplicate-matrix.out" 2> "$TMP/duplicate-matrix.err"
+rc=$?
+expect_exit "duplicate matrix keys fail closed" 2 "$rc"
+
+awk 'NR == 2 { print "  \"unknown_policy\": true," } { print }' "$ACTIVE_MATRIX" > "$TMP/unknown-matrix.json"
+python3 "$MATRIX_TOOL" validate-matrix --matrix "$TMP/unknown-matrix.json" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/matrix-version.txt" \
+    --reviewed-revision-file "$TMP/matrix-revision.txt" > "$TMP/unknown-matrix.out" 2> "$TMP/unknown-matrix.err"
+rc=$?
+expect_exit "unknown matrix keys fail closed" 2 "$rc"
+
+printf '{ malformed\n' > "$TMP/malformed-matrix.json"
+python3 "$MATRIX_TOOL" validate-matrix --matrix "$TMP/malformed-matrix.json" --schema "$MATRIX_SCHEMA" \
+    --verified-version-file "$TMP/matrix-version.txt" \
+    --reviewed-revision-file "$TMP/matrix-revision.txt" > "$TMP/malformed-matrix.out" 2> "$TMP/malformed-matrix.err"
+rc=$?
+expect_exit "malformed matrix JSON fails closed" 2 "$rc"
+
+WORKFLOW="$ROOT/.github/workflows/compatibility-watch.yml"
+if grep -Fq 'schedule:' "$WORKFLOW" && grep -Fq 'workflow_dispatch:' "$WORKFLOW" \
+        && grep -Fq 'runs-on: macos-latest' "$WORKFLOW" \
+        && grep -Fq 'contents: read' "$WORKFLOW" \
+        && grep -Fq 'persist-credentials: false' "$WORKFLOW"; then
+    ok "watch workflow has only the weekly/manual read-only platform contract"
+else
+    bad "watch workflow has only the weekly/manual read-only platform contract"
+fi
+if ! grep -Eq 'pull_request:|secrets\.|contents: write|issues: write|git (pull|commit|push)|gh |curl |wget |brew |npm |pip |update\.sh apply' "$WORKFLOW"; then
+    ok "watch workflow has no install, secret, mutation, or GitHub-write path"
+else
+    bad "watch workflow has no install, secret, mutation, or GitHub-write path"
+fi
+if grep -Fq 'GITHUB_STEP_SUMMARY' "$WORKFLOW" && grep -Fq 'head -80' "$WORKFLOW" \
+        && grep -Fq 'exit "$status"' "$WORKFLOW"; then
+    ok "watch summary is bounded and preserves 0/3/2 status"
+else
+    bad "watch summary is bounded and preserves 0/3/2 status"
+fi
 
 echo
 if (( fail )); then
