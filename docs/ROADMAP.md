@@ -127,19 +127,41 @@ an earlier implementation because it shares a schema or helper.
 - **Intended surface:** Add canonical
   `skills/agy-worker/runtime/verify-job.sh`, root `verify-job.sh`,
   `skills/agy-worker/runtime/schemas/evidence-receipt.schema.json`, and a
-  dependency-free receipt validator. The wrapper invokes the existing gate, writes
-  one atomic mode-`0600` receipt outside the audited repository, and returns the gate
-  exit unchanged. Optional `--pre-recommendation FILE` and
-  `--post-recommendation FILE` inputs may bind already-rendered advisory results; the
-  receipt command never generates or applies them.
-- **Receipt v1 minimum:** Version and kind; immutable base; envelope hash; candidate
-  state hash; ordered path-policy hash; verifier labels and command hashes; exact gate
-  exit/outcome; a verdict restricted to `gate-passed`, `rejected`, or `routed`;
-  optional caller-selected tier; optional validated pre/post advisory objects
-  retaining their rationale, controlled driver evidence, relative cost impact,
-  `recommendation_only: true`, and `applied: false`; `gate_authority: qa-gate`; and an
-  explicit statement that the receipt is unsigned and recommendations did not
-  participate in acceptance.
+  dependency-free receipt validator. The wrapper creates a private temporary receipt
+  and pre-opens a driver-owned structured-evidence sink, then invokes the gate with a
+  narrow optional `--evidence-fd FD`. When that option is absent, `qa-gate.sh` output,
+  side effects, and exit behavior remain identical to today. With it, the gate writes
+  exactly one bounded JSON handoff to the already-open descriptor; it never owns or
+  chooses the destination path. Optional `--pre-recommendation FILE` may bind an
+  already-rendered pre-dispatch advisory. The receipt command never generates or
+  applies a recommendation.
+- **Gate evidence handoff:** The structured handoff is the receipt's bounded source
+  for driver-derived facts. It includes the hash of the exact envelope snapshot the
+  gate validated, the resolved immutable base, the gate's internal initial and final
+  candidate-state digests, and its exact outcome and exit. The wrapper validates the
+  complete handoff, cross-checks it against its immutable inputs, and refuses missing,
+  malformed, duplicate, or mismatched evidence. It never parses gate prose or
+  reconstructs candidate truth from outer-wrapper observations alone.
+- **Receipt v1 minimum:** Version and kind; gate-resolved immutable base; hash of the
+  exact envelope snapshot validated by the gate; ordered path-policy hash; verifier
+  labels and command hashes; the gate-supplied initial and final candidate-state
+  digests; actual gate exit/outcome; a verdict restricted to `gate-passed`, `rejected`,
+  or `routed`; optional
+  caller-selected tier; optional validated pre-dispatch advisory retaining its
+  rationale, controlled driver evidence, relative cost impact,
+  `recommendation_only: true`, `applied: false`, and `stage: pre-dispatch`;
+  `gate_authority: qa-gate`; and an explicit statement that the receipt is unsigned
+  and recommendations did not participate in acceptance.
+- **Exit and publication contract:** Wrapper preflight/input errors exit `64` before
+  the gate and publish no receipt. Gate outcomes `0` and `10`–`15` may publish a
+  receipt with the exact `gate_exit`; after successful receipt validation, file
+  `fsync`, atomic publication, and parent-directory durability, the wrapper returns
+  that gate exit. Gate exit `64` publishes no receipt and returns `64`. A missing or
+  mismatched handoff, unknown gate exit, signal, or other internal protocol failure
+  publishes no receipt and returns reserved exit `70`. Receipt validation, `fsync`,
+  or atomic-publication failure removes the private temporary file, publishes no
+  partial receipt, and returns reserved exit `74`. The wrapper never returns `0`
+  unless the gate returned `0` **and** the receipt was durably published.
 - **Exclude:** Diff/source content, prompt, worker summary/confidence, raw verifier
   commands or output, credentials, absolute repository paths, provider pricing, and
   an applied recommendation.
@@ -147,25 +169,51 @@ an earlier implementation because it shares a schema or helper.
 - **Trust boundary:** A receipt records a gate execution. It must not reproduce gate
   acceptance logic, treat its own existence as acceptance, use `accepted` as a
   verdict, or map any nonzero gate result to `gate-passed`. A receipt path inside the
-  audited repository is rejected.
+  audited repository is rejected. Schema validation, canonical serialization, and
+  internal-invariant checks can detect malformed or inconsistent receipts, but an
+  unsigned receipt cannot detect arbitrary schema-valid tampering by an actor who can
+  rewrite the document and recompute its embedded hashes. Validation can detect a
+  mismatch when the caller separately supplies the bound envelope, candidate
+  artifact, pre-dispatch advisory, or a trusted external digest. Receipt v1 makes no
+  self-hash authenticity or signing claim; signing remains deferred to an approved
+  threat model and external signer.
 - **Minimum accept tests:** An honest edit with passing driver verification yields a
-  schema-valid receipt with verdict `gate-passed`; hashes bind the exact base,
-  envelope, policy, verifier order, and candidate state; wrapper and gate exit codes
-  match. The test does not call the candidate accepted before human review.
+  durably published, schema-valid receipt with verdict `gate-passed`, actual
+  `gate_exit: 0`, the gate's exact envelope snapshot hash, resolved base, and internal
+  initial/final state digests; the wrapper returns `0`. Each normal gate result
+  `10`–`14` durably publishes verdict `rejected`, result `15` publishes `routed`, and
+  the wrapper returns that exact gate exit. A valid pre-dispatch advisory is bound
+  without changing the selected tier or gate result. The tests never call a candidate
+  accepted before human review. Direct `qa-gate.sh` calls without `--evidence-fd`
+  retain their current stdout/stderr and exit contract.
 - **Minimum reject tests:** Scope failure, malformed envelope, untrusted command/test
-  claim, missing edits, verifier failure/mutation, and human-required outcome remain
-  rejected and are never rendered as acceptance; reject overwrite, symlink target,
-  in-repository output, unknown schema version, receipt tampering, cross-stage or
-  malformed advisory input, selected-tier mismatch, or an advisory that claims it was
-  applied.
+  claim, missing edits, verifier failure/mutation, and human-required outcome retain
+  their gate classification and are never rendered as acceptance. Reject overwrite,
+  symlink target, in-repository output, unknown schema version, inconsistent receipt,
+  separately bound artifact/digest mismatch, malformed or duplicate handoff, envelope
+  snapshot/base/state/outcome/exit mismatch, post-gate or cross-stage advisory input,
+  selected-tier mismatch, or an advisory that claims it was applied. Wrapper/gate
+  preflight `64`, unknown exit, signal, missing evidence, internal `70`, and durable
+  publication `74` paths publish no receipt; injected validation, `fsync`, rename, and
+  parent-directory durability failures leave no final or partial receipt. An unsigned
+  receipt rewritten with recomputed hashes must not be falsely described as
+  tamper-evident without a separately trusted binding.
 - **Docs and AGENTS impact:** Update README, SKILL, privacy disclosure, REPO_MAP, and
   architectural lessons only after implementation. AGENTS then gains the actual new
   suite/count and a concise durable rule that receipts do not replace gate or human
   review. Run `agents-md-auditor` before and after.
 - **Size:** M.
 - **Done/exit criteria:** One isolated PR; no behavior change when `verify-job.sh` is
-  unused; all current suites plus receipt accept/reject matrix green; no raw private
-  data in the receipt; independent verifier confirms no weaker gate path.
+  unused and no behavior/output/exit change when `qa-gate.sh` is called without its
+  optional evidence handoff; all current suites plus the `0`, `10`–`15`, `64`, `70`,
+  and `74` receipt matrix green; no receipt on unknown/signal/missing-evidence or
+  publication failure; no raw private data in the receipt; no post-gate recommendation
+  binding in P0-A; and an independent verifier confirms no weaker gate path.
+
+The existing post-gate recommender remains external and unchanged. P0-A does not
+auto-run it or bind its output after a synchronous gate completes. A later, separate
+contract may bind a post-gate advisory without rewriting the canonical one-pass
+receipt or creating chronology ambiguity.
 
 #### P0-B — Human Report renderer
 
@@ -181,8 +229,10 @@ an earlier implementation because it shares a schema or helper.
 - **Minimum accept tests:** Receipts whose verdicts are `gate-passed`, `rejected`, and
   `routed` render stable, escaped text and Markdown with exact exit/outcome and
   verification labels.
-- **Minimum reject tests:** Malformed, tampered, unsupported-version, control-character,
-  Markdown-link-injection, or forbidden-private-field input produces no report.
+- **Minimum reject tests:** Malformed, internally inconsistent, unsupported-version,
+  control-character, Markdown-link-injection, forbidden-private-field, or separately
+  bound artifact/trusted-digest mismatch produces no report. Do not claim detection
+  of arbitrary unsigned receipt rewriting with recomputed hashes.
 - **Docs and AGENTS impact:** Add report examples to README/SKILL and ownership to
   REPO_MAP; update privacy language. Change AGENTS only for an actual suite/count.
 - **Size:** S.
