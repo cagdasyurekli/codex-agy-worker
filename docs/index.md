@@ -59,5 +59,7 @@ Checked-in repository files do not alter GitHub About fields, topics, homepage
 metadata, or social-preview settings. Those remain deliberate repository-owner
 actions.
 
-[Read the full documentation](https://github.com/cagdasyurekli/codex-agy-worker#readme)
-or [inspect the source and offline tests](https://github.com/cagdasyurekli/codex-agy-worker).
+[Read the full documentation](https://github.com/cagdasyurekli/codex-agy-worker#readme),
+[review the planned roadmap](https://github.com/cagdasyurekli/codex-agy-worker/blob/main/docs/ROADMAP.md), or
+[inspect the source and offline tests](https://github.com/cagdasyurekli/codex-agy-worker).
+Roadmap entries are proposals, not current product capabilities.
