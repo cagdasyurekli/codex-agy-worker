@@ -62,6 +62,194 @@ else
     bad "public skill bundle contains no checkout placeholder or local path marker"
 fi
 
+if [[ -x "$ROOT/doctor.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/doctor.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/doctor-metadata.py" ]]; then
+    ok "root and portable packages include the canonical read-only doctor"
+else
+    bad "root and portable packages include the canonical read-only doctor"
+fi
+
+required_runtime_dependencies=(
+    agy-worker.sh
+    qa-gate.sh
+    model-recommendation.sh
+    doctor.sh
+    scripts/validate-envelope.py
+    scripts/model-recommendation.py
+    scripts/doctor-metadata.py
+    schemas/worker-result.schema.json
+    agents/bulk-test-writer.md
+    agents/repo-inventory.md
+    agents/diff-reviewer.md
+    compat/agy-verified-version.txt
+    compat/agy-last-reviewed.txt
+)
+for dependency in "${required_runtime_dependencies[@]}"; do
+    label="${dependency//\//-}"
+    dependency_copy="$TMP/missing-$label"
+    cp -R "$ROOT/skills/agy-worker" "$dependency_copy"
+    rm -f "$dependency_copy/runtime/$dependency"
+    PATH="$TMP/no-network-bin:$PATH" NETWORK_MARKER="$TMP/missing-$label.network" \
+        bash "$dependency_copy/scripts/resolve-pipeline.sh" \
+        > "$TMP/missing-$label.out" 2> "$TMP/missing-$label.err"
+    rc=$?
+    if [[ "$rc" == 2 && ! -s "$TMP/missing-$label.out" ]] \
+            && grep -Fq 'complete agy-worker skill bundle' "$TMP/missing-$label.err" \
+            && [[ ! -e "$TMP/missing-$label.network" ]]; then
+        ok "resolver rejects a bundle missing $dependency"
+    else
+        bad "resolver rejects a bundle missing $dependency"
+    fi
+done
+
+if python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1])
+resolver = (root / "skills/agy-worker/scripts/resolve-pipeline.sh").read_text()
+doctor = (root / "skills/agy-worker/runtime/doctor.sh").read_text()
+
+def body(text: str, name: str) -> str:
+    match = re.search(rf"^{name}\(\) \{{\n(.*?)^\}}$", text, re.M | re.S)
+    assert match is not None
+    return match.group(1)
+
+assert body(resolver, "pipeline_runtime_complete") == body(
+    doctor, "doctor_runtime_complete"
+)
+assert "runtime-bundle.sh" not in resolver
+assert "runtime-bundle.sh" not in doctor
+assert not re.search(r"(?:^|[;&|()]\s*)(?:source|\.)\s+", resolver, re.M)
+assert not re.search(r"(?:^|[;&|()]\s*)(?:source|\.)\s+", doctor, re.M)
+PY
+then ok "resolver and doctor use the same fixed non-sourced runtime predicate"; else bad "resolver and doctor use the same fixed non-sourced runtime predicate"; fi
+
+real_parent_copy="$TMP/real-runtime-parents"
+cp -R "$ROOT/skills/agy-worker" "$real_parent_copy"
+real_parent_resolved="$(bash "$real_parent_copy/scripts/resolve-pipeline.sh" 2>/dev/null)"
+if [[ "$real_parent_resolved" == "$(cd "$real_parent_copy/runtime" && pwd -P)" ]]; then
+    ok "resolver accepts bundle-owned real runtime parent directories"
+else
+    bad "resolver accepts bundle-owned real runtime parent directories"
+fi
+
+for parent in scripts agents schemas compat; do
+    for link_kind in absolute relative in-root; do
+        parent_copy="$TMP/parent-$parent-$link_kind"
+        foreign_parent="$TMP/foreign-$parent-$link_kind"
+        cp -R "$ROOT/skills/agy-worker" "$parent_copy"
+        if [[ "$link_kind" == in-root ]]; then
+            mv "$parent_copy/runtime/$parent" \
+                "$parent_copy/runtime/owned-$parent"
+            ln -s "owned-$parent" "$parent_copy/runtime/$parent"
+        else
+            mv "$parent_copy/runtime/$parent" "$foreign_parent"
+            if [[ "$link_kind" == absolute ]]; then
+                ln -s "$foreign_parent" "$parent_copy/runtime/$parent"
+            else
+                ln -s "../../${foreign_parent##*/}" "$parent_copy/runtime/$parent"
+            fi
+        fi
+        bash "$parent_copy/scripts/resolve-pipeline.sh" \
+            > "$TMP/parent-$parent-$link_kind.out" \
+            2> "$TMP/parent-$parent-$link_kind.err"
+        rc=$?
+        if [[ "$rc" == 2 \
+                && ! -s "$TMP/parent-$parent-$link_kind.out" ]] \
+                && grep -Fq 'complete agy-worker skill bundle' \
+                    "$TMP/parent-$parent-$link_kind.err" \
+                && ! grep -Fq "$TMP" "$TMP/parent-$parent-$link_kind.err"; then
+            ok "resolver rejects $link_kind $parent parent symlink"
+        else
+            bad "resolver rejects $link_kind $parent parent symlink"
+        fi
+    done
+done
+
+for specification in \
+    'qa-gate.sh:executable' \
+    'scripts/validate-envelope.py:executable' \
+    'schemas/worker-result.schema.json:data' \
+    'agents/repo-inventory.md:data' \
+    'compat/agy-verified-version.txt:data'; do
+    dependency="${specification%:*}"
+    dependency_class="${specification##*:}"
+    for wrong_type in directory symlink-directory symlink-foreign fifo wrong-mode; do
+        label="${dependency//\//-}-$wrong_type"
+        dependency_copy="$TMP/wrong-$label"
+        cp -R "$ROOT/skills/agy-worker" "$dependency_copy"
+        dependency_path="$dependency_copy/runtime/$dependency"
+        rm -f "$dependency_path"
+        case "$wrong_type" in
+            directory) mkdir "$dependency_path" ;;
+            symlink-directory) ln -s "$TMP" "$dependency_path" ;;
+            symlink-foreign) ln -s /dev/null "$dependency_path" ;;
+            fifo) mkfifo "$dependency_path" ;;
+            wrong-mode)
+                cp "$ROOT/skills/agy-worker/runtime/$dependency" "$dependency_path"
+                if [[ "$dependency_class" == executable ]]; then
+                    chmod -x "$dependency_path"
+                else
+                    chmod +x "$dependency_path"
+                fi
+                ;;
+        esac
+        PATH="$TMP/no-network-bin:$PATH" NETWORK_MARKER="$TMP/wrong-$label.network" \
+            bash "$dependency_copy/scripts/resolve-pipeline.sh" \
+            > "$TMP/wrong-$label.out" 2> "$TMP/wrong-$label.err"
+        rc=$?
+        if [[ "$rc" == 2 && ! -s "$TMP/wrong-$label.out" ]] \
+                && grep -Fq 'complete agy-worker skill bundle' "$TMP/wrong-$label.err" \
+                && [[ ! -e "$TMP/wrong-$label.network" ]] \
+                && ! grep -Fq "$TMP" "$TMP/wrong-$label.err"; then
+            ok "resolver rejects $wrong_type for $dependency_class $dependency"
+        else
+            bad "resolver rejects $wrong_type for $dependency_class $dependency"
+        fi
+    done
+done
+
+for helper_mode in malformed side-effect exit stale; do
+    helper_copy="$TMP/helper-$helper_mode"
+    cp -R "$ROOT/skills/agy-worker" "$helper_copy"
+    helper="$helper_copy/runtime/scripts/runtime-bundle.sh"
+    case "$helper_mode" in
+        malformed) printf 'if then impossible\n' > "$helper" ;;
+        side-effect) printf ': > %q\n' "$TMP/helper-side-effect.marker" > "$helper" ;;
+        exit) printf 'exit 91\n' > "$helper" ;;
+        stale) printf 'pipeline_runtime_complete() { return 1; }\n' > "$helper" ;;
+    esac
+    resolved="$(bash "$helper_copy/scripts/resolve-pipeline.sh" 2> "$TMP/helper-$helper_mode.err")"
+    rc=$?
+    if [[ "$rc" == 0 \
+            && "$resolved" == "$(cd "$helper_copy/runtime" && pwd -P)" \
+            && ! -s "$TMP/helper-$helper_mode.err" \
+            && ! -e "$TMP/helper-side-effect.marker" ]]; then
+        ok "resolver ignores $helper_mode candidate runtime helper"
+    else
+        bad "resolver ignores $helper_mode candidate runtime helper"
+    fi
+done
+
+if grep -Fq 'run: ./tests/test-doctor.sh' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq 'runs-on: macos-latest' "$ROOT/.github/workflows/test.yml"; then
+    ok "macOS CI runs the dedicated offline doctor suite"
+else
+    bad "macOS CI runs the dedicated offline doctor suite"
+fi
+
+if cmp -s "$ROOT/compat/agy-verified-version.txt" \
+        "$ROOT/skills/agy-worker/runtime/compat/agy-verified-version.txt" \
+        && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
+        "$ROOT/skills/agy-worker/runtime/compat/agy-last-reviewed.txt"; then
+    ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
+else
+    bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
+fi
+
 resolved="$(bash "$ROOT/skills/agy-worker/scripts/resolve-pipeline.sh" 2>/dev/null)"
 if [[ "$resolved" == "$(cd "$ROOT" && pwd -P)" ]]; then
     ok "Codex package resolver finds the adjacent canonical runtime"
@@ -124,6 +312,20 @@ else
     bad "skill-folder-only resolver rejects an incomplete runtime bundle"
 fi
 
+cp -R "$ROOT/skills/agy-worker" "$TMP/missing-doctor-skill"
+rm -f "$TMP/missing-doctor-skill/runtime/doctor.sh"
+PATH="$TMP/no-network-bin:$PATH" NETWORK_MARKER="$TMP/missing-doctor-network" \
+    bash "$TMP/missing-doctor-skill/scripts/resolve-pipeline.sh" \
+    > "$TMP/missing-doctor.out" 2> "$TMP/missing-doctor.err"
+rc=$?
+if [[ "$rc" == "2" && ! -s "$TMP/missing-doctor.out" ]] \
+        && grep -Fq 'complete agy-worker skill bundle' "$TMP/missing-doctor.err" \
+        && [[ ! -e "$TMP/missing-doctor-network" ]]; then
+    ok "resolver rejects a doctor-less bundle without fallback or network"
+else
+    bad "resolver rejects a doctor-less bundle without fallback or network"
+fi
+
 mkdir -p "$TMP/bin" "$TMP/installed"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/agy"
 chmod +x "$TMP/bin/agy"
@@ -138,6 +340,16 @@ if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]]; then
     ok "standalone install resolves the checkout without rewriting SKILL.md"
 else
     bad "standalone install resolves the checkout without rewriting SKILL.md"
+fi
+if [[ -x "$TMP/installed/agy-worker/runtime/doctor.sh" ]] \
+        && [[ -x "$TMP/installed/agy-worker/runtime/scripts/doctor-metadata.py" ]] \
+        && cmp -s "$ROOT/compat/agy-verified-version.txt" \
+            "$TMP/installed/agy-worker/runtime/compat/agy-verified-version.txt" \
+        && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
+            "$TMP/installed/agy-worker/runtime/compat/agy-last-reviewed.txt"; then
+    ok "standalone install preserves the doctor and its reviewed metadata bytes"
+else
+    bad "standalone install preserves the doctor and its reviewed metadata bytes"
 fi
 
 mkdir -p "$TMP/reject-relative/agy-worker"

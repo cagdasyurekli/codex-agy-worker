@@ -52,6 +52,26 @@ URL to the expected host/path/version, and make no archive request. Keep the rec
 tuple explicitly observational: version or same-version build/hash drift asks for
 human review and cannot advance a baseline or activate model routing.
 
+## Diagnostics observe; they do not repair
+
+A readiness command is safest when its success claim is narrower than the job it
+precedes. Check only bounded offline prerequisites and semantic command output; do
+not turn an exit code, usage page, or executable name into proof of compatibility.
+Keep paths and raw command output out of reports, because even a diagnostic can leak
+repository names, credentials, or personal configuration.
+
+Never make a doctor scan home configuration, probe invented authentication commands,
+call a provider, access the network, run an updater, or repair a failure. Report
+version drift and due review as requiring human review; report missing or malformed
+prerequisites as not ready. Green proves only the tested offline conditions, not
+authentication, provider availability, sandbox permission, task quality, or a future
+dispatch. Portable diagnostics must carry byte-synchronized reviewed metadata and
+fail closed when their bundle or records are incomplete. Treat temp placement and
+signal propagation as part of the trust boundary: ignore caller temp paths, keep
+captures private and bounded, and terminate the exact active process group. A
+non-symlink file is not contained when one of its parent directories is a symlink;
+canonicalize the root and require package-owned parents to be real directories.
+
 A disposable candidate worktree isolates files, not execution. Candidate validation
 runs release-owned scripts with the invoking user's privileges. Exact tag/ref and
 fast-forward checks prove transport consistency, not that candidate code is harmless.

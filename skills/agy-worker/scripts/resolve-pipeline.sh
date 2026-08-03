@@ -7,8 +7,92 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 SKILL_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)"
 
 is_pipeline() {
-    [[ -x "$1/agy-worker.sh" && -x "$1/qa-gate.sh" \
-        && -x "$1/model-recommendation.sh" ]]
+    local pipeline_root runtime_root required component component_canonical parent_canonical
+
+    pipeline_root="$(CDPATH= cd -- "$1" 2>/dev/null && pwd -P)" || return 1
+    runtime_root="$pipeline_root"
+    if [[ -e "$pipeline_root/skills" || -L "$pipeline_root/skills" ]]; then
+        parent_canonical="$pipeline_root"
+        for component in skills agy-worker runtime; do
+            [[ -d "$parent_canonical/$component" \
+                && ! -L "$parent_canonical/$component" ]] || return 1
+            component_canonical="$(CDPATH= cd -- "$parent_canonical/$component" \
+                2>/dev/null && pwd -P)" || return 1
+            [[ "$component_canonical" == "$parent_canonical/$component" ]] \
+                || return 1
+            parent_canonical="$component_canonical"
+        done
+        runtime_root="$pipeline_root/skills/agy-worker/runtime"
+    fi
+    pipeline_runtime_complete "$runtime_root" || return 1
+
+    for required in agy-worker.sh qa-gate.sh model-recommendation.sh doctor.sh; do
+        [[ -f "$pipeline_root/$required" && -x "$pipeline_root/$required" \
+            && ! -L "$pipeline_root/$required" ]] || return 1
+    done
+}
+
+pipeline_runtime_complete() {
+    local runtime_root="$1" required parent runtime_canonical parent_canonical
+    local dependency_parent dependency_canonical
+
+    [[ -d "$runtime_root" && ! -L "$runtime_root" ]] || return 1
+    runtime_canonical="$(CDPATH= cd -- "$runtime_root" 2>/dev/null && pwd -P)" \
+        || return 1
+    for parent in scripts agents schemas compat; do
+        [[ -d "$runtime_canonical/$parent" \
+            && ! -L "$runtime_canonical/$parent" ]] || return 1
+        parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$parent" \
+            2>/dev/null && pwd -P)" || return 1
+        [[ "$parent_canonical" == "$runtime_canonical/$parent" ]] || return 1
+        case "$parent_canonical" in
+            "$runtime_canonical"/*) ;;
+            *) return 1 ;;
+        esac
+    done
+    for required in \
+        agy-worker.sh \
+        qa-gate.sh \
+        model-recommendation.sh \
+        doctor.sh \
+        scripts/validate-envelope.py \
+        scripts/model-recommendation.py \
+        scripts/doctor-metadata.py; do
+        case "$required" in
+            */*) dependency_parent="${required%/*}" ;;
+            *) dependency_parent='.' ;;
+        esac
+        parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$dependency_parent" \
+            2>/dev/null && pwd -P)" || return 1
+        dependency_canonical="$parent_canonical/${required##*/}"
+        case "$dependency_canonical" in
+            "$runtime_canonical"/*) ;;
+            *) return 1 ;;
+        esac
+        [[ "$dependency_canonical" == "$runtime_canonical/$required" \
+            && -f "$dependency_canonical" && -x "$dependency_canonical" \
+            && ! -L "$dependency_canonical" ]] || return 1
+    done
+
+    for required in \
+        schemas/worker-result.schema.json \
+        agents/bulk-test-writer.md \
+        agents/repo-inventory.md \
+        agents/diff-reviewer.md \
+        compat/agy-verified-version.txt \
+        compat/agy-last-reviewed.txt; do
+        dependency_parent="${required%/*}"
+        parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$dependency_parent" \
+            2>/dev/null && pwd -P)" || return 1
+        dependency_canonical="$parent_canonical/${required##*/}"
+        case "$dependency_canonical" in
+            "$runtime_canonical"/*) ;;
+            *) return 1 ;;
+        esac
+        [[ "$dependency_canonical" == "$runtime_canonical/$required" \
+            && -f "$dependency_canonical" && ! -x "$dependency_canonical" \
+            && ! -L "$dependency_canonical" ]] || return 1
+    done
 }
 
 PLUGIN_ROOT="$(CDPATH= cd -- "$SKILL_DIR/../.." 2>/dev/null && pwd -P)" || PLUGIN_ROOT=""

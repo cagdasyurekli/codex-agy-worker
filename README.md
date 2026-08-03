@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The five offline suites need no agy process, network access, API key, or GitHub login.
+The six offline suites need no agy process, network access, API key, or GitHub login.
 
 ## Roadmap
 
@@ -82,6 +82,44 @@ before running `./install.sh`; do not substitute an unverified tag.
 
 Requires `agy` (Antigravity CLI) on `PATH`, `git`, `python3`, and bash.
 Tested on macOS with agy 1.1.9 and codex-cli 0.146.0. Not tested on Windows.
+
+Before spending provider quota, run the offline doctor against the repository you
+plan to delegate:
+
+```bash
+./doctor.sh --repo /absolute/path/to/target
+./doctor.sh --repo /absolute/path/to/target --format json
+```
+
+The doctor is deterministic and read-only. It checks the bundled runtime, Bash 3.2,
+Python 3, git and worktree support, target Git worktree, exact semantic
+`agy --version`, and the checked-in agy compatibility-review records. It invokes no
+provider, network client, updater, dispatch, authentication probe, or personal-config
+scan, and it repairs nothing.
+
+| Exit | Overall | Meaning |
+|---:|---|---|
+| `0` | `ready` | All offline prerequisites match the checked-in evidence. |
+| `3` | `review-required` | Prerequisites work, but the agy version drifted or review is due. |
+| `3` | `not-ready` | A prerequisite, semantic probe, repository, bundle, or metadata check failed. |
+| `64` | no report | Invocation or format is invalid. |
+
+If the repository-root launcher cannot resolve a bounded symlink chain to the
+canonical `doctor.sh`, it emits one sanitized diagnostic, no report, and exits `3`.
+The wrapper itself may be reached through that bounded chain, but the package-owned
+`skills/agy-worker/runtime` path and the runtime's `scripts`, `agents`, `schemas`,
+and `compat` parents must be real directories contained in the bundle, not symlinks.
+The doctor also ignores caller-provided temp paths, gives every child probe one
+private external workspace, and removes it before returning. HUP, INT, or TERM is
+forwarded to the active probe and its descendants; interruption emits only
+`doctor: interrupted`, no report, and exits `3`.
+
+Green covers only those offline prerequisites. It does **not** certify authentication,
+provider availability, Codex/agy sandbox permission, task quality, or a future
+dispatch. A due or drift result asks for human compatibility review; it never updates
+metadata. For a folder-only skill copy, resolve `PIPELINE` as shown in
+`skills/agy-worker/SKILL.md` and run `"$PIPELINE/doctor.sh"`—no checkout or fetch is
+needed.
 
 `skills/agy-worker/` is the one canonical, open-standard Agent Skill and contains its
 own Bash/Python/git runtime. A folder-only copy therefore works without the rest of
@@ -529,6 +567,7 @@ output, not its own recollection.
 agy-worker.sh                 dispatch a job, return a schema-valid envelope
 qa-gate.sh                    verify an envelope against the repo — the evidence
 model-recommendation.sh       repository compatibility wrapper for the advisory
+doctor.sh                     repository wrapper for offline read-only diagnostics
 ground-truth.sh               dump live agy facts for skill authoring
 update.sh                     explicit release + agy/Codex compatibility check/apply
 bug-report.sh                 sanitized local draft/preview/optional submission
@@ -538,6 +577,7 @@ scripts/official_distribution.py  fixed, bounded agy distribution-manifest canar
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
 skills/agy-worker/            canonical self-contained Agent Skill and runtime
 skills/agy-worker/runtime/    dispatcher, gate, advisory, personas, schema, Python helpers
+skills/agy-worker/runtime/compat/  byte-synced portable agy doctor metadata
 .codex-plugin/plugin.json     OpenAI skills-only plugin package metadata
 docs/REPO_MAP.md              hand-maintained ownership, data flow, and trust map
 docs/lessons_learned.md       durable architectural mistakes and prevention rules
@@ -551,7 +591,8 @@ tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          164-case offline local-remote/matrix/manifest updater suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       offline Codex package/relocation/landing suite
+tests/test-packaging.sh       82-case offline Codex package/relocation/landing suite
+tests/test-doctor.sh          143-case offline fake-tool/read-only doctor suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```
 
@@ -575,6 +616,8 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
 - Model/effort resolution is intentionally disabled until a future human reconciliation
   can bind official evidence to the exact installed inventory; no wrapper `--effort`
   input exists in this release.
+- A green doctor result covers offline prerequisites only. It does not predict live
+  authentication, provider, sandbox, task, or dispatch behavior and never fixes them.
 
 ## License
 
