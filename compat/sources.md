@@ -14,13 +14,25 @@ an external action.
 - Official changelog: https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md
 - Official CLI overview: https://antigravity.google/docs/cli-overview
 - Official usage guidance: https://antigravity.google/docs/cli-using
+- Official installer: https://antigravity.google/cli/install.sh
+- Fixed `darwin_arm64` distribution manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
 - Installed interface evidence: `./ground-truth.sh`
 
 The verified baseline is agy `1.1.9` at source revision
-`21f650e7bb852f58562425ddd0c7d203c80e3d0e`. Installed `1.1.10` is established
-drift, not permission to advance that baseline. Its model list is recorded only as a
-disabled candidate inventory in `agy-model-effort-matrix.json`, because today's
-official `1.1.9` release/source evidence does not substantiate those exact rows.
+`21f650e7bb852f58562425ddd0c7d203c80e3d0e`. The official distribution manifest and
+the installed executable advertise `1.1.10`; the public stable release and reviewed
+source still establish only `1.1.9`. This is drift, not permission to advance that
+baseline. The `1.1.10` model list remains a disabled candidate inventory in
+`agy-model-effort-matrix.json`, because distribution availability does not
+substantiate its source or behavior.
+
+`agy-distribution-manifest.json` records the observed `1.1.10` version, exact Google
+Storage archive URL, and lowercase SHA-512 tuple. It is an observational snapshot,
+not an authoritative baseline, signature, or permission to download the archive.
+The checker fetches only the fixed small manifest, rejects redirects and malformed
+transport/schema/URL evidence, and never makes an archive request. A version change
+or a same-version URL/build/hash change is `drift-review`; unavailable or invalid
+evidence is inconclusive.
 
 ## Codex CLI
 

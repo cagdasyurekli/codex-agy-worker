@@ -7,6 +7,8 @@ ROOT="$HERE/.."
 TMP="$(mktemp -d -t agyworker-update-tests.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
+REAL_PYTHON_REAL="$(command -v python3)"
+export REAL_PYTHON_REAL
 
 ok() { printf '  ok   %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail+1)); }
@@ -98,6 +100,7 @@ cp "$ROOT/update.sh" "$ROOT/install.sh" "$SOURCE/"
 cp -R "$ROOT/skills/agy-worker" "$SOURCE/skills/agy-worker"
 cp "$ROOT/compat/"* "$SOURCE/compat/"
 cp "$ROOT/scripts/compatibility.py" "$SOURCE/scripts/"
+cp "$ROOT/scripts/official_distribution.py" "$SOURCE/scripts/"
 
 mkdir -p "$UPSTREAM_SOURCE"
 git -C "$UPSTREAM_SOURCE" init -q -b main
@@ -156,7 +159,50 @@ case "${FAKE_CODEX_MODE:-version}" in
 esac
 printf '%s\n' "${FAKE_CODEX_OUTPUT:-codex-cli ${FAKE_CODEX_VERSION:-0.146.0}}"
 STUB
-chmod +x "$SOURCE/"*.sh "$SOURCE/tests/"*.sh "$TMP/bin/agy" "$TMP/bin/codex" "$SOURCE/scripts/compatibility.py"
+cat > "$TMP/bin/python3" <<'STUB'
+#!/usr/bin/env bash
+set -u
+case "${1:-}" in
+  */scripts/official_distribution.py)
+    if [[ $# -ne 1 ]] || ! "$REAL_PYTHON_REAL" -B -c '
+import importlib.util
+import sys
+expected = (
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/"
+    "manifests/darwin_arm64.json"
+)
+spec = importlib.util.spec_from_file_location("manifest_fixture", sys.argv[1])
+if spec is None or spec.loader is None:
+    raise SystemExit(1)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+raise SystemExit(0 if module.MANIFEST_URL == expected else 1)
+' "$1"; then
+      printf '%s\n' 'fake manifest launcher rejected production argv or fixed URL' >&2
+      exit 70
+    fi
+    case "${FAKE_MANIFEST_RESULT:-unchanged}" in
+      unchanged)
+        printf '%s\n' '  distribution manifest: unchanged (1.1.9)'
+        exit 0 ;;
+      drift)
+        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.1.10; verified 1.1.9)'
+        exit 3 ;;
+      unavailable)
+        printf '%s\n' '  distribution manifest: evidence-unavailable (network evidence unavailable)'
+        exit 2 ;;
+      invalid)
+        printf '%s\n' 'https://example.invalid/credential-secret'
+        printf '%s\n' 'raw exception credential-secret' >&2
+        exit 0 ;;
+      *) exit 70 ;;
+    esac
+    ;;
+esac
+exec "$REAL_PYTHON_REAL" "$@"
+STUB
+chmod +x "$SOURCE/"*.sh "$SOURCE/tests/"*.sh "$TMP/bin/agy" "$TMP/bin/codex" \
+    "$TMP/bin/python3" "$SOURCE/scripts/compatibility.py" "$SOURCE/scripts/official_distribution.py"
 
 git -C "$SOURCE" init -q -b main
 git -C "$SOURCE" config user.email test@example.com
@@ -220,6 +266,7 @@ expect_same_snapshot "exit 0 preserves HEAD, refs, index, and all worktree bytes
     "$TMP/check-zero.before" "$TMP/check-zero.after"
 if grep -Fq 'agy compatibility:' "$TMP/check.out" \
         && grep -Fq 'codex compatibility:' "$TMP/check.out" \
+        && grep -Fq 'distribution manifest: unchanged' "$TMP/check.out" \
         && grep -Fq 'stable release: unchanged' "$TMP/check.out" \
         && grep -Fq 'source revision: unchanged' "$TMP/check.out"; then
     ok "local check always reports both tools and official evidence"
@@ -242,6 +289,7 @@ fi
 
 PATH="$TMP/bin:$PATH" OFFICIAL_AGY_UPSTREAM=https://example.invalid/secret \
     OFFICIAL_CODEX_UPSTREAM=https://example.invalid/secret \
+    OFFICIAL_AGY_DISTRIBUTION_MANIFEST=https://example.invalid/credential \
     COMPATIBILITY_REVIEW_DAYS=9999 \
     "$CLIENT/update.sh" check > "$TMP/fixed-policy.out" 2> "$TMP/fixed-policy.err"
 rc=$?
@@ -250,6 +298,50 @@ if ! grep -Fq 'example.invalid' "$TMP/fixed-policy.out" "$TMP/fixed-policy.err";
     ok "ignored source overrides are never disclosed"
 else
     bad "ignored source overrides are never disclosed"
+fi
+
+PATH="$TMP/bin:$PATH" "$CLIENT/update.sh" check \
+    --manifest-url https://example.invalid/credential-secret \
+    > "$TMP/manifest-cli-override.out" 2> "$TMP/manifest-cli-override.err"
+rc=$?
+expect_exit "CLI cannot override the fixed distribution manifest" 64 "$rc"
+if ! grep -Fq 'example.invalid' "$TMP/manifest-cli-override.out" \
+        "$TMP/manifest-cli-override.err"; then
+    ok "rejected manifest override is not disclosed"
+else
+    bad "rejected manifest override is not disclosed"
+fi
+
+snapshot_repo "$CLIENT" "$TMP/manifest-three.before"
+PATH="$TMP/bin:$PATH" FAKE_MANIFEST_RESULT=drift \
+    "$CLIENT/update.sh" check > "$TMP/manifest-drift.out" 2> "$TMP/manifest-drift.err"
+rc=$?
+snapshot_repo "$CLIENT" "$TMP/manifest-three.after"
+expect_exit "official distribution drift requires review without advancing baseline" 3 "$rc"
+expect_same_snapshot "distribution drift preserves HEAD, refs, index, and all worktree bytes/status" \
+    "$TMP/manifest-three.before" "$TMP/manifest-three.after"
+
+snapshot_repo "$CLIENT" "$TMP/manifest-two.before"
+PATH="$TMP/bin:$PATH" FAKE_MANIFEST_RESULT=unavailable FAKE_CODEX_VERSION=9.9.9 \
+    "$CLIENT/update.sh" check > "$TMP/manifest-unavailable.out" \
+    2> "$TMP/manifest-unavailable.err"
+rc=$?
+snapshot_repo "$CLIENT" "$TMP/manifest-two.after"
+expect_exit "distribution evidence-unavailable outranks established tool drift" 2 "$rc"
+expect_same_snapshot "distribution failure preserves HEAD, refs, index, and all worktree bytes/status" \
+    "$TMP/manifest-two.before" "$TMP/manifest-two.after"
+
+PATH="$TMP/bin:$PATH" FAKE_MANIFEST_RESULT=invalid \
+    "$CLIENT/update.sh" check > "$TMP/manifest-invalid-helper.out" \
+    2> "$TMP/manifest-invalid-helper.err"
+rc=$?
+expect_exit "unexpected manifest-helper result fails closed" 2 "$rc"
+if grep -Fq 'invalid helper result' "$TMP/manifest-invalid-helper.out" \
+        && ! grep -Eq 'example\.invalid|credential-secret|raw exception' \
+            "$TMP/manifest-invalid-helper.out" "$TMP/manifest-invalid-helper.err"; then
+    ok "manifest helper output and errors are sanitized"
+else
+    bad "manifest helper output and errors are sanitized"
 fi
 
 snapshot_repo "$CLIENT" "$TMP/check-three.before"
@@ -282,9 +374,10 @@ expect_exit "failed documented version command is inconclusive" 2 "$rc"
 
 NO_AGY_BIN="$TMP/no-agy-bin"
 mkdir -p "$NO_AGY_BIN"
-for required_tool in bash git python3 dirname; do
+for required_tool in bash git dirname; do
     ln -s "$(command -v "$required_tool")" "$NO_AGY_BIN/$required_tool"
 done
+ln -s "$TMP/bin/python3" "$NO_AGY_BIN/python3"
 cp "$TMP/bin/codex" "$NO_AGY_BIN/codex"
 PATH="$NO_AGY_BIN" "$CLIENT/update.sh" check > "$TMP/missing-agy.out" 2> "$TMP/missing-agy.err"
 rc=$?
@@ -744,6 +837,16 @@ awk 'NR == 2 { print "  \"$schema\": \"duplicate\"," } { print }' \
 expect_matrix_validation "duplicate schema key fails closed" 2 \
     "$ACTIVE_MATRIX" "$TMP/schema-duplicate-key.json" schema-duplicate-key
 
+MANIFEST_TEST_OUTPUT="$($REAL_PYTHON_REAL "$ROOT/tests/test-official-distribution.py" 2>&1)"
+rc=$?
+printf '%s\n' "$MANIFEST_TEST_OUTPUT"
+MANIFEST_RESULT="$(printf '%s\n' "$MANIFEST_TEST_OUTPUT" | tail -1)"
+if [[ "$rc" == 0 && "$MANIFEST_RESULT" == "MANIFEST_TEST_RESULT passed=64 failed=0" ]]; then
+    pass=$((pass+64))
+else
+    bad "official distribution policy tests (expected 64 controlled passes)"
+fi
+
 WORKFLOW="$ROOT/.github/workflows/compatibility-watch.yml"
 if grep -Fq 'schedule:' "$WORKFLOW" && grep -Fq 'workflow_dispatch:' "$WORKFLOW" \
         && grep -Fq 'runs-on: macos-latest' "$WORKFLOW" \
@@ -753,7 +856,7 @@ if grep -Fq 'schedule:' "$WORKFLOW" && grep -Fq 'workflow_dispatch:' "$WORKFLOW"
 else
     bad "watch workflow has only the weekly/manual read-only platform contract"
 fi
-if ! grep -Eq 'pull_request:|secrets\.|contents: write|issues: write|git (pull|commit|push)|gh |curl |wget |brew |npm |pip |update\.sh apply' "$WORKFLOW"; then
+if ! grep -Eq 'pull_request:|secrets\.|contents: write|issues: write|git (pull|commit|push)|gh |curl |wget |brew |npm |pip |update\.sh apply|agy-worker|model-recommendation|ground-truth|agy --|codex ' "$WORKFLOW"; then
     ok "watch workflow has no install, secret, mutation, or GitHub-write path"
 else
     bad "watch workflow has no install, secret, mutation, or GitHub-write path"

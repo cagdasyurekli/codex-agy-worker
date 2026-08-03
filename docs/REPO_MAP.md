@@ -31,8 +31,10 @@ accepting them.
 ## Opt-in maintenance flows
 
 - `update.sh check` queries fixed official agy and Codex stable-release/source
-  evidence, per-tool review age, and (locally) installed versions without changing
-  files. Its `--watch` mode needs no installed tools and preserves the same
+  evidence, one bounded agy `darwin_arm64` distribution-manifest canary, per-tool
+  review age, and (locally) installed versions without changing files. The manifest
+  helper requests no archive and its observational tuple cannot advance a baseline.
+  Its `--watch` mode needs no installed tools and preserves the same
   unchanged/drift-review/evidence-unavailable exit contract. `update.sh apply [TAG]`
   remains explicit: it verifies a
   stable tag and fast-forward, protects ignored-path collisions, runs the candidate
@@ -59,7 +61,7 @@ accepting them.
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
 | `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, path policy, escalation, driver verification | `tests/test-qa-gate.sh` (41 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
-| `update.sh`, `scripts/compatibility.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; strict per-tool metadata and disabled-on-drift model/effort matrix | `tests/test-update.sh` (92 cases) |
+| `update.sh`, `scripts/compatibility.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; bounded distribution-manifest canary; strict per-tool metadata and disabled-on-drift model/effort matrix | `tests/test-update.sh` (164 cases, including the test-only manifest adversary harness) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
 | `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (21 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (21 cases) plus review |
@@ -88,6 +90,10 @@ accepting them.
 - Scheduled compatibility evidence is observational. Missing or malformed official
   evidence is inconclusive, and neither the watcher nor a release/version name can
   advance a human-reviewed baseline.
+- The fixed agy distribution manifest is a drift canary, not executable or source
+  evidence. Its validated archive tuple is never requested, opened, hashed, or run;
+  the observational snapshot detects same-version build/hash changes but cannot
+  activate the model/effort matrix.
 - `--workdir` is the single audited repository. User-supplied `--add-dir` roots must
   resolve inside it; multi-repository mutation is unsupported.
 - Release tags are trusted only through the fixed official origin and exact ref/commit

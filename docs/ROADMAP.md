@@ -173,6 +173,15 @@ an earlier implementation because it shares a schema or helper.
   [Codex CLI reference](https://developers.openai.com/codex/cli/reference). Production
   URLs, review intervals, release channels, and upstream repositories remain fixed in
   the runtime and are not environment-overridable.
+- **Official distribution canary:** The agy evidence set also observes the fixed
+  official `darwin_arm64` updater manifest. The stdlib-only checker disables proxies,
+  rejects redirects and oversized or malformed responses, validates the exact
+  version/archive URL/SHA-512 tuple, and never requests the archive. Its checked-in
+  tuple is an observational same-version change detector, not a verified release,
+  source revision, signature, or baseline. The manifest currently establishes
+  distribution `1.1.10` while public release/source remains verified at `1.1.9`;
+  this keeps G1 resolution disabled and produces drift-review rather than a
+  speculative advance.
 - **Baseline advancement:** A maintainer may advance either verified baseline only
   after reconciling official docs, release notes, and source; regenerating the local
   `./ground-truth.sh` evidence for agy and equivalent documented Codex CLI inventory;
@@ -228,12 +237,18 @@ an earlier implementation because it shares a schema or helper.
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,
   and non-escalating; workflow fixtures prove weekly/manual triggers, macOS, read-only
-  permission, bounded summary, and no mutation.
+  permission, bounded summary, and no mutation; fixed-manifest fixtures pair exact
+  transport/schema/URL/hash acceptance with redirect, timeout, oversize,
+  duplicate/extra/malformed field, archive-policy, and same-version build/hash
+  rejection while proving that no archive request occurs.
 - **Minimum reject tests:** Green on missing evidence; automatic baseline edits;
   environment-overridden source/review policy; malformed or future-dated metadata;
   treating unknown-command exit/usage as support; secret access, installation, model
   calls, `apply`, `pull`, GitHub writes, or required-PR-check coupling in the watcher;
   automatic issue/PR creation; tier remapping; alias creation; or an effort flag.
+  Reject manifest redirects, missing or conflicting length/type metadata, invalid
+  UTF-8/JSON/schema/SemVer/SHA-512, unexpected archive origins or paths, test/runtime
+  source overrides, and any archive request.
   Reject a matrix with an unbound/mismatched version or revision, an unsupported pair,
   a provider-table-only claim, an inferred capability for an unknown model, a missing
   exact output slug, or an adjustable effort entry for a fixed/no-level model.
