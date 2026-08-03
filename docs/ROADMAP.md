@@ -5,9 +5,12 @@ surface and verified limitations remain in [README.md](../README.md). A roadmap 
 becomes current only after its own implementation, adversarial tests, documentation
 review, and an accepted pull request.
 
-The first recommended implementation is **P0-A Evidence Receipt v1 only**. Starting
-that slice requires a fresh, explicit approval; this roadmap does not authorize code,
-commit, push, pull-request, merge, release, live model use, or another external action.
+The first recommended implementation is **G0 Compatibility Reconciliation & Watch
+only**. G1 Explicit Model & Effort Selection follows as a separate slice; P0-A
+Evidence Receipt v1 follows separately after the compatibility baseline is current.
+Starting any slice requires a fresh, explicit approval; this roadmap does not
+authorize code, commit, push, pull-request, merge, release, live model use, or another
+external action.
 
 ## Product direction
 
@@ -74,8 +77,10 @@ Every roadmap slice must preserve all of these rules:
    become an alternative acceptance path.
 4. The caller selects the model tier. Recommendations remain visible and advisory,
    with `recommendation_only: true` and `applied: false`.
-5. Never add automatic tier/model changes or a wrapper-level thinking/effort control.
-   Retries keep the caller-selected tier.
+5. Never add automatic tier/model/effort changes or invent a `--thinking-level`
+   control. After G0 reconciles the exact agy contract, G1 may expose agy's real
+   `--model MODEL` and `--effort low|medium|high` as explicit caller choices only.
+   Retries keep the caller's resolved selection byte-for-byte.
 6. Permission, authentication, scope-policy, invalid-contract, untrusted-claim, and
    human-required outcomes are non-escalatable.
 7. No feature may automatically commit, push, open a pull request, merge, release,
@@ -101,21 +106,213 @@ However, the live `models` and `agents` probes failed in the current Codex sandb
 because agy could not write under `~/.gemini` or bind its local language-server
 socket. Exact model and agent catalogs therefore remain unverified in this audit.
 
-This corrects the inventory without expanding the wrapper contract:
+This corrects the current inventory without claiming that locally advertised flags
+or historical failure behavior are the verified agy `1.1.10` contract:
 
-- Do not add `--effort` or infer a thinking level. The roadmap deliberately preserves
-  explicit tier selection and recommendation-only routing.
+- Do not expose `--effort` before G0 reconciles official releases/source/docs with a
+  sandbox-correct inventory and bounded behavior tests. G1 may then expose the real
+  agy flag; it must not infer effort or invent a thinking-level flag.
 - Do not add dynamic model/persona discovery from help text alone.
-- Do not infer authentication from a single failure or invent `agy auth`; unknown
-  subcommands can print usage and exit `0`.
-- Any future exposure of newly advertised agy behavior is a separate compatibility
-  slice requiring official docs, official source, a sandbox-correct live inventory,
-  a bounded real job, paired offline tests, and explicit approval.
+- Do not infer authentication from a single failure or invent `agy auth`. Probe only
+  documented commands and validate their expected semantic output; neither an unknown
+  subcommand's exit code nor generic usage text is compatibility evidence.
+- Do not assume a full model slug ending in an effort-like suffix composes safely with
+  `--effort`. Until official source plus a bounded test proves an exact combination,
+  the wrapper must reject it rather than send two possibly conflicting selectors.
+- Any exposure of newly advertised agy behavior remains a separate slice requiring
+  official docs, official source, a sandbox-correct live inventory, a bounded real
+  job, paired offline tests, and explicit approval.
 
 ## Release groups and slices
 
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
+
+### G0 — Compatibility Reconciliation & Watch
+
+- **User job:** Learn that Codex or agy has drifted before a normal dispatch breaks,
+  while keeping every check read-only and requiring a human to reconcile behavior.
+- **Intended surface:** Extend the fixed-source compatibility contract in `update.sh`,
+  `compat/sources.md`, and dependency-free metadata from agy to both agy and Codex.
+  Use one explicit version, reviewed upstream revision, and last-reviewed date per
+  tool; migrate the current shared `compat/last-reviewed.txt` to unambiguous per-tool
+  records. Add a human-reviewed, dependency-free model/effort capability matrix bound
+  to the exact verified agy version and source revision. Add
+  `.github/workflows/compatibility-watch.yml` as a separate weekly and
+  `workflow_dispatch` macOS workflow. It is observational and is not a required pull
+  request check.
+- **Local check contract:** `./update.sh check` reports the installed version, the
+  repository's human-verified baseline, official stable release/source drift, and
+  official documentation-review age separately for agy and Codex. It exits `0` only
+  when all required evidence is available and unchanged, `3` when evidence establishes
+  drift or review is due, and `2` when network or source evidence is unavailable or
+  malformed. Exit `2` is **inconclusive**, never green. The command changes no file,
+  pulls nothing, applies nothing, and does not update its own baseline.
+- **Watch workflow contract:** The workflow runs only on `macos-latest`, declares
+  `permissions: contents: read`, uses no secrets, installs no package or CLI, invokes
+  no model, and performs no apply, pull, issue, PR, commit, or baseline write. A
+  bounded GitHub Step Summary identifies each fixed source as unchanged, review-due,
+  or evidence-unavailable without dumping fetched pages. Its command preserves the
+  same `0`/`3`/`2` meanings; the workflow may surface nonzero status for maintainers
+  but cannot open or modify anything. Scheduling it does not add it to the protected
+  branch's required `test` check.
+- **Fixed primary sources:** agy reconciliation binds the official
+  [Antigravity source](https://github.com/google-antigravity/antigravity-cli),
+  [releases](https://github.com/google-antigravity/antigravity-cli/releases),
+  [changelog](https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md),
+  and official CLI overview/usage pages already recorded in `compat/sources.md`.
+  Codex reconciliation binds the official
+  [Codex source and releases](https://github.com/openai/codex/releases),
+  [Codex changelog](https://developers.openai.com/codex/changelog), and
+  [Codex CLI reference](https://developers.openai.com/codex/cli/reference). Production
+  URLs, review intervals, release channels, and upstream repositories remain fixed in
+  the runtime and are not environment-overridable.
+- **Baseline advancement:** A maintainer may advance either verified baseline only
+  after reconciling official docs, release notes, and source; regenerating the local
+  `./ground-truth.sh` evidence for agy and equivalent documented Codex CLI inventory;
+  running every offline suite and syntax/compile/diff check; and recording the exact
+  reviewed revisions. If behavior affecting dispatch changed, a bounded job against
+  an explicit public fixture is a separate live-data approval, not part of the watch.
+  The watch never performs this reconciliation. If an official agy `1.1.10` release
+  and matching source cannot both be established, the verified baseline stays `1.1.9`
+  and the result remains AMBER/review-due rather than speculatively advancing.
+- **Capability-matrix rule:** G0 derives model-specific effort support from the exact
+  verified agy docs/source and bounded CLI behavior, not from a provider API table or
+  a model-name guess. The matrix records its agy version and source revision. Any agy
+  version/source drift makes the matrix stale and keeps effort dispatch disabled until
+  human reconciliation. The current candidate inventory to verify is Gemini 3.6 Flash
+  with low/medium/high and Gemini 3.1 Pro with low/high but **not medium**; it is not a
+  runtime promise until G0 establishes the exact agy model identifiers and pairs.
+- **Current-behavior correction:** Implementation updates README and AGENTS guidance
+  to say that probes must validate documented commands and expected semantic content,
+  never an unknown subcommand's exit or usage output. It also records that agy has a
+  real `--effort`, while this wrapper exposes no effort control until G1. No code may
+  combine `--effort` with a full slug that may already encode effort without exact
+  compatibility evidence.
+- **Model option decision gate:** `gemini-3.6-flash-high` is already selectable as a
+  raw custom `--tier` label. It remains unranked and non-escalating; no `bulk`/`hard`
+  mapping changes and no effort flag are part of G0. Google's official
+  [model catalog](https://ai.google.dev/gemini-api/docs/models) describes Gemini 3.6
+  Flash as a speed/intelligence balance and Gemini 3.1 Pro as the advanced model for
+  complex reasoning and coding. The official
+  [thinking guide](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
+  shows real but model-specific effort levels, and
+  [pricing](https://ai.google.dev/gemini-api/docs/pricing) distinguishes model and
+  thinking usage. Those API facts must not be copied into the agy capability matrix;
+  they do not prove the agy CLI composition, relative quality, or effective
+  subscription cost for this wrapper. A discoverable `flash-high` alias is a later
+  isolated decision after G0/G1 compatibility tests; changing a default or
+  recommendation order additionally requires the pre-registered benchmark below.
+- **Dependencies:** Existing read-only `update.sh check`, fixed compatibility metadata,
+  `ground-truth.sh`, Bash 3.2, Python 3 standard library, git, and GitHub-hosted macOS.
+  No runtime dependency, provider credential, or paid quota is introduced.
+- **Trust boundary:** Release names, help text, provider prose, and worker output are
+  signals for review, not permission to update code or metadata. Missing network
+  evidence cannot be collapsed into unchanged. The watcher cannot authorize model
+  selection, acceptance, baseline advancement, dispatch, or an external action.
+- **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
+  versus verified differences and stale review dates are reported separately and
+  return `3`; unavailable network returns `2` with an inconclusive label; absent
+  official `1.1.10` evidence retains `1.1.9` and AMBER; version-bound capability
+  fixtures reproduce every documented supported pair and mark drift stale; a raw
+  `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,
+  and non-escalating; workflow fixtures prove weekly/manual triggers, macOS, read-only
+  permission, bounded summary, and no mutation.
+- **Minimum reject tests:** Green on missing evidence; automatic baseline edits;
+  environment-overridden source/review policy; malformed or future-dated metadata;
+  treating unknown-command exit/usage as support; secret access, installation, model
+  calls, `apply`, `pull`, GitHub writes, or required-PR-check coupling in the watcher;
+  automatic issue/PR creation; tier remapping; alias creation; or an effort flag.
+  Reject a matrix with an unbound/mismatched version or revision, an unsupported pair,
+  a provider-table-only claim, or an inferred capability for an unknown model.
+- **Docs and AGENTS impact:** README compatibility semantics and limitations,
+  `compat/sources.md`, REPO_MAP ownership/data flow, lessons learned on inconclusive
+  evidence, and concise durable AGENTS probing rules. Run `agents-md-auditor` before
+  and after those future guidance edits.
+- **Size:** M.
+- **Done/exit criteria:** Both tools have fixed, human-reviewed baselines; all three
+  outcomes are adversarially tested; the macOS watcher is read-only and separately
+  observable; all existing suites stay green; docs do not claim live compatibility
+  beyond evidence; and an independent verifier confirms zero write/escalation path.
+- **Success measures:** Zero false-green results when official evidence is unavailable;
+  compatibility drift is classified by the next weekly run; each baseline advance
+  links exact primary evidence and completed gates; and no watcher run changes a file,
+  opens an item, invokes a model, or changes required branch checks.
+
+### G1 — Explicit Model & Effort Selection
+
+- **User job:** Select an exact agy model and its verified supported effort directly,
+  without disguising the choice as a tier or allowing a recommendation to change it.
+- **Sequence gate:** Start only after G0 has reconciled the exact agy `1.1.10` (or
+  later explicitly verified) CLI/source behavior. G1 precedes any `flash-high` alias,
+  performance ranking, or default/recommendation remap and must be its own pull request.
+- **Intended surface:** Add wrapper CLI `--model MODEL` and agy's real
+  `--effort low|medium|high`; never add `--thinking-level`. Preserve `--tier` named
+  values, raw-label pass-through, and the no-option default exactly. Add
+  `AGY_WORKER_MODEL` and `AGY_WORKER_EFFORT` only with the strict conflict contract
+  below. Canonical runtime, root compatibility wrapper, public skill copy, validators,
+  recommendation schemas/renderers, and later receipt/report schemas carry the same
+  resolved selection contract.
+- **Selection and precedence contract:** There is no silent precedence. Each option
+  may be supplied by CLI or its matching environment variable, never both—even when
+  the values match. Any explicit tier source (`--tier` or `AGY_WORKER_TIER`) is mutually
+  exclusive with every explicit model/effort source. With no explicit selector, the
+  existing implicit `bulk` default remains. Direct mode uses one exact model source;
+  an effort source requires that model unless the G0 evidence explicitly proves and
+  pins safe effort-only behavior. Duplicate CLI occurrences, empty values, unknown
+  effort values, and cross-source conflicts fail before dispatch with usage exit `64`.
+- **Composition safety:** Pass `--model MODEL` and `--effort VALUE` as separate agy
+  arguments only for that exact pair in the G0 matrix whose agy version and source
+  revision still match the verified baseline. The globally accepted effort spelling
+  does not imply every model accepts all three values: the candidate matrix must, for
+  example, verify Flash low/medium/high separately and Pro low/high separately while
+  rejecting Pro medium. Unknown model/version, unsupported pair, or stale matrix fails
+  before dispatch. Until official source and a bounded test prove otherwise, also
+  reject effort combined with a slug ending in a known effort suffix such as `-low`,
+  `-medium`, `-high`, or another registered effort-bearing form, and reject every
+  other ambiguous combination. Do not strip, rewrite, normalize, or guess a base
+  model from the slug.
+- **Persistence and evidence:** Resolve selection once before attempt one and retain
+  the exact tier/model/effort provenance and values across every retry. Pre-dispatch
+  and post-gate recommendations, Evidence Receipt v1, and the Human Report represent
+  selected tier, model, and effort as distinct optional fields. A custom model or
+  effort remains unranked; recommendation output stays `recommendation_only: true`,
+  `applied: false`, and cannot alter or redispatch the selection.
+- **Non-escalatable outcomes:** Permission, authentication, scope-policy,
+  invalid-contract, untrusted-claim, and human-required failures remain
+  non-escalatable regardless of selected model or effort. Higher effort is never
+  proposed as a repair for those outcomes.
+- **Dependencies:** Completed G0 baseline and composition matrix, existing dispatcher
+  parsing/model assembly, advisory recommender, and the schema/report surfaces present
+  when G1 starts. No new dependency or provider lookup.
+- **Minimum accept tests:** Legacy named tiers, raw `--tier` labels, and implicit bulk
+  remain byte-compatible; one CLI or one environment model reaches agy exactly; every
+  matrix-admitted pair has its own test and reaches agy as two exact arguments; retries
+  preserve the resolved selection; recommendations and receipts/reports label custom
+  selection without ranking or applying it.
+- **Minimum reject tests:** CLI/env duplicates; tier plus model or effort across any
+  source; repeated selector; empty/invalid model or effort; effort without a model
+  unless explicitly verified; known effort-bearing slug plus `--effort`; unverified
+  composition; unsupported model/effort pair (including Pro medium when absent from
+  the verified matrix); unknown model or version; stale/unbound matrix; inferred
+  capability; invented thinking flag; retry mutation; recommendation-driven change;
+  or escalation of a non-escalatable failure. Assert that fake agy is never invoked
+  for every preflight rejection.
+- **Docs and AGENTS impact:** README option/precedence tables and examples, public
+  skill SKILL.md, REPO_MAP data flow, lessons learned on dual selectors, compatibility
+  metadata, and a concise AGENTS rule forbidding inferred effort and silent override.
+  Run `agents-md-auditor` before and after those future guidance edits.
+- **Size:** M.
+- **Done/exit criteria:** Exact G0-backed arguments and conflict behavior are documented
+  and adversarially tested on macOS Bash 3.2; all prior suites stay green; raw tier
+  compatibility remains; no recommendation changes selection; and independent
+  verification confirms no ambiguous or automatic model/effort path.
+- **Later alias/ranking gate:** A named `flash-high` alias can be proposed only after
+  G0/G1 prove its exact agy composition. Mapping `bulk`/`hard`, recommending Flash-high
+  over Pro-high, or changing a default additionally requires a pre-registered bounded
+  benchmark using fixed public fixtures, identical scope and verifier, pinned tool
+  versions, equal attempts, captured latency/provider telemetry, and explicit live-use
+  approval. Official model descriptions or a one-off result are not a ranking.
 
 ### P0 — make the evidence boundary visible and usable
 
@@ -146,8 +343,9 @@ an earlier implementation because it shares a schema or helper.
   exact envelope snapshot validated by the gate; ordered path-policy hash; verifier
   labels and command hashes; the gate-supplied initial and final candidate-state
   digests; actual gate exit/outcome; a verdict restricted to `gate-passed`, `rejected`,
-  or `routed`; optional
-  caller-selected tier; optional validated pre-dispatch advisory retaining its
+  or `routed`; optional caller-selection object with exactly one resolved mode and
+  distinct tier/model/effort values plus CLI/environment/default provenance under the
+  accepted G1 contract; optional validated pre-dispatch advisory retaining its
   rationale, controlled driver evidence, relative cost impact,
   `recommendation_only: true`, `applied: false`, and `stage: pre-dispatch`;
   `gate_authority: qa-gate`; and an explicit statement that the receipt is unsigned
@@ -165,7 +363,8 @@ an earlier implementation because it shares a schema or helper.
 - **Exclude:** Diff/source content, prompt, worker summary/confidence, raw verifier
   commands or output, credentials, absolute repository paths, provider pricing, and
   an applied recommendation.
-- **Dependencies:** Existing `qa-gate.sh`, envelope validator, Python SHA-256, git.
+- **Dependencies:** Existing `qa-gate.sh`, envelope validator, accepted G1 selection
+  contract, Python SHA-256, and git.
 - **Trust boundary:** A receipt records a gate execution. It must not reproduce gate
   acceptance logic, treat its own existence as acceptance, use `accepted` as a
   verdict, or map any nonzero gate result to `gate-passed`. A receipt path inside the
@@ -183,8 +382,9 @@ an earlier implementation because it shares a schema or helper.
   initial/final state digests; the wrapper returns `0`. Each normal gate result
   `10`–`14` durably publishes verdict `rejected`, result `15` publishes `routed`, and
   the wrapper returns that exact gate exit. A valid pre-dispatch advisory is bound
-  without changing the selected tier or gate result. The tests never call a candidate
-  accepted before human review. Direct `qa-gate.sh` calls without `--evidence-fd`
+  without changing the selected tier/model/effort or gate result. The tests never call
+  a candidate accepted before human review. Direct `qa-gate.sh` calls without
+  `--evidence-fd`
   retain their current stdout/stderr and exit contract.
 - **Minimum reject tests:** Scope failure, malformed envelope, untrusted command/test
   claim, missing edits, verifier failure/mutation, and human-required outcome retain
@@ -192,7 +392,8 @@ an earlier implementation because it shares a schema or helper.
   symlink target, in-repository output, unknown schema version, inconsistent receipt,
   separately bound artifact/digest mismatch, malformed or duplicate handoff, envelope
   snapshot/base/state/outcome/exit mismatch, post-gate or cross-stage advisory input,
-  selected-tier mismatch, or an advisory that claims it was applied. Wrapper/gate
+  selected tier/model/effort mismatch, ambiguous selector provenance, or an advisory
+  that claims it was applied. Wrapper/gate
   preflight `64`, unknown exit, signal, missing evidence, internal `70`, and durable
   publication `74` paths publish no receipt; injected validation, `fsync`, rename, and
   parent-directory durability failures leave no final or partial receipt. An unsigned
@@ -361,14 +562,14 @@ receipt or creating chronology ambiguity.
   `docs/BENCHMARKING.md`. Paid work requires an explicit `--live` boundary.
 - **Dependencies:** Receipt v1; lifecycle is useful but optional.
 - **Trust boundary:** Every result binds exact fixture/base, tool versions, selected
-  tier, attempt count, policy, and verification. No hidden retries or model changes.
-  Competitor comparisons require identical public tasks and rules. No leaderboard by
-  default.
+  tier/model/effort, attempt count, policy, and verification. No hidden retries or
+  selector changes. Competitor comparisons require identical public tasks and rules.
+  No leaderboard by default.
 - **Minimum accept tests:** Frozen offline fixture produces a deterministic report and
-  receipt; live-mode parser preserves selected tier and attempt count.
+  receipt; live-mode parser preserves selected tier/model/effort and attempt count.
 - **Minimum reject tests:** Changed fixture hash, missing verifier, unpublished input,
-  partial task set described as complete, hidden retry/model change, or result without
-  exact version binding.
+  partial task set described as complete, hidden retry/model/effort change, or result
+  without exact version binding.
 - **Docs and AGENTS impact:** Add BENCHMARKING document and README evidence link;
   update REPO_MAP. AGENTS updates only verified real/offline evidence boundaries, not
   one-off results.
@@ -517,8 +718,10 @@ semantically honest mapping; “job rejected” is not automatically a test-case
   but macOS correctness takes priority.
 - **Multiple worker backends — rejected for this product direction.** It would dilute
   agy-specific ground truth and compatibility review.
-- **Automatic tier/model selection, thinking/effort controls, or quota routing —
-  rejected.** Recommendations remain advisory and caller selection remains explicit.
+- **Automatic tier/model/effort selection, inferred thinking controls, or quota
+  routing — rejected.** Recommendations remain advisory and caller selection remains
+  explicit. G1 may expose agy's verified `--model` and `--effort` only as direct,
+  non-inferred caller controls; no `--thinking-level` is planned.
 - **Automatic commit, push, PR, merge, release, issue submission, or deployment —
   rejected.** These remain deliberate user-owned workflows with separate approvals.
 - **Escalating permission, authentication, scope-policy, invalid-contract,
@@ -530,18 +733,21 @@ semantically honest mapping; “job rejected” is not automatically a test-case
 Roadmap priority is not authorization. Apply these gates independently:
 
 1. **Feature implementation:** fresh explicit approval for one named slice.
-2. **External data/live model:** name the repository and paths sent through agy and
+2. **Compatibility watch enablement:** merging or scheduling the weekly external
+   watcher and changing a verified baseline each require explicit approval. A baseline
+   change also requires the G0 reconciliation record; the watcher cannot approve it.
+3. **External data/live model:** name the repository and paths sent through agy and
    obtain explicit approval before a live dispatch or benchmark.
-3. **Destructive local lifecycle:** allow cleanup only for the exact hash-bound state
+4. **Destructive local lifecycle:** allow cleanup only for the exact hash-bound state
    recorded as rejected and disposable, then re-derive its digest and obtain explicit
    user approval for those exact job/worktree/branch targets. Refuse every other
    state; cleanup is never authorized merely because a job is old or uncommitted.
-4. **GitHub:** staging and local commits may occur only when requested; push, PR,
+5. **GitHub:** staging and local commits may occur only when requested; push, PR,
    merge, and release each follow the user's explicit authorization boundary.
-5. **External distribution/search:** marketplace, directory, Search Console, or other
+6. **External distribution/search:** marketplace, directory, Search Console, or other
    service enablement remains out of scope unless newly approved. The current product
    direction is public GitHub distribution.
-6. **Signing:** requires an approved threat model and signer dependency before code.
+7. **Signing:** requires an approved threat model and signer dependency before code.
 
 ## Honest success measures
 
@@ -551,6 +757,8 @@ reviews, or automated promotional submissions.
 
 ### 30 days — onboarding and proof
 
+- Require every scheduled G0 result to distinguish unchanged, review-due, and
+  evidence-unavailable; target zero false green on missing official evidence.
 - Measure median fresh-clone-to-offline-proof time in small opt-in sessions; target
   under 10 minutes and keep P0-D itself under 60 seconds.
 - Record whether Doctor identifies the real blocker before any paid dispatch; report
@@ -562,6 +770,8 @@ reviews, or automated promotional submissions.
 
 ### 60 days — qualified external use
 
+- Measure compatibility-review lead time from first weekly drift signal to a recorded
+  human disposition; do not count an automatic metadata change as resolution.
 - Count distinct public external repositories or opt-in users that demonstrate a
   valid receipt or starter proof. Verify each signal manually instead of inferring it
   from stars.
@@ -575,6 +785,9 @@ reviews, or automated promotional submissions.
 
 ### 90 days — reusable evidence ecosystem
 
+- Audit every compatibility baseline advance for fixed primary sources, ground-truth
+  evidence, full offline gates, and any separately approved behavior-changing live
+  fixture; target zero unreviewed advances and zero watcher mutations.
 - Count verified external workflows that link to or run the conformance kit or local
   reporter. A public repository reference is stronger than a raw star.
 - Require the full conformance kit to reject every deliberately trusting reference
@@ -588,8 +801,10 @@ reviews, or automated promotional submissions.
 
 ## First implementation recommendation
 
-Implement **P0-A Evidence Receipt v1 only** as the next isolated feature slice. Do
-not include the renderer, Doctor, proof demo, lifecycle, CI formats, profiles, usage,
-benchmarking, or signing in that change. Before any code begins, obtain a fresh user
-approval naming P0-A and preserve the normal independent implementation and
-verification-agent split.
+Implement **G0 Compatibility Reconciliation & Watch only** as the next isolated
+feature slice. Do not include G1 selectors, a `flash-high` alias, routing/ranking
+changes, P0-A receipts, the renderer, Doctor, proof demo, lifecycle, CI report formats,
+profiles, usage, benchmarking, or signing in that change. After G0 is accepted, G1
+may proceed under its own fresh approval and pull request; P0-A follows separately.
+Never mix G0 and P0-A even if they touch shared documentation. Preserve the normal
+independent implementation and verification-agent split for every slice.
