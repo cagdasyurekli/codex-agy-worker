@@ -469,22 +469,25 @@ watch runs the official-evidence-only mode without installing agy or Codex. It w
 only a bounded Step Summary, preserves the same `0`/`3`/`2` meanings, is not a required
 pull-request check, and cannot advance metadata or open an issue or pull request.
 
-The official distribution manifest currently advertises agy `1.1.10`, while the
-public GitHub stable release and reviewed source remain `1.1.9`. That is established
-distribution drift, not authority to advance the verified baseline. The checked-in
-manifest tuple is an observational change detector rather than a trust root: a
-same-version archive build, URL, or SHA-512 change also requires review. Neither the
-live manifest nor its snapshot activates the disabled `1.1.10` model/effort matrix.
+The official stable release, current source, CLI documentation, and distribution
+manifest now expose agy `1.1.10` evidence, while this project's human-reviewed
+verified baseline remains `1.1.9`. That is established drift and enables a human
+reconciliation; it is not authority to advance the baseline or claim `1.1.10`
+support. The checked-in manifest tuple is an observational change detector rather
+than a trust root: a same-version archive build, URL, or SHA-512 change also requires
+review. Neither the live manifest nor its snapshot activates the disabled `1.1.10`
+model/effort matrix.
 
 agy's real CLI exposes `--effort`, but this wrapper exposes no effort control until a
 separately approved G1. The checked-in model/effort matrix is validated metadata, not
 routing or gate authority. Its agy `1.1.10` inventory is explicitly disabled candidate
-evidence because official `1.1.9` release/source evidence does not substantiate those
-exact rows; version/source drift keeps resolution disabled. The wrapper does not send
-both a compound model slug and agy's separate effort flag. `qa-gate.sh` remains the
-sole acceptance authority, and model recommendations remain visible, advisory-only,
-and unable to escalate permission, authentication, scope-policy, or human-required
-outcomes.
+evidence: the newly available official `1.1.10` evidence has not been reconciled with
+a sandbox-correct inventory and bounded behavior tests that substantiate those exact
+rows. Version/source drift therefore keeps resolution disabled. The wrapper does not
+send both a compound model slug and agy's separate effort flag. `qa-gate.sh` remains
+the sole acceptance authority, and model recommendations remain visible,
+advisory-only, and unable to escalate permission, authentication, scope-policy, or
+human-required outcomes.
 
 ## Sanitized bug reports and feature requests
 

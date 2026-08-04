@@ -118,10 +118,11 @@ or historical failure behavior are the verified agy `1.1.10` contract:
   documented commands and validate their expected semantic output; neither an unknown
   subcommand's exit code nor generic usage text is compatibility evidence.
 - Do not assume agy's separate `--model` and `--effort` flags compose safely.
-  Subsequent bounded `1.1.10` inventory evidence advertises compound slugs, while
-  public source does not establish dual-selector composition or precedence. G1
-  therefore resolves a verified base/effort pair to one exact advertised slug and
-  sends one `--model`.
+  Subsequent bounded `1.1.10` inventory evidence advertises compound slugs. Official
+  `1.1.10` source and documentation are now available for human reconciliation, but
+  this repository has not yet completed evidence that establishes dual-selector
+  composition or precedence. G1 therefore resolves a verified base/effort pair to
+  one exact advertised slug and sends one `--model`.
 - Any exposure of newly advertised agy behavior remains a separate slice requiring
   official docs, official source, a sandbox-correct live inventory, a bounded real
   job, paired offline tests, and explicit approval.
@@ -177,19 +178,21 @@ an earlier implementation because it shares a schema or helper.
   rejects redirects and oversized or malformed responses, validates the exact
   version/archive URL/SHA-512 tuple, and never requests the archive. Its checked-in
   tuple is an observational same-version change detector, not a verified release,
-  source revision, signature, or baseline. The manifest currently establishes
-  distribution `1.1.10` while public release/source remains verified at `1.1.9`;
-  this keeps G1 resolution disabled and produces drift-review rather than a
-  speculative advance.
+  source revision, signature, or baseline. Official release, source, documentation,
+  and distribution evidence now expose `1.1.10`, while the repository's
+  human-reviewed verified baseline remains `1.1.9`. That evidence enables human
+  reconciliation but does not complete it, activate G1 resolution, or permit a
+  speculative baseline advance; the current result remains drift-review.
 - **Baseline advancement:** A maintainer may advance either verified baseline only
   after reconciling official docs, release notes, and source; regenerating the local
   `./ground-truth.sh` evidence for agy and equivalent documented Codex CLI inventory;
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. If an official agy `1.1.10` release
-  and matching source cannot both be established, the verified baseline stays `1.1.9`
-  and the result remains AMBER/review-due rather than speculatively advancing.
+  The watch never performs this reconciliation. The official agy `1.1.10` release and
+  matching source now provide inputs to that review, but the verified baseline stays
+  `1.1.9` and the result remains AMBER/review-due until the complete human
+  reconciliation and its required evidence gates are accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
   exact output slug from the verified `agy models` inventory, agy docs/source, and
   bounded CLI behavior—not from a provider API table or a model-name guess. The
@@ -203,10 +206,11 @@ an earlier implementation because it shares a schema or helper.
 - **Current-behavior correction:** Implementation updates README and AGENTS guidance
   to say that probes must validate documented commands and expected semantic content,
   never an unknown subcommand's exit or usage output. It also records that agy has a
-  real `--effort`, while this wrapper exposes no effort control until G1. G0 records
-  that the public source does not yet prove dual-selector composition: production code
-  sends one resolved model slug and cannot combine an effort-bearing slug with agy's
-  separate effort flag without a later, separately approved evidence gate.
+  real `--effort`, while this wrapper exposes no effort control until G1. Official
+  `1.1.10` source is now available, but the repository has not accepted a human
+  reconciliation proving dual-selector composition: production code sends one
+  resolved model slug and cannot combine an effort-bearing slug with agy's separate
+  effort flag without a later, separately approved evidence gate.
 - **Model option decision gate:** `gemini-3.6-flash-high` is already selectable as a
   raw custom `--tier` label. It remains unranked and non-escalating; no `bulk`/`hard`
   mapping changes and no effort flag are part of G0. Google's official
