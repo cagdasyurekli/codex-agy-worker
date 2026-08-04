@@ -241,6 +241,44 @@ else
     bad "macOS CI runs the dedicated offline doctor suite"
 fi
 
+if [[ -x "$ROOT/proof-demo.sh" ]] \
+        && [[ -x "$ROOT/tests/test-proof-demo.sh" ]] \
+        && [[ -f "$ROOT/demo/fixtures/honest-envelope.json" ]] \
+        && [[ ! -L "$ROOT/demo/fixtures/honest-envelope.json" ]] \
+        && [[ -f "$ROOT/demo/fixtures/scope-mismatch-envelope.json" ]] \
+        && [[ ! -L "$ROOT/demo/fixtures/scope-mismatch-envelope.json" ]] \
+        && [[ ! -e "$ROOT/skills/agy-worker/runtime/proof-demo.sh" ]]; then
+    ok "repository package includes the repo-only starter proof and canonical fixtures"
+else
+    bad "repository package includes the repo-only starter proof and canonical fixtures"
+fi
+
+if grep -Fq 'run: ./tests/test-proof-demo.sh' "$ROOT/.github/workflows/test.yml"; then
+    ok "macOS CI runs the dedicated offline starter-proof suite"
+else
+    bad "macOS CI runs the dedicated offline starter-proof suite"
+fi
+
+if grep -Fq './proof-demo.sh' "$ROOT/README.md" \
+        && grep -Fq 'starter proof' "$ROOT/README.md" \
+        && grep -Fq 'proof-demo.sh' "$ROOT/docs/index.md" \
+        && grep -Fq 'not human review' "$ROOT/docs/index.md"; then
+    ok "public documentation links the bounded starter proof without claiming acceptance"
+else
+    bad "public documentation links the bounded starter proof without claiming acceptance"
+fi
+
+if grep -Fq 'gate="$script_dir/qa-gate.sh"' "$ROOT/proof-demo.sh" \
+        && ! grep -Eq 'PROOF_GATE|--gate([=[:space:]]|$)' "$ROOT/proof-demo.sh" \
+        && grep -Fq 'honest: gate-passed (exit 0)' "$ROOT/proof-demo.sh" \
+        && grep -Fq 'mismatch: rejected (exit 10)' "$ROOT/proof-demo.sh" \
+        && grep -Fq 'starter proof only; no candidate accepted because no human review occurred' \
+            "$ROOT/proof-demo.sh"; then
+    ok "starter proof fixes the maintained gate and its bounded success contract"
+else
+    bad "starter proof fixes the maintained gate and its bounded success contract"
+fi
+
 if cmp -s "$ROOT/compat/agy-verified-version.txt" \
         "$ROOT/skills/agy-worker/runtime/compat/agy-verified-version.txt" \
         && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
