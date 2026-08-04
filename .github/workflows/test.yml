@@ -36,3 +36,6 @@ jobs:
 
       - name: read-only doctor suite
         run: ./tests/test-doctor.sh
+
+      - name: starter proof suite
+        run: ./tests/test-proof-demo.sh

@@ -120,6 +120,19 @@ scope or diff hygiene. Report such an outcome as successful enforcement by the g
 not as a successful worker delivery, and never weaken independent checks to obtain a
 green result.
 
+## A starter proof is not an acceptance claim
+
+A useful offline proof must exercise the maintained gate, not a reimplementation of
+its decision logic. Give the passing and rejecting cases independent repositories,
+require their exact exit contracts, and include a negative control showing that a
+copied permissive gate cannot make the overall proof pass. Keep canonical fixtures
+strict so silent edits cannot turn a teaching example into a different claim.
+
+Buffer success output until every case and cleanup step succeeds. Describe the
+result as evidence for the fixed synthetic cases only: a gate pass is still not a
+human diff review, accepted candidate, correctness result, security certification,
+benchmark, or production validation.
+
 ## Distribution must preserve the trust boundary
 
 A public skill cannot depend on a developer's absolute checkout path or assume that

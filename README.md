@@ -55,7 +55,21 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The six offline suites need no agy process, network access, API key, or GitHub login.
+The seven offline suites need no agy process, network access, API key, or GitHub login.
+
+## See the evidence boundary in under a minute
+
+```bash
+./proof-demo.sh
+```
+
+This repository-only starter proof creates two independent private temporary Git
+repositories, exercises the maintained gate once on an exact synthetic edit and once
+on a plausible but incomplete synthetic envelope, then removes both repositories. It
+does not invoke agy, access the network, inspect credentials, or change the current
+checkout. The three-line result proves only that these two fixed cases produced the
+expected gate exits. `gate-passed` is not a human review, accepted candidate, general
+correctness claim, security certification, benchmark, or production validation.
 
 ## Roadmap
 
@@ -566,6 +580,7 @@ output, not its own recollection.
 ```
 agy-worker.sh                 dispatch a job, return a schema-valid envelope
 qa-gate.sh                    verify an envelope against the repo — the evidence
+proof-demo.sh                 offline starter proof of one gate pass and one rejection
 model-recommendation.sh       repository compatibility wrapper for the advisory
 doctor.sh                     repository wrapper for offline read-only diagnostics
 ground-truth.sh               dump live agy facts for skill authoring
@@ -591,8 +606,9 @@ tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          164-case offline local-remote/matrix/manifest updater suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       82-case offline Codex package/relocation/landing suite
+tests/test-packaging.sh       86-case offline Codex package/relocation/landing suite
 tests/test-doctor.sh          143-case offline fake-tool/read-only doctor suite
+tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```
 

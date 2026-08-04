@@ -42,6 +42,16 @@ Dispatches use the external Antigravity CLI and can send approved task text and
 repository content to Google/Gemini. Read the [privacy disclosure](https://github.com/cagdasyurekli/codex-agy-worker/blob/main/PRIVACY.md)
 before use.
 
+## See the evidence boundary in under a minute
+
+From a reviewed clone, run the repository-only
+[`./proof-demo.sh`](https://github.com/cagdasyurekli/codex-agy-worker/blob/main/proof-demo.sh).
+It builds two private synthetic repositories, confirms one exact edit passes the
+maintained gate and one plausible scope mismatch is rejected, then cleans up. It is
+offline and does not run agy or alter the checkout. Its three-line output is starter
+evidence for those fixed cases only: it is not human review, candidate acceptance,
+general correctness, a security certification, a benchmark, or production proof.
+
 ## Install and explore
 
 Use the GitHub repository as the source of truth. Review the cloned commit—or the

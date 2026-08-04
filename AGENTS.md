@@ -39,8 +39,10 @@ Keep these counts current when their suites change:
   fake-agy/routing cases.
 - `update.sh`: 164 offline local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 82 offline manifest/runtime-copy/relocation/landing cases.
+- Codex package/skill distribution: 86 offline
+  manifest/runtime-copy/relocation/landing cases.
 - `doctor.sh`: 143 offline fake-tool/read-only cases.
+- `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
 Codex sandbox requirements, and an honest `repo-inventory` escalation. The
@@ -62,6 +64,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
+./tests/test-proof-demo.sh      # offline synthetic pass/reject proof coverage
 bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
 python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
 git diff --check
