@@ -22,6 +22,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
+assert manifest["version"] == "0.2.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -412,13 +413,31 @@ else
     bad "standalone resolver rejects a missing pipeline runtime"
 fi
 
-if grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
+required_suite_paths=(
+    tests/test-qa-gate.sh
+    tests/test-agy-worker.sh
+    tests/test-update.sh
+    tests/test-reporting.sh
+    tests/test-packaging.sh
+    tests/test-doctor.sh
+    tests/test-proof-demo.sh
+)
+governance_lists_all_suites=1
+for suite in "${required_suite_paths[@]}"; do
+    if ! grep -Fq "./$suite" "$ROOT/CONTRIBUTING.md" \
+            || ! grep -Fq "./$suite" "$ROOT/.github/pull_request_template.md"; then
+        governance_lists_all_suites=0
+    fi
+done
+
+if [[ "$governance_lists_all_suites" == "1" ]] \
+        && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "public policy pages disclose external transfer, local artifacts, and support"
+    ok "governance docs require all seven suites and disclose public policy boundaries"
 else
-    bad "public policy pages disclose external transfer, local artifacts, and support"
+    bad "governance docs require all seven suites and disclose public policy boundaries"
 fi
 
 python3 "$ROOT/scripts/validate-brand-assets.py" "$ROOT/docs/assets/brand" \
