@@ -18,6 +18,8 @@
 - [ ] `./tests/test-update.sh`
 - [ ] `./tests/test-reporting.sh`
 - [ ] `./tests/test-packaging.sh`
+- [ ] `./tests/test-doctor.sh`
+- [ ] `./tests/test-proof-demo.sh`
 - [ ] Bash and Python syntax checks
 - [ ] `git diff --check`
 - [ ] Human diff review completed
