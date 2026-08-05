@@ -126,6 +126,15 @@ may resolve a pair; disabled candidate, stale, unknown, duplicate, unsupported, 
 fixed/no-level inputs fail closed. Do not add a separate thinking-level abstraction
 or assume that agy's separate model and effort arguments compose safely.
 
+An exact matrix cannot validate itself. Keep its reviewed pair-to-slug mappings and
+fixed-slug classifications mirrored in explicit validator allowlists, and require
+exact equality between the two representations. That duplication is intentional:
+changing only the data or only the code fails closed and forces the next compatibility
+review to update both. Never reconstruct a supposedly reviewed slug with string
+concatenation; a plausible model name is not evidence. Keep the sanitized review
+record as the human evidence owner, and keep raw prompts, streams, envelopes, and
+private artifact paths out of it.
+
 Only an independently observed, bounded quality or verification gap can justify
 recommending a higher named tier. Permission, authentication, scope-policy, contract,
 untrusted-claim, and human-required failures need correction at their own boundary,

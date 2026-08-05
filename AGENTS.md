@@ -37,11 +37,11 @@ Keep these counts current when their suites change:
 - `qa-gate.sh`: 41 offline cases.
 - `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 77 offline
   fake-agy/routing cases.
-- `update.sh`: 164 offline local-remote/matrix/manifest/watch-policy cases.
+- `update.sh`: 174 offline local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 86 offline
+- Codex package/skill distribution: 89 offline
   manifest/runtime-copy/relocation/landing cases.
-- `doctor.sh`: 143 offline fake-tool/read-only cases.
+- `doctor.sh`: 148 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
@@ -118,9 +118,11 @@ only a passing test has not been shown to catch anything.
   exact semantic version/repository commands, expose no paths or raw output, and do
   not scan personal configuration. Green covers offline prerequisites only—not auth,
   provider, sandbox, task quality, or future dispatch. Portable agy metadata must
-  remain byte-identical to the canonical `compat/` records. Ignore caller temp paths;
-  use a private external workspace and propagate HUP/INT/TERM to the active probe.
-  Runtime parent directories are bundle-owned real directories, never symlinks.
+  remain byte-identical to the canonical `compat/` records, and the reviewed source
+  revision must match the doctor's fixed expected revision without printing its bytes.
+  Ignore caller temp paths; use a private external workspace and propagate HUP/INT/TERM
+  to the active probe. Runtime parent directories are bundle-owned real directories,
+  never symlinks.
 
 ## Boundaries
 
@@ -138,6 +140,9 @@ only a passing test has not been shown to catch anything.
 - agy has a real `--effort`, but the wrapper exposes none until G1. The checked-in
   matrix is validated metadata, not routing or gate authority; disabled, stale, or
   version/source-mismatched metadata must never resolve a model/effort pair.
+  Keep reviewed pair-to-slug mappings and fixed classifications explicit in both the
+  matrix and validator allowlists; update both in one reconciliation and never derive
+  a slug by concatenating model and effort strings.
 - Do not auto-pull during a worker job, auto-submit an issue, install `gh`, or make
   GitHub CLI a runtime dependency.
 - Do not overstate the project in README. It is one differentiated idea among several

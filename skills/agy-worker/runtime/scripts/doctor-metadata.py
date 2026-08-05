@@ -15,6 +15,7 @@ from pathlib import Path
 
 
 VERSION_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
+REVISION_RE = re.compile(r"[0-9a-f]{40}")
 REVIEW_DAYS = 30
 MAX_VERSION_OUTPUT_BYTES = 128
 CAPTURE_TIMEOUT_SECONDS = 5
@@ -44,6 +45,14 @@ def version(path: Path) -> int:
     value = read_record(path)
     if VERSION_RE.fullmatch(value) is None:
         raise MetadataError("invalid version")
+    print(value)
+    return 0
+
+
+def revision(path: Path) -> int:
+    value = read_record(path)
+    if REVISION_RE.fullmatch(value) is None:
+        raise MetadataError("invalid revision")
     print(value)
     return 0
 
@@ -205,11 +214,18 @@ def review(path: Path) -> int:
 def main(argv: list[str]) -> int:
     if len(argv) == 2 and argv[1] == "capture-agy-version":
         return capture_agy_version()
-    if len(argv) != 3 or argv[1] not in {"version", "review", "agy-version-output"}:
+    if len(argv) != 3 or argv[1] not in {
+        "version",
+        "revision",
+        "review",
+        "agy-version-output",
+    }:
         return 2
     try:
         if argv[1] == "version":
             return version(Path(argv[2]))
+        if argv[1] == "revision":
+            return revision(Path(argv[2]))
         if argv[1] == "agy-version-output":
             return agy_version_output(Path(argv[2]))
         return review(Path(argv[2]))

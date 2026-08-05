@@ -98,7 +98,7 @@ OFFICIAL_CODEX_UPSTREAM_URL="https://github.com/openai/codex.git"
 mkdir -p "$SOURCE/skills" "$SOURCE/tests" "$SOURCE/compat" "$SOURCE/scripts" "$TMP/bin" "$SKILLS"
 cp "$ROOT/update.sh" "$ROOT/install.sh" "$SOURCE/"
 cp -R "$ROOT/skills/agy-worker" "$SOURCE/skills/agy-worker"
-cp "$ROOT/compat/"* "$SOURCE/compat/"
+cp -R "$ROOT/compat/." "$SOURCE/compat/"
 cp "$ROOT/scripts/compatibility.py" "$SOURCE/scripts/"
 cp "$ROOT/scripts/official_distribution.py" "$SOURCE/scripts/"
 
@@ -109,7 +109,7 @@ git -C "$UPSTREAM_SOURCE" config user.name test
 printf 'reviewed upstream\n' > "$UPSTREAM_SOURCE/README.md"
 git -C "$UPSTREAM_SOURCE" add README.md
 git -C "$UPSTREAM_SOURCE" commit -qm 'reviewed upstream fixture'
-git -C "$UPSTREAM_SOURCE" tag v1.1.9
+git -C "$UPSTREAM_SOURCE" tag v1.1.10
 UPSTREAM_HEAD="$(git -C "$UPSTREAM_SOURCE" rev-parse HEAD)"
 git init -q --bare "$UPSTREAM_REMOTE"
 git -C "$UPSTREAM_SOURCE" remote add publish "$UPSTREAM_REMOTE"
@@ -117,6 +117,18 @@ git -C "$UPSTREAM_SOURCE" push -q publish main --tags
 git --git-dir="$UPSTREAM_REMOTE" symbolic-ref HEAD refs/heads/main
 printf '%s\n' "$UPSTREAM_HEAD" > "$SOURCE/compat/agy-upstream-head.txt"
 python3 -c 'from datetime import date; print(date.today().isoformat())' > "$SOURCE/compat/agy-last-reviewed.txt"
+python3 - "$SOURCE/compat/agy-model-effort-matrix.json" "$UPSTREAM_HEAD" <<'PY'
+import json
+import sys
+
+path, revision = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    matrix = json.load(handle)
+matrix["inventory"]["reviewed_source_revision"] = revision
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(matrix, handle, indent=2)
+    handle.write("\n")
+PY
 
 mkdir -p "$CODEX_UPSTREAM_SOURCE"
 git -C "$CODEX_UPSTREAM_SOURCE" init -q -b main
@@ -148,7 +160,7 @@ case "${FAKE_AGY_MODE:-version}" in
   usage) printf 'Usage: agy [options] [command]\n'; exit 0 ;;
   fail) exit 7 ;;
 esac
-printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.1.9}}"
+printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.1.10}}"
 STUB
 cat > "$TMP/bin/codex" <<'STUB'
 #!/usr/bin/env bash
@@ -183,10 +195,10 @@ raise SystemExit(0 if module.MANIFEST_URL == expected else 1)
     fi
     case "${FAKE_MANIFEST_RESULT:-unchanged}" in
       unchanged)
-        printf '%s\n' '  distribution manifest: unchanged (1.1.9)'
+        printf '%s\n' '  distribution manifest: unchanged (1.1.10)'
         exit 0 ;;
       drift)
-        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.1.10; verified 1.1.9)'
+        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.1.11; verified 1.1.10)'
         exit 3 ;;
       unavailable)
         printf '%s\n' '  distribution manifest: evidence-unavailable (network evidence unavailable)'
@@ -267,6 +279,7 @@ expect_same_snapshot "exit 0 preserves HEAD, refs, index, and all worktree bytes
 if grep -Fq 'agy compatibility:' "$TMP/check.out" \
         && grep -Fq 'codex compatibility:' "$TMP/check.out" \
         && grep -Fq 'distribution manifest: unchanged' "$TMP/check.out" \
+        && grep -Fq 'model/effort matrix: unchanged' "$TMP/check.out" \
         && grep -Fq 'stable release: unchanged' "$TMP/check.out" \
         && grep -Fq 'source revision: unchanged' "$TMP/check.out"; then
     ok "local check always reports both tools and official evidence"
@@ -299,6 +312,92 @@ if ! grep -Fq 'example.invalid' "$TMP/fixed-policy.out" "$TMP/fixed-policy.err";
 else
     bad "ignored source overrides are never disclosed"
 fi
+
+set_client_matrix_mode() {
+    local mode="$1"
+    "$REAL_PYTHON_REAL" - "$CLIENT/compat/agy-model-effort-matrix.json" "$mode" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+mode = sys.argv[2]
+if mode == "missing":
+    path.unlink()
+    raise SystemExit
+if mode == "malformed":
+    path.write_text("{ malformed\n", encoding="utf-8")
+    raise SystemExit
+with path.open(encoding="utf-8") as handle:
+    matrix = json.load(handle)
+if mode == "disabled":
+    matrix["resolution_status"] = "disabled-unverified-source"
+    matrix["inventory"]["reviewed_source_revision"] = None
+    matrix["inventory"]["evidence"] = ["installed-agy-models"]
+elif mode == "source-mismatch":
+    matrix["inventory"]["reviewed_source_revision"] = "a" * 40
+elif mode == "version-mismatch":
+    matrix["inventory"]["agy_version"] = "9.9.9"
+else:
+    raise SystemExit("unknown matrix fixture mode")
+with path.open("w", encoding="utf-8") as handle:
+    json.dump(matrix, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
+snapshot_repo "$CLIENT" "$TMP/matrix-disabled.before"
+set_client_matrix_mode disabled
+PATH="$TMP/bin:$PATH" "$CLIENT/update.sh" check \
+    > "$TMP/matrix-disabled.out" 2> "$TMP/matrix-disabled.err"
+rc=$?
+git -C "$CLIENT" checkout -q -- compat/agy-model-effort-matrix.json
+snapshot_repo "$CLIENT" "$TMP/matrix-disabled.after"
+expect_exit "disabled matrix is drift-review" 3 "$rc"
+if grep -Fq 'model/effort matrix: drift-review' "$TMP/matrix-disabled.out"; then
+    ok "disabled matrix reports its bounded state"
+else
+    bad "disabled matrix reports its bounded state"
+fi
+expect_same_snapshot "disabled-matrix check preserves repository state" \
+    "$TMP/matrix-disabled.before" "$TMP/matrix-disabled.after"
+
+set_client_matrix_mode source-mismatch
+PATH="$TMP/bin:$PATH" "$CLIENT/update.sh" check \
+    > "$TMP/matrix-source-mismatch.out" 2> "$TMP/matrix-source-mismatch.err"
+rc=$?
+expect_exit "source-mismatched matrix is drift-review" 3 "$rc"
+git -C "$CLIENT" checkout -q -- compat/agy-model-effort-matrix.json
+
+set_client_matrix_mode version-mismatch
+PATH="$TMP/bin:$PATH" "$CLIENT/update.sh" check \
+    > "$TMP/matrix-version-mismatch.out" 2> "$TMP/matrix-version-mismatch.err"
+rc=$?
+expect_exit "version-mismatched matrix is drift-review" 3 "$rc"
+git -C "$CLIENT" checkout -q -- compat/agy-model-effort-matrix.json
+
+snapshot_repo "$CLIENT" "$TMP/matrix-malformed.before"
+set_client_matrix_mode malformed
+PATH="$TMP/bin:$PATH" "$CLIENT/update.sh" check \
+    > "$TMP/matrix-malformed.out" 2> "$TMP/matrix-malformed.err"
+rc=$?
+git -C "$CLIENT" checkout -q -- compat/agy-model-effort-matrix.json
+snapshot_repo "$CLIENT" "$TMP/matrix-malformed.after"
+expect_exit "malformed matrix is evidence-unavailable" 2 "$rc"
+if grep -Fq 'model/effort matrix: evidence-unavailable' "$TMP/matrix-malformed.out"; then
+    ok "malformed matrix output is sanitized"
+else
+    bad "malformed matrix output is sanitized"
+fi
+expect_same_snapshot "malformed-matrix check preserves repository state" \
+    "$TMP/matrix-malformed.before" "$TMP/matrix-malformed.after"
+
+set_client_matrix_mode missing
+PATH="$TMP/bin:$PATH" "$CLIENT/update.sh" check \
+    > "$TMP/matrix-missing.out" 2> "$TMP/matrix-missing.err"
+rc=$?
+expect_exit "missing matrix is evidence-unavailable" 2 "$rc"
+git -C "$CLIENT" checkout -q -- compat/agy-model-effort-matrix.json
 
 PATH="$TMP/bin:$PATH" "$CLIENT/update.sh" check \
     --manifest-url https://example.invalid/credential-secret \
@@ -437,8 +536,8 @@ PATH="$TMP/bin:$PATH" \
 rc=$?
 expect_exit "watch mode preserves drift-review exit semantics" 3 "$rc"
 
-git -C "$UPSTREAM_SOURCE" tag v1.1.10
-git -C "$UPSTREAM_SOURCE" push -q publish v1.1.10
+git -C "$UPSTREAM_SOURCE" tag v1.1.11
+git -C "$UPSTREAM_SOURCE" push -q publish v1.1.11
 PATH="$TMP/bin:$PATH" \
     "$CLIENT/update.sh" check > "$TMP/agy-stable-drift.out" 2> "$TMP/agy-stable-drift.err"
 rc=$?
@@ -685,8 +784,14 @@ elif mode == "matrix-missing-output":
     data["adjustable_models"][0]["resolutions"]["medium"] = ""
 elif mode == "matrix-inferred-output":
     data["adjustable_models"][0]["resolutions"]["high"] = "gemini-3.6-flash-thinking"
+elif mode == "matrix-unreviewed-output":
+    data["adjustable_models"][0]["resolutions"]["high"] = "gemini-3.6-flash-high-v2"
 elif mode == "matrix-malformed-nested-type":
     data["adjustable_models"][2]["unsupported_efforts"] = [{}]
+elif mode == "matrix-disabled":
+    data["resolution_status"] = "disabled-unverified-source"
+    data["inventory"]["reviewed_source_revision"] = None
+    data["inventory"]["evidence"] = ["installed-agy-models"]
 else:
     raise SystemExit(f"unknown fixture mode: {mode}")
 
@@ -698,19 +803,19 @@ PY
 python3 "$MATRIX_TOOL" validate-matrix --matrix "$MATRIX" --schema "$MATRIX_SCHEMA" \
     --verified-version-file "$ROOT/compat/agy-verified-version.txt" \
     --reviewed-revision-file "$ROOT/compat/agy-upstream-head.txt" \
-    > "$TMP/candidate-matrix.out" 2> "$TMP/candidate-matrix.err"
+    > "$TMP/reconciled-matrix.out" 2> "$TMP/reconciled-matrix.err"
 rc=$?
-expect_exit "candidate inventory validates but remains disabled" 3 "$rc"
+expect_exit "checked-in active matrix is exactly version/source bound" 0 "$rc"
 
 ACTIVE_MATRIX="$TMP/active-matrix.json"
-sed -e 's/"resolution_status": "disabled-unverified-source"/"resolution_status": "active"/' \
-    -e "s/\"reviewed_source_revision\": null/\"reviewed_source_revision\": \"$UPSTREAM_HEAD\"/" \
-    -e 's/"evidence": \["installed-agy-models"\]/"evidence": ["agy-models", "official-release", "official-source"]/' \
-    "$MATRIX" > "$ACTIVE_MATRIX"
-printf '1.1.10\n' > "$TMP/matrix-version.txt"
-printf '%s\n' "$UPSTREAM_HEAD" > "$TMP/matrix-revision.txt"
+cp "$MATRIX" "$ACTIVE_MATRIX"
+cp "$ROOT/compat/agy-verified-version.txt" "$TMP/matrix-version.txt"
+cp "$ROOT/compat/agy-upstream-head.txt" "$TMP/matrix-revision.txt"
 expect_matrix_validation "canonical schema and active matrix are exactly bound" 0 \
     "$ACTIVE_MATRIX" "$MATRIX_SCHEMA" active-matrix
+
+DISABLED_MATRIX="$TMP/disabled-matrix.json"
+make_json_variant "$ACTIVE_MATRIX" "$DISABLED_MATRIX" matrix-disabled
 
 expect_matrix_resolution "3.6 Flash low resolves exactly" \
     gemini-3.6-flash low gemini-3.6-flash-low pair-36-low
@@ -783,7 +888,7 @@ expect_matrix_reject "thinking-like effort is not inferred" 64 \
 expect_matrix_reject "unknown effort has no fallback" 64 \
     "$ACTIVE_MATRIX" gemini-3.6-flash extreme effort-unknown
 
-expect_matrix_reject "disabled candidate matrix cannot resolve" 3 "$MATRIX" \
+expect_matrix_reject "disabled candidate matrix cannot resolve" 3 "$DISABLED_MATRIX" \
     gemini-3.6-flash high disabled-matrix
 
 printf '9.9.9\n' > "$TMP/stale-version.txt"
@@ -803,6 +908,7 @@ for matrix_variant in \
     missing-coverage \
     missing-output \
     inferred-output \
+    unreviewed-output \
     malformed-nested-type
 do
     make_json_variant "$ACTIVE_MATRIX" "$TMP/$matrix_variant.json" \
