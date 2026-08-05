@@ -337,6 +337,20 @@ Personas are injected as prompt text, **not** via agy's `--agent` flag, because
 Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid ·
 `5` agy failed · `6` permission gate.
 
+The dispatcher creates each job directory and its task, full prompt, stream, stderr,
+staged prompt, and envelope under an owner-only mask, even when the caller's mask is
+permissive. A missing `AGY_WORKER_LOG_DIR` is created owner-only. An existing final
+log root must be a real directory owned by the current user with no group/other write
+bits; a final symlink is rejected, and the accepted root is resolved physically. The
+dispatcher does not rewrite that caller-owned root or change the caller's umask inside
+agy, so this boundary does not silently change candidate-file permissions. A job ID
+is exclusive: an existing directory, file, or symlink at that job path is rejected
+before the prompt is read or agy is invoked. Oversized staged prompts return to
+owner-only modes after the child, on an early exit, and before HUP, INT, or TERM is
+re-raised with its normal status. This bounded final-root check does not validate the
+full ancestor chain or claim to eliminate every filesystem time-of-check/time-of-use
+race.
+
 ### Model selection is explicit; recommendations are advisory
 
 The dispatcher does not infer difficulty or score the gap between worker output and

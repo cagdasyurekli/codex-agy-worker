@@ -9,7 +9,7 @@ from Graphify or another indexer.
 ```text
 driver task
   -> model-recommendation.sh --stage pre-dispatch (visible advisory only)
-  -> agy-worker.sh (bounded prompt, sandbox/mode/model, job artifacts)
+  -> agy-worker.sh (bounded prompt, sandbox/mode/model, owner-private job artifacts)
   -> agy (untrusted worker)
   -> structured envelope
   -> skills/agy-worker/runtime/scripts/validate-envelope.py (shape and contract only)
@@ -76,8 +76,8 @@ accept a candidate, replace human diff review, or certify correctness or securit
 
 | Path | Responsibility | Owning offline suite |
 |---|---|---|
-| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus canonical dispatch, model/mode selection, bounded retries, prompt staging, envelope extraction | `tests/test-agy-worker.sh` (60 cases) |
-| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre-dispatch and post-gate recommendations | `tests/test-agy-worker.sh` (60 cases) |
+| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus canonical dispatch, model/mode selection, bounded retries, bounded final-log-root validation, exclusive private prompt/log staging with signal cleanup, envelope extraction | `tests/test-agy-worker.sh` (77 cases) |
+| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre-dispatch and post-gate recommendations | `tests/test-agy-worker.sh` (77 cases) |
 | `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (143 cases) plus packaging synchronization checks |
 | `install.sh`, `skills/agy-worker/`, `skills/agy-worker/scripts/resolve-pipeline.sh` | Install and resolve complete-plugin, explicit-checkout, or folder-only skill layouts without fetching code | dispatcher and packaging suites |
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
@@ -138,8 +138,14 @@ accept a candidate, replace human diff review, or certify correctness or securit
 ## Generated and private artifacts
 
 - `logs/<job>/` contains the task, full prompt, stream, stderr, staged oversized
-  prompt, and extracted envelope. Treat it as private evidence; do not commit or paste
-  it into reports.
+  prompt, and extracted envelope. The dispatcher creates this job tree owner-only
+  even under a permissive caller umask. A missing log root is created privately; an
+  existing final root must be current-user-owned, non-symlink, and not group/other
+  writable before its physical path is used. The caller-owned root is not rewritten.
+  This final-component check is not full ancestor-chain or TOCTOU protection. Job
+  paths are created exclusively rather than reused, and staged prompt modes are
+  restored on completion, early exit, and handled termination signals. Treat the
+  tree as private evidence; do not commit or paste it into reports.
 - Temporary worktrees, envelopes, updater candidates, and bug drafts normally live
   outside the repository. Preserve accepted work before cleanup; force removal is only
   for deliberately rejected disposable changes.

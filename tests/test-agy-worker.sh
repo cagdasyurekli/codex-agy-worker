@@ -73,8 +73,55 @@ expect_recommendation_reject() {
         bad "$name (exit $rc, wanted 64 with empty stdout)"
     fi
 }
+private_tree_is_private() {
+    python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+root = sys.argv[1]
+paths = [root]
+for current, directories, files in os.walk(root, followlinks=False):
+    paths.extend(os.path.join(current, name) for name in directories + files)
+for path in paths:
+    mode = stat.S_IMODE(os.lstat(path).st_mode)
+    if mode & 0o077:
+        print(f"non-private artifact: {path} mode={mode:04o}", file=sys.stderr)
+        raise SystemExit(1)
+PY
+}
+mode_is() {
+    python3 - "$1" "$2" <<'PY'
+import os
+import stat
+import sys
+
+actual = stat.S_IMODE(os.lstat(sys.argv[1]).st_mode)
+expected = int(sys.argv[2], 8)
+raise SystemExit(0 if actual == expected else 1)
+PY
+}
+log_root_is_acceptable() {
+    python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+metadata = os.lstat(sys.argv[1])
+mode = stat.S_IMODE(metadata.st_mode)
+valid = (
+    not stat.S_ISLNK(metadata.st_mode)
+    and stat.S_ISDIR(metadata.st_mode)
+    and metadata.st_uid == os.geteuid()
+    and (mode & 0o022) == 0
+)
+raise SystemExit(0 if valid else 1)
+PY
+}
 
 mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/logs"
+chmod 0755 "$TMP/logs"
+LOGS_REAL="$(cd "$TMP/logs" && pwd -P)"
 cat > "$TMP/bin/agy" <<'FAKE'
 #!/usr/bin/env bash
 set -u
@@ -107,6 +154,16 @@ if [[ "${FAKE_TRY_STAGE_WRITE:-0}" == "1" && -n "$stage_dir" ]]; then
         printf 'blocked' > "$FAKE_STAGE_RESULT_FILE"
     fi
 fi
+if [[ -n "${FAKE_CALLED_FILE:-}" ]]; then
+    : > "$FAKE_CALLED_FILE"
+fi
+if [[ -n "${FAKE_SIGNAL_PARENT:-}" ]]; then
+    kill -s "$FAKE_SIGNAL_PARENT" "$PPID"
+    exit "${FAKE_EXIT_CODE:-23}"
+fi
+if [[ "${FAKE_EXIT_CODE:-0}" != "0" ]]; then
+    exit "$FAKE_EXIT_CODE"
+fi
 status="${FAKE_AGY_STATUS:-SUCCESS}"
 if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
@@ -120,7 +177,7 @@ chmod +x "$TMP/bin/agy"
 run_worker() {
     local job="$1"; shift
     PATH="$TMP/bin:$PATH" \
-    AGY_WORKER_LOG_DIR="$TMP/logs" \
+    AGY_WORKER_LOG_DIR="${AGY_TEST_LOG_DIR:-$TMP/logs}" \
     AGY_WORKER_JOB_ID="$job" \
     FAKE_MODEL_FILE="$TMP/$job.model" \
     FAKE_PROMPT_FILE="$TMP/$job.prompt" \
@@ -128,7 +185,10 @@ run_worker() {
     FAKE_ARGV_FILE="$TMP/$job.argv" \
     FAKE_STAGE_RESULT_FILE="$TMP/$job.stage-result" \
     FAKE_TRY_STAGE_WRITE="${FAKE_TRY_STAGE_WRITE:-0}" \
-    "$WORKER" --workdir "$TMP/repo" "$@"
+    FAKE_CALLED_FILE="$TMP/$job.called" \
+    FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
+    FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
+    "${AGY_TEST_WORKER:-$WORKER}" --workdir "$TMP/repo" "$@"
 }
 
 echo "agy-worker.sh offline test suite"
@@ -182,6 +242,210 @@ else
     bad "root wrapper treats an empty log override as the historical root logs default"
 fi
 
+PRIVATE_LOG_022="$TMP/existing-log-022"
+mkdir -p "$PRIVATE_LOG_022"
+chmod 0755 "$PRIVATE_LOG_022"
+(
+    umask 022
+    printf 'private artifacts under umask 022\n' | \
+        AGY_TEST_LOG_DIR="$PRIVATE_LOG_022" run_worker private-022
+) > "$TMP/private-022.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && mode_is "$PRIVATE_LOG_022" 0755 \
+        && log_root_is_acceptable "$PRIVATE_LOG_022" \
+        && private_tree_is_private "$PRIVATE_LOG_022/private-022"; then
+    ok "dispatcher keeps a new job private under umask 022 and a traversable custom log root"
+else
+    bad "dispatcher keeps a new job private under umask 022 and a traversable custom log root"
+fi
+
+PRIVATE_LOG_000="$TMP/existing-log-000"
+mkdir -p "$PRIVATE_LOG_000"
+chmod 0755 "$PRIVATE_LOG_000"
+(
+    umask 000
+    printf 'private artifacts under umask 000\n' | \
+        AGY_TEST_LOG_DIR="$PRIVATE_LOG_000" run_worker private-000
+) > "$TMP/private-000.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && mode_is "$PRIVATE_LOG_000" 0755 \
+        && log_root_is_acceptable "$PRIVATE_LOG_000" \
+        && mode_is "$TMP/private-000.model" 0666 \
+        && private_tree_is_private "$PRIVATE_LOG_000/private-000"; then
+    ok "dispatcher keeps artifacts private under umask 000 without changing the agy child umask"
+else
+    bad "dispatcher keeps artifacts private under umask 000 without changing the agy child umask"
+fi
+
+MISSING_LOG_ROOT="$TMP/missing-log-root"
+(
+    umask 000
+    printf 'create a private log root\n' | \
+        AGY_TEST_LOG_DIR="$MISSING_LOG_ROOT" run_worker missing-log-root
+) > "$TMP/missing-log-root.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && mode_is "$MISSING_LOG_ROOT" 0700 \
+        && log_root_is_acceptable "$MISSING_LOG_ROOT" \
+        && private_tree_is_private "$MISSING_LOG_ROOT/missing-log-root"; then
+    ok "a missing custom log root is created owner-only under caller umask 000"
+else
+    bad "a missing custom log root is created owner-only under caller umask 000"
+fi
+
+invalid_root_index=0
+for invalid_root_mode in 0777 0775; do
+    invalid_root_index=$((invalid_root_index+1))
+    invalid_root="$TMP/invalid-root-$invalid_root_index"
+    invalid_job="invalid-root-$invalid_root_index"
+    mkdir -p "$invalid_root"
+    chmod "$invalid_root_mode" "$invalid_root"
+    printf 'root sentinel %s\n' "$invalid_root_mode" > "$invalid_root/sentinel"
+    printf 'must reject writable log root\n' | \
+        AGY_TEST_LOG_DIR="$invalid_root" run_worker "$invalid_job" \
+        > "$TMP/$invalid_job.out" 2>/dev/null
+    rc=$?
+    if [[ "$rc" == "64" ]] \
+            && [[ "$(<"$invalid_root/sentinel")" == "root sentinel $invalid_root_mode" ]] \
+            && [[ ! -e "$invalid_root/$invalid_job" ]] \
+            && [[ ! -e "$TMP/$invalid_job.called" ]]; then
+        ok "mode $invalid_root_mode log root is rejected before prompt staging or agy"
+    else
+        bad "mode $invalid_root_mode log root is rejected before prompt staging or agy"
+    fi
+done
+
+SYMLINK_LOG_TARGET="$TMP/symlink-log-target"
+SYMLINK_LOG_ROOT="$TMP/symlink-log-root"
+mkdir -p "$SYMLINK_LOG_TARGET"
+chmod 0755 "$SYMLINK_LOG_TARGET"
+printf 'symlink root sentinel\n' > "$SYMLINK_LOG_TARGET/sentinel"
+ln -s "$SYMLINK_LOG_TARGET" "$SYMLINK_LOG_ROOT"
+printf 'must reject symlink log root\n' | \
+    AGY_TEST_LOG_DIR="$SYMLINK_LOG_ROOT" run_worker symlink-log-root \
+    > "$TMP/symlink-log-root.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "64" ]] \
+        && [[ "$(<"$SYMLINK_LOG_TARGET/sentinel")" == "symlink root sentinel" ]] \
+        && [[ ! -e "$SYMLINK_LOG_TARGET/symlink-log-root" ]] \
+        && [[ ! -e "$TMP/symlink-log-root.called" ]]; then
+    ok "symlink log root is rejected before prompt staging or agy"
+else
+    bad "symlink log root is rejected before prompt staging or agy"
+fi
+
+WEAK_ROOT_POLICY="$TMP/weak-root-policy"
+mkdir -p "$WEAK_ROOT_POLICY"
+cp -R "$ROOT/skills/agy-worker" "$WEAK_ROOT_POLICY/agy-worker"
+python3 - "$WEAK_ROOT_POLICY/agy-worker/runtime/agy-worker.sh" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    source = handle.read()
+old = 'if ! validate_log_root "$LOG_DIR"; then'
+new = 'if ! true; then  # TEST MUTATION: final log-root policy bypassed'
+if source.count(old) != 1:
+    raise SystemExit("expected exactly one final log-root policy call")
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(source.replace(old, new, 1))
+PY
+WEAK_ROOT_POLICY_LOG="$TMP/weak-root-policy-log"
+mkdir -p "$WEAK_ROOT_POLICY_LOG"
+chmod 0777 "$WEAK_ROOT_POLICY_LOG"
+printf 'mutation must be caught\n' | \
+    AGY_TEST_WORKER="$WEAK_ROOT_POLICY/agy-worker/runtime/agy-worker.sh" \
+    AGY_TEST_LOG_DIR="$WEAK_ROOT_POLICY_LOG" run_worker weak-root-policy \
+    > "$TMP/weak-root-policy.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && [[ -e "$TMP/weak-root-policy.called" ]] \
+        && private_tree_is_private "$WEAK_ROOT_POLICY_LOG/weak-root-policy" \
+        && ! log_root_is_acceptable "$WEAK_ROOT_POLICY_LOG" 2>/dev/null; then
+    ok "log-root acceptance rejects a runtime with final-root validation bypassed"
+else
+    bad "log-root acceptance rejects a runtime with final-root validation bypassed"
+fi
+
+WEAK_UMASK_ROOT="$TMP/weak-umask"
+mkdir -p "$WEAK_UMASK_ROOT"
+cp -R "$ROOT/skills/agy-worker" "$WEAK_UMASK_ROOT/agy-worker"
+python3 - "$WEAK_UMASK_ROOT/agy-worker/runtime/agy-worker.sh" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    source = handle.read()
+old = 'CALLER_UMASK="$(umask)"\numask 077\n'
+new = 'CALLER_UMASK="$(umask)"\n# TEST MUTATION: private creation mask removed.\n'
+if source.count(old) != 1:
+    raise SystemExit("expected exactly one private-mask block")
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(source.replace(old, new, 1))
+PY
+WEAK_UMASK_LOG="$TMP/weak-umask-log"
+mkdir -p "$WEAK_UMASK_LOG"
+chmod 0755 "$WEAK_UMASK_LOG"
+(
+    umask 000
+    printf 'mutation must be caught\n' | \
+        AGY_TEST_WORKER="$WEAK_UMASK_ROOT/agy-worker/runtime/agy-worker.sh" \
+        AGY_TEST_LOG_DIR="$WEAK_UMASK_LOG" run_worker weak-umask
+) > "$TMP/weak-umask.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && ! private_tree_is_private "$WEAK_UMASK_LOG/weak-umask" 2>/dev/null; then
+    ok "privacy acceptance rejects a runtime with the private creation mask removed"
+else
+    bad "privacy acceptance rejects a runtime with the private creation mask removed"
+fi
+
+COLLISION_LOG="$TMP/collision-log"
+mkdir -p "$COLLISION_LOG/existing-dir" "$TMP/symlink-target"
+chmod 0755 "$COLLISION_LOG"
+printf 'directory sentinel\n' > "$COLLISION_LOG/existing-dir/sentinel"
+printf 'file sentinel\n' > "$COLLISION_LOG/existing-file"
+printf 'symlink sentinel\n' > "$TMP/symlink-target/sentinel"
+ln -s "$TMP/symlink-target" "$COLLISION_LOG/existing-link"
+
+printf 'must reject existing directory\n' | \
+    AGY_TEST_LOG_DIR="$COLLISION_LOG" run_worker existing-dir \
+    > "$TMP/existing-dir.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "64" ]] \
+        && [[ "$(<"$COLLISION_LOG/existing-dir/sentinel")" == "directory sentinel" ]] \
+        && [[ ! -e "$TMP/existing-dir.called" ]]; then
+    ok "pre-existing job directory is rejected before invoking agy or touching its sentinel"
+else
+    bad "pre-existing job directory is rejected before invoking agy or touching its sentinel"
+fi
+
+printf 'must reject existing file\n' | \
+    AGY_TEST_LOG_DIR="$COLLISION_LOG" run_worker existing-file \
+    > "$TMP/existing-file.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "64" ]] \
+        && [[ "$(<"$COLLISION_LOG/existing-file")" == "file sentinel" ]] \
+        && [[ ! -e "$TMP/existing-file.called" ]]; then
+    ok "pre-existing job file is rejected before invoking agy or touching its sentinel"
+else
+    bad "pre-existing job file is rejected before invoking agy or touching its sentinel"
+fi
+
+printf 'must reject existing symlink\n' | \
+    AGY_TEST_LOG_DIR="$COLLISION_LOG" run_worker existing-link \
+    > "$TMP/existing-link.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "64" ]] \
+        && [[ "$(<"$TMP/symlink-target/sentinel")" == "symlink sentinel" ]] \
+        && [[ ! -e "$TMP/existing-link.called" ]]; then
+    ok "pre-existing job symlink is rejected before invoking agy or touching its target"
+else
+    bad "pre-existing job symlink is rejected before invoking agy or touching its target"
+fi
+
 printf 'must not edit\n' | run_worker readonly --mode accept-edits --persona diff-reviewer > "$TMP/readonly.out" 2>/dev/null
 rc=$?
 expect_exit "read-only persona rejects accept-edits" 64 "$rc"
@@ -216,13 +480,13 @@ if grep -q 'OVERSIZED_TASK_MARKER' "$TMP/logs/oversized/full-prompt.txt" \
 else
     bad "oversized staged prompt preserves task and persona"
 fi
-if grep -Fxq "$TMP/logs/oversized/staged" "$TMP/oversized.dirs" \
-        && ! grep -Fxq "$TMP/logs" "$TMP/oversized.dirs"; then
+if grep -Fxq "$LOGS_REAL/oversized/staged" "$TMP/oversized.dirs" \
+        && ! grep -Fxq "$LOGS_REAL" "$TMP/oversized.dirs"; then
     ok "oversized job grants only its staged prompt directory"
 else
     bad "oversized job grants only its staged prompt directory"
 fi
-if grep -Fq "$TMP/logs/oversized/staged/full-prompt.txt" "$TMP/oversized.prompt"; then
+if grep -Fq "$LOGS_REAL/oversized/staged/full-prompt.txt" "$TMP/oversized.prompt"; then
     ok "oversized dispatch points agy at the complete staged prompt"
 else
     bad "oversized dispatch points agy at the complete staged prompt"
@@ -232,7 +496,84 @@ if [[ "$(<"$TMP/oversized.stage-result")" == "blocked" ]]; then
 else
     bad "oversized staged prompt is read-only during agy execution"
 fi
+if private_tree_is_private "$TMP/logs/oversized"; then
+    ok "oversized staged prompt is private again after agy returns"
+else
+    bad "oversized staged prompt is private again after agy returns"
+fi
 expect_print_last "oversized prompt keeps --print and its value last" "$TMP/oversized.argv"
+
+WEAK_RESTORE_ROOT="$TMP/weak-restore"
+mkdir -p "$WEAK_RESTORE_ROOT"
+cp -R "$ROOT/skills/agy-worker" "$WEAK_RESTORE_ROOT/agy-worker"
+python3 - "$WEAK_RESTORE_ROOT/agy-worker/runtime/agy-worker.sh" <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    source = handle.read()
+replacements = (
+    (
+        'chmod 0700 "$staged_dir" 2>/dev/null || true',
+        'chmod 0755 "$staged_dir" 2>/dev/null || true',
+    ),
+    (
+        'chmod 0600 "$staged_prompt_file" 2>/dev/null || true',
+        'chmod 0644 "$staged_prompt_file" 2>/dev/null || true',
+    ),
+)
+for old, new in replacements:
+    if source.count(old) != 1:
+        raise SystemExit(f"expected exactly one restore statement: {old}")
+    source = source.replace(old, new, 1)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(source)
+PY
+WEAK_RESTORE_LOG="$TMP/weak-restore-log"
+mkdir -p "$WEAK_RESTORE_LOG"
+chmod 0755 "$WEAK_RESTORE_LOG"
+AGY_TEST_WORKER="$WEAK_RESTORE_ROOT/agy-worker/runtime/agy-worker.sh" \
+    AGY_TEST_LOG_DIR="$WEAK_RESTORE_LOG" \
+    run_worker weak-restore < "$TMP/large-task.txt" \
+    > "$TMP/weak-restore.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && ! private_tree_is_private "$WEAK_RESTORE_LOG/weak-restore" 2>/dev/null; then
+    ok "privacy acceptance rejects a runtime that restores staged artifacts publicly"
+else
+    bad "privacy acceptance rejects a runtime that restores staged artifacts publicly"
+fi
+
+FAKE_EXIT_CODE=23 AGY_WORKER_MAX_ATTEMPTS=1 \
+    run_worker staged-early-exit < "$TMP/large-task.txt" \
+    > "$TMP/staged-early-exit.out" 2>/dev/null
+rc=$?
+if [[ "$rc" == "5" ]] && private_tree_is_private "$TMP/logs/staged-early-exit"; then
+    ok "failed oversized child restores staged artifacts before the wrapper exits"
+else
+    bad "failed oversized child restores staged artifacts before the wrapper exits"
+fi
+
+signal_index=0
+for signal_name in HUP INT TERM; do
+    signal_index=$((signal_index+1))
+    case "$signal_name" in
+        HUP) expected_signal_rc=129 ;;
+        INT) expected_signal_rc=130 ;;
+        TERM) expected_signal_rc=143 ;;
+    esac
+    signal_job="staged-signal-$signal_index"
+    FAKE_SIGNAL_PARENT="$signal_name" FAKE_EXIT_CODE=23 AGY_WORKER_MAX_ATTEMPTS=1 \
+        run_worker "$signal_job" < "$TMP/large-task.txt" \
+        > "$TMP/$signal_job.out" 2>/dev/null
+    rc=$?
+    if [[ "$rc" == "$expected_signal_rc" ]] \
+            && private_tree_is_private "$TMP/logs/$signal_job"; then
+        ok "$signal_name restores staged artifacts and preserves signal exit semantics"
+    else
+        bad "$signal_name restores staged artifacts and preserves signal exit semantics"
+    fi
+done
 
 printf 'terminal failure\n' | PATH="$TMP/bin:$PATH" \
     AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID=terminal \

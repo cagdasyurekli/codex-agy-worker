@@ -91,6 +91,28 @@ over stdin, or use an equally immutable private snapshot. Bind the destination t
 intended public GitHub host, require the exact reviewed SHA-256, and never collect
 prompts, source, envelopes, credentials, private paths, or raw logs automatically.
 
+## Private evidence must be private when created
+
+Prompts, model streams, stderr, and extracted envelopes can contain repository data.
+Set an owner-only process mask before creating dispatcher-owned log directories or
+files; fixing permissions after a write leaves an avoidable disclosure window. A
+custom log root belongs to the caller, so contain each new job under its own private
+directory instead of rewriting that root. Before the first job write, require the
+final existing root itself to be a current-user-owned real directory without
+group/other write bits, then use its physical path. Create a missing root under the
+private mask. This is a bounded final-component invariant, not proof that every
+ancestor is safe or that all filesystem TOCTOU races are eliminated. Create the job
+directory atomically and fail closed when its path already names a directory, file,
+or symlink; reusing an attacker-prepared path defeats creation-time permissions.
+
+Do not let log hardening alter candidate-file behavior. Restore the caller's mask
+only inside the untrusted worker child while keeping the shell-owned redirections
+private. An oversized staged prompt may need its proven read-only access modes during
+agy execution, but it must stay below a non-traversable job parent and return to
+owner-only modes immediately afterward. Restore those modes from the normal child
+return path and an EXIT trap; HUP, INT, and TERM handlers must restore first and then
+re-raise the same signal so cleanup does not turn termination into success.
+
 ## Model routing is explicit
 
 The caller selects the tier. Built-in retries reuse the same model; gate failures do
