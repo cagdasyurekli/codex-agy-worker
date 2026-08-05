@@ -35,7 +35,7 @@ an unknown subcommand's exit code or generic usage text as compatibility evidenc
 Keep these counts current when their suites change:
 
 - `qa-gate.sh`: 41 offline cases.
-- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 60 offline
+- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 77 offline
   fake-agy/routing cases.
 - `update.sh`: 164 offline local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.

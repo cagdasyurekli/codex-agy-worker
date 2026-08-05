@@ -19,6 +19,12 @@
 #   * Therefore: exit code 0 proves nothing. Empty stdout is a FAILURE. See classify().
 set -euo pipefail
 
+# Prompts, streams, stderr, and envelopes can contain private repository content.
+# Create dispatcher-owned artifacts under a private mask regardless of the caller's
+# umask. The agy child gets the caller's mask back so target-file behavior is stable.
+CALLER_UMASK="$(umask)"
+umask 077
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCHEMA="${AGY_WORKER_SCHEMA:-$SCRIPT_DIR/schemas/worker-result.schema.json}"
 LOG_DIR="${AGY_WORKER_LOG_DIR:-$SCRIPT_DIR/logs}"
@@ -30,6 +36,27 @@ mode="${AGY_WORKER_MODE:-plan}"               # plan | accept-edits  (rec: plan 
 print_timeout="${AGY_WORKER_TIMEOUT:-5m0s}"
 max_attempts="${AGY_WORKER_MAX_ATTEMPTS:-2}"  # bounded retries, then fail closed (rec #11)
 job_id="${AGY_WORKER_JOB_ID:-job-$$}"
+
+validate_log_root() {
+    python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+try:
+    metadata = os.lstat(sys.argv[1])
+except OSError:
+    raise SystemExit(1)
+mode = stat.S_IMODE(metadata.st_mode)
+valid = (
+    not stat.S_ISLNK(metadata.st_mode)
+    and stat.S_ISDIR(metadata.st_mode)
+    and metadata.st_uid == os.geteuid()
+    and (mode & 0o022) == 0
+)
+raise SystemExit(0 if valid else 1)
+PY
+}
 
 usage() {
     cat >&2 <<'EOF'
@@ -101,12 +128,22 @@ if [[ "$mode" != "plan" && ( "$persona" == "repo-inventory" || "$persona" == "di
     exit 64
 fi
 
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" 2>/dev/null || {
+    echo "agy-worker.sh: log root cannot be created safely" >&2
+    exit 64
+}
+if ! validate_log_root "$LOG_DIR"; then
+    echo "agy-worker.sh: log root must be an owner-owned, non-writable real directory" >&2
+    exit 64
+fi
 # agy operates on its CWD as the workspace, so the dispatcher must actually move
 # there. LOG_DIR is resolved to an absolute path first: it defaults to a path under
 # SCRIPT_DIR, but a caller-supplied relative AGY_WORKER_LOG_DIR would otherwise
 # silently follow us into the worktree and scatter artifacts.
-LOG_DIR="$(cd "$LOG_DIR" && pwd)"
+if ! LOG_DIR="$(CDPATH= cd -- "$LOG_DIR" 2>/dev/null && pwd -P)"; then
+    echo "agy-worker.sh: log root cannot be resolved safely" >&2
+    exit 64
+fi
 [[ -f "$SCHEMA" ]] || { echo "agy-worker.sh: schema not found: $SCHEMA" >&2; exit 64; }
 SCHEMA="$(cd "$(dirname "$SCHEMA")" && pwd)/$(basename "$SCHEMA")"
 [[ -d "$workdir" ]] || { echo "agy-worker.sh: --workdir not a directory: $workdir" >&2; exit 64; }
@@ -129,7 +166,10 @@ fi
 cd "$workdir"
 
 job_dir="$LOG_DIR/$job_id"
-mkdir -p "$job_dir"
+if ! mkdir "$job_dir" 2>/dev/null; then
+    echo "agy-worker.sh: job artifact path already exists or cannot be created: $job_id" >&2
+    exit 64
+fi
 stdout_file="$job_dir/stream.ndjson"
 stderr_file="$job_dir/stderr.txt"
 prompt_file="$job_dir/task.txt"
@@ -137,6 +177,26 @@ full_prompt_file="$job_dir/full-prompt.txt"
 envelope_file="$job_dir/envelope.json"
 staged_dir="$job_dir/staged"
 staged_prompt_file="$staged_dir/full-prompt.txt"
+
+restore_staged_permissions() {
+    if [[ -d "$staged_dir" ]]; then
+        chmod 0700 "$staged_dir" 2>/dev/null || true
+        [[ ! -f "$staged_prompt_file" ]] || chmod 0600 "$staged_prompt_file" 2>/dev/null || true
+    fi
+}
+
+handle_signal() {
+    local signal="$1" status="$2"
+    restore_staged_permissions
+    trap - "$signal"
+    kill -s "$signal" "$$"
+    exit "$status"
+}
+
+trap 'restore_staged_permissions' EXIT
+trap 'handle_signal HUP 129' HUP
+trap 'handle_signal INT 130' INT
+trap 'handle_signal TERM 143' TERM
 
 # --- read the task -----------------------------------------------------------
 # stdin is consumed once; cache it so a retry can replay it verbatim.
@@ -206,8 +266,7 @@ build_cmd() {
     if (( ${#full_prompt} > 100000 )); then
         # The automatic out-of-repo root contains only one read-only staged prompt.
         # Logs and envelopes remain outside agy's granted roots.
-        [[ -d "$staged_dir" ]] && chmod 0755 "$staged_dir"
-        [[ -f "$staged_prompt_file" ]] && chmod 0644 "$staged_prompt_file"
+        restore_staged_permissions
         mkdir -p "$staged_dir"
         printf '%s' "$full_prompt" > "$staged_prompt_file"
         chmod 0444 "$staged_prompt_file"
@@ -298,12 +357,12 @@ while (( attempt <= max_attempts )); do
     build_cmd
     : > "$stdout_file"; : > "$stderr_file"
     set +e
-    "${cmd[@]}" > "$stdout_file" 2> "$stderr_file" < /dev/null
+    (
+        umask "$CALLER_UMASK"
+        exec "${cmd[@]}"
+    ) > "$stdout_file" 2> "$stderr_file" < /dev/null
     agy_rc=$?
-    if [[ -d "$staged_dir" ]]; then
-        chmod 0755 "$staged_dir"
-        [[ -f "$staged_prompt_file" ]] && chmod 0644 "$staged_prompt_file"
-    fi
+    restore_staged_permissions
     classify "$agy_rc"
     verdict=$?
     set -e
