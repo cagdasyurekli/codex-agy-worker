@@ -47,7 +47,7 @@ make_fixture() {
         "$destination/tmp"
     cp -R "$ROOT/skills/agy-worker/runtime" "$destination/runtime"
     rm -rf "$destination/runtime/__pycache__" "$destination/runtime/scripts/__pycache__"
-    printf '1.1.9\n' > "$destination/runtime/compat/agy-verified-version.txt"
+    printf '1.1.10\n' > "$destination/runtime/compat/agy-verified-version.txt"
     "$HOST_PYTHON" -B -c 'from datetime import date; print(date.today().isoformat())' \
         > "$destination/runtime/compat/agy-last-reviewed.txt"
     printf 'CONFIG_SECRET_DO_NOT_READ\n' > "$destination/home/.codex/config.toml"
@@ -61,8 +61,8 @@ make_fixture() {
         '[[ "${FAKE_PYTHON_MODE:-ready}" == "fail" ]] && exit 7' \
         'if [[ "${2:-}" == *doctor-metadata.py && "${3:-}" == "capture-agy-version" ]]; then' \
         '  case "${FAKE_PYTHON_CAPTURE_MODE:-real}" in' \
-        '    no-newline) printf "1.1.9"; exit 0 ;;' \
-        '    multiline) printf "1.1.9\\nextra\\n"; exit 0 ;;' \
+        '    no-newline) printf "1.1.10"; exit 0 ;;' \
+        '    multiline) printf "1.1.10\\nextra\\n"; exit 0 ;;' \
         '    short-write) exec 1>&-; exit 0 ;;' \
         '    disk-full) exit 74 ;;' \
         '  esac' \
@@ -94,14 +94,14 @@ make_fixture() {
         'printf "%s\\n" "$*" >> "$DOCTOR_AGY_CALLS"' \
         '"$DOCTOR_TEST_PYTHON" -B -c '"'"'import os,stat,sys; p=sys.argv[1]; c=os.path.join(p,"agy-version"); open(sys.argv[2],"a").write(f"agy:{p}:{stat.S_IMODE(os.stat(p).st_mode):03o}:{stat.S_IMODE(os.stat(c).st_mode):03o}\\n")'"'"' "$TMPDIR" "${DOCTOR_TMP_OBSERVATIONS:-/dev/null}"' \
         'case "${FAKE_AGY_MODE:-ready}" in' \
-        '  ready) printf "agy 1.1.9\\n" ;;' \
-        '  bare) printf "1.1.9\\n" ;;' \
-        '  no-newline) printf "agy 1.1.9" ;;' \
-        '  two-newlines) printf "agy 1.1.9\\n\\n" ;;' \
-        '  carriage-return) printf "agy 1.1.9\\r\\n" ;;' \
-        '  control) printf "agy 1.1.9\\t" ;;' \
-        '  nul) printf "agy 1.1.9\\0" ;;' \
-        '  prefix-junk) printf "version: agy 1.1.9\\n" ;;' \
+        '  ready) printf "agy 1.1.10\\n" ;;' \
+        '  bare) printf "1.1.10\\n" ;;' \
+        '  no-newline) printf "agy 1.1.10" ;;' \
+        '  two-newlines) printf "agy 1.1.10\\n\\n" ;;' \
+        '  carriage-return) printf "agy 1.1.10\\r\\n" ;;' \
+        '  control) printf "agy 1.1.10\\t" ;;' \
+        '  nul) printf "agy 1.1.10\\0" ;;' \
+        '  prefix-junk) printf "version: agy 1.1.10\\n" ;;' \
         '  oversize) printf "agy "; i=0; while [[ $i -lt 140 ]]; do printf "1"; i=$((i+1)); done ;;' \
         '  huge) printf "agy "; i=0; while [[ $i -lt 4096 ]]; do printf "1"; i=$((i+1)); done ;;' \
         '  signal) kill -TERM "$PPID"; exit 7 ;;' \
@@ -113,10 +113,10 @@ make_fixture() {
         '    trap "" HUP INT TERM' \
         '    while :; do /bin/sleep 1; done' \
         '    ;;' \
-        '  drift) printf "agy 1.1.10\\n" ;;' \
+        '  drift) printf "agy 1.1.11\\n" ;;' \
         '  empty) : ;;' \
         '  usage) printf "usage: agy [options]\\n" ;;' \
-        '  multiline) printf "agy 1.1.9\\nextra\\n" ;;' \
+        '  multiline) printf "agy 1.1.10\\nextra\\n" ;;' \
         '  fail) exit 7 ;;' \
         'esac' > "$destination/bin/agy"
     printf '%s\n' '#!/usr/bin/env bash' \
@@ -165,7 +165,7 @@ assert value["overall"] == overall
 assert value["exit_code"] == int(exit_code)
 assert [item["id"] for item in value["checks"]] == [
     "runtime_bundle", "private_workspace", "bash", "python", "git", "repository", "git_worktree",
-    "agy", "agy_version", "compatibility_review",
+    "agy", "agy_version", "agy_source", "compatibility_review",
 ]
 assert all(list(item) == ["id", "status", "detail"] for item in value["checks"])
 assert value["scope"] == "offline-prerequisites-only"
@@ -200,6 +200,7 @@ rc=$?
 expect_exit "compatible fake toolchain is ready" 0 "$rc"
 if grep -Fxq 'overall: ready' "$TMP/ready-text.out" \
         && grep -Fxq 'check agy_version: ready - verified-version-match' "$TMP/ready-text.out" \
+        && grep -Fxq 'check agy_source: ready - reviewed-source-match' "$TMP/ready-text.out" \
         && grep -Fxq 'scope: offline-prerequisites-only' "$TMP/ready-text.out"; then
     ok "text output has the stable ready contract"
 else
@@ -637,7 +638,7 @@ for parent in scripts agents schemas compat; do
             fi
         fi
         if [[ "$parent" == scripts ]]; then
-            printf '#!/usr/bin/env bash\n: > %q\nprintf "1.1.9\\n"\n' "$marker" \
+            printf '#!/usr/bin/env bash\n: > %q\nprintf "1.1.10\\n"\n' "$marker" \
                 > "$foreign_parent/doctor-metadata.py"
             chmod +x "$foreign_parent/doctor-metadata.py"
         fi
@@ -743,17 +744,19 @@ for dependency in \
     'scripts/validate-envelope.py:python-helper' \
     'schemas/worker-result.schema.json:schema' \
     'agents/repo-inventory.md:persona' \
+    'compat/agy-upstream-head.txt:source-record' \
     'compat/agy-verified-version.txt:compat-record'; do
     dependency_path="${dependency%:*}"
     dependency_class="${dependency##*:}"
-    fixture="$TMP/incomplete-$dependency_class"
+    dependency_label="${dependency_path//\//-}"
+    fixture="$TMP/incomplete-$dependency_label"
     cp -R "$BASE_FIXTURE" "$fixture"
     rm -f "$fixture/runtime/$dependency_path"
-    run_doctor "$fixture" "incomplete-$dependency_class" --format json
+    run_doctor "$fixture" "incomplete-$dependency_label" --format json
     rc=$?
     if [[ "$rc" == 3 ]] \
             && grep -Fq '"id": "runtime_bundle", "status": "not-ready", "detail": "incomplete"' \
-                "$TMP/incomplete-$dependency_class.out"; then
+                "$TMP/incomplete-$dependency_label.out"; then
         ok "doctor rejects an incomplete $dependency_class runtime"
     else
         bad "doctor rejects an incomplete $dependency_class runtime"
@@ -786,6 +789,37 @@ for mode in worktree-fail worktree-empty worktree-usage; do
         ok "git $mode does not prove worktree support"
     else
         bad "git $mode does not prove worktree support"
+    fi
+done
+
+for kind in missing malformed symlink tamper; do
+    fixture="$TMP/$kind-source"
+    cp -R "$BASE_FIXTURE" "$fixture"
+    source_record="$fixture/runtime/compat/agy-upstream-head.txt"
+    case "$kind" in
+        missing) rm -f "$source_record" ;;
+        malformed) printf 'not-a-revision\n' > "$source_record" ;;
+        symlink)
+            rm -f "$source_record"
+            ln -s /dev/null "$source_record"
+            ;;
+        tamper) printf '%040d\n' 0 > "$source_record" ;;
+    esac
+    run_doctor "$fixture" "$kind-source" --format json
+    rc=$?
+    if [[ "$kind" == tamper ]]; then
+        expected_detail='reviewed-source-mismatch'
+    else
+        expected_detail='reviewed-source-metadata-unavailable'
+    fi
+    if [[ "$rc" == 3 ]] \
+            && grep -Fq "\"id\": \"agy_source\", \"status\": \"not-ready\", \"detail\": \"$expected_detail\"" \
+                "$TMP/$kind-source.out" \
+            && ! grep -Eq 'not-a-revision|0000000000000000000000000000000000000000|/dev/null' \
+                "$TMP/$kind-source.out" "$TMP/$kind-source.err"; then
+        ok "$kind source revision is rejected without raw metadata"
+    else
+        bad "$kind source revision is rejected without raw metadata"
     fi
 done
 
@@ -838,7 +872,7 @@ for kind in malformed missing; do
     fixture="$TMP/$kind-version"
     cp -R "$BASE_FIXTURE" "$fixture"
     if [[ "$kind" == malformed ]]; then
-        printf 'v1.1.9\n' > "$fixture/runtime/compat/agy-verified-version.txt"
+        printf 'v1.1.10\n' > "$fixture/runtime/compat/agy-verified-version.txt"
     else
         rm -f "$fixture/runtime/compat/agy-verified-version.txt"
     fi

@@ -139,6 +139,32 @@ agy_distribution_manifest_check() {
     return 2
 }
 
+agy_model_matrix_check() {
+    local output="" status=0
+    output="$(python3 "$SCRIPT_DIR/scripts/compatibility.py" validate-matrix \
+        --matrix "$SCRIPT_DIR/compat/agy-model-effort-matrix.json" \
+        --schema "$SCRIPT_DIR/compat/model-effort-matrix.schema.json" \
+        --verified-version-file "$SCRIPT_DIR/compat/agy-verified-version.txt" \
+        --reviewed-revision-file "$SCRIPT_DIR/compat/agy-upstream-head.txt" \
+        2>/dev/null)" || status=$?
+    case "$status:$output" in
+        "0:matrix: unchanged - active and version/source bound")
+            echo "  model/effort matrix: unchanged (active and version/source bound)"
+            return 0
+            ;;
+        "3:matrix: drift-or-review - resolution is disabled pending official source evidence"|\
+        "3:matrix: drift-or-review - matrix agy version differs from the verified baseline"|\
+        "3:matrix: drift-or-review - matrix source revision differs from the reviewed baseline")
+            echo "  model/effort matrix: drift-review"
+            return 3
+            ;;
+        *)
+            echo "  model/effort matrix: evidence-unavailable"
+            return 2
+            ;;
+    esac
+}
+
 tool_compatibility_check() {
     local tool="$1" mode="$2" upstream verified_file reviewed_file revision_file
     local verified_version="" review_date="" reviewed_head="" installed_output="" installed_version=""
@@ -209,6 +235,10 @@ tool_compatibility_check() {
     fi
 
     if [[ "$tool" == "agy" ]]; then
+        step_rc=0
+        agy_model_matrix_check || step_rc=$?
+        rc="$(merge_status "$rc" "$step_rc")"
+
         step_rc=0
         agy_distribution_manifest_check || step_rc=$?
         rc="$(merge_status "$rc" "$step_rc")"

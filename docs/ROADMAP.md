@@ -99,15 +99,14 @@ Every roadmap slice must preserve all of these rules:
 
 ## Current agy inventory correction
 
-The local `./ground-truth.sh` inventory on agy `1.1.9` currently lists `--effort`,
-`models`, `agent`/`agents`, and `plugin`/`plugins` in addition to the already used
-print, model, mode, sandbox, schema, timeout, conversation, and directory options.
-However, the live `models` and `agents` probes failed in the current Codex sandbox
-because agy could not write under `~/.gemini` or bind its local language-server
-socket. Exact model and agent catalogs therefore remain unverified in this audit.
+The accepted agy `1.1.10` reconciliation combines documented `--effort` and `models`
+surfaces with one sandbox-correct read-only model inventory. The exact 11-slug list,
+its SHA-256, reviewed source revision, and bounded behavior limits live in
+[`../compat/reviews/agy-1.1.10.md`](../compat/reviews/agy-1.1.10.md). Agent and plugin
+catalogs were not part of that bounded review and remain outside this contract.
 
-This corrects the current inventory without claiming that locally advertised flags
-or historical failure behavior are the verified agy `1.1.10` contract:
+This corrects the inventory without turning advertised flags or historical failure
+behavior into broader agy `1.1.10` promises:
 
 - Do not expose `--effort` before G0 reconciles official releases/source/docs with a
   sandbox-correct inventory and bounded behavior tests. G1 may then expose the same
@@ -179,38 +178,37 @@ an earlier implementation because it shares a schema or helper.
   version/archive URL/SHA-512 tuple, and never requests the archive. Its checked-in
   tuple is an observational same-version change detector, not a verified release,
   source revision, signature, or baseline. Official release, source, documentation,
-  and distribution evidence now expose `1.1.10`, while the repository's
-  human-reviewed verified baseline remains `1.1.9`. That evidence enables human
-  reconciliation but does not complete it, activate G1 resolution, or permit a
-  speculative baseline advance; the current result remains drift-review.
+  and distribution evidence expose `1.1.10`. They were inputs to the separately
+  accepted human reconciliation; the canary alone did not advance the now-reviewed
+  `1.1.10` baseline or activate G1.
 - **Baseline advancement:** A maintainer may advance either verified baseline only
   after reconciling official docs, release notes, and source; regenerating the local
   `./ground-truth.sh` evidence for agy and equivalent documented Codex CLI inventory;
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. The official agy `1.1.10` release and
-  matching source now provide inputs to that review, but the verified baseline stays
-  `1.1.9` and the result remains AMBER/review-due until the complete human
-  reconciliation and its required evidence gates are accepted.
+  The watch never performs this reconciliation. agy `1.1.10` was advanced only after
+  its official evidence, installed inventory, bounded jobs, and offline gates were
+  human-reviewed. Any later version or source movement returns the result to
+  drift-review until another reconciliation is accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
   exact output slug from the verified `agy models` inventory, agy docs/source, and
   bounded CLI behavior—not from a provider API table or a model-name guess. The
   matrix records its agy version and source revision. Any agy version/source drift
   makes it stale and keeps effort resolution disabled until human reconciliation.
-  The current `1.1.10` candidate inventory to verify exposes compound slugs: Gemini
-  3.6 Flash has low/medium/high and Gemini 3.1 Pro has low/high but **not medium**.
+  The verified `1.1.10` inventory exposes compound slugs: Gemini 3.6 Flash and Gemini
+  3.5 Flash have low/medium/high; Gemini 3.1 Pro has low/high but **not medium**.
   Sonnet is no-level; the advertised Opus thinking slug and GPT medium-labelled slug
-  are fixed model choices, not adjustable effort pairs. These are not runtime promises
-  until G0 binds every exact input and output slug to the verified inventory.
+  are fixed model choices, not adjustable effort pairs. G0 binds those exact entries
+  as compatibility metadata; the wrapper does not consume the mappings until G1.
 - **Current-behavior correction:** Implementation updates README and AGENTS guidance
   to say that probes must validate documented commands and expected semantic content,
   never an unknown subcommand's exit or usage output. It also records that agy has a
   real `--effort`, while this wrapper exposes no effort control until G1. Official
-  `1.1.10` source is now available, but the repository has not accepted a human
-  reconciliation proving dual-selector composition: production code sends one
-  resolved model slug and cannot combine an effort-bearing slug with agy's separate
-  effort flag without a later, separately approved evidence gate.
+  `1.1.10` source was reviewed, but the reconciliation did not prove dual-selector
+  composition: production code sends one resolved model slug and cannot combine an
+  effort-bearing slug with agy's separate effort flag without a later, separately
+  approved evidence gate.
 - **Model option decision gate:** `gemini-3.6-flash-high` is already selectable as a
   raw custom `--tier` label. It remains unranked and non-escalating; no `bulk`/`hard`
   mapping changes and no effort flag are part of G0. Google's official
@@ -235,7 +233,7 @@ an earlier implementation because it shares a schema or helper.
 - **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
   versus verified differences and stale review dates are reported separately and
   return `3`; unavailable network returns `2` with an inconclusive label; absent
-  official `1.1.10` evidence retains `1.1.9` and AMBER; version-bound resolution
+  absent future-version evidence retains `1.1.10` and AMBER; version-bound resolution
   fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,

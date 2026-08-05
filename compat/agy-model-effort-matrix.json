@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "resolution_status": "disabled-unverified-source",
+  "resolution_status": "active",
   "inventory": {
     "agy_version": "1.1.10",
-    "reviewed_source_revision": null,
-    "evidence": ["installed-agy-models"]
+    "reviewed_source_revision": "bfab12dac5bd090015a89cf82e65093d13b567d9",
+    "evidence": ["agy-models", "official-release", "official-source"]
   },
   "adjustable_models": [
     {

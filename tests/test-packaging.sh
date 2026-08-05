@@ -84,6 +84,7 @@ required_runtime_dependencies=(
     agents/repo-inventory.md
     agents/diff-reviewer.md
     compat/agy-verified-version.txt
+    compat/agy-upstream-head.txt
     compat/agy-last-reviewed.txt
 )
 for dependency in "${required_runtime_dependencies[@]}"; do
@@ -282,11 +283,33 @@ fi
 
 if cmp -s "$ROOT/compat/agy-verified-version.txt" \
         "$ROOT/skills/agy-worker/runtime/compat/agy-verified-version.txt" \
+        && cmp -s "$ROOT/compat/agy-upstream-head.txt" \
+        "$ROOT/skills/agy-worker/runtime/compat/agy-upstream-head.txt" \
         && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
-        "$ROOT/skills/agy-worker/runtime/compat/agy-last-reviewed.txt"; then
+        "$ROOT/skills/agy-worker/runtime/compat/agy-last-reviewed.txt" \
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.10" ]] \
+        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-05" ]]; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
+fi
+
+TAMPERED_PORTABLE="$TMP/tampered-portable-metadata"
+cp -R "$ROOT/skills/agy-worker" "$TAMPERED_PORTABLE"
+printf '9.9.9\n' > "$TAMPERED_PORTABLE/runtime/compat/agy-verified-version.txt"
+if ! cmp -s "$ROOT/compat/agy-verified-version.txt" \
+        "$TAMPERED_PORTABLE/runtime/compat/agy-verified-version.txt"; then
+    ok "portable metadata tampering breaks canonical byte identity"
+else
+    bad "portable metadata tampering breaks canonical byte identity"
+fi
+
+printf '%040d\n' 0 > "$TAMPERED_PORTABLE/runtime/compat/agy-upstream-head.txt"
+if ! cmp -s "$ROOT/compat/agy-upstream-head.txt" \
+        "$TAMPERED_PORTABLE/runtime/compat/agy-upstream-head.txt"; then
+    ok "portable source-revision tampering breaks canonical byte identity"
+else
+    bad "portable source-revision tampering breaks canonical byte identity"
 fi
 
 resolved="$(bash "$ROOT/skills/agy-worker/scripts/resolve-pipeline.sh" 2>/dev/null)"
@@ -384,6 +407,8 @@ if [[ -x "$TMP/installed/agy-worker/runtime/doctor.sh" ]] \
         && [[ -x "$TMP/installed/agy-worker/runtime/scripts/doctor-metadata.py" ]] \
         && cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$TMP/installed/agy-worker/runtime/compat/agy-verified-version.txt" \
+        && cmp -s "$ROOT/compat/agy-upstream-head.txt" \
+            "$TMP/installed/agy-worker/runtime/compat/agy-upstream-head.txt" \
         && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
             "$TMP/installed/agy-worker/runtime/compat/agy-last-reviewed.txt"; then
     ok "standalone install preserves the doctor and its reviewed metadata bytes"

@@ -80,6 +80,7 @@ pipeline_runtime_complete() {
         agents/repo-inventory.md \
         agents/diff-reviewer.md \
         compat/agy-verified-version.txt \
+        compat/agy-upstream-head.txt \
         compat/agy-last-reviewed.txt; do
         dependency_parent="${required%/*}"
         parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$dependency_parent" \

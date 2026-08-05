@@ -16,11 +16,23 @@ VERSION_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
 MODEL_RE = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)+")
 EFFORTS = ("low", "medium", "high")
-ADJUSTABLE_MODELS = (
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-pro",
-)
+ADJUSTABLE_RESOLUTIONS = {
+    "gemini-3.6-flash": {
+        "low": "gemini-3.6-flash-low",
+        "medium": "gemini-3.6-flash-medium",
+        "high": "gemini-3.6-flash-high",
+    },
+    "gemini-3.5-flash": {
+        "low": "gemini-3.5-flash-low",
+        "medium": "gemini-3.5-flash-medium",
+        "high": "gemini-3.5-flash-high",
+    },
+    "gemini-3.1-pro": {
+        "low": "gemini-3.1-pro-low",
+        "high": "gemini-3.1-pro-high",
+    },
+}
+ADJUSTABLE_MODELS = tuple(ADJUSTABLE_RESOLUTIONS)
 FIXED_MODELS = {
     "claude-sonnet-4-6": "no-level",
     "claude-opus-4-6-thinking": "thinking-labelled",
@@ -366,14 +378,26 @@ def validate_matrix_structure(matrix_path: Path, schema_path: Path) -> dict[str,
             for value in unsupported
         ) or len(set(unsupported)) != len(unsupported):
             raise CompatibilityError(f"invalid unsupported effort list for {model}")
+        expected_resolutions = ADJUSTABLE_RESOLUTIONS[model]
+        expected_unsupported = [
+            effort for effort in EFFORTS if effort not in expected_resolutions
+        ]
+        if resolutions != expected_resolutions:
+            raise CompatibilityError(
+                f"matrix differs from the explicit reviewed mapping for {model}"
+            )
+        if unsupported != expected_unsupported:
+            raise CompatibilityError(
+                f"matrix differs from the explicit unsupported efforts for {model}"
+            )
         covered = set(resolutions) | set(unsupported)
         if covered != set(EFFORTS) or set(resolutions) & set(unsupported):
             raise CompatibilityError(f"effort coverage for {model} must be exact and disjoint")
         for effort, slug in resolutions.items():
             if effort not in EFFORTS or not isinstance(slug, str) or MODEL_RE.fullmatch(slug) is None:
                 raise CompatibilityError(f"invalid resolution for {model}/{effort}")
-            if slug != f"{model}-{effort}" or slug in seen_outputs:
-                raise CompatibilityError(f"non-exact or duplicate output slug for {model}/{effort}")
+            if slug in seen_outputs:
+                raise CompatibilityError(f"duplicate output slug for {model}/{effort}")
             seen_outputs.add(slug)
 
     fixed_rows = root["fixed_models"]

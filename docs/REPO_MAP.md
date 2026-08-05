@@ -46,8 +46,10 @@ accept a candidate, replace human diff review, or certify correctness or securit
 
 - `update.sh check` queries fixed official agy and Codex stable-release/source
   evidence, one bounded agy `darwin_arm64` distribution-manifest canary, per-tool
-  review age, and (locally) installed versions without changing files. The manifest
-  helper requests no archive and its observational tuple cannot advance a baseline.
+  review age, the active agy matrix binding, and (locally) installed versions without
+  changing files. A disabled or stale matrix is drift-review; malformed or missing
+  matrix evidence is inconclusive. The manifest helper requests no archive and its
+  observational tuple cannot advance a baseline.
   Its `--watch` mode needs no installed tools and preserves the same
   unchanged/drift-review/evidence-unavailable exit contract. `update.sh apply [TAG]`
   remains explicit: it verifies a
@@ -65,12 +67,14 @@ accept a candidate, replace human diff review, or certify correctness or securit
   available. `.codex-plugin/plugin.json` describes the same skill for local package
   validation; GitHub clone plus explicit install is the supported public path.
 - `doctor.sh` delegates to the canonical bundled doctor. It reads only its fixed
-  portable agy metadata plus bounded semantic tool/repository probes, emits no paths
-  or raw command output, and neither dispatches nor repairs. It ignores caller temp
-  paths, isolates child probes in one private external workspace, and forwards
-  HUP/INT/TERM to the active process group. Runtime parent directories are real,
-  bundle-contained package components rather than followed symlinks. The root
-  `compat/` records stay canonical; packaging tests require byte-identical copies.
+  portable agy version/source/date metadata plus bounded semantic tool/repository
+  probes, emits no paths or raw command output, and neither dispatches nor repairs.
+  The source check exposes only match/mismatch/unavailable against its fixed reviewed
+  revision. It ignores caller temp paths, isolates child probes in one private external
+  workspace, and forwards HUP/INT/TERM to the active process group. Runtime parent
+  directories are real, bundle-contained package components rather than followed
+  symlinks. The root `compat/` records stay canonical; packaging tests require
+  byte-identical copies.
 
 ## Ownership and test coverage
 
@@ -78,18 +82,18 @@ accept a candidate, replace human diff review, or certify correctness or securit
 |---|---|---|
 | `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus canonical dispatch, model/mode selection, bounded retries, bounded final-log-root validation, exclusive private prompt/log staging with signal cleanup, envelope extraction | `tests/test-agy-worker.sh` (77 cases) |
 | `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre-dispatch and post-gate recommendations | `tests/test-agy-worker.sh` (77 cases) |
-| `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (143 cases) plus packaging synchronization checks |
+| `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (148 cases) plus packaging synchronization checks |
 | `install.sh`, `skills/agy-worker/`, `skills/agy-worker/scripts/resolve-pipeline.sh` | Install and resolve complete-plugin, explicit-checkout, or folder-only skill layouts without fetching code | dispatcher and packaging suites |
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
 | `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, path policy, escalation, driver verification | `tests/test-qa-gate.sh` (41 cases) |
 | `proof-demo.sh`, `demo/fixtures/` | Repository-only offline starter proof using two canonical synthetic envelopes and isolated temporary repositories | `tests/test-proof-demo.sh` (21 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
-| `update.sh`, `scripts/compatibility.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; bounded distribution-manifest canary; strict per-tool metadata and disabled-on-drift model/effort matrix | `tests/test-update.sh` (164 cases, including the test-only manifest adversary harness) |
+| `update.sh`, `scripts/compatibility.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix | `tests/test-update.sh` (174 cases, including the test-only manifest adversary harness) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
-| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (86 cases) plus platform validators |
-| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (86 cases) plus review |
-| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (86 cases) plus rendered review |
-| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (86 cases) plus rendered review |
+| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (89 cases) plus platform validators |
+| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (89 cases) plus review |
+| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (89 cases) plus rendered review |
+| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (89 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
 | `.github/workflows/test.yml` | macOS CI for syntax and all seven offline suites | exercised by GitHub Actions |
 | `.github/workflows/compatibility-watch.yml` | Weekly/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |
@@ -107,9 +111,13 @@ accept a candidate, replace human diff review, or certify correctness or securit
   and never applies its output. Default/custom tiers and the highest named tier fail
   safely to `no-escalation` when no ordered higher tier can be proved.
 - The model/effort matrix is compatibility metadata only. It cannot select a tier,
-  dispatch a worker, recommend escalation, or accept a candidate. Its current
-  `1.1.10` inventory is disabled candidate evidence; only an active exact
-  version/source binding may resolve a pair, and the wrapper exposes no effort input.
+  dispatch a worker, recommend escalation, or accept a candidate. Its `1.1.10`
+  inventory is active only while the exact version/source binding matches; the
+  wrapper exposes no effort input. `scripts/compatibility.py` carries the independently
+  reviewed explicit pair and fixed-slug allowlists and rejects any matrix drift. This
+  intentional duplicate representation is a fail-closed review boundary: a future
+  reconciliation must update the matrix and validator policy together, never derive
+  an output by concatenating model and effort strings.
 - Scheduled compatibility evidence is observational. Missing or malformed official
   evidence is inconclusive, and neither the watcher nor a release/version name can
   advance a human-reviewed baseline.
