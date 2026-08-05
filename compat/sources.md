@@ -18,15 +18,14 @@ an external action.
 - Fixed `darwin_arm64` distribution manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
 - Installed interface evidence: `./ground-truth.sh`
 
-The verified baseline is agy `1.1.9` at reviewed source revision
-`21f650e7bb852f58562425ddd0c7d203c80e3d0e`. The current official stable release,
-source revision `bfab12dac5bd090015a89cf82e65093d13b567d9`, CLI documentation,
-and distribution manifest expose `1.1.10` evidence. These are drift evidence
-sufficient to begin human reconciliation, not permission to advance the verified
-baseline or claim `1.1.10` support. The `1.1.10` model list remains a disabled
-candidate inventory in `agy-model-effort-matrix.json` until its exact rows are
-human-reconciled against those primary sources, a sandbox-correct inventory, and
-bounded behavior tests.
+The verified baseline is agy `1.1.10` at reviewed source revision
+`bfab12dac5bd090015a89cf82e65093d13b567d9`. The official release, source, CLI
+documentation, one sandbox-correct 11-slug inventory, and two bounded
+single-selector jobs were human-reconciled in
+[`reviews/agy-1.1.10.md`](reviews/agy-1.1.10.md). The active matrix binds every
+adjustable pair to one exact advertised compound slug and records fixed choices as
+non-adjustable. It neither forwards `--effort` nor attests the effective provider
+backend; silent fallback could not be independently excluded.
 
 `agy-distribution-manifest.json` records the observed `1.1.10` version, exact Google
 Storage archive URL, and lowercase SHA-512 tuple. It is an observational snapshot,
@@ -55,4 +54,5 @@ source revision, and installed command inventory, then completes every offline s
 and the documented syntax/compile/diff checks. If dispatch behavior changed, a
 bounded real job requires separate approval. The weekly watcher only reports
 `unchanged`, `drift-review`, or `evidence-unavailable`; it cannot approve or write a
-baseline.
+baseline. A future version or source change disables resolution until another human
+reconciliation is accepted.

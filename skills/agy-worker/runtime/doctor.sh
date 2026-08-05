@@ -3,6 +3,7 @@
 set -uo pipefail
 
 DOCTOR_SCHEMA_VERSION=1
+DOCTOR_EXPECTED_AGY_SOURCE_REVISION='bfab12dac5bd090015a89cf82e65093d13b567d9'
 
 doctor_usage() {
     echo "usage: doctor.sh [--repo DIR] [--format text|json]" >&2
@@ -71,6 +72,7 @@ doctor_runtime_complete() {
         agents/repo-inventory.md \
         agents/diff-reviewer.md \
         compat/agy-verified-version.txt \
+        compat/agy-upstream-head.txt \
         compat/agy-last-reviewed.txt; do
         dependency_parent="${required%/*}"
         parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$dependency_parent" \
@@ -306,9 +308,9 @@ doctor_print_json() {
 
 doctor_main() {
     local repo='.' format='text' seen_repo=0 seen_format=0
-    local runtime_dir metadata_helper version_file review_file
+    local runtime_dir metadata_helper version_file source_file review_file
     local runtime_ready=0 workspace_ready=0 python_ready=0 git_ready=0 repo_ready=0
-    local output rc verified_version='' installed_version=''
+    local output rc verified_version='' installed_version='' reviewed_source=''
     local worktree_line='' head_line=''
     local agy_rc=0
     local semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
@@ -356,6 +358,7 @@ doctor_main() {
     }
     metadata_helper="$runtime_dir/scripts/doctor-metadata.py"
     version_file="$runtime_dir/compat/agy-verified-version.txt"
+    source_file="$runtime_dir/compat/agy-upstream-head.txt"
     review_file="$runtime_dir/compat/agy-last-reviewed.txt"
 
     DOCTOR_WORK_DIR=''
@@ -483,6 +486,22 @@ doctor_main() {
         doctor_add_check agy_version ready verified-version-match
     else
         doctor_add_check agy_version review-required version-drift
+    fi
+
+    if (( runtime_ready && python_ready )) \
+            && [[ -f "$metadata_helper" && -f "$source_file" && ! -L "$source_file" ]]; then
+        reviewed_source="$(python3 -B "$metadata_helper" revision "$source_file" 2>/dev/null)"
+        rc=$?
+        if [[ "$rc" != 0 ]]; then
+            reviewed_source=''
+        fi
+    fi
+    if [[ ! -f "$source_file" || -L "$source_file" || -z "$reviewed_source" ]]; then
+        doctor_add_check agy_source not-ready reviewed-source-metadata-unavailable
+    elif [[ "$reviewed_source" == "$DOCTOR_EXPECTED_AGY_SOURCE_REVISION" ]]; then
+        doctor_add_check agy_source ready reviewed-source-match
+    else
+        doctor_add_check agy_source not-ready reviewed-source-mismatch
     fi
 
     if (( runtime_ready && python_ready )) \
