@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 from unittest import mock
 
+sys.dont_write_bytecode = True
+
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULE_PATH = ROOT / "scripts" / "official_distribution.py"

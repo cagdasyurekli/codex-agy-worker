@@ -660,9 +660,11 @@ done
 for specification in \
     'qa-gate.sh:executable' \
     'scripts/validate-envelope.py:executable' \
+    'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \
     'agents/repo-inventory.md:data' \
-    'compat/agy-verified-version.txt:data'; do
+    'compat/agy-verified-version.txt:data' \
+    'compat/agy-model-effort-matrix.json:data'; do
     dependency_path="${specification%:*}"
     dependency_class="${specification##*:}"
     for wrong_type in directory symlink-directory symlink-foreign fifo wrong-mode; do
@@ -742,10 +744,15 @@ fi
 
 for dependency in \
     'scripts/validate-envelope.py:python-helper' \
+    'scripts/model_selection.py:model-resolver' \
     'schemas/worker-result.schema.json:schema' \
+    'schemas/model-selection.schema.json:selection-schema' \
     'agents/repo-inventory.md:persona' \
     'compat/agy-upstream-head.txt:source-record' \
-    'compat/agy-verified-version.txt:compat-record'; do
+    'compat/agy-verified-version.txt:compat-record' \
+    'compat/agy-model-effort-matrix.json:model-matrix' \
+    'compat/model-effort-matrix.schema.json:matrix-schema' \
+    'compat/agy-model-effort-matrix.sha256:matrix-hash'; do
     dependency_path="${dependency%:*}"
     dependency_class="${dependency##*:}"
     dependency_label="${dependency_path//\//-}"

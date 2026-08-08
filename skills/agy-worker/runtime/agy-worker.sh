@@ -29,16 +29,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCHEMA="${AGY_WORKER_SCHEMA:-$SCRIPT_DIR/schemas/worker-result.schema.json}"
 LOG_DIR="${AGY_WORKER_LOG_DIR:-$SCRIPT_DIR/logs}"
 
-# Model tiering. Resolve the selected model only after CLI arguments are parsed so
-# --tier and AGY_WORKER_TIER have identical behavior.
-tier="${AGY_WORKER_TIER:-bulk}"
+# Selector values are presence-sensitive. An explicitly empty environment variable
+# is not the same as an unset one, and CLI never silently overrides environment.
+tier_env_seen=0; tier_env_value=""
+model_env_seen=0; model_env_value=""
+effort_env_seen=0; effort_env_value=""
+if [[ -n "${AGY_WORKER_TIER+x}" ]]; then tier_env_seen=1; tier_env_value="$AGY_WORKER_TIER"; fi
+if [[ -n "${AGY_WORKER_MODEL+x}" ]]; then model_env_seen=1; model_env_value="$AGY_WORKER_MODEL"; fi
+if [[ -n "${AGY_WORKER_EFFORT+x}" ]]; then effort_env_seen=1; effort_env_value="$AGY_WORKER_EFFORT"; fi
 mode="${AGY_WORKER_MODE:-plan}"               # plan | accept-edits  (rec: plan is the safe default)
 print_timeout="${AGY_WORKER_TIMEOUT:-5m0s}"
 max_attempts="${AGY_WORKER_MAX_ATTEMPTS:-2}"  # bounded retries, then fail closed (rec #11)
 job_id="${AGY_WORKER_JOB_ID:-job-$$}"
 
 validate_log_root() {
-    python3 - "$1" <<'PY'
+    python3 -B - "$1" <<'PY'
 import os
 import stat
 import sys
@@ -62,6 +67,7 @@ usage() {
     cat >&2 <<'EOF'
 usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
                      [--tier bulk|cheap|hard|hardest|default|MODEL]
+                     [--model EXACT_MODEL [--effort low|medium|high]]
                      [--add-dir DIR]... [--allow-slash-commands]
        ... task prompt on stdin ...
 
@@ -69,7 +75,8 @@ Emits the schema-valid result envelope on stdout. Non-zero exit means the job fa
 stdout is then NOT a valid envelope. Artifacts land in $AGY_WORKER_LOG_DIR.
 
 Exit codes: 0 ok · 2 no prompt · 3 empty output (agy silent-empty) · 4 schema invalid
-            5 agy nonzero exit · 6 permission gate hit
+            5 agy nonzero exit · 6 permission gate hit · 7 compatibility review
+            8 compatibility evidence unavailable · 64 invalid usage
 EOF
     exit 64
 }
@@ -77,6 +84,9 @@ EOF
 workdir="$PWD"
 persona=""
 extra_dirs=()
+tier_cli_seen=0; tier_cli_value=""
+model_cli_seen=0; model_cli_value=""
+effort_cli_seen=0; effort_cli_value=""
 # Injection control (rec #8): worker prompts routinely embed repo content, and a
 # "/skill ..." string inside that content would otherwise expand as a real command.
 # Default OFF; only a caller who controls the whole prompt should re-enable it.
@@ -93,13 +103,64 @@ while [[ $# -gt 0 ]]; do
         # persona body keeps structured output working.
         --persona) [[ $# -ge 2 ]] || usage; persona="$2"; shift 2 ;;
         --mode) [[ $# -ge 2 ]] || usage; mode="$2"; shift 2 ;;
-        --tier) [[ $# -ge 2 ]] || usage; tier="$2"; shift 2 ;;
+        --tier)
+            [[ $# -ge 2 ]] || usage
+            (( tier_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --tier" >&2; exit 64; }
+            tier_cli_seen=1; tier_cli_value="$2"; shift 2 ;;
+        --model)
+            [[ $# -ge 2 ]] || usage
+            (( model_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --model" >&2; exit 64; }
+            model_cli_seen=1; model_cli_value="$2"; shift 2 ;;
+        --effort)
+            [[ $# -ge 2 ]] || usage
+            (( effort_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --effort" >&2; exit 64; }
+            effort_cli_seen=1; effort_cli_value="$2"; shift 2 ;;
         --add-dir) [[ $# -ge 2 ]] || usage; extra_dirs+=("$2"); shift 2 ;;
         --allow-slash-commands) disable_slash=0; shift ;;
         -h|--help) usage ;;
         *) echo "agy-worker.sh: unknown arg: $1" >&2; usage ;;
     esac
 done
+
+(( tier_cli_seen == 0 || tier_env_seen == 0 )) || {
+    echo "agy-worker.sh: --tier conflicts with AGY_WORKER_TIER" >&2; exit 64;
+}
+(( model_cli_seen == 0 || model_env_seen == 0 )) || {
+    echo "agy-worker.sh: --model conflicts with AGY_WORKER_MODEL" >&2; exit 64;
+}
+(( effort_cli_seen == 0 || effort_env_seen == 0 )) || {
+    echo "agy-worker.sh: --effort conflicts with AGY_WORKER_EFFORT" >&2; exit 64;
+}
+tier_seen=$((tier_cli_seen + tier_env_seen))
+model_seen=$((model_cli_seen + model_env_seen))
+effort_seen=$((effort_cli_seen + effort_env_seen))
+if (( tier_seen > 0 && (model_seen > 0 || effort_seen > 0) )); then
+    echo "agy-worker.sh: explicit tier and model/effort selectors are mutually exclusive" >&2
+    exit 64
+fi
+if (( effort_seen > 0 && model_seen == 0 )); then
+    echo "agy-worker.sh: effort requires an explicit base model" >&2
+    exit 64
+fi
+if (( tier_seen > 0 )); then
+    if (( tier_cli_seen )); then tier="$tier_cli_value"; tier_source="cli"
+    else tier="$tier_env_value"; tier_source="environment"; fi
+    [[ -n "$tier" ]] || { echo "agy-worker.sh: explicit tier must not be empty" >&2; exit 64; }
+    selection_kind="tier"
+elif (( model_seen > 0 )); then
+    if (( model_cli_seen )); then user_model="$model_cli_value"; model_source="cli"
+    else user_model="$model_env_value"; model_source="environment"; fi
+    [[ -n "$user_model" ]] || { echo "agy-worker.sh: explicit model must not be empty" >&2; exit 64; }
+    user_effort=""; effort_source=""
+    if (( effort_seen > 0 )); then
+        if (( effort_cli_seen )); then user_effort="$effort_cli_value"; effort_source="cli"
+        else user_effort="$effort_env_value"; effort_source="environment"; fi
+        [[ -n "$user_effort" ]] || { echo "agy-worker.sh: explicit effort must not be empty" >&2; exit 64; }
+    fi
+    selection_kind="model"
+else
+    tier="bulk"; tier_source="implicit-default"; selection_kind="tier"
+fi
 
 case "$persona" in
     ''|bulk-test-writer|repo-inventory|diff-reviewer) ;;
@@ -108,14 +169,6 @@ esac
 case "$mode" in
     plan|accept-edits) ;;
     *) echo "agy-worker.sh: invalid mode: $mode" >&2; exit 64 ;;
-esac
-case "$tier" in
-    bulk)    model="gemini-3.6-flash-medium" ;;
-    cheap)   model="gemini-3.6-flash-low" ;;
-    hard)    model="gemini-3.1-pro-high" ;;
-    hardest) model="claude-opus-4-6-thinking" ;;
-    default) model="" ;;                      # use agy's own selected model
-    *)       model="$tier" ;;                 # explicit model label passthrough
 esac
 case "$max_attempts" in
     ''|*[!0-9]*|0) echo "agy-worker.sh: AGY_WORKER_MAX_ATTEMPTS must be a positive integer" >&2; exit 64 ;;
@@ -177,6 +230,26 @@ full_prompt_file="$job_dir/full-prompt.txt"
 envelope_file="$job_dir/envelope.json"
 staged_dir="$job_dir/staged"
 staged_prompt_file="$staged_dir/full-prompt.txt"
+selection_file="$job_dir/selection.json"
+
+# Resolve once before consuming the task. New direct selectors validate the exact
+# portable matrix and installed agy version; legacy tiers preserve their old mapping.
+selection_args=(--output "$selection_file")
+if [[ "$selection_kind" == "tier" ]]; then
+    selection_args+=(--tier "$tier" --tier-source "$tier_source")
+else
+    selection_args+=(--model "$user_model" --model-source "$model_source")
+    if [[ -n "$user_effort" ]]; then
+        selection_args+=(--effort "$user_effort" --effort-source "$effort_source")
+    fi
+fi
+set +e
+model="$(python3 -B "$SCRIPT_DIR/scripts/model_selection.py" "${selection_args[@]}")"
+selection_rc=$?
+set -e
+if (( selection_rc != 0 )); then
+    exit "$selection_rc"
+fi
 
 restore_staged_permissions() {
     if [[ -d "$staged_dir" ]]; then
@@ -309,7 +382,7 @@ classify() {
 # match required" walker matches the schema's own `properties` block instead of the
 # answer — that bug cost a run; hence the exact path below rather than a search.
 extract_envelope() {
-    python3 - "$stdout_file" <<'PY'
+    python3 -B - "$stdout_file" <<'PY'
 import json, sys
 stream = sys.argv[1]
 result = None

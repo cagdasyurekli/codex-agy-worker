@@ -26,7 +26,7 @@ is_pipeline() {
     fi
     pipeline_runtime_complete "$runtime_root" || return 1
 
-    for required in agy-worker.sh qa-gate.sh model-recommendation.sh doctor.sh; do
+    for required in agy-worker.sh qa-gate.sh model-recommendation.sh model-selection.sh doctor.sh; do
         [[ -f "$pipeline_root/$required" && -x "$pipeline_root/$required" \
             && ! -L "$pipeline_root/$required" ]] || return 1
     done
@@ -54,9 +54,12 @@ pipeline_runtime_complete() {
         agy-worker.sh \
         qa-gate.sh \
         model-recommendation.sh \
+        model-selection.sh \
         doctor.sh \
         scripts/validate-envelope.py \
         scripts/model-recommendation.py \
+        scripts/model_selection.py \
+        scripts/compatibility.py \
         scripts/doctor-metadata.py; do
         case "$required" in
             */*) dependency_parent="${required%/*}" ;;
@@ -76,12 +79,17 @@ pipeline_runtime_complete() {
 
     for required in \
         schemas/worker-result.schema.json \
+        schemas/model-selection.schema.json \
+        schemas/model-recommendation.schema.json \
         agents/bulk-test-writer.md \
         agents/repo-inventory.md \
         agents/diff-reviewer.md \
         compat/agy-verified-version.txt \
         compat/agy-upstream-head.txt \
-        compat/agy-last-reviewed.txt; do
+        compat/agy-last-reviewed.txt \
+        compat/agy-model-effort-matrix.json \
+        compat/model-effort-matrix.schema.json \
+        compat/agy-model-effort-matrix.sha256; do
         dependency_parent="${required%/*}"
         parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$dependency_parent" \
             2>/dev/null && pwd -P)" || return 1

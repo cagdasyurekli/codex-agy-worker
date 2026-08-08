@@ -113,18 +113,28 @@ owner-only modes immediately afterward. Restore those modes from the normal chil
 return path and an EXIT trap; HUP, INT, and TERM handlers must restore first and then
 re-raise the same signal so cleanup does not turn termination into success.
 
+Treat a direct-selection version probe as a process-group boundary too. Read its
+stdout incrementally under byte and wall-clock limits, close the whole group on
+oversize, timeout, HUP, INT, or TERM, and do so before reading the task or publishing
+selection provenance. Signal cleanup must preserve the conventional `128 + signal`
+status instead of relabelling interruption as unavailable evidence.
+
 ## Model routing is explicit
 
-The caller selects the tier. Built-in retries reuse the same model; gate failures do
+The caller selects the tier or direct model/effort input. Built-in retries reuse the same model; gate failures do
 not silently increase cost or reasoning effort. Keep recommendation policy outside
 both dispatch and gate acceptance: its output must be visible, state the current tier,
 show controlled driver-owned evidence and relative cost impact, and say explicitly
-that it was not applied. agy exposes a real `--effort`, but this wrapper exposes none
-until G1. A validated model/effort matrix remains metadata, never routing or gate
-authority. Only an active matrix bound to the exact verified agy version and source
-may resolve a pair; disabled candidate, stale, unknown, duplicate, unsupported, and
-fixed/no-level inputs fail closed. Do not add a separate thinking-level abstraction
-or assume that agy's separate model and effort arguments compose safely.
+that it was not applied. A validated model/effort matrix remains metadata, never
+routing or gate authority. Direct selectors resolve only from exact reviewed choices
+after matrix SHA/schema/version/source and installed-version preflight. Preserve
+presence as data: unset differs from explicit empty, CLI and matching environment
+sources conflict even when equal, and repeated components never mean “last wins.”
+Resolve once, publish private driver provenance, and freeze the exact slug and matrix
+SHA across retries. Disabled, stale, unknown, duplicate, unsupported, and fixed/no-
+level-plus-effort inputs fail closed. Do not add a separate thinking-level abstraction
+or assume that agy's separate model and effort arguments compose safely; send one
+resolved `--model` and no downstream `--effort`.
 
 An exact matrix cannot validate itself. Keep its reviewed pair-to-slug mappings and
 fixed-slug classifications mirrored in explicit validator allowlists, and require
@@ -191,6 +201,12 @@ do not trade the project's evidence boundary for keyword stuffing or unsupported
 product claims. Do not place `robots.txt` under a GitHub Pages project subpath and call
 it crawler control: robots rules are host-root metadata owned by the site owner,
 outside this repository's publication slice.
+
+Treat Python syntax compilation as a package-boundary write. `-B` does not suppress
+bytecode emitted by an explicit `py_compile` invocation, so CI and contributor checks
+must direct `PYTHONPYCACHEPREFIX` to a private external temporary directory. A cache
+inside the public skill is a distribution leak, not harmless ignored state; keep the
+positive external-cache path and a plain-compile negative control paired offline.
 
 ## Public discovery claims need the same evidence discipline
 

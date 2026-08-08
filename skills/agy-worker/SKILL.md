@@ -142,13 +142,48 @@ echo "<task>" | "$PIPELINE/agy-worker.sh" --mode accept-edits --tier "$TIER" \
     --workdir "$WT" --add-dir "$WT" > /tmp/envelope.json
 ```
 
+For a caller-selected reviewed direct model, keep the user model and effort separate
+in the advisory and dispatch them unchanged:
+
+```bash
+MODEL=gemini-3.6-flash
+EFFORT=high
+"$PIPELINE/model-recommendation.sh" --stage pre-dispatch \
+    --selected-model "$MODEL" --selected-effort "$EFFORT" \
+    --evidence batched-mechanical
+echo "<task>" | "$PIPELINE/agy-worker.sh" --mode accept-edits \
+    --model "$MODEL" --effort "$EFFORT" --workdir "$WT" --add-dir "$WT" \
+    > /tmp/envelope.json
+```
+
 Personas: `bulk-test-writer` (tests only), `diff-reviewer` (review, no edits),
 `repo-inventory` (read-only survey). Omit `--persona` for a plain worker.
 The dispatcher rejects `accept-edits` for the read-only personas. Tiers may be passed
 as `--tier cheap|bulk|hard|hardest|default` or through `AGY_WORKER_TIER`.
-Tier selection is explicit: retries reuse the same model, and this skill does not
-infer a thinking level or silently escalate models after a gate failure. The
-recommendation helper has no thinking-level option and never invokes the dispatcher.
+Direct selection uses `--model`/`AGY_WORKER_MODEL` and optional
+`--effort`/`AGY_WORKER_EFFORT`. Each component has one source: CLI and its matching
+environment variable conflict even when equal, repeated or empty components fail,
+and any explicit tier conflicts with every model/effort source. Model and effort may
+use different sources. Do not normalize or guess names.
+
+Exact reviewed compound/fixed slugs are model-only. Adjustable Flash 3.6/3.5 bases
+accept low/medium/high; Pro 3.1 accepts low/high and rejects medium. Fixed Sonnet,
+Opus thinking-labelled, GPT medium-labelled, and compound slugs reject effort. Custom
+labels remain available only through legacy `--tier CUSTOM`. Direct resolution needs
+the active exact-SHA/version/source-bound portable matrix and exact installed agy
+`1.1.10`; exit 7 needs human compatibility review and exit 8 means evidence is
+unavailable. The dispatcher sends one downstream `--model`, never downstream
+`--effort` or a thinking flag.
+HUP, INT, or TERM during the direct-selection version preflight closes the exact
+probe process group and returns `129`, `130`, or `143` before task read or selection
+publication.
+
+Every job has an owner-private `selection.json`. Direct selection records input
+sources, exact resolved slug, installed version, matrix version/source, and matrix SHA
+before attempt one; retries cannot re-resolve it. This is provenance, not gate
+evidence or acceptance. Tier selection remains explicit: retries reuse the same
+model, and this skill never infers a thinking level or silently escalates after a gate
+failure. Direct advisories are unranked, recommendation-only, and never applied.
 Every user-supplied `--add-dir` must resolve inside the audited `--workdir`; do not
 delegate multi-repository mutation in one job.
 
