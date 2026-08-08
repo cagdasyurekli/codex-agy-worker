@@ -6,6 +6,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$HERE/.."
 WORKER="$ROOT/agy-worker.sh"
 RECOMMENDER="$ROOT/model-recommendation.sh"
+SELECTOR="$ROOT/model-selection.sh"
 TMP="$(mktemp -d -t agyworker-dispatch.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
@@ -73,6 +74,35 @@ expect_recommendation_reject() {
         bad "$name (exit $rc, wanted 64 with empty stdout)"
     fi
 }
+expect_direct_recommendation() {
+    local name="$1" stage="$2" model="$3" effort="$4" evidence="$5" resolved="$6"
+    local output="$TMP/direct-recommendation-$pass.json" rc
+    local args=(--stage "$stage" --selected-model "$model" --evidence "$evidence")
+    [[ -z "$effort" ]] || args+=(--selected-effort "$effort")
+    "$RECOMMENDER" "${args[@]}" > "$output" 2> "$output.err"
+    rc=$?
+    if [[ "$rc" == 0 ]] && python3 - "$output" "$model" "$effort" "$resolved" <<'PY'
+import json
+import sys
+
+path, model, effort, resolved = sys.argv[1:]
+value = json.load(open(path, encoding="utf-8"))
+assert "selected_tier" not in value
+assert value["user_model"] == model
+assert value.get("user_effort", "") == effort
+assert value["resolved_agy_model"] == resolved
+assert len(value["matrix_sha256"]) == 64
+assert value["matrix_agy_version"] == "1.1.10"
+assert len(value["matrix_source_revision"]) == 40
+assert value["recommendation_only"] is True
+assert value["applied"] is False
+assert value["decision"] == "no-escalation"
+assert value["recommended_tier"] is None
+assert value["cost_impact"]["direction"] == "none"
+assert "caller-owned and unranked" in value["rationale"]
+PY
+    then ok "$name"; else bad "$name (exit $rc)"; fi
+}
 private_tree_is_private() {
     python3 - "$1" <<'PY'
 import os
@@ -119,12 +149,102 @@ raise SystemExit(0 if valid else 1)
 PY
 }
 
+process_group_is_gone() {
+    python3 -B - "$1" <<'PY'
+import os
+import sys
+
+try:
+    os.killpg(int(sys.argv[1]), 0)
+except ProcessLookupError:
+    raise SystemExit(0)
+except (PermissionError, ValueError):
+    pass
+raise SystemExit(1)
+PY
+}
+
+wait_probe_cleanup() {
+    local child_pid="$1" probe_pgid="$2" wait_index
+    [[ "$child_pid" != "$probe_pgid" ]] || return 1
+    for (( wait_index=0; wait_index<100; wait_index++ )); do
+        if process_group_is_gone "$probe_pgid"; then
+            return 0
+        fi
+        sleep 0.02
+    done
+    process_group_is_gone "$probe_pgid"
+}
+
 mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/logs"
 chmod 0755 "$TMP/logs"
 LOGS_REAL="$(cd "$TMP/logs" && pwd -P)"
 cat > "$TMP/bin/agy" <<'FAKE'
 #!/usr/bin/env bash
 set -u
+FAKE_CALLS_FILE="${FAKE_CALLS_FILE:-/dev/null}"
+FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-/dev/null}"
+if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
+    printf 'version\n' >> "$FAKE_CALLS_FILE"
+    case "${FAKE_VERSION_MODE:-ready}" in
+        ready) printf '1.1.10\n' ;;
+        prefixed) printf 'agy 1.1.10\n' ;;
+        drift) printf '1.1.11\n' ;;
+        empty) : ;;
+        malformed) printf 'version 1.1.10\n' ;;
+        oversize) i=0; while [[ $i -lt 140 ]]; do printf x; i=$((i+1)); done; printf '\n' ;;
+        stream) while :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done ;;
+        child-stream)
+            cleanup_probe_child() {
+                trap - TERM
+                kill -KILL "$child_pid" 2>/dev/null || true
+                wait "$child_pid" 2>/dev/null || true
+                exit 143
+            }
+            trap cleanup_probe_child TERM
+            (
+                trap '' TERM
+                while [[ ! -e "${FAKE_PROBE_RELEASE_FILE:?}" ]]; do
+                    sleep 0.01
+                done
+                while :; do
+                    printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+                done
+            ) &
+            child_pid=$!
+            [[ -z "${FAKE_CHILD_PID_FILE:-}" ]] || printf '%s\n' "$child_pid" > "$FAKE_CHILD_PID_FILE"
+            [[ -z "${FAKE_PROBE_PGID_FILE:-}" ]] || printf '%s\n' "$$" > "$FAKE_PROBE_PGID_FILE"
+            [[ -z "${FAKE_PROBE_PARENT_PID_FILE:-}" ]] || printf '%s\n' "$PPID" > "$FAKE_PROBE_PARENT_PID_FILE"
+            [[ -z "${FAKE_PROBE_READY_FILE:-}" ]] || : > "$FAKE_PROBE_READY_FILE"
+            wait "$child_pid"
+            ;;
+        signal-wait)
+            cleanup_probe_child() {
+                trap - TERM
+                kill -KILL "$child_pid" 2>/dev/null || true
+                wait "$child_pid" 2>/dev/null || true
+                exit 143
+            }
+            trap cleanup_probe_child TERM
+            (
+                trap '' HUP INT TERM
+                while :; do sleep 1; done
+            ) &
+            child_pid=$!
+            [[ -z "${FAKE_CHILD_PID_FILE:-}" ]] || printf '%s\n' "$child_pid" > "$FAKE_CHILD_PID_FILE"
+            [[ -z "${FAKE_PROBE_PGID_FILE:-}" ]] || printf '%s\n' "$$" > "$FAKE_PROBE_PGID_FILE"
+            [[ -z "${FAKE_PROBE_PARENT_PID_FILE:-}" ]] || printf '%s\n' "$PPID" > "$FAKE_PROBE_PARENT_PID_FILE"
+            [[ -z "${FAKE_PROBE_READY_FILE:-}" ]] || : > "$FAKE_PROBE_READY_FILE"
+            wait "$child_pid"
+            ;;
+        fail) exit 23 ;;
+        hang) sleep 10 ;;
+        *) exit 24 ;;
+    esac
+    exit 0
+fi
+printf 'worker\n' >> "$FAKE_CALLS_FILE"
+printf 'worker\n' >> "$FAKE_WORKER_CALLS_FILE"
 : "${FAKE_MODEL_FILE:?}"
 : "${FAKE_PROMPT_FILE:?}"
 : "${FAKE_DIRS_FILE:?}"
@@ -157,6 +277,20 @@ fi
 if [[ -n "${FAKE_CALLED_FILE:-}" ]]; then
     : > "$FAKE_CALLED_FILE"
 fi
+if [[ -n "${FAKE_MUTATE_MATRIX:-}" ]]; then
+    printf '{"mutated":true}\n' > "$FAKE_MUTATE_MATRIX"
+fi
+dispatch_count=1
+if [[ -n "${FAKE_DISPATCH_COUNT_FILE:-}" ]]; then
+    if [[ -f "$FAKE_DISPATCH_COUNT_FILE" ]]; then
+        IFS= read -r dispatch_count < "$FAKE_DISPATCH_COUNT_FILE"
+        dispatch_count=$((dispatch_count+1))
+    fi
+    printf '%s\n' "$dispatch_count" > "$FAKE_DISPATCH_COUNT_FILE"
+fi
+if [[ "${FAKE_FAIL_FIRST:-0}" == "1" && "$dispatch_count" == "1" ]]; then
+    exit 23
+fi
 if [[ -n "${FAKE_SIGNAL_PARENT:-}" ]]; then
     kill -s "$FAKE_SIGNAL_PARENT" "$PPID"
     exit "${FAKE_EXIT_CODE:-23}"
@@ -184,6 +318,17 @@ run_worker() {
     FAKE_DIRS_FILE="$TMP/$job.dirs" \
     FAKE_ARGV_FILE="$TMP/$job.argv" \
     FAKE_STAGE_RESULT_FILE="$TMP/$job.stage-result" \
+    FAKE_CALLS_FILE="$TMP/$job.calls" \
+    FAKE_WORKER_CALLS_FILE="$TMP/$job.worker-calls" \
+    FAKE_VERSION_MODE="${FAKE_VERSION_MODE:-ready}" \
+    FAKE_CHILD_PID_FILE="${FAKE_CHILD_PID_FILE:-}" \
+    FAKE_PROBE_PGID_FILE="${FAKE_PROBE_PGID_FILE:-}" \
+    FAKE_PROBE_PARENT_PID_FILE="${FAKE_PROBE_PARENT_PID_FILE:-}" \
+    FAKE_PROBE_READY_FILE="${FAKE_PROBE_READY_FILE:-}" \
+    FAKE_PROBE_RELEASE_FILE="${FAKE_PROBE_RELEASE_FILE:-}" \
+    FAKE_MUTATE_MATRIX="${FAKE_MUTATE_MATRIX:-}" \
+    FAKE_DISPATCH_COUNT_FILE="${FAKE_DISPATCH_COUNT_FILE:-}" \
+    FAKE_FAIL_FIRST="${FAKE_FAIL_FIRST:-0}" \
     FAKE_TRY_STAGE_WRITE="${FAKE_TRY_STAGE_WRITE:-0}" \
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
@@ -208,15 +353,684 @@ printf 'raw custom model\n' | run_worker raw-flash-high \
     --tier gemini-3.6-flash-high > "$TMP/raw-flash-high.out" 2>/dev/null
 rc=$?
 if [[ "$rc" == "0" && "$(<"$TMP/raw-flash-high.model")" == "gemini-3.6-flash-high" ]] \
-        && python3 - "$TMP/raw-flash-high.argv" <<'PY'
+        && python3 - "$TMP/raw-flash-high.argv" "$TMP/raw-flash-high.calls" <<'PY'
 import sys
 parts = [part for part in open(sys.argv[1], "rb").read().split(b"\0") if part]
-raise SystemExit(0 if b"--effort" not in parts else 1)
+calls = open(sys.argv[2], encoding="ascii").read().splitlines()
+raise SystemExit(0 if b"--effort" not in parts and calls == ["worker"] else 1)
 PY
 then
     ok "raw flash-high stays exact pass-through with no effort argument"
 else
     bad "raw flash-high stays exact pass-through with no effort argument"
+fi
+
+assert_tier_selection() {
+    local name="$1" job="$2" tier_value="$3" tier_source="$4" expected_model="$5"
+    if python3 - "$TMP/$job.argv" "$TMP/logs/$job/selection.json" \
+        "$TMP/$job.calls" "$tier_value" "$tier_source" "$expected_model" <<'PY'
+import json
+import sys
+
+argv_path, selection_path, calls_path, tier, source, expected = sys.argv[1:]
+parts = [part for part in open(argv_path, "rb").read().split(b"\0") if part]
+record = json.load(open(selection_path, encoding="utf-8"))
+assert open(calls_path, encoding="ascii").read().splitlines() == ["worker"]
+assert record["selection_mode"] == "tier"
+assert record["selected_tier"] == tier
+assert record["selected_tier_source"] == source
+assert record["resolved_agy_model"] == (expected or None)
+if expected:
+    assert parts.count(b"--model") == 1
+    assert parts[parts.index(b"--model") + 1].decode() == expected
+else:
+    assert b"--model" not in parts
+PY
+    then ok "$name"; else bad "$name"; fi
+}
+
+legacy_index=0
+while IFS='|' read -r legacy_tier legacy_model; do
+    legacy_index=$((legacy_index+1))
+    legacy_job="legacy-tier-$legacy_index"
+    printf 'legacy tier %s\n' "$legacy_tier" | run_worker "$legacy_job" --tier "$legacy_tier" \
+        > "$TMP/$legacy_job.out" 2> "$TMP/$legacy_job.err"
+    rc=$?
+    if [[ "$rc" == 0 ]]; then
+        assert_tier_selection "legacy tier $legacy_tier preserves its exact mapping" \
+            "$legacy_job" "$legacy_tier" cli "$legacy_model"
+    else
+        bad "legacy tier $legacy_tier preserves its exact mapping (exit $rc)"
+    fi
+done <<'EOF'
+bulk|gemini-3.6-flash-medium
+cheap|gemini-3.6-flash-low
+hard|gemini-3.1-pro-high
+hardest|claude-opus-4-6-thinking
+default|
+vendor/model-v1|vendor/model-v1
+EOF
+
+printf 'environment tier\n' | AGY_WORKER_TIER=hard run_worker legacy-tier-env \
+    > "$TMP/legacy-tier-env.out" 2> "$TMP/legacy-tier-env.err"
+rc=$?
+if [[ "$rc" == 0 ]]; then
+    assert_tier_selection "legacy environment tier records environment provenance" \
+        legacy-tier-env hard environment gemini-3.1-pro-high
+else
+    bad "legacy environment tier records environment provenance (exit $rc)"
+fi
+
+printf 'implicit default tier\n' | run_worker legacy-tier-implicit \
+    > "$TMP/legacy-tier-implicit.out" 2> "$TMP/legacy-tier-implicit.err"
+rc=$?
+if [[ "$rc" == 0 ]]; then
+    assert_tier_selection "no selector preserves implicit bulk and provenance" \
+        legacy-tier-implicit bulk implicit-default gemini-3.6-flash-medium
+else
+    bad "no selector preserves implicit bulk and provenance (exit $rc)"
+fi
+
+assert_direct_result() {
+    local name="$1" job="$2" expected="$3" user_model="$4" user_effort="$5"
+    local model_source="${6:-cli}" effort_source="${7:-}"
+    if [[ "$(<"$TMP/$job.model")" == "$expected" ]] \
+            && [[ "$(wc -l < "$TMP/$job.worker-calls" | tr -d ' ')" == "1" ]] \
+            && python3 - "$TMP/$job.argv" "$TMP/logs/$job/selection.json" \
+                "$TMP/$job.calls" "$expected" "$user_model" "$user_effort" "$model_source" "$effort_source" <<'PY'
+import json
+import os
+import stat
+import sys
+
+argv_path, selection_path, calls_path, expected, user_model, user_effort, model_source, effort_source = sys.argv[1:]
+parts = [part for part in open(argv_path, "rb").read().split(b"\0") if part]
+assert open(calls_path, encoding="ascii").read().splitlines() == ["version", "worker"]
+assert parts.count(b"--model") == 1
+index = parts.index(b"--model")
+assert parts[index + 1].decode() == expected
+assert b"--effort" not in parts
+assert b"--thinking-level" not in parts
+record = json.load(open(selection_path, encoding="utf-8"))
+assert record["schema_version"] == 1
+assert record["kind"] == "agy-worker-selection"
+assert record["user_model"] == user_model
+assert record.get("user_effort", "") == user_effort
+assert record["user_model_source"] == model_source
+assert record.get("user_effort_source", "") == effort_source
+assert record["resolved_agy_model"] == expected
+assert record["installed_agy_version"] == "1.1.10"
+assert record["matrix_agy_version"] == "1.1.10"
+assert len(record["matrix_sha256"]) == 64
+assert len(record["matrix_source_revision"]) == 40
+assert stat.S_IMODE(os.stat(selection_path).st_mode) & 0o077 == 0
+PY
+    then ok "$name"; else bad "$name"; fi
+}
+
+pair_index=0
+while IFS='|' read -r pair_model pair_effort pair_resolved; do
+    pair_index=$((pair_index+1))
+    for source_mode in cli-cli cli-env env-cli env-env; do
+        pair_job="direct-pair-$pair_index-$source_mode"
+        case "$source_mode" in
+            cli-cli)
+                printf 'direct pair %s %s\n' "$pair_index" "$source_mode" | \
+                    run_worker "$pair_job" --model "$pair_model" --effort "$pair_effort" \
+                    > "$TMP/$pair_job.out" 2> "$TMP/$pair_job.err" ;;
+            cli-env)
+                printf 'direct pair %s %s\n' "$pair_index" "$source_mode" | \
+                    AGY_WORKER_EFFORT="$pair_effort" run_worker "$pair_job" --model "$pair_model" \
+                    > "$TMP/$pair_job.out" 2> "$TMP/$pair_job.err" ;;
+            env-cli)
+                printf 'direct pair %s %s\n' "$pair_index" "$source_mode" | \
+                    AGY_WORKER_MODEL="$pair_model" run_worker "$pair_job" --effort "$pair_effort" \
+                    > "$TMP/$pair_job.out" 2> "$TMP/$pair_job.err" ;;
+            env-env)
+                printf 'direct pair %s %s\n' "$pair_index" "$source_mode" | \
+                    AGY_WORKER_MODEL="$pair_model" AGY_WORKER_EFFORT="$pair_effort" \
+                    run_worker "$pair_job" > "$TMP/$pair_job.out" 2> "$TMP/$pair_job.err" ;;
+        esac
+        rc=$?
+        case "$source_mode" in
+            cli-cli) expected_model_source=cli; expected_effort_source=cli ;;
+            cli-env) expected_model_source=cli; expected_effort_source=environment ;;
+            env-cli) expected_model_source=environment; expected_effort_source=cli ;;
+            env-env) expected_model_source=environment; expected_effort_source=environment ;;
+        esac
+        if [[ "$rc" == 0 ]]; then
+            assert_direct_result "reviewed pair $pair_model/$pair_effort accepts $source_mode" \
+                "$pair_job" "$pair_resolved" "$pair_model" "$pair_effort" \
+                "$expected_model_source" "$expected_effort_source"
+        else
+            bad "reviewed pair $pair_model/$pair_effort accepts $source_mode (exit $rc)"
+        fi
+    done
+done <<'EOF'
+gemini-3.6-flash|low|gemini-3.6-flash-low
+gemini-3.6-flash|medium|gemini-3.6-flash-medium
+gemini-3.6-flash|high|gemini-3.6-flash-high
+gemini-3.5-flash|low|gemini-3.5-flash-low
+gemini-3.5-flash|medium|gemini-3.5-flash-medium
+gemini-3.5-flash|high|gemini-3.5-flash-high
+gemini-3.1-pro|low|gemini-3.1-pro-low
+gemini-3.1-pro|high|gemini-3.1-pro-high
+EOF
+
+exact_index=0
+for exact_model in \
+    gemini-3.6-flash-low gemini-3.6-flash-medium gemini-3.6-flash-high \
+    gemini-3.5-flash-low gemini-3.5-flash-medium gemini-3.5-flash-high \
+    gemini-3.1-pro-low gemini-3.1-pro-high \
+    claude-sonnet-4-6 claude-opus-4-6-thinking gpt-oss-120b-medium; do
+    exact_index=$((exact_index+1))
+    for exact_source in cli env; do
+        exact_job="direct-exact-$exact_index-$exact_source"
+        if [[ "$exact_source" == cli ]]; then
+            printf 'direct exact %s cli\n' "$exact_index" | run_worker "$exact_job" \
+                --model "$exact_model" > "$TMP/$exact_job.out" 2> "$TMP/$exact_job.err"
+        else
+            printf 'direct exact %s env\n' "$exact_index" | \
+                AGY_WORKER_MODEL="$exact_model" run_worker "$exact_job" \
+                > "$TMP/$exact_job.out" 2> "$TMP/$exact_job.err"
+        fi
+        rc=$?
+        if [[ "$exact_source" == cli ]]; then
+            exact_model_source=cli
+        else
+            exact_model_source=environment
+        fi
+        if [[ "$rc" == 0 ]]; then
+            assert_direct_result "reviewed exact model $exact_model accepts $exact_source" \
+                "$exact_job" "$exact_model" "$exact_model" "" \
+                "$exact_model_source" ""
+        else
+            bad "reviewed exact model $exact_model accepts $exact_source (exit $rc)"
+        fi
+    done
+done
+
+expect_selector_reject() {
+    local name="$1" job="$2"; shift 2
+    printf 'must reject before task read\n' | run_worker "$job" "$@" \
+        > "$TMP/$job.out" 2> "$TMP/$job.err"
+    local got=$?
+    if [[ "$got" == 64 && ! -s "$TMP/$job.out" \
+            && ! -s "$TMP/$job.calls" \
+            && ! -e "$TMP/logs/$job/task.txt" ]]; then
+        ok "$name (exit 64, zero agy calls)"
+    else
+        bad "$name (exit $got, wanted 64 before task read and agy)"
+    fi
+}
+
+expect_selector_reject "repeated model is ambiguous" repeated-model \
+    --model gemini-3.6-flash --model gemini-3.6-flash --effort high
+expect_selector_reject "repeated effort is ambiguous" repeated-effort \
+    --model gemini-3.6-flash --effort high --effort high
+expect_selector_reject "repeated tier is ambiguous" repeated-tier --tier bulk --tier bulk
+expect_selector_reject "empty CLI model is rejected" empty-cli-model --model ''
+expect_selector_reject "empty CLI effort is rejected" empty-cli-effort \
+    --model gemini-3.6-flash --effort ''
+expect_selector_reject "effort without model is rejected" effort-without-model --effort high
+expect_selector_reject "base model without effort is rejected" base-without-effort \
+    --model gemini-3.6-flash
+expect_selector_reject "Pro medium is unsupported" pro-medium \
+    --model gemini-3.1-pro --effort medium
+expect_selector_reject "fixed Sonnet rejects effort" sonnet-effort \
+    --model claude-sonnet-4-6 --effort high
+expect_selector_reject "fixed Opus rejects effort" opus-effort \
+    --model claude-opus-4-6-thinking --effort high
+expect_selector_reject "fixed GPT rejects effort" gpt-effort \
+    --model gpt-oss-120b-medium --effort medium
+expect_selector_reject "compound slug rejects effort" compound-effort \
+    --model gemini-3.6-flash-high --effort high
+expect_selector_reject "unknown direct model is rejected" unknown-direct \
+    --model vendor/model-v1
+expect_selector_reject "case-changing a direct model is rejected" upper-direct \
+    --model Gemini-3.6-Flash --effort high
+expect_selector_reject "padded direct model is rejected" padded-direct \
+    --model ' gemini-3.6-flash' --effort high
+expect_selector_reject "thinking-style effort is rejected" thinking-effort \
+    --model gemini-3.6-flash --effort thinking-high
+expect_selector_reject "invented thinking-level flag is rejected" thinking-flag \
+    --model gemini-3.6-flash --thinking-level high
+
+assert_env_reject() {
+    local name="$1" job="$2" got="$3"
+    if [[ "$got" == 64 && ! -s "$TMP/$job.out" && ! -s "$TMP/$job.calls" \
+            && ! -e "$TMP/logs/$job/task.txt" ]]; then
+        ok "$name (exit 64, zero agy calls)"
+    else
+        bad "$name (exit $got, wanted 64 before task read and agy)"
+    fi
+}
+
+printf 'same model conflict\n' | AGY_WORKER_MODEL=gemini-3.6-flash \
+    run_worker same-model-conflict --model gemini-3.6-flash --effort high \
+    > "$TMP/same-model-conflict.out" 2> "$TMP/same-model-conflict.err"
+assert_env_reject "same model in CLI and environment conflicts" same-model-conflict "$?"
+printf 'same effort conflict\n' | AGY_WORKER_EFFORT=high \
+    run_worker same-effort-conflict --model gemini-3.6-flash --effort high \
+    > "$TMP/same-effort-conflict.out" 2> "$TMP/same-effort-conflict.err"
+assert_env_reject "same effort in CLI and environment conflicts" same-effort-conflict "$?"
+printf 'same tier conflict\n' | AGY_WORKER_TIER=bulk \
+    run_worker same-tier-conflict --tier bulk \
+    > "$TMP/same-tier-conflict.out" 2> "$TMP/same-tier-conflict.err"
+assert_env_reject "same tier in CLI and environment conflicts" same-tier-conflict "$?"
+printf 'empty env model\n' | AGY_WORKER_MODEL= run_worker empty-env-model \
+    > "$TMP/empty-env-model.out" 2> "$TMP/empty-env-model.err"
+assert_env_reject "explicit empty environment model is rejected" empty-env-model "$?"
+printf 'empty env effort\n' | AGY_WORKER_MODEL=gemini-3.6-flash AGY_WORKER_EFFORT= \
+    run_worker empty-env-effort > "$TMP/empty-env-effort.out" 2> "$TMP/empty-env-effort.err"
+assert_env_reject "explicit empty environment effort is rejected" empty-env-effort "$?"
+printf 'empty env tier\n' | AGY_WORKER_TIER= run_worker empty-env-tier \
+    > "$TMP/empty-env-tier.out" 2> "$TMP/empty-env-tier.err"
+assert_env_reject "explicit empty environment tier is rejected" empty-env-tier "$?"
+printf 'tier cli model env\n' | AGY_WORKER_MODEL=gemini-3.6-flash-high \
+    run_worker tier-cli-model-env --tier bulk \
+    > "$TMP/tier-cli-model-env.out" 2> "$TMP/tier-cli-model-env.err"
+assert_env_reject "CLI tier conflicts with environment model" tier-cli-model-env "$?"
+printf 'tier env model cli\n' | AGY_WORKER_TIER=bulk \
+    run_worker tier-env-model-cli --model gemini-3.6-flash-high \
+    > "$TMP/tier-env-model-cli.out" 2> "$TMP/tier-env-model-cli.err"
+assert_env_reject "environment tier conflicts with CLI model" tier-env-model-cli "$?"
+printf 'tier cli effort env\n' | AGY_WORKER_EFFORT=high \
+    run_worker tier-cli-effort-env --tier bulk \
+    > "$TMP/tier-cli-effort-env.out" 2> "$TMP/tier-cli-effort-env.err"
+assert_env_reject "CLI tier conflicts with environment effort" tier-cli-effort-env "$?"
+printf 'tier env effort cli\n' | AGY_WORKER_TIER=bulk \
+    run_worker tier-env-effort-cli --effort high \
+    > "$TMP/tier-env-effort-cli.out" 2> "$TMP/tier-env-effort-cli.err"
+assert_env_reject "environment tier conflicts with CLI effort" tier-env-effort-cli "$?"
+
+make_selector_fixture() {
+    local destination="$1" mode="$2"
+    cp -R "$ROOT/skills/agy-worker" "$destination"
+    case "$mode" in
+        clean) ;;
+        disabled|missing-output)
+            python3 - "$destination/runtime/compat/agy-model-effort-matrix.json" "$mode" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+mode = sys.argv[2]
+data = json.loads(path.read_text())
+if mode == "disabled":
+    data["resolution_status"] = "disabled-unverified-source"
+    data["inventory"]["reviewed_source_revision"] = None
+    data["inventory"]["evidence"] = ["installed-agy-models"]
+else:
+    data["adjustable_models"][0]["resolutions"]["high"] = ""
+path.write_text(json.dumps(data, indent=2) + "\n")
+digest = hashlib.sha256(path.read_bytes()).hexdigest()
+(path.parent / "agy-model-effort-matrix.sha256").write_text(digest + "\n")
+PY
+            ;;
+        source-drift) printf '%040d\n' 0 > "$destination/runtime/compat/agy-upstream-head.txt" ;;
+        version-drift) printf '9.9.9\n' > "$destination/runtime/compat/agy-verified-version.txt" ;;
+        sha-mismatch) printf '%064d\n' 0 > "$destination/runtime/compat/agy-model-effort-matrix.sha256" ;;
+        missing-matrix) rm -f "$destination/runtime/compat/agy-model-effort-matrix.json" ;;
+        malformed-schema) printf '\n{}\n' >> "$destination/runtime/compat/model-effort-matrix.schema.json" ;;
+    esac
+}
+
+expect_compat_reject() {
+    local name="$1" fixture="$2" job="$3" want="$4" version_mode="$5" calls_want="$6"
+    printf 'compatibility rejection\n' | AGY_TEST_WORKER="$fixture/runtime/agy-worker.sh" \
+        FAKE_VERSION_MODE="$version_mode" run_worker "$job" \
+        --model gemini-3.6-flash --effort high \
+        > "$TMP/$job.out" 2> "$TMP/$job.err"
+    local got=$? calls=0
+    [[ ! -f "$TMP/$job.calls" ]] || calls="$(wc -l < "$TMP/$job.calls" | tr -d ' ')"
+    if [[ "$got" == "$want" && "$calls" == "$calls_want" \
+            && ! -s "$TMP/$job.worker-calls" \
+            && ! -e "$TMP/logs/$job/task.txt" ]]; then
+        ok "$name (exit $got, calls $calls, zero worker dispatch)"
+    else
+        bad "$name (exit $got/calls $calls, wanted $want/$calls_want and zero worker)"
+    fi
+}
+
+for compat_mode in disabled source-drift version-drift sha-mismatch missing-matrix \
+    malformed-schema missing-output; do
+    compat_fixture="$TMP/selector-$compat_mode"
+    make_selector_fixture "$compat_fixture" "$compat_mode"
+    case "$compat_mode" in
+        disabled|source-drift|version-drift) compat_exit=7 ;;
+        *) compat_exit=8 ;;
+    esac
+    expect_compat_reject "$compat_mode matrix evidence fails closed" \
+        "$compat_fixture" "compat-$compat_mode" "$compat_exit" ready 0
+done
+
+VERSION_FIXTURE="$TMP/selector-version-probes"
+make_selector_fixture "$VERSION_FIXTURE" clean
+expect_compat_reject "installed version drift requires review" \
+    "$VERSION_FIXTURE" version-drift-installed 7 drift 1
+for version_mode in fail empty malformed oversize hang; do
+    expect_compat_reject "$version_mode version evidence is unavailable" \
+        "$VERSION_FIXTURE" "version-$version_mode" 8 "$version_mode" 1
+done
+
+SECONDS=0
+expect_compat_reject "continuous-stream version evidence is bounded" \
+    "$VERSION_FIXTURE" version-stream 8 stream 1
+stream_elapsed=$SECONDS
+if (( stream_elapsed < 3 )); then
+    ok "continuous-stream probe fails promptly without reading the task"
+else
+    bad "continuous-stream probe exceeded the byte-bound deadline (${stream_elapsed}s)"
+fi
+
+run_child_stream_probe() {
+    local job="$1" child_file="$TMP/$1.pid" pgid_file="$TMP/$1.pgid"
+    local parent_file="$TMP/$1.parent" ready_file="$TMP/$1.ready"
+    local release_file="$TMP/$1.release" task_file="$TMP/$1.task-input"
+    local worker_pid ready=1 rc calls=0 cleanup=1 artifacts=0 elapsed
+    local child_pid="" probe_pgid="" probe_parent=""
+    printf 'stream probe must not read this task\n' > "$task_file"
+    SECONDS=0
+    FAKE_CHILD_PID_FILE="$child_file" \
+        FAKE_PROBE_PGID_FILE="$pgid_file" \
+        FAKE_PROBE_PARENT_PID_FILE="$parent_file" \
+        FAKE_PROBE_READY_FILE="$ready_file" \
+        FAKE_PROBE_RELEASE_FILE="$release_file" \
+        AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+        FAKE_VERSION_MODE=child-stream run_worker "$job" \
+        --model gemini-3.6-flash --effort high \
+        < "$task_file" > "$TMP/$job.out" 2> "$TMP/$job.err" &
+    worker_pid=$!
+    for (( child_wait=0; child_wait<200; child_wait++ )); do
+        if [[ -e "$ready_file" && -s "$parent_file" \
+                && -s "$child_file" && -s "$pgid_file" ]]; then
+            ready=0
+            break
+        fi
+        if ! kill -0 "$worker_pid" 2>/dev/null; then
+            break
+        fi
+        sleep 0.01
+    done
+    if (( ready == 0 )); then
+        child_pid="$(<"$child_file")"
+        probe_pgid="$(<"$pgid_file")"
+        probe_parent="$(<"$parent_file")"
+    fi
+    : > "$release_file"
+    wait "$worker_pid"
+    rc=$?
+    elapsed=$SECONDS
+    [[ ! -f "$TMP/$job.calls" ]] \
+        || calls="$(wc -l < "$TMP/$job.calls" | tr -d ' ')"
+    if (( ready == 0 )); then
+        wait_probe_cleanup "$child_pid" "$probe_pgid"
+        cleanup=$?
+    fi
+    if [[ -d "$TMP/logs/$job" ]]; then
+        artifacts="$(find "$TMP/logs/$job" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')"
+    fi
+    case "$probe_parent:$probe_pgid:$child_pid" in
+        *[!0-9:]*|:*|*::*) return 1 ;;
+    esac
+    [[ "$ready" == 0 && "$rc" == 8 && "$calls" == 1 \
+        && "$elapsed" -lt 3 && "$probe_parent" != "$probe_pgid" \
+        && "$probe_parent" != "$child_pid" && "$probe_pgid" != "$child_pid" \
+        && "$cleanup" == 0 && "$artifacts" == 0 \
+        && ! -s "$TMP/$job.out" && ! -s "$TMP/$job.worker-calls" \
+        && "$(<"$TMP/$job.err")" == "model-selection: evidence-unavailable - agy version probe failed or was oversized" \
+        && ! -e "$TMP/logs/$job/task.txt" \
+        && ! -e "$TMP/logs/$job/selection.json" \
+        && ! -d "$VERSION_FIXTURE/runtime/scripts/__pycache__" ]]
+}
+
+if run_child_stream_probe version-child-stream; then
+    ok "oversized child stream is handshake-bound, prompt, and group-clean"
+else
+    bad "oversized child stream handshake, bound, prompt, or group cleanup"
+fi
+
+child_stream_stress=0
+for (( child_repeat=1; child_repeat<=20; child_repeat++ )); do
+    if ! run_child_stream_probe "version-child-stream-stress-$child_repeat"; then
+        child_stream_stress=1
+        break
+    fi
+done
+if (( child_stream_stress == 0 )); then
+    ok "child-stream handshake and process-group cleanup are stable across 20 runs"
+else
+    bad "child-stream handshake or process-group cleanup flaked during 20 runs"
+fi
+
+for signal_case in HUP INT TERM; do
+    case "$signal_case" in
+        HUP) signal_exit=129; signal_slug=hup ;;
+        INT) signal_exit=130; signal_slug=int ;;
+        TERM) signal_exit=143; signal_slug=term ;;
+    esac
+    signal_job="version-signal-$signal_slug"
+    signal_pid_file="$TMP/$signal_job.pid"
+    signal_pgid_file="$TMP/$signal_job.pgid"
+    signal_parent_file="$TMP/$signal_job.parent"
+    signal_ready_file="$TMP/$signal_job.ready"
+    signal_task_file="$TMP/$signal_job.task-input"
+    printf 'probe signal must not read this task\n' > "$signal_task_file"
+    FAKE_CHILD_PID_FILE="$signal_pid_file" \
+        FAKE_PROBE_PGID_FILE="$signal_pgid_file" \
+        FAKE_PROBE_PARENT_PID_FILE="$signal_parent_file" \
+        FAKE_PROBE_READY_FILE="$signal_ready_file" \
+        AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+        FAKE_VERSION_MODE=signal-wait run_worker "$signal_job" \
+        --model gemini-3.6-flash --effort high \
+        < "$signal_task_file" > "$TMP/$signal_job.out" 2> "$TMP/$signal_job.err" &
+    signal_worker_pid=$!
+    signal_ready=1
+    for (( signal_wait=0; signal_wait<200; signal_wait++ )); do
+        if [[ -e "$signal_ready_file" && -s "$signal_parent_file" \
+                && -s "$signal_pid_file" && -s "$signal_pgid_file" ]]; then
+            signal_ready=0
+            break
+        fi
+        if ! kill -0 "$signal_worker_pid" 2>/dev/null; then
+            break
+        fi
+        sleep 0.01
+    done
+    if (( signal_ready == 0 )); then
+        signal_probe_parent="$(<"$signal_parent_file")"
+        kill -s "$signal_case" "$signal_probe_parent" 2>/dev/null || true
+    fi
+    wait "$signal_worker_pid"
+    rc=$?
+    signal_calls=0
+    [[ ! -f "$TMP/$signal_job.calls" ]] \
+        || signal_calls="$(wc -l < "$TMP/$signal_job.calls" | tr -d ' ')"
+    signal_cleanup=1
+    if [[ -s "$signal_pid_file" && -s "$signal_pgid_file" ]]; then
+        signal_child_pid="$(<"$signal_pid_file")"
+        signal_probe_pgid="$(<"$signal_pgid_file")"
+        wait_probe_cleanup "$signal_child_pid" "$signal_probe_pgid"
+        signal_cleanup=$?
+    fi
+    signal_artifacts=0
+    if [[ -d "$TMP/logs/$signal_job" ]]; then
+        signal_artifacts="$(find "$TMP/logs/$signal_job" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')"
+    fi
+    if [[ "$signal_ready" == 0 && "$rc" == "$signal_exit" && "$signal_calls" == 1 \
+            && ! -s "$TMP/$signal_job.worker-calls" \
+            && ! -s "$TMP/$signal_job.out" && ! -s "$TMP/$signal_job.err" \
+            && ! -e "$TMP/logs/$signal_job/task.txt" \
+            && ! -e "$TMP/logs/$signal_job/selection.json" \
+            && "$signal_artifacts" == 0 \
+            && "$signal_cleanup" == 0 \
+            && ! -d "$VERSION_FIXTURE/runtime/scripts/__pycache__" ]]; then
+        ok "$signal_case interrupts the version probe with exit $signal_exit, no group, and no artifacts"
+    else
+        bad "$signal_case version-probe cleanup (ready $signal_ready/exit $rc/calls $signal_calls/artifacts $signal_artifacts/cleanup $signal_cleanup)"
+    fi
+done
+
+NO_AGY_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+run_without_fake_agy() {
+    local job="$1" path_value="$2"; shift 2
+    PATH="$path_value" \
+    AGY_WORKER_LOG_DIR="$TMP/no-agy-logs" \
+    AGY_WORKER_JOB_ID="$job" \
+    AGY_WORKER_MAX_ATTEMPTS=1 \
+    "$WORKER" --workdir "$TMP/repo" "$@"
+}
+mkdir -p "$TMP/no-agy-logs"
+chmod 0755 "$TMP/no-agy-logs"
+
+printf 'direct PATH missing must not be read\n' | run_without_fake_agy direct-path-missing \
+    "$NO_AGY_PATH" --model gemini-3.6-flash --effort high \
+    > "$TMP/direct-path-missing.out" 2> "$TMP/direct-path-missing.err"
+rc=$?
+if [[ "$rc" == 8 && ! -s "$TMP/direct-path-missing.out" \
+        && ! -e "$TMP/no-agy-logs/direct-path-missing/task.txt" ]]; then
+    ok "direct selector reports missing agy as unavailable before task read"
+else
+    bad "direct selector missing-agy boundary (exit $rc)"
+fi
+
+mkdir -p "$TMP/nonexec-agy-bin"
+printf '#!/usr/bin/env bash\n: > %q\n' "$TMP/nonexec-agy-ran" \
+    > "$TMP/nonexec-agy-bin/agy"
+chmod 0644 "$TMP/nonexec-agy-bin/agy"
+printf 'direct nonexec must not be read\n' | run_without_fake_agy direct-path-nonexec \
+    "$TMP/nonexec-agy-bin:$NO_AGY_PATH" --model gemini-3.6-flash --effort high \
+    > "$TMP/direct-path-nonexec.out" 2> "$TMP/direct-path-nonexec.err"
+rc=$?
+if [[ "$rc" == 8 && ! -e "$TMP/nonexec-agy-ran" \
+        && ! -e "$TMP/no-agy-logs/direct-path-nonexec/task.txt" ]]; then
+    ok "direct selector reports non-executable agy as unavailable before task read"
+else
+    bad "direct selector non-executable-agy boundary (exit $rc)"
+fi
+
+mkdir -p "$TMP/broken-agy-bin"
+printf '#!/definitely/missing/agy-interpreter\n' > "$TMP/broken-agy-bin/agy"
+chmod +x "$TMP/broken-agy-bin/agy"
+printf 'direct broken launch must not be read\n' | run_without_fake_agy direct-start-fail \
+    "$TMP/broken-agy-bin:$NO_AGY_PATH" --model gemini-3.6-flash --effort high \
+    > "$TMP/direct-start-fail.out" 2> "$TMP/direct-start-fail.err"
+rc=$?
+if [[ "$rc" == 8 && ! -e "$TMP/no-agy-logs/direct-start-fail/task.txt" ]]; then
+    ok "direct selector sanitizes an agy launch failure before task read"
+else
+    bad "direct selector launch-failure boundary (exit $rc)"
+fi
+
+printf 'legacy missing agy still consumes the task and reaches dispatch\n' | \
+    run_without_fake_agy legacy-path-missing "$NO_AGY_PATH" --tier cheap \
+    > "$TMP/legacy-path-missing.out" 2> "$TMP/legacy-path-missing.err"
+rc=$?
+if [[ "$rc" == 5 && -s "$TMP/no-agy-logs/legacy-path-missing/task.txt" \
+        && -s "$TMP/no-agy-logs/legacy-path-missing/selection.json" ]]; then
+    ok "legacy tier preserves historical missing-agy dispatch semantics"
+else
+    bad "legacy tier missing-agy semantics (exit $rc)"
+fi
+
+printf 'prefixed semantic version\n' | AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+    FAKE_VERSION_MODE=prefixed run_worker version-prefixed \
+    --model gemini-3.6-flash --effort high \
+    > "$TMP/version-prefixed.out" 2> "$TMP/version-prefixed.err"
+rc=$?
+if [[ "$rc" == 0 ]]; then
+    assert_direct_result "documented prefixed agy version is accepted" version-prefixed \
+        gemini-3.6-flash-high gemini-3.6-flash high cli cli
+else
+    bad "documented prefixed agy version is accepted (exit $rc)"
+fi
+
+VALID_DIRECT_RECORD="$TMP/logs/direct-pair-1-cli-cli/selection.json"
+VALID_TIER_RECORD="$TMP/logs/legacy-tier-1/selection.json"
+ARTIFACT_CASES="$TMP/selection-artifacts"
+mkdir -p "$ARTIFACT_CASES"
+python3 -B - "$VALID_DIRECT_RECORD" "$VALID_TIER_RECORD" "$ARTIFACT_CASES" <<'PY'
+import copy
+import json
+from pathlib import Path
+import sys
+
+direct = json.load(open(sys.argv[1], encoding="utf-8"))
+tier = json.load(open(sys.argv[2], encoding="utf-8"))
+root = Path(sys.argv[3])
+
+cases = {
+    "three-key-direct": {
+        "schema_version": 1,
+        "kind": "agy-worker-selection",
+        "selection_mode": "exact-model",
+    },
+    "tier-with-direct-fields": {**tier, "user_model": "gemini-3.6-flash-high"},
+    "direct-missing-provenance": {key: value for key, value in direct.items() if key != "user_model_source"},
+    "direct-invalid-source": {**direct, "user_model_source": "worker"},
+    "direct-invalid-sha": {**direct, "matrix_sha256": "z" * 64},
+    "direct-extra-field": {**direct, "applied": False},
+}
+for name, value in cases.items():
+    (root / f"{name}.json").write_text(json.dumps(value) + "\n", encoding="utf-8")
+PY
+
+expect_valid_selection_record() {
+    local name="$1" path="$2"
+    "$SELECTOR" --validate-record "$path" > "$path.valid.out" 2> "$path.valid.err"
+    local got=$?
+    if [[ "$got" == 0 && ! -s "$path.valid.out" ]]; then ok "$name"; else bad "$name (exit $got)"; fi
+}
+expect_invalid_selection_record() {
+    local name="$1" path="$2"
+    "$SELECTOR" --validate-record "$path" > "$path.invalid.out" 2> "$path.invalid.err"
+    local got=$?
+    if [[ "$got" == 64 && ! -s "$path.invalid.out" ]]; then ok "$name"; else bad "$name (exit $got)"; fi
+}
+expect_valid_selection_record "runtime validator accepts a complete direct artifact" "$VALID_DIRECT_RECORD"
+expect_valid_selection_record "runtime validator accepts a complete tier artifact" "$VALID_TIER_RECORD"
+expect_invalid_selection_record "runtime validator rejects a three-key direct artifact" "$ARTIFACT_CASES/three-key-direct.json"
+expect_invalid_selection_record "runtime validator rejects tier records carrying direct fields" "$ARTIFACT_CASES/tier-with-direct-fields.json"
+expect_invalid_selection_record "runtime validator rejects missing direct provenance" "$ARTIFACT_CASES/direct-missing-provenance.json"
+expect_invalid_selection_record "runtime validator rejects an invalid source" "$ARTIFACT_CASES/direct-invalid-source.json"
+expect_invalid_selection_record "runtime validator rejects an invalid matrix SHA" "$ARTIFACT_CASES/direct-invalid-sha.json"
+expect_invalid_selection_record "runtime validator rejects extra artifact fields" "$ARTIFACT_CASES/direct-extra-field.json"
+
+RETRY_FIXTURE="$TMP/selector-retry-freeze"
+make_selector_fixture "$RETRY_FIXTURE" clean
+RETRY_MATRIX="$RETRY_FIXTURE/runtime/compat/agy-model-effort-matrix.json"
+printf 'retry must freeze selection\n' | \
+    FAKE_DISPATCH_COUNT_FILE="$TMP/retry-freeze.dispatch-count" \
+    FAKE_MUTATE_MATRIX="$RETRY_MATRIX" FAKE_FAIL_FIRST=1 \
+    AGY_TEST_WORKER="$RETRY_FIXTURE/runtime/agy-worker.sh" \
+    run_worker retry-freeze \
+        --model gemini-3.6-flash --effort high \
+        > "$TMP/retry-freeze.out" 2> "$TMP/retry-freeze.err"
+rc=$?
+if [[ "$rc" == 0 ]] && python3 - \
+        "$TMP/logs/retry-freeze/selection.json" "$RETRY_MATRIX" \
+        "$RETRY_FIXTURE/runtime/compat/agy-model-effort-matrix.sha256" \
+        "$TMP/retry-freeze.calls" "$TMP/retry-freeze.worker-calls" <<'PY'
+import hashlib
+import json
+import sys
+
+selection_path, matrix_path, sha_path, calls_path, workers_path = sys.argv[1:]
+selection = json.load(open(selection_path, encoding="utf-8"))
+expected = open(sha_path, encoding="ascii").read().strip()
+assert selection["resolved_agy_model"] == "gemini-3.6-flash-high"
+assert selection["matrix_sha256"] == expected
+assert hashlib.sha256(open(matrix_path, "rb").read()).hexdigest() != expected
+assert open(calls_path).read().splitlines() == ["version", "worker", "worker"]
+assert open(workers_path).read().splitlines() == ["worker", "worker"]
+PY
+then
+    ok "retry freezes the resolved slug and exact matrix SHA before attempt one"
+else
+    bad "retry freezes the resolved slug and exact matrix SHA before attempt one"
 fi
 
 WRAPPER_FIXTURE="$TMP/root-wrapper"
@@ -597,6 +1411,12 @@ expect_exit "dispatcher independently rejects schema-invalid output" 4 "$rc"
 
 echo
 echo "model-recommendation.sh offline policy tests:"
+expect_direct_recommendation "pre-dispatch explicit pair stays unranked and unapplied" \
+    pre-dispatch gemini-3.6-flash high high-complexity-bounded gemini-3.6-flash-high
+expect_direct_recommendation "post-gate explicit pair cannot be changed or redispatched" \
+    post-gate gemini-3.1-pro low driver-verification-failed gemini-3.1-pro-low
+expect_direct_recommendation "fixed exact model stays unranked and unapplied" \
+    pre-dispatch claude-sonnet-4-6 '' high-complexity-bounded claude-sonnet-4-6
 expect_recommendation "pre-dispatch routine work needs no escalation" \
     pre-dispatch cheap bounded-routine no-escalation null none 0
 expect_recommendation "pre-dispatch mechanical batch recommends bulk" \
@@ -667,6 +1487,22 @@ expect_recommendation_reject "missing evidence is rejected" \
     --stage pre-dispatch --selected-tier bulk
 expect_recommendation_reject "thinking-level flags are not an interface" \
     --stage pre-dispatch --selected-tier bulk --evidence bounded-routine --thinking-level high
+expect_recommendation_reject "selected tier and selected model conflict" \
+    --stage pre-dispatch --selected-tier bulk --selected-model gemini-3.6-flash-high \
+    --evidence bounded-routine
+expect_recommendation_reject "selected effort requires selected model" \
+    --stage pre-dispatch --selected-tier bulk --selected-effort high --evidence bounded-routine
+expect_recommendation_reject "duplicate selected model is ambiguous" \
+    --stage pre-dispatch --selected-model gemini-3.6-flash-high \
+    --selected-model gemini-3.6-flash-high --evidence bounded-routine
+expect_recommendation_reject "duplicate selected effort is ambiguous" \
+    --stage pre-dispatch --selected-model gemini-3.6-flash --selected-effort high \
+    --selected-effort high --evidence bounded-routine
+expect_recommendation_reject "unsupported direct recommendation pair is rejected" \
+    --stage pre-dispatch --selected-model gemini-3.1-pro --selected-effort medium \
+    --evidence bounded-routine
+expect_recommendation_reject "unknown direct recommendation model is rejected" \
+    --stage pre-dispatch --selected-model vendor/model-v1 --evidence bounded-routine
 expect_recommendation_reject "positional arguments are rejected" \
     --stage pre-dispatch --selected-tier bulk --evidence bounded-routine hardest
 

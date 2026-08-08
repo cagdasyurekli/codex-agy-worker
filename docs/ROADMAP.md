@@ -1,9 +1,9 @@
 # Product roadmap
 
-This document describes **planned work, not current behavior**. The current command
-surface and verified limitations remain in [README.md](../README.md). A roadmap item
-becomes current only after its own implementation, adversarial tests, documentation
-review, and an accepted pull request.
+This document describes dependency-ordered work. The current command surface and
+verified limitations remain in [README.md](../README.md). An item explicitly marked
+implemented has code, adversarial tests, and documentation in its isolated slice; it
+is not a released/public capability until that slice is reviewed and merged.
 
 Compatibility reconciliation remains a prerequisite for model/effort selection and
 portable receipt work. The offline starter proof depends only on the maintained gate
@@ -268,6 +268,9 @@ an earlier implementation because it shares a schema or helper.
   opens an item, invokes a model, or changes required branch checks.
 
 ### G1 — Explicit Model & Effort Selection
+
+**Status:** Implemented as an isolated, offline-verified slice; merge and release
+remain separately approval-gated.
 
 - **User job:** Select an exact advertised agy model or a verified base-model/effort
   pair directly, without disguising the choice as a tier or allowing a recommendation

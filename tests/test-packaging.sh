@@ -71,21 +71,37 @@ else
     bad "root and portable packages include the canonical read-only doctor"
 fi
 
+if [[ -x "$ROOT/model-selection.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/model-selection.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" ]]; then
+    ok "root and portable packages include the canonical explicit selector"
+else
+    bad "root and portable packages include the canonical explicit selector"
+fi
+
 required_runtime_dependencies=(
     agy-worker.sh
     qa-gate.sh
     model-recommendation.sh
+    model-selection.sh
     doctor.sh
     scripts/validate-envelope.py
     scripts/model-recommendation.py
+    scripts/model_selection.py
+    scripts/compatibility.py
     scripts/doctor-metadata.py
     schemas/worker-result.schema.json
+    schemas/model-selection.schema.json
+    schemas/model-recommendation.schema.json
     agents/bulk-test-writer.md
     agents/repo-inventory.md
     agents/diff-reviewer.md
     compat/agy-verified-version.txt
     compat/agy-upstream-head.txt
     compat/agy-last-reviewed.txt
+    compat/agy-model-effort-matrix.json
+    compat/model-effort-matrix.schema.json
+    compat/agy-model-effort-matrix.sha256
 )
 for dependency in "${required_runtime_dependencies[@]}"; do
     label="${dependency//\//-}"
@@ -174,9 +190,11 @@ done
 for specification in \
     'qa-gate.sh:executable' \
     'scripts/validate-envelope.py:executable' \
+    'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \
     'agents/repo-inventory.md:data' \
-    'compat/agy-verified-version.txt:data'; do
+    'compat/agy-verified-version.txt:data' \
+    'compat/agy-model-effort-matrix.json:data'; do
     dependency="${specification%:*}"
     dependency_class="${specification##*:}"
     for wrong_type in directory symlink-directory symlink-foreign fifo wrong-mode; do
@@ -243,6 +261,77 @@ else
     bad "macOS CI runs the dedicated offline doctor suite"
 fi
 
+python_cache_exists() {
+    python3 -B - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+raise SystemExit(
+    0 if any(
+        path.name == "__pycache__" or path.suffix in {".pyc", ".pyo"}
+        for path in root.rglob("*")
+    ) else 1
+)
+PY
+}
+
+workflow_compile_fixture="$TMP/workflow-compile-fixture"
+mkdir -p "$workflow_compile_fixture/scripts" \
+    "$workflow_compile_fixture/skills/agy-worker/runtime/scripts"
+cp "$ROOT/scripts/compatibility.py" "$workflow_compile_fixture/scripts/compatibility.py"
+cp "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
+    "$workflow_compile_fixture/skills/agy-worker/runtime/scripts/model_selection.py"
+(
+    cd "$workflow_compile_fixture" || exit 1
+    PYTHONPYCACHEPREFIX="$TMP/workflow-python-cache" \
+        python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+)
+workflow_compile_rc=$?
+python3 -B - "$ROOT/.github/workflows/test.yml" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+step = re.compile(
+    r"^      - name: Python syntax\n"
+    r"        env:\n"
+    r"          PYTHONPYCACHEPREFIX: \$\{\{ runner\.temp \}\}/codex-agy-worker-pycache\n"
+    r"        run: python3 -m py_compile scripts/\*\.py skills/\*/runtime/scripts/\*\.py$",
+    re.MULTILINE,
+)
+assert len(step.findall(workflow)) == 1
+PY
+workflow_contract_rc=$?
+if [[ "$workflow_compile_rc" == 0 ]] \
+        && [[ "$workflow_contract_rc" == 0 ]] \
+        && ! python_cache_exists "$workflow_compile_fixture" \
+        && python_cache_exists "$TMP/workflow-python-cache"; then
+    ok "workflow Python syntax check keeps bytecode outside the public checkout"
+else
+    bad "workflow Python syntax check keeps bytecode outside the public checkout"
+fi
+
+plain_compile_fixture="$TMP/plain-compile-fixture"
+mkdir -p "$plain_compile_fixture/scripts" \
+    "$plain_compile_fixture/skills/agy-worker/runtime/scripts"
+cp "$ROOT/scripts/compatibility.py" "$plain_compile_fixture/scripts/compatibility.py"
+cp "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
+    "$plain_compile_fixture/skills/agy-worker/runtime/scripts/model_selection.py"
+(
+    cd "$plain_compile_fixture" || exit 1
+    unset PYTHONDONTWRITEBYTECODE PYTHONPYCACHEPREFIX
+    python3 -B -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+)
+plain_compile_rc=$?
+if [[ "$plain_compile_rc" == 0 ]] \
+        && python_cache_exists "$plain_compile_fixture/skills/agy-worker"; then
+    ok "plain py_compile negative control is caught as a public bytecode leak"
+else
+    bad "plain py_compile negative control is caught as a public bytecode leak"
+fi
+
 if [[ -x "$ROOT/proof-demo.sh" ]] \
         && [[ -x "$ROOT/tests/test-proof-demo.sh" ]] \
         && [[ -f "$ROOT/demo/fixtures/honest-envelope.json" ]] \
@@ -292,6 +381,108 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
+fi
+
+if cmp -s "$ROOT/compat/agy-model-effort-matrix.json" \
+        "$ROOT/skills/agy-worker/runtime/compat/agy-model-effort-matrix.json" \
+        && cmp -s "$ROOT/compat/model-effort-matrix.schema.json" \
+            "$ROOT/skills/agy-worker/runtime/compat/model-effort-matrix.schema.json" \
+        && cmp -s "$ROOT/compat/agy-model-effort-matrix.sha256" \
+            "$ROOT/skills/agy-worker/runtime/compat/agy-model-effort-matrix.sha256" \
+        && python3 - "$ROOT/compat/agy-model-effort-matrix.json" \
+            "$ROOT/compat/agy-model-effort-matrix.sha256" <<'PY'
+import hashlib
+import sys
+
+actual = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
+expected = open(sys.argv[2], encoding="ascii").read().strip()
+assert actual == expected
+PY
+then
+    ok "portable resolver matrix, schema, and exact SHA are byte-synchronized"
+else
+    bad "portable resolver matrix, schema, and exact SHA are byte-synchronized"
+fi
+
+if python3 -B - "$ROOT/skills/agy-worker/runtime/schemas/model-selection.schema.json" <<'PY'
+import copy
+import json
+import sys
+
+schema = json.load(open(sys.argv[1], encoding="utf-8"))
+
+required = {
+    "legacy tier selection": {
+        "schema_version", "kind", "selection_mode", "selected_tier",
+        "selected_tier_source", "resolved_agy_model",
+    },
+    "exact reviewed model selection": {
+        "schema_version", "kind", "selection_mode", "user_model",
+        "user_model_source", "resolved_agy_model", "installed_agy_version",
+        "matrix_sha256", "matrix_agy_version", "matrix_source_revision",
+    },
+    "reviewed model and effort selection": {
+        "schema_version", "kind", "selection_mode", "user_model",
+        "user_model_source", "user_effort", "user_effort_source",
+        "resolved_agy_model", "installed_agy_version", "matrix_sha256",
+        "matrix_agy_version", "matrix_source_revision",
+    },
+}
+forbidden = {
+    "legacy tier selection": {
+        "user_model", "user_model_source", "user_effort", "user_effort_source",
+        "installed_agy_version", "matrix_sha256", "matrix_agy_version",
+        "matrix_source_revision",
+    },
+    "exact reviewed model selection": {
+        "selected_tier", "selected_tier_source", "user_effort", "user_effort_source",
+    },
+    "reviewed model and effort selection": {"selected_tier", "selected_tier_source"},
+}
+
+def assert_strict(value):
+    assert value["additionalProperties"] is False
+    assert set(value["required"]) == {"schema_version", "kind", "selection_mode"}
+    variants = {variant["title"]: variant for variant in value["oneOf"]}
+    assert set(variants) == set(required)
+    for title, expected in required.items():
+        variant = variants[title]
+        assert set(variant["required"]) == expected
+        blocked = {
+            tuple(rule["required"])[0]
+            for rule in variant["not"]["anyOf"]
+            if len(rule.get("required", [])) == 1
+        }
+        assert blocked == forbidden[title]
+    tier_conditions = json.dumps(variants["legacy tier selection"]["allOf"], sort_keys=True)
+    assert '"const": "default"' in tier_conditions and '"type": "null"' in tier_conditions
+    assert '"const": "implicit-default"' in tier_conditions and '"const": "bulk"' in tier_conditions
+
+assert_strict(schema)
+mutants = []
+mutant = copy.deepcopy(schema)
+mutant["additionalProperties"] = True
+mutants.append(mutant)
+mutant = copy.deepcopy(schema)
+mutant["oneOf"][1]["required"].remove("matrix_sha256")
+mutants.append(mutant)
+mutant = copy.deepcopy(schema)
+mutant["oneOf"][0]["not"]["anyOf"] = mutant["oneOf"][0]["not"]["anyOf"][1:]
+mutants.append(mutant)
+mutant = copy.deepcopy(schema)
+mutant["oneOf"][0]["allOf"] = mutant["oneOf"][0]["allOf"][:1]
+mutants.append(mutant)
+for mutant in mutants:
+    try:
+        assert_strict(mutant)
+    except (AssertionError, KeyError, TypeError):
+        continue
+    raise AssertionError("weakened selection schema mutant was accepted")
+PY
+then
+    ok "selection schema contract rejects required, forbidden, conditional, and extra-field weakening"
+else
+    bad "selection schema contract rejects required, forbidden, conditional, and extra-field weakening"
 fi
 
 TAMPERED_PORTABLE="$TMP/tampered-portable-metadata"
@@ -357,6 +548,54 @@ else
     bad "skill-folder-only copy resolves and runs a bounded offline advisory"
 fi
 
+mkdir -p "$TMP/selector-bin"
+printf '%s\n' '#!/usr/bin/env bash' \
+    '[[ "$*" == "--version" ]] || exit 97' \
+    'printf "1.1.10\n"' > "$TMP/selector-bin/agy"
+chmod +x "$TMP/selector-bin/agy"
+PATH="$TMP/selector-bin:$PATH" NETWORK_MARKER="$TMP/network-called" \
+    "$copied_pipeline/model-selection.sh" --model gemini-3.6-flash --effort high \
+    > "$TMP/copied-selection.json" 2> "$TMP/copied-selection.err"
+rc=$?
+if [[ "$rc" == 0 ]] \
+        && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
+            "$TMP/copied-selection.json" \
+        && grep -Fq '"matrix_sha256": "6ba67d662821b6c0888ea2a4665aadcb02b82084e2f607bc43d4f2ee334639d8"' \
+            "$TMP/copied-selection.json" \
+        && [[ ! -e "$TMP/network-called" ]]; then
+    ok "skill-folder-only copy resolves an exact direct selector offline"
+else
+    bad "skill-folder-only copy resolves an exact direct selector offline"
+fi
+
+(
+    unset PYTHONDONTWRITEBYTECODE PYTHONPYCACHEPREFIX
+    PATH="$TMP/selector-bin:$PATH" \
+        "$copied_pipeline/model-selection.sh" \
+        --model gemini-3.6-flash --effort high \
+        > "$TMP/no-spill-selection.json" 2> "$TMP/no-spill-selection.err" \
+    && "$copied_pipeline/model-recommendation.sh" \
+        --stage pre-dispatch --selected-model gemini-3.6-flash \
+        --selected-effort high --evidence bounded-routine \
+        > "$TMP/no-spill-recommendation.json" 2> "$TMP/no-spill-recommendation.err"
+)
+no_spill_rc=$?
+if [[ "$no_spill_rc" == 0 ]] \
+        && python3 -B - "$copied_pipeline" "$ROOT/skills/agy-worker" <<'PY'
+from pathlib import Path
+import sys
+
+for root_text in sys.argv[1:]:
+    root = Path(root_text)
+    leaked = [path for path in root.rglob("*") if path.name == "__pycache__" or path.suffix == ".pyc"]
+    assert not leaked, leaked
+PY
+then
+    ok "normal direct selector and recommendation runs leave no bytecode in public bundles"
+else
+    bad "normal direct selector and recommendation runs leave no bytecode in public bundles"
+fi
+
 mkdir -p "$TMP/incomplete-skill/agy-worker/agents" \
     "$TMP/incomplete-skill/agy-worker/scripts"
 cp "$ROOT/skills/agy-worker/SKILL.md" "$TMP/incomplete-skill/agy-worker/SKILL.md"
@@ -410,10 +649,16 @@ if [[ -x "$TMP/installed/agy-worker/runtime/doctor.sh" ]] \
         && cmp -s "$ROOT/compat/agy-upstream-head.txt" \
             "$TMP/installed/agy-worker/runtime/compat/agy-upstream-head.txt" \
         && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
-            "$TMP/installed/agy-worker/runtime/compat/agy-last-reviewed.txt"; then
-    ok "standalone install preserves the doctor and its reviewed metadata bytes"
+            "$TMP/installed/agy-worker/runtime/compat/agy-last-reviewed.txt" \
+        && cmp -s "$ROOT/compat/agy-model-effort-matrix.json" \
+            "$TMP/installed/agy-worker/runtime/compat/agy-model-effort-matrix.json" \
+        && cmp -s "$ROOT/compat/model-effort-matrix.schema.json" \
+            "$TMP/installed/agy-worker/runtime/compat/model-effort-matrix.schema.json" \
+        && cmp -s "$ROOT/compat/agy-model-effort-matrix.sha256" \
+            "$TMP/installed/agy-worker/runtime/compat/agy-model-effort-matrix.sha256"; then
+    ok "standalone install preserves doctor and explicit-selector compatibility bytes"
 else
-    bad "standalone install preserves the doctor and its reviewed metadata bytes"
+    bad "standalone install preserves doctor and explicit-selector compatibility bytes"
 fi
 
 mkdir -p "$TMP/reject-relative/agy-worker"

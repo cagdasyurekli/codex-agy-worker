@@ -17,6 +17,8 @@ jobs:
         run: for f in ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh; do bash -n "$f"; done
 
       - name: Python syntax
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/codex-agy-worker-pycache
         run: python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
 
       - name: qa-gate suite

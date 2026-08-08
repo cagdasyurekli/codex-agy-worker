@@ -35,13 +35,13 @@ an unknown subcommand's exit code or generic usage text as compatibility evidenc
 Keep these counts current when their suites change:
 
 - `qa-gate.sh`: 41 offline cases.
-- `agy-worker.sh` / `install.sh` / `model-recommendation.sh`: 77 offline
+- `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
-- `update.sh`: 174 offline local-remote/matrix/manifest/watch-policy cases.
+- `update.sh`: 175 offline local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 89 offline
+- Codex package/skill distribution: 114 offline
   manifest/runtime-copy/relocation/landing cases.
-- `doctor.sh`: 148 offline fake-tool/read-only cases.
+- `doctor.sh`: 163 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
@@ -66,7 +66,12 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
 ./tests/test-proof-demo.sh      # offline synthetic pass/reject proof coverage
 bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
-python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+(
+  AGY_WORKER_PYCACHE="$(mktemp -d -t agyworker-pycache.XXXXXX)" || exit 1
+  trap 'rm -rf -- "$AGY_WORKER_PYCACHE"' EXIT
+  PYTHONPYCACHEPREFIX="$AGY_WORKER_PYCACHE" \
+    python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+)
 git diff --check
 ./ground-truth.sh              # regenerate agy facts before touching agy behaviour
 ```
@@ -83,6 +88,9 @@ only a passing test has not been shown to catch anything.
   `${PIPESTATUS[0]}` silently reports empty exit codes and every assertion "fails".
 - **macOS bash is 3.2** — no `mapfile`, no associative-array conveniences. Use
   `while IFS= read -r` and C-style `for (( ))` loops.
+- **`python -B -m py_compile` still writes bytecode.** Route explicit syntax-check
+  output through an external `PYTHONPYCACHEPREFIX`; repository bytecode makes the
+  public runtime incomplete by design.
 - **agy exits 0 on failure** with empty stdout. Never treat `$? == 0` as success;
   check stripped stdout content.
 - **`result.json_schema` is the echoed schema**, not the answer. The answer is
@@ -137,9 +145,14 @@ only a passing test has not been shown to catch anything.
 - Model recommendations are advisory only: never apply them automatically, change the
   caller-selected tier, invent a thinking-level flag, or escalate permission,
   authentication, scope-policy, or human-required outcomes.
-- agy has a real `--effort`, but the wrapper exposes none until G1. The checked-in
-  matrix is validated metadata, not routing or gate authority; disabled, stale, or
-  version/source-mismatched metadata must never resolve a model/effort pair.
+- Direct model/effort selection is caller-owned. Reject repeated, empty, conflicting,
+  inferred, unsupported, or unbound selectors before task read or dispatch. CLI and
+  its matching environment source conflict even when equal; never add precedence.
+  The checked-in matrix is validated metadata, not routing or gate authority; only
+  exact SHA/schema/version/source-bound metadata matching the installed agy version
+  may resolve a pair. Resolve once, freeze provenance and the exact slug across
+  retries, send one downstream `--model`, and never send downstream `--effort` or a
+  thinking-level flag.
   Keep reviewed pair-to-slug mappings and fixed classifications explicit in both the
   matrix and validator allowlists; update both in one reconciliation and never derive
   a slug by concatenating model and effort strings.
