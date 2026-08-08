@@ -105,6 +105,8 @@ cp -R "$ROOT/skills/agy-worker" "$SOURCE/skills/agy-worker"
 cp -R "$ROOT/compat/." "$SOURCE/compat/"
 cp "$ROOT/scripts/compatibility.py" "$SOURCE/scripts/"
 cp "$ROOT/scripts/official_distribution.py" "$SOURCE/scripts/"
+cp "$ROOT/scripts/official_github.py" "$SOURCE/scripts/"
+cp "$ROOT/scripts/compatibility_probe.py" "$SOURCE/scripts/"
 
 mkdir -p "$UPSTREAM_SOURCE"
 git -C "$UPSTREAM_SOURCE" init -q -b main
@@ -178,7 +180,53 @@ STUB
 cat > "$TMP/bin/python3" <<'STUB'
 #!/usr/bin/env bash
 set -u
+arguments=("$@")
+while [[ "${1:-}" == "-I" || "${1:-}" == "-B" ]]; do shift; done
 case "${1:-}" in
+  */scripts/compatibility_probe.py)
+    probe_script="$1"
+    profile="${2:-}"
+    argument="${3:-}"
+    case "$profile" in
+      agy-version|codex-version)
+        exec "$REAL_PYTHON_REAL" -I -B "$probe_script" "$profile"
+        ;;
+      official-project)
+        case "${FAKE_PROJECT_OFFICIAL_MODE:-unchanged}" in
+          unavailable) exit 2 ;;
+          signal-hup) exit 129 ;;
+          signal-int) exit 130 ;;
+          signal-term) exit 143 ;;
+        esac
+        tag="${FAKE_PROJECT_TAG:-v1.1.0}"
+        revision="$(git --git-dir="$FAKE_PROJECT_REMOTE" rev-parse "refs/tags/$tag^{commit}" 2>/dev/null)" || exit 2
+        printf 'project\t%s\t%s\n' "$tag" "$revision"
+        ;;
+      official-project-release)
+        [[ "$argument" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 2
+        revision="$(git --git-dir="$FAKE_PROJECT_REMOTE" rev-parse "refs/tags/$argument^{commit}" 2>/dev/null)" || exit 2
+        printf 'project\t%s\t%s\n' "$argument" "$revision"
+        ;;
+      official-agy)
+        case "${FAKE_AGY_OFFICIAL_MODE:-unchanged}" in
+          unavailable) exit 2 ;;
+          malformed) printf '%s\n' 'credential-bearing malformed official bytes'; exit 0 ;;
+          drift) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.11}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
+          *) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.10}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
+        esac
+        ;;
+      official-codex)
+        case "${FAKE_CODEX_OFFICIAL_MODE:-unchanged}" in
+          unavailable) exit 2 ;;
+          malformed) printf '%s\n' 'credential-bearing malformed official bytes'; exit 0 ;;
+          drift) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.147.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
+          *) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.146.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
+        esac
+        ;;
+      *) exit 2 ;;
+    esac
+    exit 0
+    ;;
   */scripts/official_distribution.py)
     if [[ $# -ne 1 ]] || ! "$REAL_PYTHON_REAL" -B -c '
 import importlib.util
@@ -215,10 +263,11 @@ raise SystemExit(0 if module.MANIFEST_URL == expected else 1)
     esac
     ;;
 esac
-exec "$REAL_PYTHON_REAL" "$@"
+exec "$REAL_PYTHON_REAL" "${arguments[@]}"
 STUB
 chmod +x "$SOURCE/"*.sh "$SOURCE/tests/"*.sh "$TMP/bin/agy" "$TMP/bin/codex" \
-    "$TMP/bin/python3" "$SOURCE/scripts/compatibility.py" "$SOURCE/scripts/official_distribution.py"
+    "$TMP/bin/python3" "$SOURCE/scripts/compatibility.py" "$SOURCE/scripts/official_distribution.py" \
+    "$SOURCE/scripts/official_github.py" "$SOURCE/scripts/compatibility_probe.py"
 
 git -C "$SOURCE" init -q -b main
 git -C "$SOURCE" config user.email test@example.com
@@ -240,6 +289,9 @@ git init -q --bare "$REMOTE"
 git -C "$SOURCE" remote add publish "$REMOTE"
 git -C "$SOURCE" push -q publish main --tags
 git --git-dir="$REMOTE" symbolic-ref HEAD refs/heads/main
+export FAKE_PROJECT_REMOTE="$REMOTE"
+export FAKE_AGY_HEAD="$UPSTREAM_HEAD"
+export FAKE_CODEX_HEAD="$CODEX_UPSTREAM_HEAD"
 git init -q --bare "$NO_TAG_REMOTE"
 git -C "$SOURCE" push -q "$NO_TAG_REMOTE" main
 git --git-dir="$NO_TAG_REMOTE" symbolic-ref HEAD refs/heads/main
@@ -316,6 +368,59 @@ if ! grep -Fq 'example.invalid' "$TMP/fixed-policy.out" "$TMP/fixed-policy.err";
 else
     bad "ignored source overrides are never disclosed"
 fi
+
+REAL_GIT="$(command -v git)"
+export REAL_GIT
+NO_REMOTE_GIT_BIN="$TMP/no-remote-git-bin"
+mkdir -p "$NO_REMOTE_GIT_BIN"
+cat > "$NO_REMOTE_GIT_BIN/git" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "ls-remote" ]]; then
+    : > "$GIT_LS_REMOTE_MARKER"
+    exit 91
+fi
+exec "$REAL_GIT" "$@"
+STUB
+chmod +x "$NO_REMOTE_GIT_BIN/git"
+cat > "$TMP/hostile-global.gitconfig" <<'EOF'
+[url "https://credential.invalid/"]
+    insteadOf = https://github.com/
+[http]
+    proxy = https://credential.invalid/proxy
+[credential]
+    helper = !printf credential-secret
+EOF
+GIT_LS_REMOTE_MARKER="$TMP/ls-remote.marker" \
+GIT_CONFIG_GLOBAL="$TMP/hostile-global.gitconfig" \
+HTTP_PROXY=https://credential.invalid/proxy \
+HTTPS_PROXY=https://credential.invalid/proxy \
+GIT_ASKPASS="$TMP/credential-askpass" \
+PATH="$NO_REMOTE_GIT_BIN:$TMP/bin:$PATH" \
+    "$CLIENT/update.sh" check --watch \
+    > "$TMP/ambient-transport.out" 2> "$TMP/ambient-transport.err"
+rc=$?
+expect_exit "ambient Git rewrite/proxy/credential controls cannot redirect watch evidence" 0 "$rc"
+if [[ ! -e "$TMP/ls-remote.marker" ]] \
+        && ! grep -Eq 'credential\.invalid|credential-secret' \
+            "$TMP/ambient-transport.out" "$TMP/ambient-transport.err"; then
+    ok "watch performs no Git network query and discloses no ambient transport bytes"
+else
+    bad "watch performs no Git network query and discloses no ambient transport bytes"
+fi
+
+for signal_case in hup int term; do
+    case "$signal_case" in
+        hup) expected_signal_rc=129 ;;
+        int) expected_signal_rc=130 ;;
+        term) expected_signal_rc=143 ;;
+    esac
+    PATH="$TMP/bin:$PATH" FAKE_PROJECT_OFFICIAL_MODE="signal-$signal_case" \
+        "$CLIENT/update.sh" check > "$TMP/project-signal-$signal_case.out" \
+        2> "$TMP/project-signal-$signal_case.err"
+    rc=$?
+    expect_exit "project evidence $signal_case signal propagates through update check" \
+        "$expected_signal_rc" "$rc"
+done
 
 set_client_matrix_mode() {
     local mode="$1"
@@ -526,7 +631,7 @@ git -C "$CLIENT" checkout -q -- compat/agy-last-reviewed.txt
 
 git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.147.0
 git -C "$CODEX_UPSTREAM_SOURCE" push -q publish rust-v0.147.0
-PATH="$TMP/bin:$PATH" \
+PATH="$TMP/bin:$PATH" FAKE_CODEX_OFFICIAL_MODE=drift \
     "$CLIENT/update.sh" check > "$TMP/codex-stable-drift.out" 2> "$TMP/codex-stable-drift.err"
 rc=$?
 expect_exit "Codex stable release drift requires review" 3 "$rc"
@@ -535,14 +640,14 @@ if grep -Fq 'official 0.147.0; verified 0.146.0' "$TMP/codex-stable-drift.out"; 
 else
     bad "Codex stable release drift is reported separately"
 fi
-PATH="$TMP/bin:$PATH" \
+PATH="$TMP/bin:$PATH" FAKE_CODEX_OFFICIAL_MODE=drift \
     "$CLIENT/update.sh" check --watch > "$TMP/watch-drift.out" 2> "$TMP/watch-drift.err"
 rc=$?
 expect_exit "watch mode preserves drift-review exit semantics" 3 "$rc"
 
 git -C "$UPSTREAM_SOURCE" tag v1.1.11
 git -C "$UPSTREAM_SOURCE" push -q publish v1.1.11
-PATH="$TMP/bin:$PATH" \
+PATH="$TMP/bin:$PATH" FAKE_AGY_OFFICIAL_MODE=drift \
     "$CLIENT/update.sh" check > "$TMP/agy-stable-drift.out" 2> "$TMP/agy-stable-drift.err"
 rc=$?
 expect_exit "agy stable release drift requires review without baseline advance" 3 "$rc"
@@ -551,7 +656,8 @@ printf 'Codex upstream moved\n' >> "$CODEX_UPSTREAM_SOURCE/README.md"
 git -C "$CODEX_UPSTREAM_SOURCE" add README.md
 git -C "$CODEX_UPSTREAM_SOURCE" commit -qm 'Codex upstream drift fixture'
 git -C "$CODEX_UPSTREAM_SOURCE" push -q publish main
-PATH="$TMP/bin:$PATH" \
+CODEX_DRIFT_HEAD="$(git -C "$CODEX_UPSTREAM_SOURCE" rev-parse HEAD)"
+PATH="$TMP/bin:$PATH" FAKE_CODEX_OFFICIAL_HEAD="$CODEX_DRIFT_HEAD" \
     "$CLIENT/update.sh" check > "$TMP/codex-source-drift.out" 2> "$TMP/codex-source-drift.err"
 rc=$?
 expect_exit "Codex source revision drift requires review" 3 "$rc"
@@ -575,33 +681,30 @@ else
 fi
 git -C "$CLIENT" checkout -q -- compat/codex-upstream-head.txt
 
-MISSING_UPSTREAM="$TMP/missing-upstream.git"
-git -C "$CLIENT" config --unset-all "url.$UPSTREAM_REMOTE.insteadOf"
-git -C "$CLIENT" config "url.$MISSING_UPSTREAM.insteadOf" "$OFFICIAL_UPSTREAM_URL"
-PATH="$TMP/bin:$PATH" FAKE_CODEX_VERSION=9.9.9 \
+PATH="$TMP/bin:$PATH" FAKE_AGY_OFFICIAL_MODE=unavailable FAKE_CODEX_VERSION=9.9.9 \
     "$CLIENT/update.sh" check > "$TMP/unavailable-source.out" 2> "$TMP/unavailable-source.err"
 rc=$?
 expect_exit "unavailable official evidence outranks drift" 2 "$rc"
-PATH="$TMP/bin:$PATH" \
+PATH="$TMP/bin:$PATH" FAKE_AGY_OFFICIAL_MODE=unavailable \
     "$CLIENT/update.sh" check --watch > "$TMP/watch-unavailable.out" 2> "$TMP/watch-unavailable.err"
 rc=$?
 expect_exit "watch mode preserves evidence-unavailable exit semantics" 2 "$rc"
-git -C "$CLIENT" config --unset-all "url.$MISSING_UPSTREAM.insteadOf"
-git -C "$CLIENT" config "url.$UPSTREAM_REMOTE.insteadOf" "$OFFICIAL_UPSTREAM_URL"
 
 printf 'upstream moved\n' >> "$UPSTREAM_SOURCE/README.md"
 git -C "$UPSTREAM_SOURCE" add README.md
 git -C "$UPSTREAM_SOURCE" commit -qm 'upstream drift fixture'
 git -C "$UPSTREAM_SOURCE" push -q publish main
-PATH="$TMP/bin:$PATH" \
+AGY_DRIFT_HEAD="$(git -C "$UPSTREAM_SOURCE" rev-parse HEAD)"
+PATH="$TMP/bin:$PATH" FAKE_AGY_OFFICIAL_HEAD="$AGY_DRIFT_HEAD" \
     "$CLIENT/update.sh" check > "$TMP/upstream-drift.out" 2> "$TMP/upstream-drift.err"
 rc=$?
 expect_exit "official upstream HEAD drift requires review" 3 "$rc"
 
-PATH="$TMP/bin:$PATH" CODEX_SKILLS_DIR="$SKILLS" "$NO_TAG_CLIENT/update.sh" apply \
+PATH="$TMP/bin:$PATH" FAKE_PROJECT_OFFICIAL_MODE=unavailable CODEX_SKILLS_DIR="$SKILLS" \
+    "$NO_TAG_CLIENT/update.sh" apply \
     > "$TMP/no-tag.out" 2> "$TMP/no-tag.err"
 rc=$?
-expect_exit "implicit apply reports that no stable release exists" 2 "$rc"
+expect_exit "implicit apply fails closed when official release evidence is unavailable" 2 "$rc"
 
 printf 'dirty\n' > "$DIRTY_CLIENT/dirty.txt"
 PATH="$TMP/bin:$PATH" CODEX_SKILLS_DIR="$SKILLS" \
@@ -962,6 +1065,35 @@ if cmp -s "$TMP/ignored-pyc-before" "$TMP/ignored-pyc-after"; then
     ok "official distribution policy tests create no ignored bytecode"
 else
     bad "official distribution policy tests create no ignored bytecode"
+fi
+
+snapshot_ignored_pyc "$TMP/github-probe-pyc-before"
+OFFICIAL_GITHUB_TEST_OUTPUT="$($REAL_PYTHON_REAL -B "$ROOT/tests/test-official-github.py" 2>&1)"
+official_github_rc=$?
+printf '%s\n' "$OFFICIAL_GITHUB_TEST_OUTPUT"
+OFFICIAL_GITHUB_RESULT="$(printf '%s\n' "$OFFICIAL_GITHUB_TEST_OUTPUT" | tail -1)"
+if [[ "$official_github_rc" == 0 \
+        && "$OFFICIAL_GITHUB_RESULT" == "OFFICIAL_GITHUB_TEST_RESULT passed=56 failed=0" ]]; then
+    pass=$((pass+56))
+else
+    bad "fixed official GitHub transport tests (expected 56 controlled passes)"
+fi
+
+COMPATIBILITY_PROBE_TEST_OUTPUT="$($REAL_PYTHON_REAL -B "$ROOT/tests/test-compatibility-probe.py" 2>&1)"
+compatibility_probe_rc=$?
+printf '%s\n' "$COMPATIBILITY_PROBE_TEST_OUTPUT"
+COMPATIBILITY_PROBE_RESULT="$(printf '%s\n' "$COMPATIBILITY_PROBE_TEST_OUTPUT" | tail -1)"
+if [[ "$compatibility_probe_rc" == 0 \
+        && "$COMPATIBILITY_PROBE_RESULT" == "COMPATIBILITY_PROBE_TEST_RESULT passed=41 failed=0" ]]; then
+    pass=$((pass+41))
+else
+    bad "bounded compatibility probe tests (expected 41 controlled passes)"
+fi
+snapshot_ignored_pyc "$TMP/github-probe-pyc-after"
+if cmp -s "$TMP/github-probe-pyc-before" "$TMP/github-probe-pyc-after"; then
+    ok "official GitHub and probe tests create no ignored bytecode"
+else
+    bad "official GitHub and probe tests create no ignored bytecode"
 fi
 
 WORKFLOW="$ROOT/.github/workflows/compatibility-watch.yml"

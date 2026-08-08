@@ -63,6 +63,11 @@ accept a candidate, replace human diff review, or certify correctness or securit
   changing files. A disabled or stale matrix is drift-review; malformed or missing
   matrix evidence is inconclusive. The manifest helper requests no archive and its
   observational tuple cannot advance a baseline.
+  GitHub release/source observations use exact fixed REST paths through a proxyless,
+  redirect-rejecting strict JSON client and a bounded process-group supervisor.
+  Installed version probes use the same supervisor with smaller limits. Check/watch
+  makes no Git network request, so ambient Git URL rewrites and transport helpers are
+  outside its evidence path.
   Its `--watch` mode needs no installed tools and preserves the same
   unchanged/drift-review/evidence-unavailable exit contract. `update.sh apply [TAG]`
   remains explicit: it verifies a
@@ -103,7 +108,7 @@ accept a candidate, replace human diff review, or certify correctness or securit
 | `verify-job.sh`, `skills/agy-worker/runtime/verify-job.sh`, `skills/agy-worker/runtime/scripts/evidence_receipt.py`, `skills/agy-worker/runtime/schemas/evidence-receipt.schema.json` | Root compatibility entry plus exact input hashing, strict selection/advisory binding, startup-isolated parent-exclusive gate evidence, interruption cleanup, unsigned receipt validation, and private durable no-overwrite publication | `tests/test-evidence-receipt.sh` (88 cases) |
 | `proof-demo.sh`, `demo/fixtures/` | Repository-only offline starter proof using two canonical synthetic envelopes and isolated temporary repositories | `tests/test-proof-demo.sh` (21 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
-| `update.sh`, `scripts/compatibility.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix | `tests/test-update.sh` (175 cases, including the test-only manifest adversary harness) |
+| `update.sh`, `scripts/compatibility.py`, `scripts/compatibility_probe.py`, `scripts/official_github.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; exact fixed-REST agy/Codex observation; bounded process-group/version probes; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix. Explicit apply-time Git fetch remains ambient-configuration-aware. | `tests/test-update.sh` (278 cases, including fixed transport, supervisor, and manifest adversary harnesses) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
 | `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (135 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (135 cases) plus review |
@@ -144,15 +149,21 @@ accept a candidate, replace human diff review, or certify correctness or securit
 - Scheduled compatibility evidence is observational. Missing or malformed official
   evidence is inconclusive, and neither the watcher nor a release/version name can
   advance a human-reviewed baseline.
+- Read-only GitHub evidence never uses Git transport. `scripts/official_github.py`
+  owns the exact API repository/path policy and response validation;
+  `scripts/compatibility_probe.py` owns process, time, byte, environment, and signal
+  bounds. These guarantees do not extend to the explicit `update.sh apply` Git fetch.
 - The fixed agy distribution manifest is a drift canary, not executable or source
   evidence. Its validated archive tuple is never requested, opened, hashed, or run;
   the observational snapshot detects same-version build/hash changes but cannot
   activate the model/effort matrix.
 - `--workdir` is the single audited repository. User-supplied `--add-dir` roots must
   resolve inside it; multi-repository mutation is unsupported.
-- Release tags are trusted only through the fixed official origin and exact ref/commit
-  checks. Candidate validation executes release code and therefore relies on the
-  maintainer account and tag-publishing boundary.
+- Release tags are observed through fixed official REST endpoints and an apply
+  candidate must match that observed commit. The apply-time Git fetch still honors
+  ambient Git transport settings. Candidate validation executes release code and
+  therefore relies on that transport plus the maintainer account and tag-publishing
+  boundary.
 - Sanitization reduces accidental disclosure but does not replace exact human review.
   The reviewed hash must bind the bytes actually sent.
 - A plugin install is local enablement, not consent to send repository content.
