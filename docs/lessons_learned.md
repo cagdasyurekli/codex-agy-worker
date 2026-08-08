@@ -37,6 +37,19 @@ environment-overridable. Report established drift separately from unavailable or
 malformed evidence: the latter is inconclusive and must outrank a known drift result
 rather than becoming green. Always report both tools before aggregating.
 
+A literal GitHub URL passed to `git ls-remote` is not a fixed-source guarantee: Git
+still honors repository and global `url.*.insteadOf`, proxy, credential, and transport
+configuration. Read-only compatibility evidence therefore uses an exact
+`api.github.com` REST repository/path allowlist, a proxyless redirect-rejecting strict
+JSON client, and no Git network command. Keep the explicit apply-time fetch limitation
+visible; observation hardening does not silently harden mutation.
+
+Bounding a parent command is insufficient when stdout/stderr pipes or descendants can
+outlive it. Capture both streams incrementally, cap them independently, impose a hard
+deadline, create a fresh process group, and kill/reap that group on timeout, overflow,
+or HUP/INT/TERM. Return only parsed canonical fields; never surface raw child output
+as compatibility evidence or diagnostics.
+
 Reconcile each tool's official CLI documentation, stable release, exact source
 revision, and installed semantic command inventory before advancing its separate
 version/revision/review-date metadata. An unknown command that exits zero or prints

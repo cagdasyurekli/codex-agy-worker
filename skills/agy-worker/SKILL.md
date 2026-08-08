@@ -347,13 +347,17 @@ uncommitted work.
 - When `$PIPELINE/update.sh` exists, `update.sh check` is read-only and may be run
   when the user asks for an update/compatibility check. It reports tool releases plus
   verified agy version, official-upstream drift, and fixed 30-day documentation-review
-  status. A folder-only install intentionally has no checkout updater: do not fetch or
-  pull code automatically to manufacture one.
+  status. Its fixed GitHub REST evidence and installed-version probes are bounded and
+  sanitized; check/watch makes no Git network request. A folder-only install
+  intentionally has no checkout updater: do not fetch or pull code automatically to
+  manufacture one.
 - Run `update.sh apply [TAG]` only on an explicit user request. It refuses dirty or
   detached checkouts and ignored-file collisions, validates tests plus a temporary
   skill install, fast-forwards, and reinstalls this skill. If the real install fails
   after merge, report the partial update and exact recovery command; do not claim an
-  atomic rollback. Never invoke it during a worker job.
+  atomic rollback. Its explicit Git fetch still honors the caller's Git transport
+  configuration; the read-only check's transport isolation does not cover apply.
+  Never invoke it during a worker job.
 - A detected bug authorizes diagnosis, not external submission. When
   `$PIPELINE/bug-report.sh` exists and the user wants a report, create only a sanitized
   local draft with `bug-report.sh draft`, show it with `bug-report.sh preview`, and
