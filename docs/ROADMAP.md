@@ -152,6 +152,15 @@ particular, `gpt-oss` is accepted only as display text on the same line as
 checking provider output into the repository. This does not close the missing
 installed-version/executable evidence binding or advance any `1.1.11` record.
 
+The provider-independent version-attestation mutation harness is now implemented as
+a separate offline prerequisite. It replaces one-off inline test runners with one
+bounded synthetic controller supervisor, inode-bound durable publication, atomic
+lifecycle completion, and paired weakened controls for publication and HUP/INT/TERM
+windows. Its 52-case suite invokes no agy, provider, network, or private evidence and
+does not itself close the missing installed-version/executable binding. A real
+version or inventory observation remains separately authorized and independently
+reviewed.
+
 - **User job:** Learn that Codex or agy has drifted before a normal dispatch breaks,
   while keeping every check read-only and requiring a human to reconcile behavior.
 - **Intended surface:** Extend the fixed-source compatibility contract in `update.sh`,

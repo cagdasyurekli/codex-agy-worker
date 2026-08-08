@@ -109,13 +109,14 @@ accept a candidate, replace human diff review, or certify correctness or securit
 | `proof-demo.sh`, `demo/fixtures/` | Repository-only offline starter proof using two canonical synthetic envelopes and isolated temporary repositories | `tests/test-proof-demo.sh` (21 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
 | `update.sh`, `scripts/compatibility.py`, `scripts/compatibility_probe.py`, `scripts/agy_inventory.py`, `scripts/official_github.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; exact fixed-REST agy/Codex observation; bounded process-group/version probes; exact-line allowlisted agy inventory interpretation with reserved provider namespaces; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix. Explicit apply-time Git fetch remains ambient-configuration-aware. | `tests/test-update.sh` (310 cases, including fixed transport, supervisor, inventory, and manifest adversary harnesses) |
+| `scripts/version_attestation_harness.py` | Persistent provider-independent mutation harness for owner-private no-overwrite publication, one bounded synthetic controller supervisor, exact process-group cleanup, lifecycle-signal linearization, and fixed copy-based weakened controls. It never invokes agy or reads compatibility evidence. | `tests/test-version-attestation-harness.py` (52 cases) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
 | `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (135 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (135 cases) plus review |
 | `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (135 cases) plus rendered review |
 | `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (135 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
-| `.github/workflows/test.yml` | macOS CI for syntax and all eight offline suites | exercised by GitHub Actions |
+| `.github/workflows/test.yml` | macOS CI for syntax and all nine offline suites | exercised by GitHub Actions |
 | `.github/workflows/compatibility-watch.yml` | Weekly/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
 | `docs/ROADMAP.md` | Planned dependency-ordered product slices, approval gates, and honest success measures; not current behavior | human review; implementation claims remain prohibited until their slices land |
@@ -157,6 +158,11 @@ accept a candidate, replace human diff review, or certify correctness or securit
   through 11 exact canonical line entries. Display aliases and generic regex matches
   are not inventory authority; unknown reviewed-provider tokens fail closed. Parsing
   cannot activate or advance compatibility metadata.
+- `scripts/version_attestation_harness.py` is offline proof infrastructure, not
+  compatibility evidence. Its fixed fake child and copy-based mutations exercise
+  publication, process-group, and signal failure boundaries without touching agy,
+  private evidence, provider state, metadata, or the network. A green result cannot
+  authorize or substitute for a separately approved real observation.
 - The fixed agy distribution manifest is a drift canary, not executable or source
   evidence. Its validated archive tuple is never requested, opened, hashed, or run;
   the observational snapshot detects same-version build/hash changes but cannot

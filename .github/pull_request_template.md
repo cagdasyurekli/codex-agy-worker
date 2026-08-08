@@ -17,6 +17,7 @@
 - [ ] `./tests/test-evidence-receipt.sh`
 - [ ] `./tests/test-agy-worker.sh`
 - [ ] `./tests/test-update.sh`
+- [ ] `python3 -I -S -B tests/test-version-attestation-harness.py`
 - [ ] `./tests/test-reporting.sh`
 - [ ] `./tests/test-packaging.sh`
 - [ ] `./tests/test-doctor.sh`
