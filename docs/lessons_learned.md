@@ -50,6 +50,17 @@ deadline, create a fresh process group, and kill/reap that group on timeout, ove
 or HUP/INT/TERM. Return only parsed canonical fields; never surface raw child output
 as compatibility evidence or diagnostics.
 
+Security-sensitive evidence runners cannot be validated by a happy-path subprocess
+test. Exercise the exact publication and lifecycle primitives against fixed weakened
+copies: post-link stat and parent-fsync failures, signals before process-group
+registration, a second signal during TERM grace or inode rollback, and a signal
+between the final marker and disarm. Use one supervisor for every synthetic
+controller, keep Popen through validated PGID registration signal-masked, and never
+signal an unvalidated group. A failed mutation must be observed before harness-owned
+cleanup; cleanup must still prove no orphan, late side effect, final, or temporary
+artifact remains. These tests are proof infrastructure, not authority to run a real
+tool or advance compatibility metadata.
+
 Reconcile each tool's official CLI documentation, stable release, exact source
 revision, and installed semantic command inventory before advancing its separate
 version/revision/review-date metadata. An unknown command that exits zero or prints

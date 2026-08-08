@@ -764,15 +764,21 @@ for suite in "${required_suite_paths[@]}"; do
         governance_lists_all_suites=0
     fi
 done
+if ! grep -Fq 'python3 -I -S -B tests/test-version-attestation-harness.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq 'python3 -I -S -B tests/test-version-attestation-harness.py' \
+            "$ROOT/.github/pull_request_template.md"; then
+    governance_lists_all_suites=0
+fi
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all eight suites and disclose public policy boundaries"
+    ok "governance docs require all nine suites and disclose public policy boundaries"
 else
-    bad "governance docs require all eight suites and disclose public policy boundaries"
+    bad "governance docs require all nine suites and disclose public policy boundaries"
 fi
 
 python3 "$ROOT/scripts/validate-brand-assets.py" "$ROOT/docs/assets/brand" \
