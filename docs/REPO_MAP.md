@@ -18,8 +18,16 @@ driver task
   -> agy (untrusted worker)
   -> structured envelope
   -> skills/agy-worker/runtime/scripts/validate-envelope.py (shape and contract only)
-  -> qa-gate.sh (Git scope, immutable base, policy, escalation)
-  -> driver-owned --verify commands
+  -> one caller-chosen verification path:
+       -> verify-job.sh (receipt-producing wrapper)
+            -> sanitized, capability-bound launch with a pre-opened evidence FD
+               owned only by the gate parent
+            -> qa-gate.sh (Git scope, immutable base, policy, escalation)
+                 -> isolated gate helpers
+                 -> driver-owned --verify children started only after the evidence
+                    FD is closed in the existing gate process
+            -> validated unsigned receipt, atomic no-overwrite local publication
+       -> or direct qa-gate.sh (same gate and verifiers, no receipt)
   -> model-recommendation.sh --stage post-gate (visible advisory only)
   -> human diff review and deliberate integration
 ```
@@ -88,20 +96,21 @@ accept a candidate, replace human diff review, or certify correctness or securit
 | `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus strict selector-source parsing, canonical dispatch, frozen model/mode selection, bounded retries, private selection/prompt/log staging, envelope extraction | `tests/test-agy-worker.sh` (209 cases) |
 | `model-selection.sh`, `skills/agy-worker/runtime/model-selection.sh`, `skills/agy-worker/runtime/scripts/model_selection.py`, portable matrix/schema/SHA | Root compatibility entry plus canonical exact model/effort resolution, bounded installed-version preflight, and driver selection provenance | dispatcher, doctor, and packaging suites |
 | `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre/post recommendations; direct selections are labelled but unranked and never applied | `tests/test-agy-worker.sh` (209 cases) |
-| `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (163 cases) plus packaging synchronization checks |
+| `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (180 cases) plus packaging synchronization checks |
 | `install.sh`, `skills/agy-worker/`, `skills/agy-worker/scripts/resolve-pipeline.sh` | Install and resolve complete-plugin, explicit-checkout, or folder-only skill layouts without fetching code | dispatcher and packaging suites |
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
-| `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, path policy, escalation, driver verification | `tests/test-qa-gate.sh` (41 cases) |
+| `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, path policy, escalation, driver verification, and internal pre-opened structured evidence handoff | `tests/test-qa-gate.sh` (41 cases) plus receipt suite no-FD compatibility checks |
+| `verify-job.sh`, `skills/agy-worker/runtime/verify-job.sh`, `skills/agy-worker/runtime/scripts/evidence_receipt.py`, `skills/agy-worker/runtime/schemas/evidence-receipt.schema.json` | Root compatibility entry plus exact input hashing, strict selection/advisory binding, startup-isolated parent-exclusive gate evidence, interruption cleanup, unsigned receipt validation, and private durable no-overwrite publication | `tests/test-evidence-receipt.sh` (88 cases) |
 | `proof-demo.sh`, `demo/fixtures/` | Repository-only offline starter proof using two canonical synthetic envelopes and isolated temporary repositories | `tests/test-proof-demo.sh` (21 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
 | `update.sh`, `scripts/compatibility.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix | `tests/test-update.sh` (175 cases, including the test-only manifest adversary harness) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
-| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (114 cases) plus platform validators |
-| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (114 cases) plus review |
-| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (114 cases) plus rendered review |
-| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (114 cases) plus rendered review |
+| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (135 cases) plus platform validators |
+| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (135 cases) plus review |
+| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (135 cases) plus rendered review |
+| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (135 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
-| `.github/workflows/test.yml` | macOS CI for syntax and all seven offline suites | exercised by GitHub Actions |
+| `.github/workflows/test.yml` | macOS CI for syntax and all eight offline suites | exercised by GitHub Actions |
 | `.github/workflows/compatibility-watch.yml` | Weekly/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
 | `docs/ROADMAP.md` | Planned dependency-ordered product slices, approval gates, and honest success measures; not current behavior | human review; implementation claims remain prohibited until their slices land |
@@ -116,6 +125,13 @@ accept a candidate, replace human diff review, or certify correctness or securit
   recommender is outside the dispatch and acceptance paths, cannot execute either,
   and never applies its output. Default/custom tiers and the highest named tier fail
   safely to `no-escalation` when no ordered higher tier can be proved.
+- An Evidence Receipt v1 is a private, unsigned serialization of one gate execution,
+  not another acceptance authority. `verify-job.sh` can bind hashes and bounded
+  optional G1/advisory data only after `qa-gate.sh` supplies the exact outcome through
+  its internal wrapper-bound pre-opened descriptor. Direct `qa-gate.sh` is the
+  no-receipt alternative; the evidence capability is not a public direct-call mode.
+  Receipt validation never converts a rejected/routed
+  result to `gate-passed`, and even `gate-passed` still needs human diff review.
 - The model/effort matrix is compatibility metadata only. It cannot select a tier,
   dispatch a worker, recommend escalation, or accept a candidate. Direct caller input
   may resolve through it only while exact bytes, version, source, schema, and installed
@@ -166,6 +182,12 @@ accept a candidate, replace human diff review, or certify correctness or securit
 - Temporary worktrees, envelopes, updater candidates, and bug drafts normally live
   outside the repository. Preserve accepted work before cleanup; force removal is only
   for deliberately rejected disposable changes.
+- Receipt files live only at a caller-selected new canonical path outside the audited
+  repository, under an owner-private real parent. They are published mode `0600` by
+  same-directory file `fsync`, atomic no-overwrite hard link, and parent `fsync`.
+  They contain hashes and bounded labels rather than source, paths, commands, output,
+  logs, or worker prose. They are unsigned and not self-authenticating; retain or
+  delete them according to the caller's local evidence policy.
 - `~/.gemini/` contains agy state. `~/.codex/skills/agy-worker/` is written only by an
   explicit `install.sh` or successful `update.sh apply`; its `.pipeline-root` is a
   local install artifact and must never enter the public skill bundle. Repository

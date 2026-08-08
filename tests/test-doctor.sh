@@ -659,9 +659,12 @@ done
 
 for specification in \
     'qa-gate.sh:executable' \
+    'verify-job.sh:executable' \
     'scripts/validate-envelope.py:executable' \
+    'scripts/evidence_receipt.py:executable' \
     'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \
+    'schemas/evidence-receipt.schema.json:data' \
     'agents/repo-inventory.md:data' \
     'compat/agy-verified-version.txt:data' \
     'compat/agy-model-effort-matrix.json:data'; do
@@ -744,8 +747,10 @@ fi
 
 for dependency in \
     'scripts/validate-envelope.py:python-helper' \
+    'scripts/evidence_receipt.py:receipt-helper' \
     'scripts/model_selection.py:model-resolver' \
     'schemas/worker-result.schema.json:schema' \
+    'schemas/evidence-receipt.schema.json:receipt-schema' \
     'schemas/model-selection.schema.json:selection-schema' \
     'agents/repo-inventory.md:persona' \
     'compat/agy-upstream-head.txt:source-record' \

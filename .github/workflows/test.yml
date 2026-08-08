@@ -24,6 +24,9 @@ jobs:
       - name: qa-gate suite
         run: ./tests/test-qa-gate.sh
 
+      - name: Evidence Receipt v1 suite
+        run: ./tests/test-evidence-receipt.sh
+
       - name: dispatcher suite
         run: ./tests/test-agy-worker.sh
 

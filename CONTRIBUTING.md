@@ -23,6 +23,7 @@ Run the offline suites and static checks before requesting review:
 
 ```bash
 ./tests/test-qa-gate.sh
+./tests/test-evidence-receipt.sh
 ./tests/test-agy-worker.sh
 ./tests/test-update.sh
 ./tests/test-reporting.sh
@@ -30,7 +31,12 @@ Run the offline suites and static checks before requesting review:
 ./tests/test-doctor.sh
 ./tests/test-proof-demo.sh
 bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh
-python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+(
+  AGY_WORKER_PYCACHE="$(mktemp -d -t agyworker-pycache.XXXXXX)" || exit 1
+  trap 'rm -rf -- "$AGY_WORKER_PYCACHE"' EXIT
+  PYTHONPYCACHEPREFIX="$AGY_WORKER_PYCACHE" \
+    python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+)
 git diff --check
 ```
 
