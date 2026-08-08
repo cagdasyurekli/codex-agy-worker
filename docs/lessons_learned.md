@@ -57,6 +57,15 @@ usage is not semantic evidence. The weekly watcher observes the same fixed sourc
 it never updates a baseline, installs a tool, dispatches a model, or takes a GitHub
 write action. A bounded real job remains separately approved when behavior changed.
 
+Model-list display text can look like an additional slug. A generic slug regex turned
+the `gpt-oss` label beside `gpt-oss-120b-medium` into a false twelfth entry. Parse a
+bounded inventory one line at a time, recognize only whole exact reviewed slugs,
+require every expected slug exactly once, and permit a display alias only beside its
+bound canonical slug. Reserve the reviewed provider namespaces so even a one-hyphen
+unknown such as `gemini-unknown` fails closed without treating every ordinary display
+label as a model. Keep prefix/longest-match and namespace-removal mutations in paired
+offline controls; inventory parsing alone is not a version binding.
+
 An official installer channel can move before a public release/source repository.
 Observe that difference through one fixed, bounded manifest canary, but do not turn a
 distribution version or checksum into source or behavior evidence. Disable proxies,

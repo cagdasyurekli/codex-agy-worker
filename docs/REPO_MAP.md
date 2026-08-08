@@ -108,7 +108,7 @@ accept a candidate, replace human diff review, or certify correctness or securit
 | `verify-job.sh`, `skills/agy-worker/runtime/verify-job.sh`, `skills/agy-worker/runtime/scripts/evidence_receipt.py`, `skills/agy-worker/runtime/schemas/evidence-receipt.schema.json` | Root compatibility entry plus exact input hashing, strict selection/advisory binding, startup-isolated parent-exclusive gate evidence, interruption cleanup, unsigned receipt validation, and private durable no-overwrite publication | `tests/test-evidence-receipt.sh` (88 cases) |
 | `proof-demo.sh`, `demo/fixtures/` | Repository-only offline starter proof using two canonical synthetic envelopes and isolated temporary repositories | `tests/test-proof-demo.sh` (21 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
-| `update.sh`, `scripts/compatibility.py`, `scripts/compatibility_probe.py`, `scripts/official_github.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; exact fixed-REST agy/Codex observation; bounded process-group/version probes; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix. Explicit apply-time Git fetch remains ambient-configuration-aware. | `tests/test-update.sh` (278 cases, including fixed transport, supervisor, and manifest adversary harnesses) |
+| `update.sh`, `scripts/compatibility.py`, `scripts/compatibility_probe.py`, `scripts/agy_inventory.py`, `scripts/official_github.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; exact fixed-REST agy/Codex observation; bounded process-group/version probes; exact-line allowlisted agy inventory interpretation with reserved provider namespaces; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix. Explicit apply-time Git fetch remains ambient-configuration-aware. | `tests/test-update.sh` (310 cases, including fixed transport, supervisor, inventory, and manifest adversary harnesses) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
 | `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (135 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (135 cases) plus review |
@@ -153,6 +153,10 @@ accept a candidate, replace human diff review, or certify correctness or securit
   owns the exact API repository/path policy and response validation;
   `scripts/compatibility_probe.py` owns process, time, byte, environment, and signal
   bounds. These guarantees do not extend to the explicit `update.sh apply` Git fetch.
+- `scripts/agy_inventory.py` interprets a separately owner-captured inventory only
+  through 11 exact canonical line entries. Display aliases and generic regex matches
+  are not inventory authority; unknown reviewed-provider tokens fail closed. Parsing
+  cannot activate or advance compatibility metadata.
 - The fixed agy distribution manifest is a drift canary, not executable or source
   evidence. Its validated archive tuple is never requested, opened, hashed, or run;
   the observational snapshot detects same-version build/hash changes but cannot

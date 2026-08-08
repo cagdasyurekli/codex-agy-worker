@@ -143,6 +143,15 @@ version, revision, review date, manifest, or matrix record is advanced; `1.1.10`
 remains the active fail-closed baseline until separately authorized inventory and
 provider evidence is accepted.
 
+The provider-independent inventory parser is also implemented offline. It treats
+each line as one semantic inventory entry, requires complete one-time coverage of the
+11 exact reviewed slugs, and rejects unknown reviewed-provider tokens,
+generic-regex aliases, or prefix matches. In
+particular, `gpt-oss` is accepted only as display text on the same line as
+`gpt-oss-120b-medium`. Synthetic tests pin the corrected canonical-slug hash without
+checking provider output into the repository. This does not close the missing
+installed-version/executable evidence binding or advance any `1.1.11` record.
+
 - **User job:** Learn that Codex or agy has drifted before a normal dispatch breaks,
   while keeping every check read-only and requiring a human to reconcile behavior.
 - **Intended surface:** Extend the fixed-source compatibility contract in `update.sh`,

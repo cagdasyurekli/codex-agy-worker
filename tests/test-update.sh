@@ -107,6 +107,7 @@ cp "$ROOT/scripts/compatibility.py" "$SOURCE/scripts/"
 cp "$ROOT/scripts/official_distribution.py" "$SOURCE/scripts/"
 cp "$ROOT/scripts/official_github.py" "$SOURCE/scripts/"
 cp "$ROOT/scripts/compatibility_probe.py" "$SOURCE/scripts/"
+cp "$ROOT/scripts/agy_inventory.py" "$SOURCE/scripts/"
 
 mkdir -p "$UPSTREAM_SOURCE"
 git -C "$UPSTREAM_SOURCE" init -q -b main
@@ -267,7 +268,8 @@ exec "$REAL_PYTHON_REAL" "${arguments[@]}"
 STUB
 chmod +x "$SOURCE/"*.sh "$SOURCE/tests/"*.sh "$TMP/bin/agy" "$TMP/bin/codex" \
     "$TMP/bin/python3" "$SOURCE/scripts/compatibility.py" "$SOURCE/scripts/official_distribution.py" \
-    "$SOURCE/scripts/official_github.py" "$SOURCE/scripts/compatibility_probe.py"
+    "$SOURCE/scripts/official_github.py" "$SOURCE/scripts/compatibility_probe.py" \
+    "$SOURCE/scripts/agy_inventory.py"
 
 git -C "$SOURCE" init -q -b main
 git -C "$SOURCE" config user.email test@example.com
@@ -1089,11 +1091,22 @@ if [[ "$compatibility_probe_rc" == 0 \
 else
     bad "bounded compatibility probe tests (expected 41 controlled passes)"
 fi
+
+AGY_INVENTORY_TEST_OUTPUT="$($REAL_PYTHON_REAL -B "$ROOT/tests/test-agy-inventory.py" 2>&1)"
+agy_inventory_rc=$?
+printf '%s\n' "$AGY_INVENTORY_TEST_OUTPUT"
+AGY_INVENTORY_RESULT="$(printf '%s\n' "$AGY_INVENTORY_TEST_OUTPUT" | tail -1)"
+if [[ "$agy_inventory_rc" == 0 \
+        && "$AGY_INVENTORY_RESULT" == "AGY_INVENTORY_TEST_RESULT passed=32 failed=0" ]]; then
+    pass=$((pass+32))
+else
+    bad "agy inventory semantic parser tests (expected 32 controlled passes)"
+fi
 snapshot_ignored_pyc "$TMP/github-probe-pyc-after"
 if cmp -s "$TMP/github-probe-pyc-before" "$TMP/github-probe-pyc-after"; then
-    ok "official GitHub and probe tests create no ignored bytecode"
+    ok "official GitHub, probe, and inventory tests create no ignored bytecode"
 else
-    bad "official GitHub and probe tests create no ignored bytecode"
+    bad "official GitHub, probe, and inventory tests create no ignored bytecode"
 fi
 
 WORKFLOW="$ROOT/.github/workflows/compatibility-watch.yml"
