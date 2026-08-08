@@ -45,10 +45,12 @@ doctor_runtime_complete() {
     for required in \
         agy-worker.sh \
         qa-gate.sh \
+        verify-job.sh \
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
         scripts/validate-envelope.py \
+        scripts/evidence_receipt.py \
         scripts/model-recommendation.py \
         scripts/model_selection.py \
         scripts/compatibility.py \
@@ -71,6 +73,7 @@ doctor_runtime_complete() {
 
     for required in \
         schemas/worker-result.schema.json \
+        schemas/evidence-receipt.schema.json \
         schemas/model-selection.schema.json \
         schemas/model-recommendation.schema.json \
         agents/bulk-test-writer.md \

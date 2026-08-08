@@ -363,6 +363,9 @@ remain separately approval-gated.
 
 #### P0-A — Evidence Receipt v1
 
+**Status:** Implemented as an isolated, offline-verified slice; merge and release
+remain separately approval-gated.
+
 - **User job:** Preserve what the driver checked, against which immutable base and
   policy, and what the gate concluded without sharing source, prompts, raw logs, or
   worker prose.
@@ -370,9 +373,11 @@ remain separately approval-gated.
   `skills/agy-worker/runtime/verify-job.sh`, root `verify-job.sh`,
   `skills/agy-worker/runtime/schemas/evidence-receipt.schema.json`, and a
   dependency-free receipt validator. The wrapper creates a private temporary receipt
-  and pre-opens a driver-owned structured-evidence sink, then invokes the gate with a
-  narrow optional `--evidence-fd FD`. When that option is absent, `qa-gate.sh` output,
-  side effects, and exit behavior remain identical to today. With it, the gate writes
+  and pre-opens a driver-owned structured-evidence sink, then invokes the gate with an
+  internal capability-bound `--evidence-fd FD` handoff. This evidence mode is owned by
+  `verify-job.sh`, not supported as an arbitrary direct-call interface. When that
+  option is absent, `qa-gate.sh` output, side effects, and exit behavior remain
+  identical to today. With it, the gate writes
   exactly one bounded JSON handoff to the already-open descriptor; it never owns or
   chooses the destination path. Optional `--pre-recommendation FILE` may bind an
   already-rendered pre-dispatch advisory. The receipt command never generates or
@@ -430,8 +435,8 @@ remain separately approval-gated.
   the wrapper returns that exact gate exit. A valid pre-dispatch advisory is bound
   without changing the selected input, matrix revision, resolved agy slug, or gate
   result. The tests never call a candidate accepted before human review. Direct
-  `qa-gate.sh` calls without `--evidence-fd` retain their current stdout/stderr and
-  exit contract.
+  `qa-gate.sh` calls without the internal evidence capability retain their
+  current stdout/stderr and exit contract.
 - **Minimum reject tests:** Scope failure, malformed envelope, untrusted command/test
   claim, missing edits, verifier failure/mutation, and human-required outcome retain
   their gate classification and are never rendered as acceptance. Reject overwrite,

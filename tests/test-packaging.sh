@@ -79,18 +79,30 @@ else
     bad "root and portable packages include the canonical explicit selector"
 fi
 
+if [[ -x "$ROOT/verify-job.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/verify-job.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/evidence_receipt.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/evidence-receipt.schema.json" ]]; then
+    ok "root and portable packages include Evidence Receipt v1"
+else
+    bad "root and portable packages include Evidence Receipt v1"
+fi
+
 required_runtime_dependencies=(
     agy-worker.sh
     qa-gate.sh
+    verify-job.sh
     model-recommendation.sh
     model-selection.sh
     doctor.sh
     scripts/validate-envelope.py
+    scripts/evidence_receipt.py
     scripts/model-recommendation.py
     scripts/model_selection.py
     scripts/compatibility.py
     scripts/doctor-metadata.py
     schemas/worker-result.schema.json
+    schemas/evidence-receipt.schema.json
     schemas/model-selection.schema.json
     schemas/model-recommendation.schema.json
     agents/bulk-test-writer.md
@@ -189,9 +201,12 @@ done
 
 for specification in \
     'qa-gate.sh:executable' \
+    'verify-job.sh:executable' \
     'scripts/validate-envelope.py:executable' \
+    'scripts/evidence_receipt.py:executable' \
     'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \
+    'schemas/evidence-receipt.schema.json:data' \
     'agents/repo-inventory.md:data' \
     'compat/agy-verified-version.txt:data' \
     'compat/agy-model-effort-matrix.json:data'; do
@@ -348,6 +363,12 @@ if grep -Fq 'run: ./tests/test-proof-demo.sh' "$ROOT/.github/workflows/test.yml"
     ok "macOS CI runs the dedicated offline starter-proof suite"
 else
     bad "macOS CI runs the dedicated offline starter-proof suite"
+fi
+
+if grep -Fq 'run: ./tests/test-evidence-receipt.sh' "$ROOT/.github/workflows/test.yml"; then
+    ok "macOS CI runs the dedicated Evidence Receipt v1 suite"
+else
+    bad "macOS CI runs the dedicated Evidence Receipt v1 suite"
 fi
 
 if grep -Fq './proof-demo.sh' "$ROOT/README.md" \
@@ -548,6 +569,49 @@ else
     bad "skill-folder-only copy resolves and runs a bounded offline advisory"
 fi
 
+mkdir -p "$TMP/portable-receipt-repo" "$TMP/portable-receipts" \
+    "$TMP/receipt-no-network-bin"
+chmod 700 "$TMP/portable-receipts"
+for command_name in agy curl wget npm npx; do
+    printf '#!/usr/bin/env bash\n: > "$NETWORK_MARKER"\nexit 99\n' \
+        > "$TMP/receipt-no-network-bin/$command_name"
+    chmod +x "$TMP/receipt-no-network-bin/$command_name"
+done
+git -C "$TMP/portable-receipt-repo" init -q
+git -C "$TMP/portable-receipt-repo" config user.email test@example.com
+git -C "$TMP/portable-receipt-repo" config user.name test
+printf 'before\n' > "$TMP/portable-receipt-repo/a.txt"
+git -C "$TMP/portable-receipt-repo" add a.txt
+git -C "$TMP/portable-receipt-repo" commit -qm init
+portable_receipt_base="$(git -C "$TMP/portable-receipt-repo" rev-parse HEAD)"
+printf 'after\n' > "$TMP/portable-receipt-repo/a.txt"
+printf '%s\n' '{"status":"completed","summary":"done","files_changed":[{"path":"a.txt","change":"modified"}],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}' \
+    > "$TMP/portable-envelope.json"
+portable_receipt_parent="$(cd "$TMP/portable-receipts" && pwd -P)"
+PATH="$TMP/receipt-no-network-bin:$PATH" NETWORK_MARKER="$TMP/receipt-network-called" \
+    "$copied_pipeline/verify-job.sh" \
+    --receipt "$portable_receipt_parent/receipt.json" \
+    --envelope "$TMP/portable-envelope.json" \
+    --repo "$TMP/portable-receipt-repo" --base "$portable_receipt_base" \
+    --only a.txt --expect-edits --verify true \
+    > "$TMP/portable-receipt.out" 2> "$TMP/portable-receipt.err"
+portable_receipt_rc=$?
+if [[ "$portable_receipt_rc" == 0 && ! -e "$TMP/receipt-network-called" ]] \
+        && python3 -B - "$portable_receipt_parent/receipt.json" <<'PY'
+import json
+import sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["gate_exit"] == 0
+assert value["verdict"] == "gate-passed"
+assert value["gate_authority"] == "qa-gate"
+assert value["integrity"]["signed"] is False
+PY
+then
+    ok "skill-folder-only copy publishes a bounded receipt offline"
+else
+    bad "skill-folder-only copy publishes a bounded receipt offline"
+fi
+
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     '[[ "$*" == "--version" ]] || exit 97' \
@@ -685,6 +749,7 @@ fi
 
 required_suite_paths=(
     tests/test-qa-gate.sh
+    tests/test-evidence-receipt.sh
     tests/test-agy-worker.sh
     tests/test-update.sh
     tests/test-reporting.sh
@@ -705,9 +770,9 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all seven suites and disclose public policy boundaries"
+    ok "governance docs require all eight suites and disclose public policy boundaries"
 else
-    bad "governance docs require all seven suites and disclose public policy boundaries"
+    bad "governance docs require all eight suites and disclose public policy boundaries"
 fi
 
 python3 "$ROOT/scripts/validate-brand-assets.py" "$ROOT/docs/assets/brand" \

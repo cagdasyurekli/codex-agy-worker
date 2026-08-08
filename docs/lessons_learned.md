@@ -174,6 +174,51 @@ result as evidence for the fixed synthetic cases only: a gate pass is still not 
 human diff review, accepted candidate, correctness result, security certification,
 benchmark, or production validation.
 
+## Receipts bind observations; they do not create authority
+
+A useful receipt records the gate's own bounded structured handoff rather than
+parsing prose or reimplementing acceptance in an outer wrapper. Snapshot the exact
+envelope bytes the gate validates, retain the resolved immutable base and the gate's
+internal initial/final candidate-state digests, and cross-check the gate process exit
+against one unique handoff. Missing, duplicate, malformed, mismatched, interrupted,
+or unknown evidence is an internal protocol failure—not a result to reconstruct.
+
+Keep private data out by hashing ordered policy and verifier commands and assigning
+deterministic labels. An optional selection or pre-dispatch advisory must pass its
+own canonical policy and agree when both are supplied; it still cannot participate
+in acceptance or change the selected model. Never bind a later post-gate advisory by
+rewriting a one-pass receipt.
+
+Durability and non-overwrite are separate properties. Write and validate a same-dir
+mode-`0600` temporary, `fsync` it, publish with an atomic hard link that refuses an
+existing target, `fsync` the parent, remove the temporary, and `fsync` the parent
+again. On validation, link, or durability failure, remove every publisher-owned
+partial and never delete or overwrite a raced caller/attacker target. Revalidate the
+private parent immediately before linking.
+
+A pre-opened evidence descriptor is authority, not ordinary inherited process state.
+Validate it in the gate parent, then close it before every verifier child and
+descendant executes; otherwise a verifier can forge or corrupt the supposedly
+gate-owned handoff. Signal ownership must span the full receipt transaction, not just
+the gate wait: track private files and the pinned published inode before the atomic
+link, terminate and reap the active process group, and remove only wrapper-owned
+artifacts on HUP, INT, or TERM.
+
+Closing a sensitive descriptor in a newly started helper is already too late:
+Python `sitecustomize` or a shell `BASH_ENV` hook can execute before that helper's
+first statement. Bind evidence mode to the receipt wrapper, sanitize executable
+startup controls before launching the gate, run gate-owned Python with isolated/no-site
+startup, and close the numeric validated FD with a Bash builtin in the already-running
+gate process before starting the verifier shell. Preserve ordinary verifier environment
+values, but do not forward the stripped startup controls or internal capability.
+
+Schema validation detects malformed and internally inconsistent content, not an
+authorized rewrite. An unsigned JSON document can be changed and rehashed by anyone
+who can replace it. State that limitation in the document itself; require a separately
+trusted envelope or candidate digest when later tampering matters. Receipt existence
+does not replace `qa-gate.sh`, human diff review, signing, authenticity, correctness,
+or security evidence.
+
 ## Distribution must preserve the trust boundary
 
 A public skill cannot depend on a developer's absolute checkout path or assume that
