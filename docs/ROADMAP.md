@@ -133,6 +133,16 @@ an earlier implementation because it shares a schema or helper.
 
 ### G0 — Compatibility Reconciliation & Watch
 
+**G0-F2 status:** Provider-independent transport hardening is implemented offline for
+review. Read-only project/agy/Codex release and source observations now use exact
+fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
+process-group supervisor also contains installed version probes. Check/watch makes no
+Git network request. The explicit `apply` fetch remains a separately authorized
+ambient-Git transport path and is not claimed hardened by this slice. No agy `1.1.11`
+version, revision, review date, manifest, or matrix record is advanced; `1.1.10`
+remains the active fail-closed baseline until separately authorized inventory and
+provider evidence is accepted.
+
 - **User job:** Learn that Codex or agy has drifted before a normal dispatch breaks,
   while keeping every check read-only and requiring a human to reconcile behavior.
 - **Intended surface:** Extend the fixed-source compatibility contract in `update.sh`,
@@ -153,6 +163,14 @@ an earlier implementation because it shares a schema or helper.
   drift or review is due, and `2` when network or source evidence is unavailable or
   malformed. Exit `2` is **inconclusive**, never green. The command changes no file,
   pulls nothing, applies nothing, and does not update its own baseline.
+- **Read-only transport contract:** Project, agy, and Codex observations use only
+  fixed `api.github.com` repository REST paths through a proxyless, redirect-rejecting,
+  strict bounded JSON client. A fixed-profile supervisor incrementally caps both
+  streams, applies a hard timeout, sanitizes output, and kills/reaps the entire child
+  process group. Installed version probes use the same boundary. Mutation-sensitive
+  offline controls prove that ambient Git URL rewrites, credentials, and proxies
+  cannot redirect check/watch, which performs no Git network query. This does not
+  make the explicit apply-time `git fetch` independent of ambient Git configuration.
 - **Watch workflow contract:** The workflow runs only on `macos-latest`, declares
   `permissions: contents: read`, uses no secrets, installs no package or CLI, invokes
   no model, and performs no apply, pull, issue, PR, commit, or baseline write. A
@@ -253,6 +271,9 @@ an earlier implementation because it shares a schema or helper.
   Reject a matrix with an unbound/mismatched version or revision, an unsupported pair,
   a provider-table-only claim, an inferred capability for an unknown model, a missing
   exact output slug, or an adjustable effort entry for a fixed/no-level model.
+  Reject alternate GitHub repositories or endpoint shapes, redirects, proxies,
+  duplicate/oversized/malformed REST evidence, unbounded version output, timeout,
+  descendant pipe retention, or swallowed HUP/INT/TERM status in read-only probes.
 - **Docs and AGENTS impact:** README compatibility semantics and limitations,
   `compat/sources.md`, REPO_MAP ownership/data flow, lessons learned on inconclusive
   evidence, and concise durable AGENTS probing rules. Run `agents-md-auditor` before

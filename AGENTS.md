@@ -38,7 +38,7 @@ Keep these counts current when their suites change:
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
-- `update.sh`: 175 offline local-remote/matrix/manifest/watch-policy cases.
+- `update.sh`: 278 offline transport/process/local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution: 135 offline
   manifest/runtime-copy/relocation/landing cases.
@@ -118,6 +118,11 @@ only a passing test has not been shown to catch anything.
   bounded real job when behavior changed. Production origins, release channels, and
   review cadence are not environment-overridable. The weekly watcher never advances
   metadata or takes an external action. `apply` is always an explicit action.
+- **A GitHub URL is not fixed evidence when Git transport is ambient.** Read-only
+  check/watch must use the exact proxyless, redirect-rejecting, bounded GitHub REST
+  helper and bounded process-group/version supervisor; never restore `git ls-remote`
+  there. Preserve HUP/INT/TERM status and sanitized output. The explicit apply-time
+  Git fetch remains outside that isolation boundary and must be documented as such.
 - **The agy distribution manifest is only a canary.** Its endpoint is fixed; reject
   proxies, redirects, oversized/malformed responses, and unexpected archive URLs.
   Never request the archive. The checked-in tuple detects drift but cannot advance a

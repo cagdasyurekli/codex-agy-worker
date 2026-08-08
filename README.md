@@ -546,6 +546,16 @@ established drift, a due review, or a missing installed tool. Exit `2` means evi
 is unavailable or malformed, so the result is inconclusive—not green. Both tools are
 reported before those results are aggregated, with `2` taking precedence over `3`.
 
+Project, agy, and Codex release/source evidence comes from exact fixed
+`https://api.github.com/repos/...` REST paths. The stdlib-only client disables ambient
+HTTP proxies, refuses redirects, validates strict JSON and response metadata, and
+captures responses under time and byte limits. The supervisor also bounds installed
+`agy --version` and `codex --version` probes, discards their raw stderr, and terminates
+the complete child process group on timeout, output overflow, or HUP/INT/TERM. Neither
+`check` nor `check --watch` makes a Git network request, so repository or global
+`url.*.insteadOf`, credential helpers, and Git proxy settings cannot redirect their
+official release/source evidence.
+
 The release origins, upstream sources, distribution-manifest endpoint, release
 channels, and 30-day cadence are fixed in the updater rather than overridable through
 arguments, environment variables, or configuration. The check never fetches into
@@ -570,8 +580,11 @@ Only after those checks does it fast-forward the current branch and rerun `insta
 against the real Codex skill destination. A real-destination permission failure cannot
 be rolled back safely after the Git fast-forward: `apply` exits 4, reports **PARTIAL
 UPDATE**, and tells you to fix the destination and rerun this checkout's `install.sh`.
-This verifies GitHub transport/ref consistency; release maintainers must still protect
-the GitHub account and tag-publishing process.
+The fixed API commit must match the commit fetched during `apply`, but the explicit
+apply path still uses `git fetch` and therefore honors the caller's Git transport
+configuration, including URL rewrites and Git proxies. The read-only transport
+isolation described above does not harden that mutating path. Release maintainers must
+also protect the GitHub account and tag-publishing process.
 
 The fixed primary sources and exact reviewed revisions are recorded in
 [`compat/sources.md`](compat/sources.md). A separate weekly/manual macOS compatibility
@@ -704,6 +717,8 @@ update.sh                     explicit release + agy/Codex compatibility check/a
 bug-report.sh                 sanitized local draft/preview/optional submission
 compat/                       per-tool baselines, reviewed evidence, and active exact matrix
 scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
+scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
+scripts/official_github.py    fixed, proxyless, redirect-free GitHub REST evidence client
 scripts/official_distribution.py  fixed, bounded agy distribution-manifest canary
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
 skills/agy-worker/            canonical self-contained Agent Skill and runtime
@@ -720,7 +735,9 @@ CODE_OF_CONDUCT.md            enforceable participation standards
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
-tests/test-update.sh          175-case offline local-remote/matrix/manifest updater suite
+tests/test-update.sh          278-case offline transport/process/local-remote/matrix/manifest updater suite
+tests/test-official-github.py test-only fixed-endpoint transport adversary harness
+tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       135-case offline Codex package/relocation/landing suite

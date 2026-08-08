@@ -5,6 +5,20 @@ interval. Environment variables cannot replace these sources or the cadence. The
 check is read-only: it never fetches into the checkout, advances metadata, or takes
 an external action.
 
+Stable-release and source-revision observations use exact fixed GitHub REST endpoints
+under `https://api.github.com/repos/`. The Python standard-library client ignores
+ambient proxies, rejects redirects, requires strict bounded JSON response metadata,
+and exposes only validated version/tag and revision fields through a bounded
+process-group supervisor. Installed `agy --version` and `codex --version` probes use
+the same supervisor with smaller time and byte limits. Read-only check/watch performs
+no Git network operation, so Git URL rewrites, credential helpers, and Git proxy
+configuration are not evidence inputs.
+
+This transport boundary covers observation only. Explicit `update.sh apply` still
+uses the caller's `git fetch` transport after resolving the expected release commit
+through the fixed API, so ambient Git transport configuration remains part of that
+separately authorized mutation path.
+
 ## agy (Antigravity CLI)
 
 - Verified stable release: `agy-verified-version.txt`
@@ -56,3 +70,9 @@ bounded real job requires separate approval. The weekly watcher only reports
 `unchanged`, `drift-review`, or `evidence-unavailable`; it cannot approve or write a
 baseline. A future version or source change disables resolution until another human
 reconciliation is accepted.
+
+agy `1.1.11` remains unreconciled in the checked-in metadata. The transport and
+process-boundary hardening needed to evaluate it does not itself advance version,
+source, review date, manifest, or matrix records; `1.1.10` continues to fail closed
+on observed drift until the separate inventory/provider evidence is authorized and
+accepted.
