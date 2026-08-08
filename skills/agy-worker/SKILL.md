@@ -225,7 +225,10 @@ the gate or wrap dispatch in an unbounded retry loop.
 ### 5. Verify — this is the step that matters
 
 ```bash
-"$PIPELINE/qa-gate.sh" --envelope /tmp/envelope.json --repo "$WT" --base "$BASE" \
+RECEIPT_DIR="$(mktemp -d -t agyworker-receipts.XXXXXX)" || exit 1
+RECEIPT_DIR="$(CDPATH= cd -- "$RECEIPT_DIR" && pwd -P)" || exit 1
+"$PIPELINE/verify-job.sh" --receipt "$RECEIPT_DIR/job.json" \
+    --envelope /tmp/envelope.json --repo "$WT" --base "$BASE" \
     --only 'tests/**' --expect-edits \
     --verify "git -C '$WT' diff --check" \
     --verify "cd '$WT' && <the command from step 2>"
@@ -236,9 +239,24 @@ the worker envelope. Use `--only` whenever the task has a path policy, especiall
 for `bulk-test-writer`; its persona prompt is not enforcement. `--base` must be the
 full commit ID captured before dispatch, never `HEAD` or another mutable ref.
 
+`verify-job.sh` is the receipt-producing wrapper around the same canonical gate. Its
+required `--receipt` must be a new canonical absolute path outside the audited
+repository under an owner-private real parent. It hashes ordered policy and verifier
+commands, publishes mode `0600` without overwrite only after file and parent `fsync`,
+and never stores raw commands, output, source, paths, prompts, logs, or worker prose.
+The lower-level `qa-gate.sh` remains available when no receipt is wanted. Its evidence
+descriptor/capability is an internal `verify-job.sh` handoff, not a supported direct
+interface; direct no-receipt behavior is unchanged.
+
+One validated dispatcher `selection.json` may be supplied as `--selection FILE`.
+One canonical advisory captured before dispatch may independently be supplied as
+`--pre-recommendation FILE`. Neither is required; neither changes the gate result or
+selected model. Never bind a post-gate advisory or an advisory claiming `applied`.
+There is no implicit artifact discovery.
+
 | Exit | Meaning | Do |
 |---|---|---|
-| 0 | Evidence accepted | Review the diff; no merge or commit happened automatically |
+| 0 | Gate passed and receipt was durably published | Review the diff; no merge or commit happened automatically |
 | 10 | Scope mismatch, invalid path, or `--only` violation | Reject |
 | 11 | Worker reported a command or test | Reject; it was not executed |
 | 12 | Envelope failed the checked-in schema | Reject |
@@ -246,6 +264,22 @@ full commit ID captured before dispatch, never `HEAD` or another mutable ref.
 | 14 | Verification failed or mutated the worktree | Reject |
 | 15 | Partial/failed/blocked/human-required outcome | Escalate; never accept |
 | 64 | Bad invocation, invalid Git base, or missing `--verify` | Fix the driver command |
+| 70 | Gate evidence missing, malformed, mismatched, unknown, or interrupted | Treat as internal failure; no receipt was published |
+| 74 | Receipt validation or durable publication failed | Treat as publication failure; no receipt was published |
+
+Gate exits `10`–`15` also publish the exact rejected/routed receipt before the wrapper
+returns that exit. A receipt uses only `gate-passed`, `rejected`, or `routed`; it never
+calls a candidate accepted. It is explicitly unsigned and not tamper-evident. Even
+exit 0 still requires human diff review.
+
+The evidence descriptor belongs only to the gate parent. The wrapper strips executable
+shell/Python startup controls from the evidence-mode gate, gate-owned Python runs in
+isolated/no-site mode, and the already-running gate closes the FD with a shell builtin
+before any driver verifier shell, interpreter, or descendant starts. Ordinary verifier
+environment is preserved except for those unsafe startup controls and the internal
+handoff variables. HUP, INT, or TERM anywhere from private input
+snapshot through durable publication and wrapper cleanup returns `70`, terminates and
+reaps an active gate/verifier group, and leaves no wrapper-owned partial receipt.
 
 A `blocked` / `requires_human: true` envelope may be the worker behaving correctly,
 but the gate still checks its diff before returning 15. Read `open_questions`, resolve
@@ -296,7 +330,8 @@ uncommitted work.
 
 ## Never
 
-- Accept a job on the envelope alone. Run `qa-gate.sh` with `--verify`, every time.
+- Accept a job on the envelope or receipt alone. Run `verify-job.sh` (or the lower-level
+  `qa-gate.sh`) with driver-owned `--verify`, then perform human diff review every time.
 - Execute `commands_run` or `tests_run` from the envelope. Only driver-authored
   `--verify` commands are executable evidence.
 - Suggest `--dangerously-skip-permissions` to clear a permission gate — it approves

@@ -14,6 +14,7 @@
 <!-- Include exact summaries; mark unrun checks and explain why. -->
 
 - [ ] `./tests/test-qa-gate.sh`
+- [ ] `./tests/test-evidence-receipt.sh`
 - [ ] `./tests/test-agy-worker.sh`
 - [ ] `./tests/test-update.sh`
 - [ ] `./tests/test-reporting.sh`

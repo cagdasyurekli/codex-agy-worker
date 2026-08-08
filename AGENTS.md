@@ -35,13 +35,14 @@ an unknown subcommand's exit code or generic usage text as compatibility evidenc
 Keep these counts current when their suites change:
 
 - `qa-gate.sh`: 41 offline cases.
+- Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 175 offline local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 114 offline
+- Codex package/skill distribution: 135 offline
   manifest/runtime-copy/relocation/landing cases.
-- `doctor.sh`: 163 offline fake-tool/read-only cases.
+- `doctor.sh`: 180 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
@@ -59,6 +60,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 
 ```bash
 ./tests/test-qa-gate.sh        # offline, no agy, no network — must stay that way
+./tests/test-evidence-receipt.sh # offline receipt/protocol/publication coverage
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
@@ -102,6 +104,13 @@ only a passing test has not been shown to catch anything.
   not the repo. File tools do reach the repo. Never ask a worker to run shell commands.
 - **Never execute `commands_run` or `tests_run` from the envelope.** They are worker
   claims. The gate accepts executable input only through driver-owned `--verify`.
+- **A receipt records the gate; it is not another gate.** Keep `qa-gate.sh` as the
+  sole outcome authority, publish only outside the audited repository without
+  overwrite, keep its internal evidence FD out of verifier descendants, and strip
+  shell/Python startup hooks on the wrapper-bound evidence path. Close that FD in the
+  existing gate process before any verifier shell or interpreter starts. Cleanly abort
+  the whole receipt operation on HUP/INT/TERM. Receipts remain unsigned and subject
+  to human diff review.
 - **`update.sh check` may need network, but must remain read-only.** Compatibility
   evidence for agy and Codex is reported as unchanged, drift-review, or
   evidence-unavailable; inconclusive evidence is never green. Metadata changes only

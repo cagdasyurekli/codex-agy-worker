@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The seven offline suites need no agy process, network access, API key, or GitHub login.
+The eight offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -463,6 +463,64 @@ Gate controls:
 - Exit 15 is escalation, never acceptance. Read `open_questions` and decide whether
   one corrective dispatch is justified.
 
+### Preserve a local Evidence Receipt v1
+
+`verify-job.sh` runs the same canonical gate and, only for gate outcomes `0` and
+`10`–`15`, durably publishes a private JSON receipt. The receipt records hashes of
+the exact envelope snapshot, ordered path policy, and driver-owned verifier commands;
+the immutable base; the gate's initial and final candidate-state digests; and the
+gate's exact outcome. It contains deterministic labels such as `verify-001`, never
+the verifier command text or output.
+
+Create a new owner-private directory outside the audited repository and choose a new
+receipt path. The parent and path must already be canonical; the command rejects a
+symlink, overwrite, repository-contained target, or group/other-accessible parent.
+
+```bash
+umask 077
+RECEIPT_DIR="$(mktemp -d -t agyworker-receipts.XXXXXX)"
+
+./verify-job.sh --receipt "$RECEIPT_DIR/job.json" \
+  --envelope envelope.json --repo "$WT" --base "$BASE" \
+  --only 'tests/**' --expect-edits \
+  --verify "git -C '$WT' diff --check" \
+  --verify "cd '$WT' && python3 -m pytest -q tests/test_parser.py"
+```
+
+`--selection FILE` may bind one current, validated G1 selection record.
+`--pre-recommendation FILE` may independently bind one canonical `pre-dispatch`
+advisory; a post-gate, cross-stage, mismatched, or `applied: true` advisory is
+rejected. The command never creates or applies a recommendation. Both inputs are
+optional and at most once. There is no implicit scan of `logs/`.
+
+The receipt maps gate `0` to `gate-passed`, gate `10`–`14` to `rejected`, and gate
+`15` to `routed`, then returns that exact exit only after file `fsync`, atomic
+no-overwrite hard-link publication, and parent-directory `fsync`. Input or gate
+preflight errors return `64`; missing, malformed, mismatched, unknown, or interrupted
+gate evidence returns `70`; receipt validation or durable-publication failure returns
+`74`. Those failures publish no receipt. The evidence descriptor and capability are
+an internal `verify-job.sh` handoff, not a supported direct `qa-gate.sh` interface;
+direct gate use without them retains the existing output, side effects, and exits.
+The wrapper removes shell/Python startup controls before launching the evidence-mode
+gate, gate-owned Python runs isolated without site startup, and the gate parent closes
+the descriptor with a shell builtin before any verifier shell or interpreter starts.
+Verifier descendants therefore cannot observe or write the handoff. Other verifier
+environment values are preserved; the unsafe startup controls and internal handoff
+variables are intentionally absent. HUP, INT, or TERM from private
+snapshot creation through publication and cleanup returns `70`, closes and reaps an
+active gate/verifier process group, and removes wrapper-owned partial artifacts.
+
+Every receipt says explicitly that it is unsigned and not tamper-evident. Its
+existence does not make a candidate accepted, signed, authentic, correct, or safe.
+Only `qa-gate.sh` supplies the gate result, and human diff review remains required
+after `gate-passed`. The dependency-free validator can check a receipt and optionally
+bind the original envelope or a separately trusted candidate-state digest:
+
+```bash
+python3 -B skills/agy-worker/runtime/scripts/evidence_receipt.py validate \
+  --receipt "$RECEIPT_DIR/job.json" --envelope envelope.json
+```
+
 `--allow-slash-commands` exists for callers who fully control the entire prompt, but
 is intentionally omitted from normal examples. It disables protection against
 embedded `/skill` or slash-command text; leave slash expansion disabled for content
@@ -636,6 +694,7 @@ output, not its own recollection.
 ```
 agy-worker.sh                 dispatch a job, return a schema-valid envelope
 qa-gate.sh                    verify an envelope against the repo — the evidence
+verify-job.sh                 run the gate and durably publish Evidence Receipt v1
 proof-demo.sh                 offline starter proof of one gate pass and one rejection
 model-recommendation.sh       repository compatibility wrapper for the advisory
 model-selection.sh            repository compatibility wrapper for explicit resolution
@@ -659,12 +718,13 @@ SECURITY.md                   private vulnerability reporting policy
 CODE_OF_CONDUCT.md            enforceable participation standards
 .github/pull_request_template.md  review and verification checklist
 tests/test-qa-gate.sh         offline adversarial suite
+tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          175-case offline local-remote/matrix/manifest updater suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       114-case offline Codex package/relocation/landing suite
-tests/test-doctor.sh          163-case offline fake-tool/read-only doctor suite
+tests/test-packaging.sh       135-case offline Codex package/relocation/landing suite
+tests/test-doctor.sh          180-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```
