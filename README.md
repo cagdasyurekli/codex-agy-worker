@@ -663,7 +663,7 @@ tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          175-case offline local-remote/matrix/manifest updater suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       112-case offline Codex package/relocation/landing suite
+tests/test-packaging.sh       114-case offline Codex package/relocation/landing suite
 tests/test-doctor.sh          163-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch

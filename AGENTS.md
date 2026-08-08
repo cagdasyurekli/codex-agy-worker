@@ -39,7 +39,7 @@ Keep these counts current when their suites change:
   fake-agy/routing cases.
 - `update.sh`: 175 offline local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 112 offline
+- Codex package/skill distribution: 114 offline
   manifest/runtime-copy/relocation/landing cases.
 - `doctor.sh`: 163 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
@@ -66,7 +66,12 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
 ./tests/test-proof-demo.sh      # offline synthetic pass/reject proof coverage
 bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
-python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+(
+  AGY_WORKER_PYCACHE="$(mktemp -d -t agyworker-pycache.XXXXXX)" || exit 1
+  trap 'rm -rf -- "$AGY_WORKER_PYCACHE"' EXIT
+  PYTHONPYCACHEPREFIX="$AGY_WORKER_PYCACHE" \
+    python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+)
 git diff --check
 ./ground-truth.sh              # regenerate agy facts before touching agy behaviour
 ```
@@ -83,6 +88,9 @@ only a passing test has not been shown to catch anything.
   `${PIPESTATUS[0]}` silently reports empty exit codes and every assertion "fails".
 - **macOS bash is 3.2** — no `mapfile`, no associative-array conveniences. Use
   `while IFS= read -r` and C-style `for (( ))` loops.
+- **`python -B -m py_compile` still writes bytecode.** Route explicit syntax-check
+  output through an external `PYTHONPYCACHEPREFIX`; repository bytecode makes the
+  public runtime incomplete by design.
 - **agy exits 0 on failure** with empty stdout. Never treat `$? == 0` as success;
   check stripped stdout content.
 - **`result.json_schema` is the echoed schema**, not the answer. The answer is

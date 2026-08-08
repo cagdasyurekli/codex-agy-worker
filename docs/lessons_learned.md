@@ -202,6 +202,12 @@ product claims. Do not place `robots.txt` under a GitHub Pages project subpath a
 it crawler control: robots rules are host-root metadata owned by the site owner,
 outside this repository's publication slice.
 
+Treat Python syntax compilation as a package-boundary write. `-B` does not suppress
+bytecode emitted by an explicit `py_compile` invocation, so CI and contributor checks
+must direct `PYTHONPYCACHEPREFIX` to a private external temporary directory. A cache
+inside the public skill is a distribution leak, not harmless ignored state; keep the
+positive external-cache path and a plain-compile negative control paired offline.
+
 ## Public discovery claims need the same evidence discipline
 
 The landing page and README are part of the trust boundary because users choose

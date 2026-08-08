@@ -261,6 +261,77 @@ else
     bad "macOS CI runs the dedicated offline doctor suite"
 fi
 
+python_cache_exists() {
+    python3 -B - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+raise SystemExit(
+    0 if any(
+        path.name == "__pycache__" or path.suffix in {".pyc", ".pyo"}
+        for path in root.rglob("*")
+    ) else 1
+)
+PY
+}
+
+workflow_compile_fixture="$TMP/workflow-compile-fixture"
+mkdir -p "$workflow_compile_fixture/scripts" \
+    "$workflow_compile_fixture/skills/agy-worker/runtime/scripts"
+cp "$ROOT/scripts/compatibility.py" "$workflow_compile_fixture/scripts/compatibility.py"
+cp "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
+    "$workflow_compile_fixture/skills/agy-worker/runtime/scripts/model_selection.py"
+(
+    cd "$workflow_compile_fixture" || exit 1
+    PYTHONPYCACHEPREFIX="$TMP/workflow-python-cache" \
+        python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+)
+workflow_compile_rc=$?
+python3 -B - "$ROOT/.github/workflows/test.yml" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
+step = re.compile(
+    r"^      - name: Python syntax\n"
+    r"        env:\n"
+    r"          PYTHONPYCACHEPREFIX: \$\{\{ runner\.temp \}\}/codex-agy-worker-pycache\n"
+    r"        run: python3 -m py_compile scripts/\*\.py skills/\*/runtime/scripts/\*\.py$",
+    re.MULTILINE,
+)
+assert len(step.findall(workflow)) == 1
+PY
+workflow_contract_rc=$?
+if [[ "$workflow_compile_rc" == 0 ]] \
+        && [[ "$workflow_contract_rc" == 0 ]] \
+        && ! python_cache_exists "$workflow_compile_fixture" \
+        && python_cache_exists "$TMP/workflow-python-cache"; then
+    ok "workflow Python syntax check keeps bytecode outside the public checkout"
+else
+    bad "workflow Python syntax check keeps bytecode outside the public checkout"
+fi
+
+plain_compile_fixture="$TMP/plain-compile-fixture"
+mkdir -p "$plain_compile_fixture/scripts" \
+    "$plain_compile_fixture/skills/agy-worker/runtime/scripts"
+cp "$ROOT/scripts/compatibility.py" "$plain_compile_fixture/scripts/compatibility.py"
+cp "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
+    "$plain_compile_fixture/skills/agy-worker/runtime/scripts/model_selection.py"
+(
+    cd "$plain_compile_fixture" || exit 1
+    unset PYTHONDONTWRITEBYTECODE PYTHONPYCACHEPREFIX
+    python3 -B -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+)
+plain_compile_rc=$?
+if [[ "$plain_compile_rc" == 0 ]] \
+        && python_cache_exists "$plain_compile_fixture/skills/agy-worker"; then
+    ok "plain py_compile negative control is caught as a public bytecode leak"
+else
+    bad "plain py_compile negative control is caught as a public bytecode leak"
+fi
+
 if [[ -x "$ROOT/proof-demo.sh" ]] \
         && [[ -x "$ROOT/tests/test-proof-demo.sh" ]] \
         && [[ -f "$ROOT/demo/fixtures/honest-envelope.json" ]] \
