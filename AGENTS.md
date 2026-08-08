@@ -38,7 +38,7 @@ Keep these counts current when their suites change:
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
-- `update.sh`: 278 offline transport/process/local-remote/matrix/manifest/watch-policy cases.
+- `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution: 135 offline
   manifest/runtime-copy/relocation/landing cases.
@@ -127,6 +127,11 @@ only a passing test has not been shown to catch anything.
   proxies, redirects, oversized/malformed responses, and unexpected archive URLs.
   Never request the archive. The checked-in tuple detects drift but cannot advance a
   baseline, prove source/behavior, or activate model/effort resolution.
+- **An inventory display label is not another model.** Interpret owner-captured
+  `agy models` evidence line by line against the exact reviewed slug allowlist.
+  `gpt-oss` is display text only when its line contains the one exact canonical
+  `gpt-oss-120b-medium` slug. Unknown tokens in the reviewed provider namespaces
+  fail closed; generic slug regex matches cannot advance metadata.
 - **Bug reports are local drafts first.** Never gather prompts, source, envelopes,
   paths, credentials, or raw logs automatically. Submission must show the exact body
   and require the matching SHA-256 confirmation token; send those validated bytes,

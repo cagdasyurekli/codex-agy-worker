@@ -592,6 +592,16 @@ watch runs the official-evidence-only mode without installing agy or Codex. It w
 only a bounded Step Summary, preserves the same `0`/`3`/`2` meanings, is not a required
 pull-request check, and cannot advance metadata or open an issue or pull request.
 
+Separately captured `agy models` output can be reconciled offline by the bounded
+semantic parser in `scripts/agy_inventory.py`. It requires exactly one occurrence of
+each of the 11 reviewed canonical slugs on 11 nonblank lines and rejects unknown,
+missing, duplicate, or ambiguous slug-shaped tokens, including unknown entries in
+the reviewed Gemini, Claude, and GPT namespaces. Ordinary display labels remain
+non-authoritative. The `gpt-oss` display alias is
+accepted only on the same line as `gpt-oss-120b-medium`; it never becomes a twelfth
+model. Parsing inventory does not bind an installed version, advance a baseline, or
+activate the matrix.
+
 The human-reviewed agy baseline is `1.1.10` at source revision
 `bfab12dac5bd090015a89cf82e65093d13b567d9`. The fixed official sources, one
 sandbox-correct 11-slug inventory, and two bounded single-selector jobs are recorded
@@ -718,6 +728,7 @@ bug-report.sh                 sanitized local draft/preview/optional submission
 compat/                       per-tool baselines, reviewed evidence, and active exact matrix
 scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
+scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
 scripts/official_github.py    fixed, proxyless, redirect-free GitHub REST evidence client
 scripts/official_distribution.py  fixed, bounded agy distribution-manifest canary
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
@@ -735,7 +746,8 @@ CODE_OF_CONDUCT.md            enforceable participation standards
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
-tests/test-update.sh          278-case offline transport/process/local-remote/matrix/manifest updater suite
+tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
+tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
