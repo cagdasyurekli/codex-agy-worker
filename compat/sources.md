@@ -76,3 +76,10 @@ process-boundary hardening needed to evaluate it does not itself advance version
 source, review date, manifest, or matrix records; `1.1.10` continues to fail closed
 on observed drift until the separate inventory/provider evidence is authorized and
 accepted.
+
+Owner-captured inventory bytes are interpreted offline by `scripts/agy_inventory.py`,
+which requires one exact reviewed canonical slug per line and complete one-time
+coverage of all 11 slugs. Unknown tokens in reviewed provider namespaces fail closed.
+Display text is non-authoritative: the `gpt-oss` alias is
+valid only beside `gpt-oss-120b-medium` on that same line. This semantic parse is one
+evidence input, not a version/executable binding or permission to advance metadata.
