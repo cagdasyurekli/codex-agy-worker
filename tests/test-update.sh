@@ -41,6 +41,7 @@ paths = {
     ).split(b"\0")
     if item
 }
+
 files = []
 for encoded in sorted(paths):
     relative = os.fsdecode(encoded)
@@ -73,6 +74,9 @@ state = {
 with open(output, "w", encoding="utf-8") as handle:
     json.dump(state, handle, sort_keys=True, separators=(",", ":"))
 PY
+}
+snapshot_ignored_pyc() {
+    git -C "$ROOT" ls-files --others --ignored --exclude-standard -z -- '*.pyc' > "$1"
 }
 expect_same_snapshot() {
     local name="$1" before="$2" after="$3"
@@ -943,14 +947,21 @@ awk 'NR == 2 { print "  \"$schema\": \"duplicate\"," } { print }' \
 expect_matrix_validation "duplicate schema key fails closed" 2 \
     "$ACTIVE_MATRIX" "$TMP/schema-duplicate-key.json" schema-duplicate-key
 
+snapshot_ignored_pyc "$TMP/ignored-pyc-before"
 MANIFEST_TEST_OUTPUT="$($REAL_PYTHON_REAL "$ROOT/tests/test-official-distribution.py" 2>&1)"
 rc=$?
+snapshot_ignored_pyc "$TMP/ignored-pyc-after"
 printf '%s\n' "$MANIFEST_TEST_OUTPUT"
 MANIFEST_RESULT="$(printf '%s\n' "$MANIFEST_TEST_OUTPUT" | tail -1)"
 if [[ "$rc" == 0 && "$MANIFEST_RESULT" == "MANIFEST_TEST_RESULT passed=64 failed=0" ]]; then
     pass=$((pass+64))
 else
     bad "official distribution policy tests (expected 64 controlled passes)"
+fi
+if cmp -s "$TMP/ignored-pyc-before" "$TMP/ignored-pyc-after"; then
+    ok "official distribution policy tests create no ignored bytecode"
+else
+    bad "official distribution policy tests create no ignored bytecode"
 fi
 
 WORKFLOW="$ROOT/.github/workflows/compatibility-watch.yml"

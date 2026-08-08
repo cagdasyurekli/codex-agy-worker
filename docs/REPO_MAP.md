@@ -9,7 +9,12 @@ from Graphify or another indexer.
 ```text
 driver task
   -> model-recommendation.sh --stage pre-dispatch (visible advisory only)
-  -> agy-worker.sh (bounded prompt, sandbox/mode/model, owner-private job artifacts)
+  -> agy-worker.sh selector preflight
+       -> legacy tier mapping; or portable exact-SHA/version/source-bound resolver
+       -> one bounded installed `agy --version` probe for direct selection only
+          -> HUP/INT/TERM closes the probe process group before task read
+       -> owner-private selection.json; exact slug and matrix SHA frozen once
+  -> agy-worker.sh (bounded prompt, sandbox/mode/one exact model, private artifacts)
   -> agy (untrusted worker)
   -> structured envelope
   -> skills/agy-worker/runtime/scripts/validate-envelope.py (shape and contract only)
@@ -19,8 +24,8 @@ driver task
   -> human diff review and deliberate integration
 ```
 
-The task, path policy, immutable base commit, verification commands, selected tier,
-and routing evidence belong to the driver. A routing recommendation is display-only:
+The task, path policy, immutable base commit, verification commands, caller selector,
+selection provenance, and routing evidence belong to the driver. A routing recommendation is display-only:
 it does not alter the selected tier or participate in gate acceptance. The worker may
 edit only the isolated worktree and may report claims, but its
 commands never execute. Schema validation proves shape, not truth. The gate derives
@@ -80,17 +85,18 @@ accept a candidate, replace human diff review, or certify correctness or securit
 
 | Path | Responsibility | Owning offline suite |
 |---|---|---|
-| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus canonical dispatch, model/mode selection, bounded retries, bounded final-log-root validation, exclusive private prompt/log staging with signal cleanup, envelope extraction | `tests/test-agy-worker.sh` (77 cases) |
-| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre-dispatch and post-gate recommendations | `tests/test-agy-worker.sh` (77 cases) |
-| `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (148 cases) plus packaging synchronization checks |
+| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus strict selector-source parsing, canonical dispatch, frozen model/mode selection, bounded retries, private selection/prompt/log staging, envelope extraction | `tests/test-agy-worker.sh` (209 cases) |
+| `model-selection.sh`, `skills/agy-worker/runtime/model-selection.sh`, `skills/agy-worker/runtime/scripts/model_selection.py`, portable matrix/schema/SHA | Root compatibility entry plus canonical exact model/effort resolution, bounded installed-version preflight, and driver selection provenance | dispatcher, doctor, and packaging suites |
+| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre/post recommendations; direct selections are labelled but unranked and never applied | `tests/test-agy-worker.sh` (209 cases) |
+| `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (163 cases) plus packaging synchronization checks |
 | `install.sh`, `skills/agy-worker/`, `skills/agy-worker/scripts/resolve-pipeline.sh` | Install and resolve complete-plugin, explicit-checkout, or folder-only skill layouts without fetching code | dispatcher and packaging suites |
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
 | `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, path policy, escalation, driver verification | `tests/test-qa-gate.sh` (41 cases) |
 | `proof-demo.sh`, `demo/fixtures/` | Repository-only offline starter proof using two canonical synthetic envelopes and isolated temporary repositories | `tests/test-proof-demo.sh` (21 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
-| `update.sh`, `scripts/compatibility.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix | `tests/test-update.sh` (174 cases, including the test-only manifest adversary harness) |
+| `update.sh`, `scripts/compatibility.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; fixed-source agy/Codex review; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix | `tests/test-update.sh` (175 cases, including the test-only manifest adversary harness) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
-| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (89 cases) plus platform validators |
+| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (112 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (89 cases) plus review |
 | `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (89 cases) plus rendered review |
 | `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (89 cases) plus rendered review |
@@ -111,9 +117,10 @@ accept a candidate, replace human diff review, or certify correctness or securit
   and never applies its output. Default/custom tiers and the highest named tier fail
   safely to `no-escalation` when no ordered higher tier can be proved.
 - The model/effort matrix is compatibility metadata only. It cannot select a tier,
-  dispatch a worker, recommend escalation, or accept a candidate. Its `1.1.10`
-  inventory is active only while the exact version/source binding matches; the
-  wrapper exposes no effort input. `scripts/compatibility.py` carries the independently
+  dispatch a worker, recommend escalation, or accept a candidate. Direct caller input
+  may resolve through it only while exact bytes, version, source, schema, and installed
+  agy version match. The portable runtime owns the resolver; the root compatibility
+  entry point delegates to it. `scripts/compatibility.py` carries the independently
   reviewed explicit pair and fixed-slug allowlists and rejects any matrix drift. This
   intentional duplicate representation is a fail-closed review boundary: a future
   reconciliation must update the matrix and validator policy together, never derive
@@ -146,7 +153,9 @@ accept a candidate, replace human diff review, or certify correctness or securit
 ## Generated and private artifacts
 
 - `logs/<job>/` contains the task, full prompt, stream, stderr, staged oversized
-  prompt, and extracted envelope. The dispatcher creates this job tree owner-only
+  prompt, extracted envelope, and driver-owned selection record. The record freezes
+  selector provenance and matrix binding but is not a gate receipt. The dispatcher
+  creates this job tree owner-only
   even under a permissive caller umask. A missing log root is created privately; an
   existing final root must be current-user-owned, non-symlink, and not group/other
   writable before its physical path is used. The caller-owned root is not rewritten.

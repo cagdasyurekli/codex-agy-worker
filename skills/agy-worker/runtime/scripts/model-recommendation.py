@@ -6,6 +6,10 @@ import json
 import re
 import sys
 
+sys.dont_write_bytecode = True
+
+from model_selection import CallerError, EvidenceUnavailable, ReviewRequired, resolve_selection
+
 
 NAMED_TIERS = ("cheap", "bulk", "hard", "hardest")
 
@@ -192,6 +196,18 @@ def main(argv=None):
         help="the caller-selected named tier, default, or explicit model label",
     )
     parser.add_argument(
+        "--selected-model",
+        action="append",
+        metavar="MODEL",
+        help="one explicit reviewed model or adjustable base model",
+    )
+    parser.add_argument(
+        "--selected-effort",
+        action="append",
+        metavar="EFFORT",
+        help="explicit effort paired with --selected-model",
+    )
+    parser.add_argument(
         "--evidence",
         action="append",
         metavar="CODE",
@@ -200,10 +216,36 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     stage = one(parser, args.stage, "--stage")
-    selected_tier = one(parser, args.selected_tier, "--selected-tier")
+    selected_tier = args.selected_tier
+    selected_model = args.selected_model
+    selected_effort = args.selected_effort
+    if bool(selected_tier) == bool(selected_model):
+        parser.error("exactly one of --selected-tier or --selected-model is required")
+    if selected_tier:
+        selected_tier_value = one(parser, selected_tier, "--selected-tier")
+        if selected_effort:
+            parser.error("--selected-effort requires --selected-model")
+        selection = None
+    else:
+        selected_tier_value = ""
+        model_value = one(parser, selected_model, "--selected-model")
+        effort_value = None
+        if selected_effort:
+            effort_value = one(parser, selected_effort, "--selected-effort")
+        try:
+            selection = resolve_selection(
+                model_value, effort_value, "cli", "cli" if effort_value else None,
+                probe_version=False,
+            )
+        except CallerError as exc:
+            parser.error(str(exc))
+        except ReviewRequired as exc:
+            parser.error(f"compatibility review required: {exc}")
+        except EvidenceUnavailable as exc:
+            parser.error(f"compatibility evidence unavailable: {exc}")
     evidence_code = one(parser, args.evidence, "--evidence")
 
-    if not SAFE_TIER.fullmatch(selected_tier):
+    if selection is None and not SAFE_TIER.fullmatch(selected_tier_value):
         parser.error("--selected-tier must be a non-empty tier or model label without whitespace")
 
     evidence_set = PRE_DISPATCH_EVIDENCE if stage == "pre-dispatch" else POST_GATE_EVIDENCE
@@ -211,10 +253,16 @@ def main(argv=None):
         allowed = ", ".join(sorted(evidence_set))
         parser.error(f"--evidence is not valid for {stage}; choose one of: {allowed}")
 
+    ranking_input = selected_tier_value if selection is None else selection["resolved_agy_model"]
     if stage == "pre-dispatch":
-        evidence_description, decision = pre_dispatch(selected_tier, evidence_code)
+        evidence_description, decision = pre_dispatch(ranking_input, evidence_code)
     else:
-        evidence_description, decision = post_gate(selected_tier, evidence_code)
+        evidence_description, decision = post_gate(ranking_input, evidence_code)
+
+    if selection is not None:
+        decision = no_change(
+            "An explicit model/effort selection is caller-owned and unranked; this advisory cannot change or redispatch it."
+        )
 
     result = {
         "schema_version": 1,
@@ -222,7 +270,6 @@ def main(argv=None):
         "stage": stage,
         "recommendation_only": True,
         "applied": False,
-        "selected_tier": selected_tier,
         **decision,
         "evidence": {
             "owner": "driver",
@@ -230,6 +277,16 @@ def main(argv=None):
             "description": evidence_description,
         },
     }
+    if selection is None:
+        result["selected_tier"] = selected_tier_value
+    else:
+        result["user_model"] = selection["user_model"]
+        if "user_effort" in selection:
+            result["user_effort"] = selection["user_effort"]
+        result["resolved_agy_model"] = selection["resolved_agy_model"]
+        result["matrix_sha256"] = selection["matrix_sha256"]
+        result["matrix_agy_version"] = selection["matrix_agy_version"]
+        result["matrix_source_revision"] = selection["matrix_source_revision"]
     json.dump(result, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0
