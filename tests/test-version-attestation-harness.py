@@ -91,6 +91,11 @@ check("fake controller explicitly unblocks lifecycle signals", lambda: "SIG_UNBL
 check("fake controller creates a descendant", lambda: "os.fork()" in MODULE.FAKE_CONTROLLER_SOURCE)
 check("fake controller has a detectable late side effect", lambda: 'marker("late.marker"' in MODULE.FAKE_CONTROLLER_SOURCE)
 
+runner_binding_cases = MODULE.run_canonical_runner_binding_cases()
+check("canonical runner binding matrix has two paired cases", lambda: len(runner_binding_cases) == 2)
+check("canonical runner source and production-path self-test are accepted", lambda: sum(item["status"] == "accepted" for item in runner_binding_cases) == 1)
+check("canonical runner source drift mutation is killed", lambda: sum(item["status"] == "killed" for item in runner_binding_cases) == 1)
+
 publisher_root = TMP / "publisher"
 publisher_root.mkdir(mode=0o700)
 publisher = MODULE.DurablePublisher(publisher_root)
@@ -207,8 +212,8 @@ check("completion failure matrix accepts two secure cases", lambda: sum(item["st
 check("completion failure matrix kills two mutations", lambda: sum(item["status"] == "killed" for item in completion_failure_cases) == 2)
 
 result = MODULE.run_offline_harness()
-check("full harness accepts exactly twenty-eight secure cases", lambda: result["secure"] == 28)
-check("full harness kills exactly twenty-eight mutations", lambda: result["mutations_killed"] == 28)
+check("full harness accepts exactly twenty-nine secure cases", lambda: result["secure"] == 29)
+check("full harness kills exactly twenty-nine mutations", lambda: result["mutations_killed"] == 29)
 check("full harness reports zero failures", lambda: result["failed"] == 0 and result["status"] == "accepted")
 check("full result is path-free canonical JSON", lambda: "/" not in json.dumps(result, sort_keys=True, separators=(",", ":")))
 

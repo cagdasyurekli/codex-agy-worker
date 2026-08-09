@@ -33,6 +33,9 @@ jobs:
       - name: updater suite
         run: ./tests/test-update.sh
 
+      - name: canonical version attestation runner
+        run: python3 -I -S -B tests/test-version-attestation-runner.py
+
       - name: version attestation mutation harness
         run: python3 -I -S -B tests/test-version-attestation-harness.py
 

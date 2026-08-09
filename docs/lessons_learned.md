@@ -309,3 +309,10 @@ need, and compare light/dark path geometry in order. Verify every PNG chunk and 
 then boundedly decode the scanlines so valid framing cannot hide transparency or a
 broken image stream. Do not imply that a checked-in preview is active in GitHub
 repository settings.
+
+Do not let an offline mutation harness prove only a reimplementation of a sensitive
+runner. Keep the production one-call path in one canonical stdlib module, bind the
+exact source byte count and SHA before importing it, and make synthetic self-test use
+that same function with fixed test-only callables. A green generic lifecycle harness
+is useful evidence for its primitives, but it cannot substitute for exact production
+source provenance.
