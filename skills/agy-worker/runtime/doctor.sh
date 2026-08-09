@@ -44,6 +44,7 @@ doctor_runtime_complete() {
     done
     for required in \
         agy-worker.sh \
+        job.sh \
         qa-gate.sh \
         verify-job.sh \
         evidence-report.sh \
@@ -57,6 +58,8 @@ doctor_runtime_complete() {
         scripts/model-recommendation.py \
         scripts/model_selection.py \
         scripts/compatibility.py \
+        scripts/candidate_state.py \
+        scripts/job_lifecycle.py \
         scripts/doctor-metadata.py; do
         case "$required" in
             */*) dependency_parent="${required%/*}" ;;
@@ -79,6 +82,7 @@ doctor_runtime_complete() {
         schemas/evidence-receipt.schema.json \
         schemas/model-selection.schema.json \
         schemas/model-recommendation.schema.json \
+        schemas/job-state.schema.json \
         agents/bulk-test-writer.md \
         agents/repo-inventory.md \
         agents/diff-reviewer.md \

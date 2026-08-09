@@ -39,6 +39,9 @@ jobs:
       - name: Evidence Report suite
         run: ./tests/test-evidence-report.sh
 
+      - name: local job lifecycle suite
+        run: /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py
+
       - name: dispatcher suite
         run: ./tests/test-agy-worker.sh
 

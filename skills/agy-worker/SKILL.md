@@ -98,16 +98,34 @@ Otherwise just do it yourself. A single-file edit is cheaper direct than delegat
 ### 1. Isolate
 
 Never let the worker touch the user's working tree. Use a branch-backed worktree so
-accepted changes can be committed before cleanup.
+accepted changes can be committed before cleanup. Prefer the lifecycle command: it
+binds the exact repository, worktree, branch, immutable base, and job ID in a private
+external state file and performs no dispatch or external action. Invoke `job.sh` as a
+command/subprocess; its Python `main()` is process-owning for signal-safe termination
+and is not an embedding API.
+It accepts only an exact canonical branch name. Every lifecycle-owned Git command
+uses fixed sanitized Git execution with a private empty hooks directory; `init`
+rejects configured hooks/helpers/filters and effective base-tree or info-attribute
+filters before creating state, a ref, or a worktree. Fatal ref evidence is never
+treated as absence.
 
 ```bash
 PIPELINE="$(bash "$SKILL_ROOT/scripts/resolve-pipeline.sh")" || exit $?
 TARGET=/absolute/path/to/target-repo
-WT=/tmp/agy-job-12345
-JOB_BRANCH=agy/job-12345
 BASE="$(git -C "$TARGET" rev-parse HEAD)"
-git -C "$TARGET" worktree add -b "$JOB_BRANCH" "$WT" "$BASE"
+umask 077
+STATE_DIR="$(mktemp -d -t agyworker-job-state.XXXXXX)"
+WT="$(mktemp -d -t agyworker-job-worktree.XXXXXX)"
+rmdir "$WT"
+JOB_BRANCH=agy/job-12345
+JOB_ID=job-12345
+"$PIPELINE/job.sh" init --state "$STATE_DIR/job.json" \
+    --repo "$TARGET" --worktree "$WT" --branch "$JOB_BRANCH" \
+    --base "$BASE" --job-id "$JOB_ID"
 ```
+
+The manual reference remains `git -C "$TARGET" worktree add -b "$JOB_BRANCH"
+"$WT" "$BASE"`. Do not mix manual mutations into a lifecycle-managed state.
 
 ### 2. Write acceptance criteria BEFORE dispatching
 
@@ -272,6 +290,17 @@ returns that exit. A receipt uses only `gate-passed`, `rejected`, or `routed`; i
 calls a candidate accepted. It is explicitly unsigned and not tamper-evident. Even
 exit 0 still requires human diff review.
 
+For a lifecycle-managed job, use the exact same verification inputs through its
+wrapper instead of calling `verify-job.sh` directly:
+
+```bash
+"$PIPELINE/job.sh" verify --state "$STATE_DIR/job.json" \
+    --receipt "$STATE_DIR/receipt.json" --envelope /tmp/envelope.json \
+    --only 'tests/**' --expect-edits \
+    --verify "git -C '$WT' diff --check" \
+    --verify "cd '$WT' && <the command from step 2>"
+```
+
 To read or share the bounded receipt observations without pasting private job
 artifacts, render the validated receipt locally:
 
@@ -340,9 +369,14 @@ git -C "$TARGET" worktree remove "$WT"
 ```
 
 Integrate `JOB_BRANCH` only through the user's normal review/merge flow. If the job
-was rejected and its disposable changes should be discarded, remove the worktree
-with `--force` and then delete only `JOB_BRANCH`. Never force-remove accepted,
-uncommitted work.
+was rejected with gate exit `10`–`14`, run `job.sh status`, inspect its current facts,
+and invoke `job.sh cleanup` only with the exact current job ID, state SHA, and Receipt
+candidate SHA copied into the three approval flags. It rechecks the receipt, digest,
+worktree, branch, deletion domain, and approvals; it never cleans gate-passed or
+routed work. If reconciliation advances state after an interruption, stop and obtain
+fresh approval for the new state SHA before continuing. The manual reference is to
+force-remove only a known disposable rejected worktree and then delete only its exact
+job branch. Never force-remove accepted, uncommitted work.
 
 ## Never
 

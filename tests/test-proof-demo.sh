@@ -92,11 +92,14 @@ make_demo_tree() {
         "$destination/skills/agy-worker/runtime/qa-gate.sh"
     cp "$ROOT/skills/agy-worker/runtime/scripts/validate-envelope.py" \
         "$destination/skills/agy-worker/runtime/scripts/validate-envelope.py"
+    cp "$ROOT/skills/agy-worker/runtime/scripts/candidate_state.py" \
+        "$destination/skills/agy-worker/runtime/scripts/candidate_state.py"
     cp "$ROOT/skills/agy-worker/runtime/schemas/worker-result.schema.json" \
         "$destination/skills/agy-worker/runtime/schemas/worker-result.schema.json"
     chmod +x "$destination/proof-demo.sh" "$destination/qa-gate.sh" \
         "$destination/skills/agy-worker/runtime/qa-gate.sh" \
-        "$destination/skills/agy-worker/runtime/scripts/validate-envelope.py"
+        "$destination/skills/agy-worker/runtime/scripts/validate-envelope.py" \
+        "$destination/skills/agy-worker/runtime/scripts/candidate_state.py"
 }
 
 mkdir -p "$TMP/bin" "$TMP/caller-temp/agy-worker-proof.COLLISION"
