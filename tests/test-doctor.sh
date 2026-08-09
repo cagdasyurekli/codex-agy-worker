@@ -618,7 +618,7 @@ else
     bad "doctor accepts bundle-owned real runtime parent directories"
 fi
 
-for parent in scripts agents schemas compat; do
+for parent in scripts agents schemas compat benchmarks; do
     for link_kind in absolute relative in-root; do
         label="doctor-parent-$parent-$link_kind"
         fixture="$TMP/$label-fixture"
@@ -756,6 +756,7 @@ for dependency in \
     'schemas/evidence-receipt.schema.json:receipt-schema' \
     'schemas/job-state.schema.json:lifecycle-schema' \
     'schemas/model-selection.schema.json:selection-schema' \
+    'benchmarks/v1/portable-source.json:benchmark-source-manifest' \
     'agents/repo-inventory.md:persona' \
     'compat/agy-upstream-head.txt:source-record' \
     'compat/agy-verified-version.txt:compat-record' \

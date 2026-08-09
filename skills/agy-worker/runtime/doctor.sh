@@ -31,7 +31,7 @@ doctor_runtime_complete() {
     [[ -d "$runtime_root" && ! -L "$runtime_root" ]] || return 1
     runtime_canonical="$(CDPATH= cd -- "$runtime_root" 2>/dev/null && pwd -P)" \
         || return 1
-    for parent in scripts agents schemas compat; do
+    for parent in scripts agents schemas compat benchmarks; do
         [[ -d "$runtime_canonical/$parent" \
             && ! -L "$runtime_canonical/$parent" ]] || return 1
         parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$parent" \
@@ -48,12 +48,14 @@ doctor_runtime_complete() {
         qa-gate.sh \
         verify-job.sh \
         evidence-report.sh \
+        benchmark.sh \
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
         scripts/validate-envelope.py \
         scripts/evidence_receipt.py \
         scripts/evidence_report.py \
+        scripts/benchmark.py \
         scripts/recommendation_record.py \
         scripts/model-recommendation.py \
         scripts/model_selection.py \
@@ -83,6 +85,14 @@ doctor_runtime_complete() {
         schemas/model-selection.schema.json \
         schemas/model-recommendation.schema.json \
         schemas/job-state.schema.json \
+        schemas/benchmark-plan.schema.json \
+        schemas/benchmark-result.schema.json \
+        benchmarks/v1/manifest.json \
+        benchmarks/v1/portable-source.json \
+        benchmarks/v1/tasks/exact-edit/initial.txt \
+        benchmarks/v1/tasks/exact-edit/candidate.txt \
+        benchmarks/v1/tasks/exact-edit/envelope.json \
+        benchmarks/v1/variants/bulk.json \
         agents/bulk-test-writer.md \
         agents/repo-inventory.md \
         agents/diff-reviewer.md \

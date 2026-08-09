@@ -41,6 +41,15 @@ sanitized failure and may leave a private residual. The runner never scans for o
 chases a moved directory and makes no same-user tamper-resistance claim. The kit
 discards bounded gate output and reports no fixture paths or captured bytes.
 
+The offline benchmark harness likewise invokes no agy, provider, or network client.
+It uses only hash-bound checked-in synthetic candidates and the canonical local gate.
+Its explicit external owner-`0700` result root contains mode-`0600` plans, Evidence
+Receipts, and results: source/tool/fixture/selection hashes, immutable synthetic Git
+bases and candidate-state hashes, bounded gate facts, and unsigned integrity labels.
+It stores no provider prompt, response, usage, pricing, credential, or raw worker log.
+The report is a pure validated completeness view and uploads nothing. Live
+benchmarking is not implemented.
+
 ## Local artifacts and retention
 
 Each job can create local private artifacts under `logs/<job>/`, including the task,

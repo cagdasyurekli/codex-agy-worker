@@ -59,6 +59,11 @@ files, verifier mutation, mutable bases, and human-required routing. Passing is
 fixture compatibility only, not security certification or real-job proof; the
 supplied gate runs with the current user's privileges and must be reviewed first.
 
+For provider-independent release comparisons, the
+[offline Benchmark v1](BENCHMARKING.md) preregisters fixed synthetic tasks and
+caller-selected variants, then records only canonical gate receipts and completeness
+facts. It has no live provider mode, score, ranking, winner, route, or recommendation.
+
 ## Install and explore
 
 Use the GitHub repository as the source of truth. Review the cloned commit—or the
