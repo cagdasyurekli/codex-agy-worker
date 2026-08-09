@@ -42,7 +42,7 @@ Keep these counts current when their suites change:
 - Canonical version-attestation runner: 157 offline fixed-profile/source-binding cases.
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 161 offline
+- Codex package/skill distribution and CI policy: 165 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 180 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
@@ -153,7 +153,9 @@ only a passing test has not been shown to catch anything.
 - **CI diff hygiene audits committed bytes.** Keep checkout history sufficient for
   the GitHub event range and run `scripts/ci-diff-check.sh`; its stdlib scanner must
   inspect every changed regular head blob independently of Git attributes with a
-  linear, globally bounded scan. This deliberately rejects pre-existing hygiene
+  linear, globally bounded scan. Read reviewed object IDs through one bounded
+  `git cat-file --batch` process; never restore one Git process per blob. This
+  deliberately rejects pre-existing hygiene
   defects in a changed file. A plain
   worktree-only `git diff --check` is not equivalent. Pull requests use base...head, pushes use
   before..head, and an all-zero initial push compares the root commit to the empty
