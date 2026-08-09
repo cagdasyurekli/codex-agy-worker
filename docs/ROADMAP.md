@@ -687,21 +687,21 @@ explicit pre-gate publication-input check.
   The claim is direct gate fixture compatibility only; it excludes Receipt/report,
   lifecycle, dispatch, provider, real-job quality, security, and human acceptance.
 
-#### P1-C — Reproducible benchmark harness
+#### P1-C — Reproducible offline benchmark harness (implemented)
 
 - **User job:** Compare releases, caller-selected model inputs, or personas on fixed
   bounded tasks using gate observations rather than subjective worker summaries.
-- **Intended surface:** `benchmark.sh prepare|run|report`, frozen
-  `benchmarks/v1/manifest.json`, ignored local result directory, and
-  `docs/BENCHMARKING.md`. Paid work requires an explicit `--live` boundary.
+- **Implemented surface:** `benchmark.sh prepare|run|report`, frozen
+  `benchmarks/v1/manifest.json`, an explicit external owner-`0700` result root, and
+  `docs/BENCHMARKING.md`. No live/provider path is implemented.
 - **Dependencies:** Receipt v1; lifecycle is useful but optional.
-- **Trust boundary:** Every result binds exact fixture/base, tool versions, selected
-  tier/user-model/user-effort, matrix revision, resolved agy slug, attempt count,
-  policy, and verification. No hidden retries or selector changes. Competitor
-  comparisons require identical public tasks and rules. No leaderboard by default.
-- **Minimum accept tests:** Frozen offline fixture produces a deterministic report and
-  receipt; live-mode parser preserves selected input, matrix revision, resolved slug,
-  and attempt count.
+- **Trust boundary:** Every result binds exact fixture/base, either a clean source
+  commit or the reviewed portable source revision/manifest, runner/schema/manifest/
+  gate/wrapper hashes, caller selection, one-attempt policy, and validated Receipt
+  v1 facts. No hidden retries or selector changes. The report is
+  completeness facts only; it has no leaderboard, score, winner, or route.
+- **Minimum accept tests:** The frozen offline fixture produces a deterministic report
+  and exact Receipt v1 through the canonical gate.
 - **Minimum reject tests:** Changed fixture hash, missing verifier, unpublished input,
   partial task set described as complete, hidden retry/input/resolution change, or
   result without exact version binding.
@@ -709,8 +709,14 @@ explicit pre-gate publication-input check.
   update REPO_MAP. AGENTS updates only verified real/offline evidence boundaries, not
   one-off results.
 - **Size:** L.
-- **Done/exit criteria:** Reproducible offline harness; live execution remains a
-  separately approved action with explicit Google/Gemini data scope and cost.
+- **Implemented evidence:** One hundred four provider-independent cases cover frozen assets,
+  clean-source/tool bindings, private no-overwrite publication, one attempt,
+  Receipt/result/report coherence, partial/tampered results, selectors, privacy,
+  lifecycle interruption, complete nested schema constraints, folder-only execution,
+  and source-policy mutations.
+- **Done/exit criteria:** Reproducible offline harness. Live execution remains an
+  unimplemented, separately reviewed and approved future slice requiring accepted agy
+  executable/version evidence plus explicit Google/Gemini data scope and cost.
 
 #### P1-D — Persona evidence registry
 

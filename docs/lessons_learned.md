@@ -414,3 +414,17 @@ node when the whole current candidate still matches the rejected Receipt, but it
 use lstat-only traversal and never follow the target. Nested repositories, initialized
 submodules, mount/device changes, special nodes, and any digest drift remain manual
 recovery boundaries.
+
+Do not let a benchmark become a second router or acceptance system. Preregister the
+ordered caller selections and fixed public tasks before execution, bind the clean
+source commit plus every runner/fixture/gate byte in a checkout. A folder-only bundle
+must instead bind an explicit reviewed portable revision and exact source manifest;
+inventing a Git commit would be false provenance. Reject missing, extra, writable,
+wrong-mode, symlinked, or hash-drifted portable authority. Structurally complete
+schemas make the public artifact contract inspectable while runtime checks retain
+cross-field and canonical-byte authority. Spend exactly one attempt per
+variant-task pair. Delegate every outcome to the existing gate and bind its raw
+Receipt bytes; the benchmark result is only an unsigned serialization of those facts.
+A deterministic report should expose completeness in manifest order, not invent a
+score, winner, retry, fallback, route, recommendation, usage estimate, or persona
+quality claim. Keep provider-backed benchmarking as a separate reviewed boundary.

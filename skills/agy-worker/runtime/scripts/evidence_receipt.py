@@ -301,6 +301,10 @@ SCHEMA_KEYS = {
     "maxLength",
     "minimum",
     "maximum",
+    "minItems",
+    "maxItems",
+    "pattern",
+    "oneOf",
 }
 
 
@@ -317,6 +321,12 @@ def preflight_schema(schema: Any, location: str = "$") -> None:
         preflight_schema(child, f"{location}.{key}")
     if "items" in schema:
         preflight_schema(schema["items"], f"{location}[]")
+    if "oneOf" in schema:
+        alternatives = schema["oneOf"]
+        if not isinstance(alternatives, list) or not alternatives:
+            raise ValidationFailure(f"schema oneOf at {location} is invalid")
+        for index, alternative in enumerate(alternatives):
+            preflight_schema(alternative, f"{location}.oneOf[{index}]")
 
 
 def schema_type_matches(value: Any, expected: str) -> bool:
@@ -330,10 +340,24 @@ def schema_type_matches(value: Any, expected: str) -> bool:
         return type(value) is bool
     if expected == "number":
         return type(value) in (int, float)
+    if expected == "integer":
+        return type(value) is int
+    if expected == "null":
+        return value is None
     raise ValidationFailure("schema contains an unknown type")
 
 
 def validate_schema(value: Any, schema: dict[str, Any], location: str = "$") -> None:
+    if "oneOf" in schema:
+        accepted = 0
+        for alternative in schema["oneOf"]:
+            try:
+                validate_schema(value, alternative, location)
+            except ValidationFailure:
+                continue
+            accepted += 1
+        if accepted != 1:
+            raise ValidationFailure(f"{location} does not match exactly one schema alternative")
     expected_type = schema.get("type")
     if expected_type is not None and not schema_type_matches(value, expected_type):
         raise ValidationFailure(f"{location} has the wrong type")
@@ -344,12 +368,26 @@ def validate_schema(value: Any, schema: dict[str, Any], location: str = "$") -> 
             raise ValidationFailure(f"{location} is too short")
         if len(value) > schema.get("maxLength", len(value)):
             raise ValidationFailure(f"{location} is too long")
+        pattern = schema.get("pattern")
+        if pattern is not None:
+            if not isinstance(pattern, str):
+                raise ValidationFailure("schema pattern is invalid")
+            try:
+                matched = re.search(pattern, value)
+            except re.error as exc:
+                raise ValidationFailure("schema pattern is invalid") from exc
+            if matched is None:
+                raise ValidationFailure(f"{location} does not match its pattern")
     if type(value) in (int, float):
         if value < schema.get("minimum", value):
             raise ValidationFailure(f"{location} is below minimum")
         if value > schema.get("maximum", value):
             raise ValidationFailure(f"{location} is above maximum")
     if isinstance(value, list) and "items" in schema:
+        if len(value) < schema.get("minItems", 0):
+            raise ValidationFailure(f"{location} has too few items")
+        if len(value) > schema.get("maxItems", len(value)):
+            raise ValidationFailure(f"{location} has too many items")
         for index, item in enumerate(value):
             validate_schema(item, schema["items"], f"{location}[{index}]")
     if isinstance(value, dict):

@@ -738,6 +738,21 @@ else
     bad "root and portable packages include the safe local job lifecycle"
 fi
 
+if [[ -x "$ROOT/benchmark.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/benchmark.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/benchmark.py" ]] \
+        && [[ -f "$ROOT/benchmarks/v1/manifest.json" ]] \
+        && cmp -s "$ROOT/benchmarks/v1/manifest.json" \
+            "$ROOT/skills/agy-worker/runtime/benchmarks/v1/manifest.json" \
+        && cmp -s "$ROOT/benchmarks/v1/portable-source.json" \
+            "$ROOT/skills/agy-worker/runtime/benchmarks/v1/portable-source.json" \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/benchmark-plan.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/benchmark-result.schema.json" ]]; then
+    ok "root and portable packages include offline Benchmark v1"
+else
+    bad "root and portable packages include offline Benchmark v1"
+fi
+
 if grep -Fq 'is process-owning: it keeps signal rollback authority' \
         "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py" \
         && grep -Fq 'The `--output` CLI path is deliberately process-owning' \
@@ -755,12 +770,14 @@ required_runtime_dependencies=(
     qa-gate.sh
     verify-job.sh
     evidence-report.sh
+    benchmark.sh
     model-recommendation.sh
     model-selection.sh
     doctor.sh
     scripts/validate-envelope.py
     scripts/evidence_receipt.py
     scripts/evidence_report.py
+    scripts/benchmark.py
     scripts/recommendation_record.py
     scripts/model-recommendation.py
     scripts/model_selection.py
@@ -773,6 +790,14 @@ required_runtime_dependencies=(
     schemas/model-selection.schema.json
     schemas/model-recommendation.schema.json
     schemas/job-state.schema.json
+    schemas/benchmark-plan.schema.json
+    schemas/benchmark-result.schema.json
+    benchmarks/v1/manifest.json
+    benchmarks/v1/portable-source.json
+    benchmarks/v1/tasks/exact-edit/initial.txt
+    benchmarks/v1/tasks/exact-edit/candidate.txt
+    benchmarks/v1/tasks/exact-edit/envelope.json
+    benchmarks/v1/variants/bulk.json
     agents/bulk-test-writer.md
     agents/repo-inventory.md
     agents/diff-reviewer.md
@@ -834,7 +859,7 @@ else
     bad "resolver accepts bundle-owned real runtime parent directories"
 fi
 
-for parent in scripts agents schemas compat; do
+for parent in scripts agents schemas compat benchmarks; do
     for link_kind in absolute relative in-root; do
         parent_copy="$TMP/parent-$parent-$link_kind"
         foreign_parent="$TMP/foreign-$parent-$link_kind"
@@ -872,9 +897,11 @@ for specification in \
     'qa-gate.sh:executable' \
     'verify-job.sh:executable' \
     'evidence-report.sh:executable' \
+    'benchmark.sh:executable' \
     'scripts/validate-envelope.py:executable' \
     'scripts/evidence_receipt.py:executable' \
     'scripts/evidence_report.py:executable' \
+    'scripts/benchmark.py:executable' \
     'scripts/recommendation_record.py:executable' \
     'scripts/candidate_state.py:executable' \
     'scripts/job_lifecycle.py:executable' \
@@ -882,6 +909,10 @@ for specification in \
     'schemas/worker-result.schema.json:data' \
     'schemas/evidence-receipt.schema.json:data' \
     'schemas/job-state.schema.json:data' \
+    'schemas/benchmark-plan.schema.json:data' \
+    'schemas/benchmark-result.schema.json:data' \
+    'benchmarks/v1/manifest.json:data' \
+    'benchmarks/v1/portable-source.json:data' \
     'agents/repo-inventory.md:data' \
     'compat/agy-verified-version.txt:data' \
     'compat/agy-model-effort-matrix.json:data'; do
@@ -949,6 +980,16 @@ if grep -Fq 'run: ./tests/test-doctor.sh' "$ROOT/.github/workflows/test.yml" \
     ok "macOS CI runs the dedicated offline doctor suite"
 else
     bad "macOS CI runs the dedicated offline doctor suite"
+fi
+
+if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-benchmark.py' \
+        "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq '[`benchmark.sh`](docs/BENCHMARKING.md)' "$ROOT/README.md" \
+        && grep -Fq 'Live benchmarking is not implemented' "$ROOT/docs/BENCHMARKING.md" \
+        && grep -Fq 'no live provider mode' "$ROOT/docs/index.md"; then
+    ok "CI and public docs expose only provider-independent Benchmark v1"
+else
+    bad "CI and public docs expose only provider-independent Benchmark v1"
 fi
 
 if grep -Fq 'run: ./tests/test-evidence-report.sh' "$ROOT/.github/workflows/test.yml" \
@@ -1516,15 +1557,23 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
             "$ROOT/.github/workflows/test.yml"; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-benchmark.py' \
+            "$ROOT/.github/workflows/test.yml"; then
+    governance_lists_all_suites=0
+fi
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all fourteen suites and disclose public policy boundaries"
+    ok "governance docs require all fifteen suites and disclose public policy boundaries"
 else
-    bad "governance docs require all fourteen suites and disclose public policy boundaries"
+    bad "governance docs require all fifteen suites and disclose public policy boundaries"
 fi
 
 if grep -Fq 'same-UID processes' "$ROOT/README.md" \
