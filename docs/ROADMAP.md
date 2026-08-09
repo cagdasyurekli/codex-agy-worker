@@ -589,8 +589,9 @@ explicit pre-gate publication-input check.
 
 - **User job:** See the project's differentiator in under one minute without agy,
   credentials, network, or API credits.
-- **Intended surface:** Add repository-only `proof-demo.sh` and a minimal
-  `demo/fixtures/` pair. It creates a temporary Git repository, demonstrates one
+- **Intended surface:** Add repository-only `proof-demo.sh` and a minimal fixture
+  pair, now retained as the `conformance/v1/` starter subset. It creates a temporary
+  Git repository, demonstrates one
   honest candidate that is `gate-passed` by driver verification and one plausible
   worker claim rejected because Git reality disagrees, prints a short explanation,
   and cleans only its own temporary directory. The demo performs no human review and
@@ -655,7 +656,7 @@ explicit pre-gate publication-input check.
   Cleanup never follows symlinks, never deletes a commit, and retains the cleaned
   state file.
 
-#### P1-B — Full public conformance kit
+#### P1-B — Full public conformance kit (implemented)
 
 - **User job:** Let integrations and forks test the published contract rather than
   claim compatibility from prose.
@@ -676,6 +677,15 @@ explicit pre-gate publication-input check.
 - **Size:** L.
 - **Done/exit criteria:** Public versioned fixture contract, malicious reference
   implementations rejected, and no “certified secure” language.
+- **Implemented boundary:** The repository-only v1 kit binds eleven exact synthetic
+  gate cases, manifest/source hashes, fixed verifier kinds, private disposable Git
+  repositories, and per-process time/output limits. Seventy-eight offline adversarial
+  cases reject source drift and permissive gates while proving HUP/INT/TERM cleanup,
+  FD-relative no-follow deletion, cleanup bounds, and fail-closed residual handling
+  under an explicit gate/loaded-code/local-owner/same-UID/OS-admin TCB. The runner
+  never scans for or chases a drifted root and claims no same-user tamper resistance.
+  The claim is direct gate fixture compatibility only; it excludes Receipt/report,
+  lifecycle, dispatch, provider, real-job quality, security, and human acceptance.
 
 #### P1-C — Reproducible benchmark harness
 

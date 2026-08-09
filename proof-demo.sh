@@ -158,7 +158,7 @@ common = {
     "confidence": 0.9,
     "requires_human": False,
 }
-expected = [common, dict(common, summary="plausible but incomplete synthetic claim")]
+expected = [common, common]
 
 def strict_object(raw: bytes):
     def unique(pairs):
@@ -172,7 +172,9 @@ def strict_object(raw: bytes):
 
 for name, wanted in zip(sys.argv[1:], expected):
     raw = Path(name).read_bytes()
-    canonical = (json.dumps(wanted, indent=2, ensure_ascii=True) + "\n").encode("ascii")
+    canonical = (json.dumps(
+        wanted, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ) + "\n").encode("ascii")
     if raw != canonical or strict_object(raw) != wanted:
         raise SystemExit(1)
 PY
@@ -195,12 +197,13 @@ proof_main() {
     script_dir="$(CDPATH= cd -- "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd -P)" \
         || proof_fail
     gate="$script_dir/qa-gate.sh"
-    fixture_root="$script_dir/demo/fixtures"
-    honest_fixture="$fixture_root/honest-envelope.json"
-    mismatch_fixture="$fixture_root/scope-mismatch-envelope.json"
+    fixture_root="$script_dir/conformance/v1/envelopes"
+    honest_fixture="$fixture_root/honest.json"
+    mismatch_fixture="$fixture_root/honest.json"
 
     [[ -f "$gate" && -x "$gate" && ! -L "$gate" ]] || proof_fail
-    [[ -d "$script_dir/demo" && ! -L "$script_dir/demo" \
+    [[ -d "$script_dir/conformance" && ! -L "$script_dir/conformance" \
+        && -d "$script_dir/conformance/v1" && ! -L "$script_dir/conformance/v1" \
         && -d "$fixture_root" && ! -L "$fixture_root" \
         && -f "$honest_fixture" && ! -L "$honest_fixture" \
         && -f "$mismatch_fixture" && ! -L "$mismatch_fixture" ]] || proof_fail

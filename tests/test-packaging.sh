@@ -974,15 +974,17 @@ PY
 }
 
 workflow_compile_fixture="$TMP/workflow-compile-fixture"
-mkdir -p "$workflow_compile_fixture/scripts" \
+mkdir -p "$workflow_compile_fixture/conformance/v1" \
+    "$workflow_compile_fixture/scripts" \
     "$workflow_compile_fixture/skills/agy-worker/runtime/scripts"
+cp "$ROOT/conformance/v1/run.py" "$workflow_compile_fixture/conformance/v1/run.py"
 cp "$ROOT/scripts/compatibility.py" "$workflow_compile_fixture/scripts/compatibility.py"
 cp "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
     "$workflow_compile_fixture/skills/agy-worker/runtime/scripts/model_selection.py"
 (
     cd "$workflow_compile_fixture" || exit 1
     PYTHONPYCACHEPREFIX="$TMP/workflow-python-cache" \
-        python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+        python3 -m py_compile conformance/v1/*.py scripts/*.py skills/*/runtime/scripts/*.py
 )
 workflow_compile_rc=$?
 python3 -B - "$ROOT/.github/workflows/test.yml" <<'PY'
@@ -995,7 +997,7 @@ step = re.compile(
     r"^      - name: Python syntax\n"
     r"        env:\n"
     r"          PYTHONPYCACHEPREFIX: \$\{\{ runner\.temp \}\}/codex-agy-worker-pycache\n"
-    r"        run: python3 -m py_compile scripts/\*\.py skills/\*/runtime/scripts/\*\.py$",
+    r"        run: python3 -m py_compile conformance/v1/\*\.py scripts/\*\.py skills/\*/runtime/scripts/\*\.py$",
     re.MULTILINE,
 )
 assert len(step.findall(workflow)) == 1
@@ -1031,14 +1033,30 @@ fi
 
 if [[ -x "$ROOT/proof-demo.sh" ]] \
         && [[ -x "$ROOT/tests/test-proof-demo.sh" ]] \
-        && [[ -f "$ROOT/demo/fixtures/honest-envelope.json" ]] \
-        && [[ ! -L "$ROOT/demo/fixtures/honest-envelope.json" ]] \
-        && [[ -f "$ROOT/demo/fixtures/scope-mismatch-envelope.json" ]] \
-        && [[ ! -L "$ROOT/demo/fixtures/scope-mismatch-envelope.json" ]] \
+        && [[ -f "$ROOT/conformance/v1/envelopes/honest.json" ]] \
+        && [[ ! -L "$ROOT/conformance/v1/envelopes/honest.json" ]] \
+        && grep -Fq 'conformance/v1/envelopes' "$ROOT/proof-demo.sh" \
+        && [[ ! -e "$ROOT/demo/fixtures/honest-envelope.json" ]] \
+        && [[ ! -e "$ROOT/demo/fixtures/scope-mismatch-envelope.json" ]] \
         && [[ ! -e "$ROOT/skills/agy-worker/runtime/proof-demo.sh" ]]; then
-    ok "repository package includes the repo-only starter proof and canonical fixtures"
+    ok "repository package binds starter proof to the public conformance subset"
 else
-    bad "repository package includes the repo-only starter proof and canonical fixtures"
+    bad "repository package binds starter proof to the public conformance subset"
+fi
+
+if [[ -x "$ROOT/conformance/run.sh" ]] \
+        && [[ -x "$ROOT/conformance/v1/run.py" ]] \
+        && [[ -f "$ROOT/conformance/v1/manifest.json" ]] \
+        && [[ -f "$ROOT/docs/CONFORMANCE.md" ]] \
+        && grep -Fq 'MANIFEST_SHA256 = "9741584060f5391e5a79df1022c9cd574c28fdddefc75006b8b6e7ff0e5e36a0"' \
+            "$ROOT/conformance/v1/run.py" \
+        && grep -Fq 'fixture compatibility only' "$ROOT/README.md" \
+        && grep -Fq 'security certification' "$ROOT/docs/CONFORMANCE.md" \
+        && grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-conformance.py' \
+            "$ROOT/.github/workflows/test.yml"; then
+    ok "distribution includes the bounded non-certifying v1 conformance contract"
+else
+    bad "distribution includes the bounded non-certifying v1 conformance contract"
 fi
 
 if grep -Fq 'run: ./tests/test-proof-demo.sh' "$ROOT/.github/workflows/test.yml"; then
@@ -1490,15 +1508,37 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
             "$ROOT/.github/workflows/test.yml"; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-conformance.py' \
+            "$ROOT/.github/workflows/test.yml"; then
+    governance_lists_all_suites=0
+fi
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all thirteen suites and disclose public policy boundaries"
+    ok "governance docs require all fourteen suites and disclose public policy boundaries"
 else
-    bad "governance docs require all thirteen suites and disclose public policy boundaries"
+    bad "governance docs require all fourteen suites and disclose public policy boundaries"
+fi
+
+if grep -Fq 'same-UID processes' "$ROOT/README.md" \
+        && grep -Fq 'It never scans for or chases a moved directory.' \
+            "$ROOT/docs/CONFORMANCE.md" \
+        && grep -Fq 'may leave a private residual' "$ROOT/PRIVACY.md" \
+        && grep -Fq 'does not establish same-user tamper resistance' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Final pathname removal still trusts that TCB.' \
+            "$ROOT/docs/lessons_learned.md" \
+        && grep -Fq 'same-user tamper-resistance or guaranteed' "$ROOT/AGENTS.md"; then
+    ok "conformance docs bind the same-UID TCB and fail-closed residual boundary"
+else
+    bad "conformance docs bind the same-UID TCB and fail-closed residual boundary"
 fi
 
 python3 "$ROOT/scripts/validate-brand-assets.py" "$ROOT/docs/assets/brand" \
