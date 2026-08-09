@@ -122,23 +122,27 @@ mutated = source.replace(
     1,
 )
 check("source validator rejects any post-reap group probe", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"    if not _production_startup_isolated():\n", b"    if False:\n", 1)
+mutated = source.replace(
+    b"    startup = _production_startup_evaluation()\n",
+    b"    startup = None\n",
+    1,
+)
 check("source validator rejects isolated startup enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"        and isolated == 1\n", b"        and True\n", 1)
+mutated = source.replace(b"and isolated == 1\n", b"and True\n", 1)
 check("source validator rejects isolated-flag enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"        and no_site == 1\n", b"        and True\n", 1)
+mutated = source.replace(b"and no_site == 1\n", b"and True\n", 1)
 check("source validator rejects no-site enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"        and dont_write_bytecode == 1\n", b"        and True\n", 1)
+mutated = source.replace(b"and dont_write_bytecode == 1\n", b"and True\n", 1)
 check("source validator rejects no-bytecode enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b'node.kind != "directory" or node.uid != 0 or node.mode & 0o022', b'node.kind != "directory" or False or node.mode & 0o022', 1)
+mutated = source.replace(b"            if node.uid != 0:\n", b"            if False:\n", 1)
 check("source validator rejects interpreter ownership enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b'node.kind != "directory" or node.uid != 0 or node.mode & 0o022', b'node.kind != "directory" or node.uid != 0 or False', 1)
+mutated = source.replace(b"            if node.mode & 0o022:\n", b"            if False:\n", 1)
 check("source validator rejects interpreter ancestor-mode enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b'resolved_leaf.kind != "regular"', b'False', 1)
+mutated = source.replace(b'            if leaf.kind != "regular":\n', b'            if False:\n', 1)
 check("source validator rejects regular-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"        or resolved_leaf.mode & 0o6000\n", b"        or False\n", 1)
+mutated = source.replace(b"            if leaf.mode & 0o6000:\n", b"            if False:\n", 1)
 check("source validator rejects setid-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"        or not resolved_leaf.mode & 0o111\n", b"        or False\n", 1)
+mutated = source.replace(b"            if not leaf.mode & 0o111:\n", b"            if False:\n", 1)
 check("source validator rejects executable-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"    if parts == (\n", b"    if parts[-7:] == (\n", 1)
 check("source validator rejects CLT path suffix matching", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
@@ -152,6 +156,66 @@ mutated = source.replace(b"    if len(tail) != 3 or", b"    if len(tail) < 3 or"
 check("source validator rejects framework extra-component weakening", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"not _numeric_python_version(tail[0])", b"not tail[0]", 1)
 check("source validator rejects numeric framework-version weakening", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b'    if family == "unreviewed" or component_index < 0:\n',
+    b"    if component_index < 0:\n",
+    1,
+)
+check("source validator rejects private basename redaction weakening", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        if len(failures) >= STARTUP_FAILURE_LIMIT:\n",
+    b"        if False:\n",
+    1,
+)
+check("source validator rejects diagnostic failure cap removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"    if not startup.accepted:\n",
+    b"    if False:\n",
+    1,
+)
+check("source validator rejects live startup condition bypass", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        sys.stderr.buffer.write(_startup_diagnostic(startup))\n        return 64\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
+    b"        sys.stderr.buffer.write(_startup_diagnostic(startup))\n        pass\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
+    1,
+)
+check("source validator rejects live startup fallthrough", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"    startup = _production_startup_evaluation()\n    if not startup.accepted:\n        sys.stderr.buffer.write(_startup_diagnostic(startup))\n        return 64\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
+    b"    startup = _production_startup_evaluation()\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n    if not startup.accepted:\n        sys.stderr.buffer.write(_startup_diagnostic(startup))\n        return 64\n",
+    1,
+)
+check("source validator rejects profile read before startup guard", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"    startup = _production_startup_evaluation()\n",
+    b"    ignored = sys.stdin.buffer.read(1)\n    startup = _production_startup_evaluation()\n",
+    1,
+)
+check("source validator rejects an extra hidden profile read", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
+    b"    data = sys.stdout.buffer.read(PROFILE_LIMIT + 1)\n",
+    1,
+)
+check("source validator rejects profile read receiver drift", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
+    b"    data = sys.stdin.buffer.read(PROFILE_LIMIT)\n",
+    1,
+)
+check("source validator rejects profile read cap drift", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        sys.stderr.buffer.write(_startup_diagnostic(startup))\n",
+    b"        pass\n",
+    1,
+)
+check("source validator rejects startup diagnostic removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b'        return _collection_failure("permission", **flags)\n',
+    b'        return _collection_failure("os-error", **flags)\n',
+    1,
+)
+check("source validator rejects collection classification collapse", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 check("source hash changes under a one-byte drift", lambda: hashlib.sha256(source + b"\n").hexdigest() != contract["sha256"])
 
 profile_root, profile = fresh_profile("profile")
@@ -240,10 +304,15 @@ def nonisolated_production_rejected() -> bool:
         stderr=subprocess.PIPE,
         check=False,
     )
+    if result.returncode != 64 or result.stdout != b"":
+        return False
+    value = json.loads(result.stderr)
     return (
-        result.returncode == 64
-        and result.stdout == b""
-        and result.stderr == b"version attestation runner: isolated startup required\n"
+        value["schema_version"] == 1
+        and value["status"] == "rejected"
+        and value["isolated"] is False
+        and value["failures"][0]["predicate"] == "isolated"
+        and len(result.stderr) <= MODULE.STARTUP_DIAGNOSTIC_LIMIT
     )
 
 
@@ -279,9 +348,11 @@ check("production CLI requires isolated no-site no-bytecode startup", isolated_s
 
 
 def interpreter_node(
-    kind: str, *, uid: int = 0, mode: int = 0o755, ino: int = 1
+    kind: str, *, uid: int = 0, gid: int = 0, mode: int = 0o755, ino: int = 1
 ) -> object:
-    return MODULE.InterpreterNode(dev=1, ino=ino, kind=kind, mode=mode, uid=uid)
+    return MODULE.InterpreterNode(
+        dev=1, gid=gid, ino=ino, kind=kind, mode=mode, uid=uid
+    )
 
 
 def interpreter_facts(alias: str, resolved: str) -> object:
@@ -320,7 +391,52 @@ xcode_facts = interpreter_facts(
 )
 check("root-owned CLT interpreter facts are accepted", lambda: facts_accepted(clt_facts))
 check("root-owned versioned Xcode interpreter facts are accepted", lambda: facts_accepted(xcode_facts))
-check("current isolated system interpreter facts are accepted", MODULE._production_startup_isolated)
+
+
+def current_startup_accepted() -> bool:
+    evaluation = MODULE._production_startup_evaluation()
+    if not evaluation.accepted:
+        sys.stderr.buffer.write(MODULE._startup_diagnostic(evaluation))
+    return evaluation.accepted
+
+
+check("current isolated system interpreter facts are accepted", current_startup_accepted)
+check(
+    "diagnostic family classifier covers every fixed family",
+    lambda: {
+        MODULE._apple_interpreter_family("/usr/bin/python3"),
+        MODULE._apple_interpreter_family(
+            "/Library/Developer/CommandLineTools/usr/bin/python3"
+        ),
+        MODULE._apple_interpreter_family(
+            "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"
+        ),
+        MODULE._apple_interpreter_family(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/python3"
+        ),
+        MODULE._apple_interpreter_family(
+            "/Applications/Xcode_26.0.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.13/bin/python3.13"
+        ),
+        MODULE._apple_interpreter_family("/private/secret/python3"),
+    }
+    == {
+        "usr-bin",
+        "clt-usr-bin",
+        "clt-framework",
+        "xcode-usr-bin",
+        "xcode-framework",
+        "unreviewed",
+    },
+)
+check(
+    "diagnostic resolved filename classes are fixed",
+    lambda: {
+        MODULE._resolved_filename_class("/usr/bin/python3"),
+        MODULE._resolved_filename_class("/fixed/python3.14"),
+        MODULE._resolved_filename_class("/fixed/private-python"),
+    }
+    == {"python3", "python-major-minor", "other"},
+)
 check(
     "incomplete interpreter component facts are rejected",
     lambda: not facts_accepted(
@@ -466,6 +582,388 @@ check(
     lambda: not facts_accepted(clt_facts, dont_write_bytecode=0),
 )
 check("boolean startup flags are rejected", lambda: not facts_accepted(clt_facts, isolated=True))
+
+
+def multi_failure_diagnostic() -> bool:
+    alias_bad = dataclasses.replace(
+        xcode_facts.alias_nodes[1], kind="other", uid=501, gid=80, mode=0o775
+    )
+    resolved_bad = dataclasses.replace(
+        xcode_facts.resolved_nodes[1], kind="other", uid=501, gid=80, mode=0o775
+    )
+    facts = dataclasses.replace(
+        xcode_facts,
+        alias_nodes=xcode_facts.alias_nodes[:1]
+        + (alias_bad,)
+        + xcode_facts.alias_nodes[2:],
+        resolved_nodes=xcode_facts.resolved_nodes[:1]
+        + (resolved_bad,)
+        + xcode_facts.resolved_nodes[2:],
+    )
+    evaluation = MODULE._evaluate_interpreter_trust(
+        facts, isolated=0, no_site=0, dont_write_bytecode=0
+    )
+    expected = [
+        ("flags", "isolated", -1),
+        ("flags", "no-site", -1),
+        ("flags", "no-bytecode", -1),
+        ("alias", "ancestor-directory", 1),
+        ("alias", "ancestor-root-owned", 1),
+        ("alias", "ancestor-not-writable", 1),
+        ("resolved", "ancestor-directory", 1),
+        ("resolved", "ancestor-root-owned", 1),
+        ("resolved", "ancestor-not-writable", 1),
+    ]
+    observed = [
+        (item.side, item.predicate, item.component_index)
+        for item in evaluation.failures
+    ]
+    node_failures = evaluation.failures[3:]
+    return (
+        not evaluation.accepted
+        and not evaluation.truncated
+        and observed == expected
+        and all(item.basename == "Applications" for item in node_failures)
+        and all(item.kind == "other" for item in node_failures)
+        and all(item.uid == 501 and item.gid == 80 for item in node_failures)
+        and all(item.mode == "0775" for item in node_failures)
+    )
+
+
+check("diagnostic preserves every failure in deterministic order", multi_failure_diagnostic)
+
+
+def diagnostic_schema_is_bounded() -> bool:
+    target = dataclasses.replace(clt_facts.resolved_target, mode=0o777)
+    facts = dataclasses.replace(
+        clt_facts,
+        alias_target=target,
+        resolved_target=target,
+        resolved_nodes=clt_facts.resolved_nodes[:-1] + (target,),
+    )
+    evaluation = MODULE._evaluate_interpreter_trust(
+        facts, isolated=1, no_site=1, dont_write_bytecode=1
+    )
+    encoded = MODULE._startup_diagnostic(evaluation)
+    value = json.loads(encoded)
+    recoded = (
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        + "\n"
+    ).encode("ascii")
+    return (
+        encoded == recoded
+        and encoded.count(b"\n") == 1
+        and len(encoded) <= MODULE.STARTUP_DIAGNOSTIC_LIMIT
+        and set(value)
+        == {
+            "alias_family",
+            "collection_error",
+            "dont_write_bytecode",
+            "failures",
+            "isolated",
+            "no_site",
+            "resolved_family",
+            "resolved_filename",
+            "schema_version",
+            "status",
+            "truncated",
+        }
+        and set(value["failures"][0])
+        == {
+            "basename",
+            "component_index",
+            "gid",
+            "kind",
+            "mode",
+            "predicate",
+            "side",
+            "uid",
+        }
+    )
+
+
+check("diagnostic is one bounded canonical line with exact schema", diagnostic_schema_is_bounded)
+
+
+def private_paths_are_redacted() -> bool:
+    facts = interpreter_facts(
+        "/Users/private-owner/secret/python3",
+        "/private/var/hidden/token/python3.14",
+    )
+    bad = dataclasses.replace(facts.alias_nodes[1], uid=501, gid=20, mode=0o777)
+    facts = dataclasses.replace(
+        facts,
+        alias_nodes=facts.alias_nodes[:1] + (bad,) + facts.alias_nodes[2:],
+    )
+    evaluation = MODULE._evaluate_interpreter_trust(
+        facts, isolated=1, no_site=1, dont_write_bytecode=1
+    )
+    encoded = MODULE._startup_diagnostic(evaluation)
+    forbidden = (b"Users", b"private-owner", b"secret", b"hidden", b"token", b"/private", b"/var")
+    return (
+        evaluation.alias_family == "unreviewed"
+        and evaluation.resolved_family == "unreviewed"
+        and all(item.basename == "redacted" for item in evaluation.failures)
+        and not any(fragment in encoded for fragment in forbidden)
+        and b"/" not in encoded
+        and b'"uid":501' in encoded
+        and b'"gid":20' in encoded
+        and b'"mode":"0777"' in encoded
+    )
+
+
+check("diagnostic redacts hostile private path fragments", private_paths_are_redacted)
+
+
+def failure_collection_is_capped() -> bool:
+    parts = tuple("private" + str(index) for index in range(40))
+    path = "/" + "/".join(parts)
+    bad_nodes = tuple(
+        interpreter_node("directory", uid=501, gid=501, mode=0o777, ino=index + 1)
+        for index in range(len(pathlib.PurePosixPath(path).parts))
+    )
+    facts = dataclasses.replace(
+        clt_facts,
+        alias_path=path,
+        alias_nodes=bad_nodes,
+    )
+    evaluation = MODULE._evaluate_interpreter_trust(
+        facts, isolated=0, no_site=0, dont_write_bytecode=0
+    )
+    encoded = MODULE._startup_diagnostic(evaluation)
+    return (
+        not evaluation.accepted
+        and evaluation.truncated
+        and len(evaluation.failures) == MODULE.STARTUP_FAILURE_LIMIT
+        and len(encoded) <= MODULE.STARTUP_DIAGNOSTIC_LIMIT
+        and all(item.basename == "redacted" for item in evaluation.failures[3:])
+    )
+
+
+check("diagnostic failure collection truncates and fails closed", failure_collection_is_capped)
+
+
+def diagnostic_overflow_falls_back() -> bool:
+    evaluation = MODULE._collection_failure(
+        "os-error", isolated=1, no_site=1, dont_write_bytecode=1
+    )
+    hostile = dataclasses.replace(evaluation, collection_error="x" * 9000)
+    encoded = MODULE._startup_diagnostic(hostile)
+    value = json.loads(encoded)
+    return (
+        len(encoded) <= MODULE.STARTUP_DIAGNOSTIC_LIMIT
+        and value["collection_error"] == "diagnostic-overflow"
+        and value["failures"] == []
+        and value["truncated"] is True
+        and value["status"] == "rejected"
+    )
+
+
+check("diagnostic hard cap uses a fixed fail-closed fallback", diagnostic_overflow_falls_back)
+check(
+    "collection errors use only fixed sanitized enums",
+    lambda: {
+        MODULE._collection_failure(
+            item, isolated=1, no_site=1, dont_write_bytecode=1
+        ).collection_error
+        for item in ("invalid-path", "missing", "permission", "os-error", "invalid-data")
+    }
+    == {"invalid-path", "missing", "permission", "os-error", "invalid-data"},
+)
+check(
+    "unknown collection error text is rejected before serialization",
+    lambda: rejects(
+        lambda: MODULE._collection_failure(
+            "/Users/private/error text",
+            isolated=1,
+            no_site=1,
+            dont_write_bytecode=1,
+        )
+    ),
+)
+
+
+def diagnostic_enums_are_closed() -> bool:
+    evaluation = MODULE._evaluate_interpreter_trust(
+        dataclasses.replace(
+            xcode_facts,
+            alias_nodes=xcode_facts.alias_nodes[:1]
+            + (dataclasses.replace(xcode_facts.alias_nodes[1], kind="hostile"),)
+            + xcode_facts.alias_nodes[2:],
+        ),
+        isolated=0,
+        no_site=0,
+        dont_write_bytecode=0,
+    )
+    allowed_sides = {"flags", "alias", "resolved", "collection"}
+    allowed_kinds = {"directory", "regular", "symlink", "other", "not-applicable"}
+    return all(
+        item.side in allowed_sides
+        and item.kind in allowed_kinds
+        and len(item.mode) == 4
+        and all(char in "01234567" for char in item.mode)
+        for item in evaluation.failures
+    )
+
+
+check("diagnostic side kind and mode enums are closed", diagnostic_enums_are_closed)
+
+
+def every_diagnostic_predicate_and_node_kind_is_exercised() -> bool:
+    evaluations = []
+    evaluations.append(
+        MODULE._evaluate_interpreter_trust(
+            dataclasses.replace(
+                clt_facts,
+                alias_path="relative/private/python3",
+                alias_nodes=(),
+            ),
+            isolated=0,
+            no_site=0,
+            dont_write_bytecode=0,
+        )
+    )
+    bad_ancestor = dataclasses.replace(
+        xcode_facts.alias_nodes[1], kind="symlink", uid=501, gid=80, mode=0o775
+    )
+    evaluations.append(
+        MODULE._evaluate_interpreter_trust(
+            dataclasses.replace(
+                xcode_facts,
+                alias_nodes=xcode_facts.alias_nodes[:1]
+                + (bad_ancestor,)
+                + xcode_facts.alias_nodes[2:],
+            ),
+            isolated=1,
+            no_site=1,
+            dont_write_bytecode=1,
+        )
+    )
+    root_owned_failure = dataclasses.replace(
+        clt_facts.resolved_nodes[2], kind="directory", uid=501, gid=20, mode=0o755
+    )
+    evaluations.append(
+        MODULE._evaluate_interpreter_trust(
+            dataclasses.replace(
+                clt_facts,
+                resolved_nodes=clt_facts.resolved_nodes[:2]
+                + (root_owned_failure,)
+                + clt_facts.resolved_nodes[3:],
+            ),
+            isolated=1,
+            no_site=1,
+            dont_write_bytecode=1,
+        )
+    )
+    bad_alias_leaf = dataclasses.replace(
+        clt_facts.alias_nodes[-1], kind="other", uid=501, gid=20, mode=0o755
+    )
+    evaluations.append(
+        MODULE._evaluate_interpreter_trust(
+            dataclasses.replace(
+                clt_facts,
+                alias_nodes=clt_facts.alias_nodes[:-1] + (bad_alias_leaf,),
+            ),
+            isolated=1,
+            no_site=1,
+            dont_write_bytecode=1,
+        )
+    )
+    regular_mismatch = dataclasses.replace(
+        clt_facts.alias_nodes[-1], kind="regular", ino=444
+    )
+    evaluations.append(
+        MODULE._evaluate_interpreter_trust(
+            dataclasses.replace(
+                clt_facts,
+                alias_nodes=clt_facts.alias_nodes[:-1] + (regular_mismatch,),
+            ),
+            isolated=1,
+            no_site=1,
+            dont_write_bytecode=1,
+        )
+    )
+    bad_target = dataclasses.replace(
+        clt_facts.resolved_target,
+        ino=555,
+        kind="other",
+        uid=501,
+        gid=20,
+        mode=0o666,
+    )
+    evaluations.append(
+        MODULE._evaluate_interpreter_trust(
+            dataclasses.replace(
+                clt_facts,
+                resolved_nodes=clt_facts.resolved_nodes[:-1] + (bad_target,),
+                resolved_target=bad_target,
+            ),
+            isolated=1,
+            no_site=1,
+            dont_write_bytecode=1,
+        )
+    )
+    setid = dataclasses.replace(clt_facts.resolved_target, mode=0o6755)
+    evaluations.append(
+        MODULE._evaluate_interpreter_trust(
+            dataclasses.replace(
+                clt_facts,
+                alias_target=setid,
+                resolved_nodes=clt_facts.resolved_nodes[:-1] + (setid,),
+                resolved_target=setid,
+            ),
+            isolated=1,
+            no_site=1,
+            dont_write_bytecode=1,
+        )
+    )
+    evaluations.append(
+        MODULE._collection_failure(
+            "os-error", isolated=1, no_site=1, dont_write_bytecode=1
+        )
+    )
+    failures = [item for evaluation in evaluations for item in evaluation.failures]
+    predicates = {item.predicate for item in failures}
+    kinds = {item.kind for item in failures}
+    expected_predicates = {
+        "isolated",
+        "no-site",
+        "no-bytecode",
+        "path-canonical",
+        "family-reviewed",
+        "components-complete",
+        "ancestor-directory",
+        "ancestor-root-owned",
+        "ancestor-not-writable",
+        "leaf-root-owned",
+        "leaf-kind",
+        "leaf-identity",
+        "leaf-regular",
+        "leaf-not-writable",
+        "leaf-no-setid",
+        "leaf-executable",
+        "alias-target-identity",
+        "collection-error",
+    }
+    expected_kinds = {"directory", "regular", "symlink", "other", "not-applicable"}
+    if predicates != expected_predicates or kinds != expected_kinds:
+        print(
+            "FAIL diagnostic enum delta:",
+            sorted(predicates ^ expected_predicates),
+            sorted(kinds ^ expected_kinds),
+        )
+    return (
+        predicates == expected_predicates
+        and kinds == expected_kinds
+        and all(-1 <= item.component_index < 64 for item in failures)
+        and all(len(item.mode) == 4 for item in failures)
+    )
+
+
+check(
+    "every diagnostic predicate and node kind has reject evidence",
+    every_diagnostic_predicate_and_node_kind_is_exercised,
+)
 
 
 def self_test_accepts() -> bool:

@@ -155,12 +155,16 @@ installed-version/executable evidence binding or advance any `1.1.11` record.
 The provider-independent version-attestation prerequisite now has one canonical
 fixed-profile runner plus its persistent mutation harness. The runner owns the exact
 snapshot-backed version-only Popen path and a synthetic-only self-test; the harness
-binds its exact source bytes and digest before import. Their 115- and 55-case suites
+binds its exact source bytes and digest before import. Their 136- and 55-case suites
 replace one-off inline runners with bounded process-group ownership, inode-bound
 durable publication, atomic lifecycle completion, and paired weakened controls. They
 invoke no agy, provider, network, or private production evidence. This closes the
 offline provenance prerequisite only; a real version or inventory observation
 remains separately authorized and independently reviewed.
+
+Startup rejection now emits one capped canonical, path-redacted diagnostic line from
+the same evaluator that owns the boolean decision. This is evidence for reconciling a
+runner-image mismatch; it does not make that environment trusted or satisfy the gate.
 
 - **User job:** Learn that Codex or agy has drifted before a normal dispatch breaks,
   while keeping every check read-only and requiring a human to reconcile behavior.

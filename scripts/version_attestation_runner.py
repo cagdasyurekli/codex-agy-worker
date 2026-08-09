@@ -37,6 +37,11 @@ EXPECTED_STDOUT = b"1.1.11\n"
 STREAM_LIMIT = 128
 WALL_SECONDS = 3.0
 PROFILE_LIMIT = 16_384
+STARTUP_DIAGNOSTIC_LIMIT = 8_192
+STARTUP_FAILURE_LIMIT = 32
+STARTUP_COLLECTION_ERRORS = frozenset(
+    {"invalid-path", "missing", "permission", "os-error", "invalid-data"}
+)
 LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
@@ -92,6 +97,7 @@ class AttestationInterrupted(BaseException):
 @dataclass(frozen=True)
 class InterpreterNode:
     dev: int
+    gid: int
     ino: int
     kind: str
     mode: int
@@ -106,6 +112,32 @@ class InterpreterTrustFacts:
     resolved_path: str
     resolved_nodes: tuple[InterpreterNode, ...]
     resolved_target: InterpreterNode
+
+
+@dataclass(frozen=True)
+class InterpreterTrustFailure:
+    side: str
+    predicate: str
+    component_index: int
+    basename: str
+    kind: str
+    uid: int
+    gid: int
+    mode: str
+
+
+@dataclass(frozen=True)
+class InterpreterTrustEvaluation:
+    accepted: bool
+    alias_family: str
+    resolved_family: str
+    resolved_filename: str
+    isolated: bool
+    no_site: bool
+    dont_write_bytecode: bool
+    collection_error: str
+    failures: tuple[InterpreterTrustFailure, ...]
+    truncated: bool
 
 
 @dataclass(frozen=True)
@@ -324,28 +356,124 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
             or any(call.lineno > waits[0].lineno for call in group_calls)
         ):
             raise AttestationError("canonical runner uses group authority after reap")
-    if len(named_calls(main_node, "_production_startup_isolated")) != 1:
+    if (
+        len(named_calls(main_node, "_production_startup_evaluation")) != 1
+        or len(named_calls(main_node, "_startup_diagnostic")) != 1
+    ):
         raise AttestationError("canonical runner lost isolated startup enforcement")
+    startup_assignments = [
+        item
+        for item in main_node.body
+        if isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Name)
+        and item.targets[0].id == "startup"
+        and isinstance(item.value, ast.Call)
+        and isinstance(item.value.func, ast.Name)
+        and item.value.func.id == "_production_startup_evaluation"
+        and not item.value.args
+        and not item.value.keywords
+    ]
+    startup_guards = [
+        item
+        for item in main_node.body
+        if isinstance(item, ast.If)
+        and isinstance(item.test, ast.UnaryOp)
+        and isinstance(item.test.op, ast.Not)
+        and isinstance(item.test.operand, ast.Attribute)
+        and item.test.operand.attr == "accepted"
+        and isinstance(item.test.operand.value, ast.Name)
+        and item.test.operand.value.id == "startup"
+    ]
+    stdin_reads = [
+        item
+        for item in ast.walk(main_node)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "read"
+        and isinstance(item.func.value, ast.Attribute)
+        and item.func.value.attr == "buffer"
+        and isinstance(item.func.value.value, ast.Attribute)
+        and item.func.value.value.attr == "stdin"
+        and isinstance(item.func.value.value.value, ast.Name)
+        and item.func.value.value.value.id == "sys"
+    ]
+    profile_reads = [
+        item
+        for item in main_node.body
+        if isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Name)
+        and item.targets[0].id == "data"
+        and isinstance(item.value, ast.Call)
+        and item.value in stdin_reads
+        and not item.value.keywords
+        and len(item.value.args) == 1
+        and isinstance(item.value.args[0], ast.BinOp)
+        and isinstance(item.value.args[0].op, ast.Add)
+        and isinstance(item.value.args[0].left, ast.Name)
+        and item.value.args[0].left.id == "PROFILE_LIMIT"
+        and isinstance(item.value.args[0].right, ast.Constant)
+        and item.value.args[0].right.value == 1
+    ]
+    if (
+        len(startup_assignments) != 1
+        or len(startup_guards) != 1
+        or len(stdin_reads) != 1
+        or len(profile_reads) != 1
+    ):
+        raise AttestationError("canonical runner lost startup guard structure")
+    startup_guard = startup_guards[0]
+    if (
+        len(startup_guard.body) != 2
+        or not isinstance(startup_guard.body[0], ast.Expr)
+        or not isinstance(startup_guard.body[0].value, ast.Call)
+        or not isinstance(startup_guard.body[0].value.func, ast.Attribute)
+        or startup_guard.body[0].value.func.attr != "write"
+        or len(startup_guard.body[0].value.args) != 1
+        or not isinstance(startup_guard.body[0].value.args[0], ast.Call)
+        or not isinstance(startup_guard.body[0].value.args[0].func, ast.Name)
+        or startup_guard.body[0].value.args[0].func.id != "_startup_diagnostic"
+        or len(startup_guard.body[0].value.args[0].args) != 1
+        or not isinstance(startup_guard.body[0].value.args[0].args[0], ast.Name)
+        or startup_guard.body[0].value.args[0].args[0].id != "startup"
+        or not isinstance(startup_guard.body[1], ast.Return)
+        or not isinstance(startup_guard.body[1].value, ast.Constant)
+        or startup_guard.body[1].value.value != 64
+        or not (
+            startup_assignments[0].lineno
+            < startup_guard.lineno
+            < profile_reads[0].lineno
+        )
+    ):
+        raise AttestationError("canonical runner startup rejection can fall through")
     startup_requirements = {
-        "type(isolated)" + " is int": 1,
-        "isolated" + " == 1": 1,
-        "type(no_site)" + " is int": 1,
-        "no_site" + " == 1": 1,
-        "type(dont_write_bytecode)" + " is int": 1,
-        "dont_write_bytecode" + " == 1": 1,
-        "node.uid" + " != 0": 2,
-        "node.mode" + " & 0o022": 2,
-        "resolved_leaf.kind" + ' != "regular"': 1,
-        "resolved_leaf.uid" + " != 0": 1,
-        "resolved_leaf.mode" + " & 0o022": 1,
-        "resolved_leaf.mode" + " & 0o6000": 1,
-        "not resolved_leaf.mode" + " & 0o111": 1,
+        "isolated_ok = type(isolated)" + " is int and isolated == 1": 1,
+        "no_site_ok = type(no_site)" + " is int and no_site == 1": 1,
+        "no_bytecode_ok = type(dont_write_bytecode)" + " is int and dont_write_bytecode == 1": 1,
+        "if node.kind" + ' != "directory"': 1,
+        "if node.uid" + " != 0": 1,
+        "if node.mode" + " & 0o022": 1,
+        "if leaf.kind" + ' != "regular"': 1,
+        "if leaf.uid" + " != 0": 2,
+        "if leaf.mode" + " & 0o022": 1,
+        "if leaf.mode" + " & 0o6000": 1,
+        "if not leaf.mode" + " & 0o111": 1,
         "os.open(resolved," + " os.O_RDONLY | CLOEXEC | NOFOLLOW)": 1,
         "if parts" + " == (": 1,
         "if xcode_root and parts[5:]" + ' == ("usr", "bin", "python3")': 1,
         "len(tail)" + " != 3": 1,
         "not _numeric_python_version" + "(tail[0])": 1,
-        "return tail[2]" + ' in {"python3", "python" + tail[0]}': 1,
+        "if tail[2]" + ' not in {"python3", "python" + tail[0]}': 1,
+        'if family == "unreviewed"' + " or component_index < 0": 1,
+        "if len(failures)" + " >= STARTUP_FAILURE_LIMIT": 1,
+        "sys.stderr.buffer.write(" + "_startup_diagnostic(startup))": 1,
+        '"failures": ' + "[dataclasses.asdict(item) for item in evaluation.failures]": 1,
+        'return _collection_failure("invalid-path", ' + "**flags)": 1,
+        'return _collection_failure("missing", ' + "**flags)": 1,
+        'return _collection_failure("permission", ' + "**flags)": 1,
+        'return _collection_failure("os-error", ' + "**flags)": 1,
+        'return _collection_failure("invalid-data", ' + "**flags)": 1,
     }
     if any(text.count(marker) != count for marker, count in startup_requirements.items()):
         raise AttestationError("canonical runner lost interpreter trust enforcement")
@@ -1162,6 +1290,7 @@ def _interpreter_node(value: os.stat_result) -> InterpreterNode:
         kind = "other"
     return InterpreterNode(
         dev=value.st_dev,
+        gid=value.st_gid,
         ino=value.st_ino,
         kind=kind,
         mode=stat.S_IMODE(value.st_mode),
@@ -1214,10 +1343,10 @@ def _numeric_python_version(value: str) -> bool:
     return len(parts) == 2 and all(item.isdigit() and item for item in parts)
 
 
-def _reviewed_apple_interpreter_path(path: str) -> bool:
+def _apple_interpreter_family(path: str) -> str:
     parts = pathlib.PurePosixPath(path).parts
     if path == "/usr/bin/python3":
-        return True
+        return "usr-bin"
     if parts == (
         "/",
         "Library",
@@ -1227,7 +1356,7 @@ def _reviewed_apple_interpreter_path(path: str) -> bool:
         "bin",
         "python3",
     ):
-        return True
+        return "clt-usr-bin"
     xcode_app = parts[2] if len(parts) > 2 else ""
     versioned_xcode = (
         xcode_app.startswith("Xcode_")
@@ -1243,7 +1372,7 @@ def _reviewed_apple_interpreter_path(path: str) -> bool:
         and (xcode_app == "Xcode.app" or versioned_xcode)
     )
     if xcode_root and parts[5:] == ("usr", "bin", "python3"):
-        return True
+        return "xcode-usr-bin"
     clt_framework = (
         "/",
         "Library",
@@ -1268,14 +1397,171 @@ def _reviewed_apple_interpreter_path(path: str) -> bool:
     prefix: tuple[str, ...]
     if parts[: len(clt_framework)] == clt_framework:
         prefix = clt_framework
+        family = "clt-framework"
     elif xcode_root and parts[: len(xcode_framework)] == xcode_framework:
         prefix = xcode_framework
+        family = "xcode-framework"
     else:
-        return False
+        return "unreviewed"
     tail = parts[len(prefix) :]
     if len(tail) != 3 or tail[1] != "bin" or not _numeric_python_version(tail[0]):
-        return False
-    return tail[2] in {"python3", "python" + tail[0]}
+        return "unreviewed"
+    if tail[2] not in {"python3", "python" + tail[0]}:
+        return "unreviewed"
+    return family
+
+
+def _reviewed_apple_interpreter_path(path: str) -> bool:
+    return _apple_interpreter_family(path) != "unreviewed"
+
+
+def _resolved_filename_class(path: str) -> str:
+    name = pathlib.PurePosixPath(path).name
+    if name == "python3":
+        return "python3"
+    if name.startswith("python") and _numeric_python_version(name[6:]):
+        return "python-major-minor"
+    return "other"
+
+
+def _safe_component(
+    path: str, family: str, component_index: int
+) -> str:
+    if family == "unreviewed" or component_index < 0:
+        return "redacted"
+    parts = pathlib.PurePosixPath(path).parts
+    if component_index >= len(parts):
+        return "redacted"
+    value = parts[component_index]
+    if not value or len(value) > 64:
+        return "redacted"
+    if value == "/":
+        return "root"
+    if any(char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for char in value):
+        return "redacted"
+    return value
+
+
+def _diagnostic_node(node: Optional[InterpreterNode]) -> tuple[str, int, int, str]:
+    if node is None:
+        return ("not-applicable", -1, -1, "0000")
+    kind = node.kind if node.kind in {"directory", "regular", "symlink", "other"} else "other"
+    uid = node.uid if type(node.uid) is int and 0 <= node.uid <= 2_147_483_647 else -1
+    gid = node.gid if type(node.gid) is int and 0 <= node.gid <= 2_147_483_647 else -1
+    mode = node.mode if type(node.mode) is int else 0
+    return (kind, uid, gid, format(mode & 0o7777, "04o"))
+
+
+def _evaluate_interpreter_trust(
+    facts: InterpreterTrustFacts,
+    *,
+    isolated: int,
+    no_site: int,
+    dont_write_bytecode: int,
+) -> InterpreterTrustEvaluation:
+    alias_family = _apple_interpreter_family(facts.alias_path)
+    resolved_family = _apple_interpreter_family(facts.resolved_path)
+    isolated_ok = type(isolated) is int and isolated == 1
+    no_site_ok = type(no_site) is int and no_site == 1
+    no_bytecode_ok = type(dont_write_bytecode) is int and dont_write_bytecode == 1
+    failures: list[InterpreterTrustFailure] = []
+    truncated = False
+
+    def add(
+        side: str,
+        predicate: str,
+        component_index: int = -1,
+        node: Optional[InterpreterNode] = None,
+    ) -> None:
+        nonlocal truncated
+        if len(failures) >= STARTUP_FAILURE_LIMIT:
+            truncated = True
+            return
+        path = facts.alias_path if side == "alias" else facts.resolved_path
+        family = alias_family if side == "alias" else resolved_family
+        kind, uid, gid, mode = _diagnostic_node(node)
+        failures.append(
+            InterpreterTrustFailure(
+                side=side,
+                predicate=predicate,
+                component_index=component_index,
+                basename=_safe_component(path, family, component_index),
+                kind=kind,
+                uid=uid,
+                gid=gid,
+                mode=mode,
+            )
+        )
+
+    if not isolated_ok:
+        add("flags", "isolated")
+    if not no_site_ok:
+        add("flags", "no-site")
+    if not no_bytecode_ok:
+        add("flags", "no-bytecode")
+
+    for side, path, nodes, target, family in (
+        ("alias", facts.alias_path, facts.alias_nodes, facts.alias_target, alias_family),
+        (
+            "resolved",
+            facts.resolved_path,
+            facts.resolved_nodes,
+            facts.resolved_target,
+            resolved_family,
+        ),
+    ):
+        parts = pathlib.PurePosixPath(path).parts
+        if not os.path.isabs(path) or os.path.normpath(path) != path:
+            add(side, "path-canonical")
+        if family == "unreviewed":
+            add(side, "family-reviewed")
+        if not nodes or len(nodes) != len(parts):
+            add(side, "components-complete")
+        for index, node in enumerate(nodes[:-1]):
+            if node.kind != "directory":
+                add(side, "ancestor-directory", index, node)
+            if node.uid != 0:
+                add(side, "ancestor-root-owned", index, node)
+            if node.mode & 0o022:
+                add(side, "ancestor-not-writable", index, node)
+        if not nodes:
+            continue
+        leaf_index = len(nodes) - 1
+        leaf = nodes[-1]
+        if side == "alias":
+            if leaf.uid != 0:
+                add(side, "leaf-root-owned", leaf_index, leaf)
+            if leaf.kind not in {"regular", "symlink"}:
+                add(side, "leaf-kind", leaf_index, leaf)
+            if leaf.kind == "regular" and leaf != target:
+                add(side, "leaf-identity", leaf_index, leaf)
+        else:
+            if leaf != target:
+                add(side, "leaf-identity", leaf_index, leaf)
+            if leaf.kind != "regular":
+                add(side, "leaf-regular", leaf_index, leaf)
+            if leaf.uid != 0:
+                add(side, "leaf-root-owned", leaf_index, leaf)
+            if leaf.mode & 0o022:
+                add(side, "leaf-not-writable", leaf_index, leaf)
+            if leaf.mode & 0o6000:
+                add(side, "leaf-no-setid", leaf_index, leaf)
+            if not leaf.mode & 0o111:
+                add(side, "leaf-executable", leaf_index, leaf)
+    if facts.alias_target != facts.resolved_target:
+        add("resolved", "alias-target-identity", len(facts.resolved_nodes) - 1, facts.resolved_target)
+    return InterpreterTrustEvaluation(
+        accepted=not failures and not truncated,
+        alias_family=alias_family,
+        resolved_family=resolved_family,
+        resolved_filename=_resolved_filename_class(facts.resolved_path),
+        isolated=isolated_ok,
+        no_site=no_site_ok,
+        dont_write_bytecode=no_bytecode_ok,
+        collection_error="none",
+        failures=tuple(failures),
+        truncated=truncated,
+    )
 
 
 def _trusted_interpreter_facts(
@@ -1285,66 +1571,99 @@ def _trusted_interpreter_facts(
     no_site: int,
     dont_write_bytecode: int,
 ) -> bool:
-    if not (
-        type(isolated) is int
-        and isolated == 1
-        and type(no_site) is int
-        and no_site == 1
-        and type(dont_write_bytecode) is int
-        and dont_write_bytecode == 1
-    ):
-        return False
-    if not (
-        os.path.isabs(facts.alias_path)
-        and os.path.normpath(facts.alias_path) == facts.alias_path
-        and os.path.isabs(facts.resolved_path)
-        and os.path.normpath(facts.resolved_path) == facts.resolved_path
-        and _reviewed_apple_interpreter_path(facts.alias_path)
-        and _reviewed_apple_interpreter_path(facts.resolved_path)
-        and facts.alias_nodes
-        and facts.resolved_nodes
-        and len(facts.alias_nodes)
-        == len(pathlib.PurePosixPath(facts.alias_path).parts)
-        and len(facts.resolved_nodes)
-        == len(pathlib.PurePosixPath(facts.resolved_path).parts)
-    ):
-        return False
-    for node in facts.alias_nodes[:-1]:
-        if node.kind != "directory" or node.uid != 0 or node.mode & 0o022:
-            return False
-    alias_leaf = facts.alias_nodes[-1]
-    if alias_leaf.uid != 0 or alias_leaf.kind not in {"regular", "symlink"}:
-        return False
-    if alias_leaf.kind == "regular" and alias_leaf != facts.alias_target:
-        return False
-    for node in facts.resolved_nodes[:-1]:
-        if node.kind != "directory" or node.uid != 0 or node.mode & 0o022:
-            return False
-    resolved_leaf = facts.resolved_nodes[-1]
-    if (
-        resolved_leaf != facts.resolved_target
-        or facts.alias_target != facts.resolved_target
-        or resolved_leaf.kind != "regular"
-        or resolved_leaf.uid != 0
-        or resolved_leaf.mode & 0o022
-        or resolved_leaf.mode & 0o6000
-        or not resolved_leaf.mode & 0o111
-    ):
-        return False
-    return True
+    return _evaluate_interpreter_trust(
+        facts,
+        isolated=isolated,
+        no_site=no_site,
+        dont_write_bytecode=dont_write_bytecode,
+    ).accepted
 
 
-def _production_startup_isolated() -> bool:
+def _collection_failure(
+    collection_error: str,
+    *,
+    isolated: int,
+    no_site: int,
+    dont_write_bytecode: int,
+) -> InterpreterTrustEvaluation:
+    if collection_error not in STARTUP_COLLECTION_ERRORS:
+        raise AttestationError("invalid startup collection classification")
+    failure = InterpreterTrustFailure(
+        side="collection",
+        predicate="collection-error",
+        component_index=-1,
+        basename="redacted",
+        kind="not-applicable",
+        uid=-1,
+        gid=-1,
+        mode="0000",
+    )
+    return InterpreterTrustEvaluation(
+        accepted=False,
+        alias_family="unavailable",
+        resolved_family="unavailable",
+        resolved_filename="unavailable",
+        isolated=type(isolated) is int and isolated == 1,
+        no_site=type(no_site) is int and no_site == 1,
+        dont_write_bytecode=type(dont_write_bytecode) is int and dont_write_bytecode == 1,
+        collection_error=collection_error,
+        failures=(failure,),
+        truncated=False,
+    )
+
+
+def _production_startup_evaluation() -> InterpreterTrustEvaluation:
+    flags = {
+        "isolated": sys.flags.isolated,
+        "no_site": sys.flags.no_site,
+        "dont_write_bytecode": sys.flags.dont_write_bytecode,
+    }
     try:
         facts = _collect_interpreter_trust_facts(sys.executable)
-    except (AttestationError, OSError, ValueError):
-        return False
-    return _trusted_interpreter_facts(
-        facts,
-        isolated=sys.flags.isolated,
-        no_site=sys.flags.no_site,
-        dont_write_bytecode=sys.flags.dont_write_bytecode,
-    )
+    except AttestationError:
+        return _collection_failure("invalid-path", **flags)
+    except FileNotFoundError:
+        return _collection_failure("missing", **flags)
+    except PermissionError:
+        return _collection_failure("permission", **flags)
+    except OSError:
+        return _collection_failure("os-error", **flags)
+    except ValueError:
+        return _collection_failure("invalid-data", **flags)
+    return _evaluate_interpreter_trust(facts, **flags)
+
+
+def _startup_diagnostic(evaluation: InterpreterTrustEvaluation) -> bytes:
+    payload = {
+        "alias_family": evaluation.alias_family,
+        "collection_error": evaluation.collection_error,
+        "dont_write_bytecode": evaluation.dont_write_bytecode,
+        "failures": [dataclasses.asdict(item) for item in evaluation.failures],
+        "isolated": evaluation.isolated,
+        "no_site": evaluation.no_site,
+        "resolved_family": evaluation.resolved_family,
+        "resolved_filename": evaluation.resolved_filename,
+        "schema_version": 1,
+        "status": "rejected",
+        "truncated": evaluation.truncated,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
+    if len(encoded) <= STARTUP_DIAGNOSTIC_LIMIT:
+        return encoded
+    fallback = {
+        "alias_family": "unavailable",
+        "collection_error": "diagnostic-overflow",
+        "dont_write_bytecode": evaluation.dont_write_bytecode,
+        "failures": [],
+        "isolated": evaluation.isolated,
+        "no_site": evaluation.no_site,
+        "resolved_family": "unavailable",
+        "resolved_filename": "unavailable",
+        "schema_version": 1,
+        "status": "rejected",
+        "truncated": True,
+    }
+    return json.dumps(fallback, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
 
 
 def main(argv: Sequence[str]) -> int:
@@ -1359,8 +1678,9 @@ def main(argv: Sequence[str]) -> int:
     if list(argv) != ["--attest-version"]:
         print("version attestation runner: invalid invocation", file=sys.stderr)
         return 64
-    if not _production_startup_isolated():
-        print("version attestation runner: isolated startup required", file=sys.stderr)
+    startup = _production_startup_evaluation()
+    if not startup.accepted:
+        sys.stderr.buffer.write(_startup_diagnostic(startup))
         return 64
     data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)
     try:

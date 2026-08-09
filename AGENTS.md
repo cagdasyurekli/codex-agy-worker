@@ -39,7 +39,7 @@ Keep these counts current when their suites change:
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
-- Canonical version-attestation runner: 115 offline fixed-profile/source-binding cases.
+- Canonical version-attestation runner: 136 offline fixed-profile/source-binding cases.
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution: 135 offline

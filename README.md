@@ -728,7 +728,7 @@ bug-report.sh                 sanitized local draft/preview/optional submission
 compat/                       per-tool baselines, reviewed evidence, and active exact matrix
 scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
-scripts/version_attestation_runner.py fixed-profile snapshot version runner; real use separately authorized
+scripts/version_attestation_runner.py fixed-profile snapshot version runner with bounded startup diagnostics; real use separately authorized
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
 scripts/official_github.py    fixed, proxyless, redirect-free GitHub REST evidence client
@@ -752,7 +752,7 @@ tests/test-update.sh          310-case offline transport/process/inventory/local
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
-tests/test-version-attestation-runner.py  115-case offline canonical fixed-profile runner suite
+tests/test-version-attestation-runner.py  136-case offline canonical fixed-profile runner suite
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite

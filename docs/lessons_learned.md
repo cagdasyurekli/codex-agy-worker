@@ -323,3 +323,8 @@ path that changes with the macOS image. Keep `-I -S -B` mandatory, resolve the a
 executable fail-closed, restrict it to reviewed Apple system families, and verify the
 regular root-owned executable plus every non-writable ancestor instead of pinning one
 image-specific string.
+
+When hosted-runner trust facts drift, emit only bounded, canonical categories from the
+same evaluator that rejected them. Report every ordered violation, redact unreviewed
+path components, cap the record, and treat it as diagnostic evidence rather than a
+reason to relax the trust boundary.
