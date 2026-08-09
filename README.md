@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The nine offline suites need no agy process, network access, API key, or GitHub login.
+The ten offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -728,7 +728,10 @@ bug-report.sh                 sanitized local draft/preview/optional submission
 compat/                       per-tool baselines, reviewed evidence, and active exact matrix
 scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
+scripts/version_attestation_runner.py fixed-profile snapshot version runner with bounded startup diagnostics; real use separately authorized
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
+scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
+scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
 scripts/official_github.py    fixed, proxyless, redirect-free GitHub REST evidence client
 scripts/official_distribution.py  fixed, bounded agy distribution-manifest canary
@@ -751,10 +754,11 @@ tests/test-update.sh          310-case offline transport/process/inventory/local
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
-tests/test-version-attestation-harness.py  52-case offline version-attestation mutation suite
+tests/test-version-attestation-runner.py  157-case offline canonical fixed-profile runner suite
+tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       135-case offline Codex package/relocation/landing suite
+tests/test-packaging.sh       161-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          180-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
@@ -783,6 +787,14 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
   quota efficiency, or dual-selector composition inside agy.
 - A green doctor result covers offline prerequisites only. It does not predict live
   authentication, provider, sandbox, task, or dispatch behavior and never fixes them.
+- Version attestation uses the fixed `/usr/bin/python3 -I -S -B` launch and exact
+  reviewed Apple interpreter families. It trusts the selected interpreter, hosted
+  image, local account owner, and OS administrators; it checks canonical components,
+  alias/target identity, executable/no-setid mode, and rejects world-writable
+  directories or resolved executables.
+  UID/GID and owner/group writability remain bounded diagnostics, not binary
+  provenance. This is not same-user or hostile-PR tamper resistance, code-signing
+  verification, or OS attestation.
 
 ## License
 

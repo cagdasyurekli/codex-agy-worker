@@ -39,10 +39,11 @@ Keep these counts current when their suites change:
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
-- Version-attestation mutation harness: 52 offline publication/process-group/signal cases.
+- Canonical version-attestation runner: 157 offline fixed-profile/source-binding cases.
+- Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 135 offline
-  manifest/runtime-copy/relocation/landing cases.
+- Codex package/skill distribution and CI policy: 161 offline
+  manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 180 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
@@ -64,12 +65,13 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-evidence-receipt.sh # offline receipt/protocol/publication coverage
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
-python3 -I -S -B tests/test-version-attestation-harness.py # offline fake-child mutation harness
+/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
+/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py # offline fake-child mutation harness
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
 ./tests/test-proof-demo.sh      # offline synthetic pass/reject proof coverage
-bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
+bash -n ./*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
 (
   AGY_WORKER_PYCACHE="$(mktemp -d -t agyworker-pycache.XXXXXX)" || exit 1
   trap 'rm -rf -- "$AGY_WORKER_PYCACHE"' EXIT
@@ -130,11 +132,32 @@ only a passing test has not been shown to catch anything.
   Never request the archive. The checked-in tuple detects drift but cannot advance a
   baseline, prove source/behavior, or activate model/effort resolution.
 - **Version attestation needs a proven supervisor, not an ad hoc probe.** Keep the
-  persistent mutation harness offline and synthetic. Every controller must use its
+  canonical runner fixed to one snapshot-backed `--version` call and keep its
+  persistent mutation harness offline and synthetic. The harness must bind the exact
+  canonical source bytes before importing them. Production mode requires the fixed
+  `/usr/bin/python3 -I -S -B` launch. Trust the selected reviewed Apple interpreter,
+  hosted image, local owner, and OS administrators; require exact path/component and
+  alias/target identity, regular executable/no-setid target, and no world-writable
+  directory or resolved executable. UID/GID and owner/group writability are
+  diagnostic facts, not provenance authority. Do not claim same-user or hostile-PR
+  tamper resistance, code signing,
+  binary provenance, or OS attestation. Bind snapshot, source, and external parent to
+  the prior
+  evidence record. Every controller must use its
   one bounded, signal-masked process-group owner; publication and completion must
   remain inode-pinned, no-overwrite, parent-fsynced, and paired with weakened controls.
   Test-only mutations are fixed Python callables/copies, never production CLI or
-  environment overrides. A green harness authorizes no agy, provider, or metadata call.
+  environment overrides. Self-test mode may use only synthetic private fixtures and
+  must have no path to production evidence. Green runner/harness tests authorize no
+  agy, provider, or metadata call.
+- **CI diff hygiene audits committed bytes.** Keep checkout history sufficient for
+  the GitHub event range and run `scripts/ci-diff-check.sh`; its stdlib scanner must
+  inspect every changed regular head blob independently of Git attributes with a
+  linear, globally bounded scan. This deliberately rejects pre-existing hygiene
+  defects in a changed file. A plain
+  worktree-only `git diff --check` is not equivalent. Pull requests use base...head, pushes use
+  before..head, and an all-zero initial push compares the root commit to the empty
+  tree. Never fetch an extra ref inside this check.
 - **An inventory display label is not another model.** Interpret owner-captured
   `agy models` evidence line by line against the exact reviewed slug allowlist.
   `gpt-oss` is display text only when its line contains the one exact canonical
