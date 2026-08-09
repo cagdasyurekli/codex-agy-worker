@@ -758,7 +758,7 @@ tests/test-version-attestation-runner.py  157-case offline canonical fixed-profi
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       161-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       165-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          180-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
