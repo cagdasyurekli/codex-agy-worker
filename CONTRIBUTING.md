@@ -26,12 +26,13 @@ Run the offline suites and static checks before requesting review:
 ./tests/test-evidence-receipt.sh
 ./tests/test-agy-worker.sh
 ./tests/test-update.sh
-python3 -I -S -B tests/test-version-attestation-harness.py
+/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py
+/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py
 ./tests/test-reporting.sh
 ./tests/test-packaging.sh
 ./tests/test-doctor.sh
 ./tests/test-proof-demo.sh
-bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh
+bash -n ./*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh
 (
   AGY_WORKER_PYCACHE="$(mktemp -d -t agyworker-pycache.XXXXXX)" || exit 1
   trap 'rm -rf -- "$AGY_WORKER_PYCACHE"' EXIT

@@ -109,14 +109,15 @@ accept a candidate, replace human diff review, or certify correctness or securit
 | `proof-demo.sh`, `demo/fixtures/` | Repository-only offline starter proof using two canonical synthetic envelopes and isolated temporary repositories | `tests/test-proof-demo.sh` (21 cases) |
 | `skills/agy-worker/runtime/agents/*.md` | Prompt-injected bounded personas; prompt text is guidance, not enforcement | dispatcher suite plus bounded real exercises |
 | `update.sh`, `scripts/compatibility.py`, `scripts/compatibility_probe.py`, `scripts/agy_inventory.py`, `scripts/official_github.py`, `scripts/official_distribution.py`, `compat/` | Explicit project releases; exact fixed-REST agy/Codex observation; bounded process-group/version probes; exact-line allowlisted agy inventory interpretation with reserved provider namespaces; sanitized reconciliation records; bounded distribution-manifest canary; strict per-tool metadata and active-only-when-bound model/effort matrix. Explicit apply-time Git fetch remains ambient-configuration-aware. | `tests/test-update.sh` (310 cases, including fixed transport, supervisor, inventory, and manifest adversary harnesses) |
-| `scripts/version_attestation_harness.py` | Persistent provider-independent mutation harness for owner-private no-overwrite publication, one bounded synthetic controller supervisor, exact process-group cleanup, lifecycle-signal linearization, and fixed copy-based weakened controls. It never invokes agy or reads compatibility evidence. | `tests/test-version-attestation-harness.py` (52 cases) |
+| `scripts/version_attestation_runner.py` | Canonical fixed-profile snapshot-backed `--version` attestation; fixed `/usr/bin/python3 -I -S -B` launch under an explicit trusted Apple interpreter/host/local-owner/OS-admin boundary; exact family, component, family-specific alias kind, alias/target identity, executable/no-setid, and no-world-writable-directory/resolved-executable checks; bounded UID/GID/mode diagnostics; one exact Popen; bounded streams/pre-reap group cleanup; private durable binding; and synthetic-only self-test. It does not prove binary provenance, code signing, host attestation, or same-user/hostile-PR tamper resistance. Production execution remains a separate explicit action. | `tests/test-version-attestation-runner.py` (157 cases) |
+| `scripts/version_attestation_harness.py` | Persistent provider-independent mutation harness for owner-private no-overwrite publication, one bounded synthetic controller supervisor, exact process-group cleanup, lifecycle-signal linearization, fixed copy-based weakened controls, and exact byte/SHA binding to the canonical runner before import. It never invokes agy or reads compatibility evidence. | `tests/test-version-attestation-harness.py` (55 cases) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
-| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (135 cases) plus platform validators |
-| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (135 cases) plus review |
-| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (135 cases) plus rendered review |
-| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (135 cases) plus rendered review |
+| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (161 cases) plus platform validators |
+| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (161 cases) plus review |
+| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (161 cases) plus rendered review |
+| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (161 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
-| `.github/workflows/test.yml` | macOS CI for syntax and all nine offline suites | exercised by GitHub Actions |
+| `.github/workflows/test.yml`, `scripts/ci-diff-check.sh`, `scripts/ci_diff_check.py` | macOS CI for committed PR/push diff hygiene, syntax, and all ten offline suites. Checkout supplies the event range; the helper performs no fetch and linearly scans each changed immutable head blob independently of attributes or diff drivers. | packaging policy tests plus GitHub Actions |
 | `.github/workflows/compatibility-watch.yml` | Weekly/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
 | `docs/ROADMAP.md` | Planned dependency-ordered product slices, approval gates, and honest success measures; not current behavior | human review; implementation claims remain prohibited until their slices land |
@@ -158,11 +159,14 @@ accept a candidate, replace human diff review, or certify correctness or securit
   through 11 exact canonical line entries. Display aliases and generic regex matches
   are not inventory authority; unknown reviewed-provider tokens fail closed. Parsing
   cannot activate or advance compatibility metadata.
-- `scripts/version_attestation_harness.py` is offline proof infrastructure, not
-  compatibility evidence. Its fixed fake child and copy-based mutations exercise
-  publication, process-group, and signal failure boundaries without touching agy,
-  private evidence, provider state, metadata, or the network. A green result cannot
-  authorize or substitute for a separately approved real observation.
+- `scripts/version_attestation_runner.py` owns the one fixed production `--version`
+  path, but accepts only an isolated system-Python startup and a prior-bound private
+  source/snapshot profile. `scripts/version_attestation_harness.py` is offline proof
+  infrastructure, not compatibility evidence. Its fixed fake child and copy-based
+  mutations exercise the canonical runner plus publication, process-group, and signal
+  failure boundaries without touching agy, private evidence, provider state, metadata,
+  or the network. A green result cannot authorize or substitute for a separately
+  approved real observation.
 - The fixed agy distribution manifest is a drift canary, not executable or source
   evidence. Its validated archive tuple is never requested, opened, hashed, or run;
   the observational snapshot detects same-version build/hash changes but cannot

@@ -309,3 +309,37 @@ need, and compare light/dark path geometry in order. Verify every PNG chunk and 
 then boundedly decode the scanlines so valid framing cannot hide transparency or a
 broken image stream. Do not imply that a checked-in preview is active in GitHub
 repository settings.
+
+Do not let an offline mutation harness prove only a reimplementation of a sensitive
+runner. Keep the production one-call path in one canonical stdlib module, bind the
+exact source byte count and SHA before importing it, and make synthetic self-test use
+that same function with fixed test-only callables. A green generic lifecycle harness
+is useful evidence for its primitives, but it cannot substitute for exact production
+source provenance.
+
+Do not use the literal value of `sys.executable`, UID/GID, or owner/group writability
+as Apple interpreter provenance. `/usr/bin/python3` can resolve into a versioned Xcode
+or Command Line Tools tree owned by the hosted job account. Keep the fixed
+`/usr/bin/python3 -I -S -B` launch, exact reviewed family/component grammar,
+alias/target identity, regular executable/no-setid target, and no-world-writable
+directory or resolved-executable checks.
+Be honest about the TCB: the selected interpreter, hosted image, local owner, and OS
+administrators are trusted. These in-process checks are drift/sanity evidence, not
+same-user or hostile-PR tamper resistance, binary provenance, code signing, or OS
+attestation.
+
+When hosted-runner trust facts drift, emit only bounded, canonical categories from the
+same evaluator that rejected them. Report every ordered violation, redact unreviewed
+path components, cap the record, and treat it as diagnostic evidence rather than a
+reason to relax the trust boundary.
+
+A clean worktree does not prove that a committed pull-request patch passes
+`git diff --check`. CI must check the GitHub event's immutable base-to-head range:
+base...head for pull requests, before..head for ordinary pushes, and the empty tree
+to head for an all-zero initial push. Give checkout enough history for those objects;
+do not repair a missing range by fetching an extra untrusted ref inside the gate.
+Repository `.gitattributes` can classify a path as `-diff` and make Git's own check
+skip its content, so pair that check with a globally bounded, linear raw-blob scan of
+every changed regular head file. The stricter scan rejects pre-existing hygiene
+defects in a changed file and rejects binary, oversized, or unsupported committed
+types fail-closed; it does not run diff algorithms or attribute-selected drivers.

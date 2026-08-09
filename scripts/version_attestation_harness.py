@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import os
 import selectors
@@ -32,6 +33,8 @@ TERM_GRACE_SECONDS = 0.20
 KILL_GRACE_SECONDS = 0.75
 HANDSHAKE_SECONDS = 1.50
 HANDSHAKE_LIMIT = 64
+CANONICAL_RUNNER_BYTES = 62988
+CANONICAL_RUNNER_SHA256 = "e6bd55d2d0ab6c542745fd1bb1af4f6f4b7f163abb6f8c78597a24475d501d28"
 
 
 class HarnessError(ValueError):
@@ -68,6 +71,45 @@ class FsyncMutation:
 
     role: str
     ordinal: int
+
+
+def _runner_source_matches(data: bytes) -> bool:
+    return (
+        len(data) == CANONICAL_RUNNER_BYTES
+        and hashlib.sha256(data).hexdigest() == CANONICAL_RUNNER_SHA256
+    )
+
+
+def run_canonical_runner_binding_cases() -> list[dict[str, object]]:
+    """Bind and exercise only the fixed adjacent canonical runner source."""
+
+    runner_path = Path(__file__).resolve().with_name("version_attestation_runner.py")
+    data = runner_path.read_bytes()
+    if not _runner_source_matches(data):
+        raise HarnessError("canonical runner source binding drifted")
+    spec = importlib.util.spec_from_file_location(
+        "version_attestation_runner_bound", runner_path
+    )
+    if spec is None or spec.loader is None:
+        raise HarnessError("canonical runner cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    contract = module.validate_source_contract(data)
+    result = module.run_offline_self_test()
+    if (
+        contract.get("sha256") != CANONICAL_RUNNER_SHA256
+        or contract.get("byte_count") != CANONICAL_RUNNER_BYTES
+        or result.get("status") != "accepted"
+        or result.get("call_count") != 1
+    ):
+        raise HarnessError("canonical runner production-path self-test failed")
+    if _runner_source_matches(data + b"\n"):
+        raise HarnessError("canonical runner drift mutation was not killed")
+    return [
+        {"case_id": "secure-canonical-runner-binding", "status": "accepted"},
+        {"case_id": "mutation-canonical-runner-source-drift", "status": "killed"},
+    ]
 
 
 def _require_signal_primitives() -> None:
@@ -1082,6 +1124,7 @@ def run_offline_harness() -> dict[str, object]:
     os.chmod(private_root, 0o700)
     try:
         evidence = []
+        evidence.extend(run_canonical_runner_binding_cases())
         evidence.extend(run_publication_cases(private_root))
         evidence.extend(run_fsync_authority_cases(private_root))
         evidence.extend(run_signal_cases(private_root))
