@@ -52,9 +52,14 @@ source_required = {
     '"--no-ext-diff", "--no-textconv"': 3,
     '"diff-tree",': 1,
     '"--raw",': 1,
+    '"--full-index",': 1,
     '"--no-renames",': 1,
-    '_check_head_blob(new)': 1,
+    '[GIT, "cat-file", "--batch"]': 1,
+    '_check_head_blob(blob)': 1,
     'deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS': 1,
+    'if output_seen > stdout_limit:': 1,
+    'if len(stderr_buffer) > MAX_BATCH_STDERR_BYTES:': 1,
+    'or stderr_buffer': 1,
 }
 assert all(shell.count(item) == 1 for item in shell_required)
 assert all(source.count(item) == count for item, count in source_required.items())
@@ -62,6 +67,9 @@ assert "difflib" not in source
 assert "SequenceMatcher" not in source
 assert "git fetch" not in shell + source
 assert "shell=True" not in source
+assert source.count("subprocess.Popen(") == 2
+assert '"cat-file", "-s"' not in source
+assert '"cat-file", "blob"' not in source
 PY
 }
 
@@ -90,6 +98,12 @@ if ci_workflow_contract "$ROOT/.github/workflows/test.yml" \
     ok "CI verifies the exact committed event range with full checkout history"
 else
     bad "CI verifies the exact committed event range with full checkout history"
+fi
+
+if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-diff-check.py"; then
+    ok "CI batch reader rejects malformed, unbounded, and interrupted streams"
+else
+    bad "CI batch reader rejects malformed, unbounded, and interrupted streams"
 fi
 
 cp "$ROOT/.github/workflows/test.yml" "$TMP/worktree-only.yml"
@@ -223,7 +237,7 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
-old = "        _check_head_blob(new)\n"
+old = "        _check_head_blob(blob)\n"
 assert text.count(old) == 1
 path.write_text(text.replace(old, "        pass\n"), encoding="utf-8")
 PY
@@ -261,6 +275,63 @@ if ! ci_helper_contract "$ROOT/scripts/ci-diff-check.sh" \
     ok "helper policy rejects a wrong-direction committed range"
 else
     bad "helper policy rejects a wrong-direction committed range"
+fi
+
+cp "$ROOT/scripts/ci_diff_check.py" "$TMP/per-blob-process.py"
+python3 - "$TMP/per-blob-process.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = '[GIT, "cat-file", "--batch"]'
+assert text.count(old) == 1
+path.write_text(
+    text.replace(old, '[GIT, "cat-file", "blob", requested[0]]'),
+    encoding="utf-8",
+)
+PY
+if ! ci_helper_contract "$ROOT/scripts/ci-diff-check.sh" \
+        "$TMP/per-blob-process.py" 2>/dev/null; then
+    ok "helper policy rejects restoration of per-blob Git subprocesses"
+else
+    bad "helper policy rejects restoration of per-blob Git subprocesses"
+fi
+
+cp "$ROOT/scripts/ci_diff_check.py" "$TMP/unbounded-batch.py"
+python3 - "$TMP/unbounded-batch.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "if output_seen > stdout_limit:"
+assert text.count(old) == 1
+path.write_text(text.replace(old, "if False:"), encoding="utf-8")
+PY
+if ! ci_helper_contract "$ROOT/scripts/ci-diff-check.sh" \
+        "$TMP/unbounded-batch.py" 2>/dev/null; then
+    ok "helper policy rejects removal of the batch output bound"
+else
+    bad "helper policy rejects removal of the batch output bound"
+fi
+
+cp "$ROOT/scripts/ci_diff_check.py" "$TMP/ignored-batch-stderr.py"
+python3 - "$TMP/ignored-batch-stderr.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "            or stderr_buffer\n"
+assert text.count(old) == 1
+path.write_text(text.replace(old, ""), encoding="utf-8")
+PY
+if ! ci_helper_contract "$ROOT/scripts/ci-diff-check.sh" \
+        "$TMP/ignored-batch-stderr.py" 2>/dev/null; then
+    ok "helper policy rejects ignoring bounded nonempty batch stderr"
+else
+    bad "helper policy rejects ignoring bounded nonempty batch stderr"
 fi
 
 (
@@ -565,8 +636,10 @@ done
 git -C "$TMP/ci-max-paths-repo" add .
 git -C "$TMP/ci-max-paths-repo" commit -qm max-paths
 ci_max_paths_head="$(git -C "$TMP/ci-max-paths-repo" rev-parse HEAD)"
+ci_max_started=$SECONDS
 if run_ci_check "$TMP/ci-max-paths-repo" pull_request \
-        "$ci_max_paths_base" "$ci_max_paths_head"; then
+        "$ci_max_paths_base" "$ci_max_paths_head" \
+        && [[ "$((SECONDS - ci_max_started))" -lt 10 ]]; then
     ok "one thousand twenty-four small files complete under the path bound"
 else
     bad "one thousand twenty-four small files complete under the path bound"

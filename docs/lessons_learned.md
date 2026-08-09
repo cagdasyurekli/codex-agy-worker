@@ -343,3 +343,7 @@ skip its content, so pair that check with a globally bounded, linear raw-blob sc
 every changed regular head file. The stricter scan rejects pre-existing hygiene
 defects in a changed file and rejects binary, oversized, or unsupported committed
 types fail-closed; it does not run diff algorithms or attribute-selected drivers.
+Do not launch `git cat-file` once per changed blob: the maximum-path fixture turns
+that design into thousands of processes and can consume the shared CI deadline.
+Feed fixed, full object IDs to one bounded batch reader and bind every response's
+order, ID, type, declared size, delimiter, total bytes, stderr, and completion.
