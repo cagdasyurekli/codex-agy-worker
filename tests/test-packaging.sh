@@ -1407,15 +1407,24 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.p
             "$ROOT/.github/pull_request_template.md"; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-models-attestation-runner.py' \
+            "$ROOT/.github/workflows/test.yml" \
+        || [[ ! -f "$ROOT/scripts/models_attestation_runner.py" ]]; then
+    governance_lists_all_suites=0
+fi
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all ten suites and disclose public policy boundaries"
+    ok "governance docs require all eleven suites and disclose public policy boundaries"
 else
-    bad "governance docs require all ten suites and disclose public policy boundaries"
+    bad "governance docs require all eleven suites and disclose public policy boundaries"
 fi
 
 python3 "$ROOT/scripts/validate-brand-assets.py" "$ROOT/docs/assets/brand" \

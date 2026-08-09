@@ -159,8 +159,17 @@ binds its exact source bytes and digest before import. Their 157- and 55-case su
 replace one-off inline runners with bounded process-group ownership, inode-bound
 durable publication, atomic lifecycle completion, and paired weakened controls. They
 invoke no agy, provider, network, or private production evidence. This closes the
-offline provenance prerequisite only; a real version or inventory observation
-remains separately authorized and independently reviewed.
+offline version provenance prerequisite only.
+
+A separate canonical models-inventory runner now binds one exact `models` Popen to
+an accepted version binding and the same attested snapshot. Its 78-case offline suite
+uses synthetic executables only, pins the exact 11-line semantic parser and corrected
+normalized hash, enforces 25-second/64-KiB bounds and private detached publication,
+and kills mutations of the executable override, logical argv, bounds, parser,
+version-binding digest, and completion marker. It never exposes `/model`, `/effort`,
+selector, retry, or provider-job surfaces. Running it against retained production
+evidence remains a separate explicit authorization and independent review; the
+checked-in `1.1.10` metadata and fail-closed matrix remain unchanged meanwhile.
 
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a
