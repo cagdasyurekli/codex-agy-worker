@@ -41,6 +41,8 @@ Keep these counts current when their suites change:
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
 - Canonical version-attestation runner: 157 offline fixed-profile/source-binding cases.
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
+- Canonical models-inventory attestation runner: 78 offline
+  fixed-profile/version-binding/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution and CI policy: 165 offline
   manifest/runtime-copy/relocation/landing/range cases.
@@ -67,6 +69,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
 /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py # offline fake-child mutation harness
+/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py # offline fake inventory attestation
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage

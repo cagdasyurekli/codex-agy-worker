@@ -77,6 +77,15 @@ unknown such as `gemini-unknown` fails closed without treating every ordinary di
 label as a model. Keep prefix/longest-match and namespace-removal mutations in paired
 offline controls; inventory parsing alone is not a version binding.
 
+A version observation and an inventory observation must share cryptographic
+executable authority, not merely a pathname or a nearby timestamp. Keep the
+version-only runner incapable of listing models, and give inventory its own
+fixed-profile runner that validates the accepted version binding, reopens the same
+snapshot and source identities, sends one literal `models` argv, and binds the exact
+line-semantic parser into a private completion record. Offline synthetic coverage is
+authority to review that mechanism, not authority to run it or advance compatibility
+metadata.
+
 An official installer channel can move before a public release/source repository.
 Observe that difference through one fixed, bounded manifest canary, but do not turn a
 distribution version or checksum into source or behavior evidence. Disable proxies,
