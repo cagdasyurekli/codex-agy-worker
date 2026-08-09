@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The thirteen offline suites need no agy process, network access, API key, or GitHub login.
+The fourteen offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -70,6 +70,28 @@ does not invoke agy, access the network, inspect credentials, or change the curr
 checkout. The three-line result proves only that these two fixed cases produced the
 expected gate exits. `gate-passed` is not a human review, accepted candidate, general
 correctness claim, security certification, benchmark, or production validation.
+
+[![Conformance v1: fixtures only](https://img.shields.io/badge/conformance-v1%20fixtures%20only-4c1.svg)](docs/CONFORMANCE.md)
+
+Integrations and forks can run the full public gate contract against their own entry
+point:
+
+```bash
+./conformance/run.sh --gate /path/to/their/qa-gate.sh
+```
+
+The versioned eleven-fixture kit requires exact exits for acceptance, scope,
+ignored-file, untrusted-claim, malformed-envelope, no-op, verifier-failure,
+verifier-mutation, human-required, mutable-base, and missing-verifier cases. Passing
+means fixture compatibility only—not security certification, real-job quality,
+Receipt v1 support, or human acceptance. The supplied gate executes with the current
+user's privileges; review it first. Its execution TCB includes the supplied gate and
+loaded code, the local owner and same-UID processes, and OS administrators. Cleanup
+holds no-follow directory descriptors and deletes contents relative to them while the
+original parent/root identities remain exact; final pathname removal trusts that TCB.
+Identity drift fails closed with a possible residual, and the runner never scans for
+or chases a moved directory. This is not same-user tamper resistance. See
+[the bounded claim and fixture contract](docs/CONFORMANCE.md).
 
 ## Roadmap
 
@@ -823,6 +845,8 @@ qa-gate.sh                    verify an envelope against the repo — the eviden
 verify-job.sh                 run the gate and durably publish Evidence Receipt v1
 evidence-report.sh            render a validated receipt as bounded text or Markdown
 proof-demo.sh                 offline starter proof of one gate pass and one rejection
+conformance/run.sh            public v1 synthetic qa-gate fixture runner
+conformance/v1/               pinned manifest, envelopes, and repository contents
 model-recommendation.sh       repository compatibility wrapper for the advisory
 model-selection.sh            repository compatibility wrapper for explicit resolution
 doctor.sh                     repository wrapper for offline read-only diagnostics
@@ -866,9 +890,10 @@ tests/test-version-attestation-harness.py  55-case offline version-attestation m
 tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       212-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       214-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          184-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
+tests/test-conformance.py     78-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```
 

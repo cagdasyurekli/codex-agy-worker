@@ -216,6 +216,29 @@ result as evidence for the fixed synthetic cases only: a gate pass is still not 
 human diff review, accepted candidate, correctness result, security certification,
 benchmark, or production validation.
 
+## Public conformance is fixture compatibility, not certification
+
+A compatibility claim needs executable, versioned fixtures rather than prose. Bind
+the manifest and every repository/envelope source by digest, require exact exits, and
+include negative cases for the tempting trust-boundary regressions: worker claims,
+ignored files, mutable bases, missing or mutating verification, and human-required
+outcomes. A permissive reference gate must fail the kit.
+
+Do not turn a public fixture suite into a security badge. A supplied gate is code run
+with the caller's privileges, and a finite public suite can be special-cased. Bound
+ordinary execution and output, keep results nonleaking, state that detached hostile
+code is outside process-group containment, and limit the claim to the reviewed
+fixture version. Receipt, report, lifecycle, dispatch, and provider compatibility
+need their own contracts; passing direct gate fixtures proves none of them.
+
+Cleanup must name its TCB honestly. The supplied gate and loaded code, local owner
+and same-UID processes, and OS administrators can mutate pathnames. Hold no-follow,
+close-on-exec parent/root descriptors; bind exact identities; delete nested content
+with bounded descriptor-relative operations; and unlink symlinks without traversing
+their targets. Final pathname removal still trusts that TCB. On any identity drift,
+stop without scanning for or chasing the moved inode and report a sanitized residual;
+do not claim same-user tamper resistance or guaranteed cleanup under hostile code.
+
 ## Receipts bind observations; they do not create authority
 
 A useful receipt records the gate's own bounded structured handoff rather than

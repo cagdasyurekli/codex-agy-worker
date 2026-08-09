@@ -23,12 +23,12 @@ jobs:
         run: ./scripts/ci-diff-check.sh
 
       - name: syntax
-        run: for f in ./*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh; do bash -n "$f"; done
+        run: for f in ./*.sh conformance/*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh; do bash -n "$f"; done
 
       - name: Python syntax
         env:
           PYTHONPYCACHEPREFIX: ${{ runner.temp }}/codex-agy-worker-pycache
-        run: python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+        run: python3 -m py_compile conformance/v1/*.py scripts/*.py skills/*/runtime/scripts/*.py
 
       - name: qa-gate suite
         run: ./tests/test-qa-gate.sh
@@ -65,6 +65,9 @@ jobs:
 
       - name: read-only doctor suite
         run: ./tests/test-doctor.sh
+
+      - name: public gate conformance suite
+        run: /usr/bin/python3 -I -S -B tests/test-conformance.py
 
       - name: starter proof suite
         run: ./tests/test-proof-demo.sh

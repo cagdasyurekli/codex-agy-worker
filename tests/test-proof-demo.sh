@@ -83,11 +83,12 @@ process_alive() {
 
 make_demo_tree() {
     local destination="$1"
-    mkdir -p "$destination/demo/fixtures" \
+    mkdir -p "$destination/conformance/v1/envelopes" \
         "$destination/skills/agy-worker/runtime/scripts" \
         "$destination/skills/agy-worker/runtime/schemas"
     cp "$ROOT/proof-demo.sh" "$ROOT/qa-gate.sh" "$destination/"
-    cp "$ROOT/demo/fixtures/"*.json "$destination/demo/fixtures/"
+    cp "$ROOT/conformance/v1/envelopes/honest.json" \
+        "$destination/conformance/v1/envelopes/honest.json"
     cp "$ROOT/skills/agy-worker/runtime/qa-gate.sh" \
         "$destination/skills/agy-worker/runtime/qa-gate.sh"
     cp "$ROOT/skills/agy-worker/runtime/scripts/validate-envelope.py" \
@@ -232,10 +233,10 @@ for fixture_mode in malformed extra altered missing; do
     make_demo_tree "$fixture_tree"
     case "$fixture_mode" in
         malformed)
-            printf '{not json\n' > "$fixture_tree/demo/fixtures/honest-envelope.json"
+            printf '{not json\n' > "$fixture_tree/conformance/v1/envelopes/honest.json"
             ;;
         extra)
-            "$HOST_PYTHON" -B - "$fixture_tree/demo/fixtures/honest-envelope.json" <<'PY'
+            "$HOST_PYTHON" -B - "$fixture_tree/conformance/v1/envelopes/honest.json" <<'PY'
 import json, sys
 path = sys.argv[1]
 value = json.load(open(path, encoding="utf-8"))
@@ -244,7 +245,7 @@ open(path, "w", encoding="utf-8").write(json.dumps(value, indent=2) + "\n")
 PY
             ;;
         altered)
-            "$HOST_PYTHON" -B - "$fixture_tree/demo/fixtures/scope-mismatch-envelope.json" <<'PY'
+            "$HOST_PYTHON" -B - "$fixture_tree/conformance/v1/envelopes/honest.json" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
@@ -252,7 +253,7 @@ path.write_text(path.read_text().replace('"proof.txt"', '"hidden.txt"'), encodin
 PY
             ;;
         missing)
-            rm -f "$fixture_tree/demo/fixtures/honest-envelope.json"
+            rm -f "$fixture_tree/conformance/v1/envelopes/honest.json"
             ;;
     esac
     run_demo "$fixture_tree" "fixture-$fixture_mode"
