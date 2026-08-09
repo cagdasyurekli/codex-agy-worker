@@ -155,7 +155,7 @@ installed-version/executable evidence binding or advance any `1.1.11` record.
 The provider-independent version-attestation prerequisite now has one canonical
 fixed-profile runner plus its persistent mutation harness. The runner owns the exact
 snapshot-backed version-only Popen path and a synthetic-only self-test; the harness
-binds its exact source bytes and digest before import. Their 136- and 55-case suites
+binds its exact source bytes and digest before import. Their 157- and 55-case suites
 replace one-off inline runners with bounded process-group ownership, inode-bound
 durable publication, atomic lifecycle completion, and paired weakened controls. They
 invoke no agy, provider, network, or private production evidence. This closes the
@@ -165,6 +165,13 @@ remains separately authorized and independently reviewed.
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a
 runner-image mismatch; it does not make that environment trusted or satisfy the gate.
+The fixed `/usr/bin/python3 -I -S -B` boundary explicitly trusts the selected reviewed
+Apple interpreter, hosted image, local owner, and OS administrators. Canonical
+family/component shape, alias/target identity, executable/no-setid mode, and no
+world-writable directory or resolved executable remain enforced; UID/GID and
+owner/group writability are diagnostics only. This is not same-user or hostile-PR
+tamper resistance, binary
+provenance, code-signing verification, or OS attestation.
 
 - **User job:** Learn that Codex or agy has drifted before a normal dispatch breaks,
   while keeping every check read-only and requiring a human to reconcile behavior.

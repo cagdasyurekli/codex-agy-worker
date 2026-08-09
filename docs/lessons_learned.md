@@ -317,12 +317,16 @@ that same function with fixed test-only callables. A green generic lifecycle har
 is useful evidence for its primitives, but it cannot substitute for exact production
 source provenance.
 
-Do not use the literal value of `sys.executable` as Apple system-interpreter
-provenance. `/usr/bin/python3` can report a versioned Xcode or Command Line Tools
-path that changes with the macOS image. Keep `-I -S -B` mandatory, resolve the actual
-executable fail-closed, restrict it to reviewed Apple system families, and verify the
-regular root-owned executable plus every non-writable ancestor instead of pinning one
-image-specific string.
+Do not use the literal value of `sys.executable`, UID/GID, or owner/group writability
+as Apple interpreter provenance. `/usr/bin/python3` can resolve into a versioned Xcode
+or Command Line Tools tree owned by the hosted job account. Keep the fixed
+`/usr/bin/python3 -I -S -B` launch, exact reviewed family/component grammar,
+alias/target identity, regular executable/no-setid target, and no-world-writable
+directory or resolved-executable checks.
+Be honest about the TCB: the selected interpreter, hosted image, local owner, and OS
+administrators are trusted. These in-process checks are drift/sanity evidence, not
+same-user or hostile-PR tamper resistance, binary provenance, code signing, or OS
+attestation.
 
 When hosted-runner trust facts drift, emit only bounded, canonical categories from the
 same evaluator that rejected them. Report every ordered violation, redact unreviewed

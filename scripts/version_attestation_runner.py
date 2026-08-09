@@ -452,13 +452,18 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         "no_site_ok = type(no_site)" + " is int and no_site == 1": 1,
         "no_bytecode_ok = type(dont_write_bytecode)" + " is int and dont_write_bytecode == 1": 1,
         "if node.kind" + ' != "directory"': 1,
-        "if node.uid" + " != 0": 1,
-        "if node.mode" + " & 0o022": 1,
-        "if leaf.kind" + ' != "regular"': 1,
-        "if leaf.uid" + " != 0": 2,
-        "if leaf.mode" + " & 0o022": 1,
+        "if not os.path.isabs(path)" + " or os.path.normpath(path) != path": 1,
+        'if family == "unreviewed"' + ":": 1,
+        "if not nodes" + " or len(nodes) != len(parts)": 1,
+        "if node.mode" + " & 0o002": 1,
+        'if family == "usr-bin"' + ":": 1,
+        "if leaf.kind" + ' != "symlink"': 1,
+        "if leaf" + " != target": 2,
+        "if leaf.kind" + ' != "regular"': 2,
+        "if leaf.mode" + " & 0o002": 1,
         "if leaf.mode" + " & 0o6000": 1,
         "if not leaf.mode" + " & 0o111": 1,
+        "if facts.alias_target" + " != facts.resolved_target": 1,
         "os.open(resolved," + " os.O_RDONLY | CLOEXEC | NOFOLLOW)": 1,
         "if parts" + " == (": 1,
         "if xcode_root and parts[5:]" + ' == ("usr", "bin", "python3")': 1,
@@ -477,6 +482,15 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
     }
     if any(text.count(marker) != count for marker, count in startup_requirements.items()):
         raise AttestationError("canonical runner lost interpreter trust enforcement")
+    diagnostic_only_authority = (
+        "if node.uid" + " != 0",
+        "if node.gid" + " != 0",
+        "if leaf.uid" + " != 0",
+        "if leaf.gid" + " != 0",
+        "mode & " + "0o022",
+    )
+    if any(marker in text for marker in diagnostic_only_authority):
+        raise AttestationError("diagnostic interpreter facts became trust authority")
     return {
         "byte_count": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
@@ -1520,30 +1534,28 @@ def _evaluate_interpreter_trust(
         for index, node in enumerate(nodes[:-1]):
             if node.kind != "directory":
                 add(side, "ancestor-directory", index, node)
-            if node.uid != 0:
-                add(side, "ancestor-root-owned", index, node)
-            if node.mode & 0o022:
-                add(side, "ancestor-not-writable", index, node)
+            if node.mode & 0o002:
+                add(side, "ancestor-not-world-writable", index, node)
         if not nodes:
             continue
         leaf_index = len(nodes) - 1
         leaf = nodes[-1]
         if side == "alias":
-            if leaf.uid != 0:
-                add(side, "leaf-root-owned", leaf_index, leaf)
-            if leaf.kind not in {"regular", "symlink"}:
-                add(side, "leaf-kind", leaf_index, leaf)
-            if leaf.kind == "regular" and leaf != target:
-                add(side, "leaf-identity", leaf_index, leaf)
+            if family == "usr-bin":
+                if leaf != target:
+                    add(side, "leaf-identity", leaf_index, leaf)
+                if leaf.kind != "regular":
+                    add(side, "leaf-regular", leaf_index, leaf)
+            else:
+                if leaf.kind != "symlink":
+                    add(side, "leaf-symlink", leaf_index, leaf)
         else:
             if leaf != target:
                 add(side, "leaf-identity", leaf_index, leaf)
             if leaf.kind != "regular":
                 add(side, "leaf-regular", leaf_index, leaf)
-            if leaf.uid != 0:
-                add(side, "leaf-root-owned", leaf_index, leaf)
-            if leaf.mode & 0o022:
-                add(side, "leaf-not-writable", leaf_index, leaf)
+            if leaf.mode & 0o002:
+                add(side, "leaf-not-world-writable", leaf_index, leaf)
             if leaf.mode & 0o6000:
                 add(side, "leaf-no-setid", leaf_index, leaf)
             if not leaf.mode & 0o111:

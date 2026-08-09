@@ -134,16 +134,70 @@ mutated = source.replace(b"and no_site == 1\n", b"and True\n", 1)
 check("source validator rejects no-site enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"and dont_write_bytecode == 1\n", b"and True\n", 1)
 check("source validator rejects no-bytecode enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"            if node.uid != 0:\n", b"            if False:\n", 1)
-check("source validator rejects interpreter ownership enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"            if node.mode & 0o022:\n", b"            if False:\n", 1)
-check("source validator rejects interpreter ancestor-mode enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        if not os.path.isabs(path) or os.path.normpath(path) != path:\n",
+    b"        if False:\n",
+    1,
+)
+check("source validator rejects canonical-path enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'        if family == "unreviewed":\n', b"        if False:\n", 1)
+check("source validator rejects reviewed-family enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        if not nodes or len(nodes) != len(parts):\n",
+    b"        if False:\n",
+    1,
+)
+check("source validator rejects component-completeness removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'            if node.kind != "directory":\n', b"            if False:\n", 1)
+check("source validator rejects ancestor-directory enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"            if node.mode & 0o002:\n", b"            if False:\n", 1)
+check("source validator rejects interpreter ancestor world-write enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b'            if node.kind != "directory":\n',
+    b'            if node.kind != "directory":\n                pass\n            if node.uid != 0:\n                add(side, "ancestor-directory", index, node)\n',
+    1,
+)
+check("source validator rejects uid becoming interpreter trust authority", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"            if node.mode & 0o002:\n", b"            if node.mode & 0o022:\n", 1)
+check("source validator rejects group-write becoming interpreter trust authority", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'            if leaf.kind != "symlink":\n', b'            if False:\n', 1)
+check("source validator rejects alias-symlink enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'            if family == "usr-bin":\n', b"            if False:\n", 1)
+check("source validator rejects family-specific alias-kind selection removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"            if leaf != target:\n", b"            if False:\n", 1)
+check("source validator rejects regular-alias identity enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b'            if leaf.kind != "regular":\n', b'            if False:\n', 1)
-check("source validator rejects regular-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+check("source validator rejects regular-alias enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b'        else:\n            if leaf != target:\n                add(side, "leaf-identity", leaf_index, leaf)\n',
+    b'        else:\n            if False:\n                add(side, "leaf-identity", leaf_index, leaf)\n',
+    1,
+)
+check("source validator rejects descriptor identity enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b'            if leaf.kind != "regular":\n                add(side, "leaf-regular", leaf_index, leaf)\n            if leaf.mode & 0o002:\n',
+    b'            if False:\n                add(side, "leaf-regular", leaf_index, leaf)\n            if leaf.mode & 0o002:\n',
+    1,
+)
+check("source validator rejects regular resolved-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"            if leaf.mode & 0o002:\n", b"            if False:\n", 1)
+check("source validator rejects interpreter leaf world-write enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"            if leaf.mode & 0o6000:\n", b"            if False:\n", 1)
 check("source validator rejects setid-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"            if not leaf.mode & 0o111:\n", b"            if False:\n", 1)
 check("source validator rejects executable-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"    if facts.alias_target != facts.resolved_target:\n",
+    b"    if False:\n",
+    1,
+)
+check("source validator rejects alias-target identity enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"    descriptor = os.open(resolved, os.O_RDONLY | CLOEXEC | NOFOLLOW)\n",
+    b"    descriptor = os.open(resolved, os.O_RDONLY | CLOEXEC)\n",
+    1,
+)
+check("source validator rejects descriptor nofollow removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"    if parts == (\n", b"    if parts[-7:] == (\n", 1)
 check("source validator rejects CLT path suffix matching", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(
@@ -389,8 +443,89 @@ xcode_facts = interpreter_facts(
     "/Applications/Xcode_26.0.app/Contents/Developer/usr/bin/python3",
     "/Applications/Xcode_26.0.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.13/bin/python3.13",
 )
-check("root-owned CLT interpreter facts are accepted", lambda: facts_accepted(clt_facts))
-check("root-owned versioned Xcode interpreter facts are accepted", lambda: facts_accepted(xcode_facts))
+usr_target = interpreter_node("regular", ino=299)
+usr_facts = MODULE.InterpreterTrustFacts(
+    alias_path="/usr/bin/python3",
+    alias_nodes=(
+        interpreter_node("directory", ino=201),
+        interpreter_node("directory", ino=202),
+        interpreter_node("directory", ino=203),
+        usr_target,
+    ),
+    alias_target=usr_target,
+    resolved_path="/usr/bin/python3",
+    resolved_nodes=(
+        interpreter_node("directory", ino=201),
+        interpreter_node("directory", ino=202),
+        interpreter_node("directory", ino=203),
+        usr_target,
+    ),
+    resolved_target=usr_target,
+)
+check("trusted-host regular usr-bin interpreter facts are accepted", lambda: facts_accepted(usr_facts))
+check("trusted-host CLT interpreter facts are accepted", lambda: facts_accepted(clt_facts))
+check("trusted-host versioned Xcode interpreter facts are accepted", lambda: facts_accepted(xcode_facts))
+
+
+def github_macos_xcode_facts() -> object:
+    target = dataclasses.replace(xcode_facts.resolved_target, uid=501, gid=20)
+
+    def hosted_nodes(nodes: tuple[object, ...], *, alias: bool) -> tuple[object, ...]:
+        changed = []
+        for index, node in enumerate(nodes):
+            if index == 0:
+                changed.append(node)
+            elif index == 1:
+                changed.append(dataclasses.replace(node, uid=0, gid=80, mode=0o775))
+            elif index == len(nodes) - 1:
+                changed.append(
+                    dataclasses.replace(
+                        node,
+                        uid=501,
+                        gid=20,
+                        mode=0o755,
+                        kind="symlink" if alias else "regular",
+                        dev=target.dev,
+                        ino=target.ino if not alias else node.ino,
+                    )
+                )
+            else:
+                changed.append(dataclasses.replace(node, uid=501, gid=20, mode=0o755))
+        return tuple(changed)
+
+    return dataclasses.replace(
+        xcode_facts,
+        alias_nodes=hosted_nodes(xcode_facts.alias_nodes, alias=True),
+        alias_target=target,
+        resolved_nodes=hosted_nodes(xcode_facts.resolved_nodes, alias=False),
+        resolved_target=target,
+    )
+
+
+ci_xcode_facts = github_macos_xcode_facts()
+check(
+    "GitHub macOS Xcode ownership and group-write facts are accepted",
+    lambda: facts_accepted(ci_xcode_facts),
+)
+usr_symlink = dataclasses.replace(usr_target, kind="symlink")
+check(
+    "usr-bin symlink alias facts are rejected",
+    lambda: not facts_accepted(
+        dataclasses.replace(
+            usr_facts,
+            alias_nodes=usr_facts.alias_nodes[:-1] + (usr_symlink,),
+        )
+    ),
+)
+check(
+    "CLT regular alias facts are rejected",
+    lambda: not facts_accepted(
+        dataclasses.replace(
+            clt_facts,
+            alias_nodes=clt_facts.alias_nodes[:-1] + (clt_facts.alias_target,),
+        )
+    ),
+)
 
 
 def current_startup_accepted() -> bool:
@@ -444,20 +579,20 @@ check(
     ),
 )
 
-user_target = dataclasses.replace(clt_facts.resolved_target, uid=os.getuid() or 501)
+user_target = dataclasses.replace(clt_facts.resolved_target, uid=501, gid=20)
 user_owned = dataclasses.replace(
     clt_facts,
     alias_target=user_target,
     resolved_target=user_target,
     resolved_nodes=clt_facts.resolved_nodes[:-1] + (user_target,),
 )
-check("user-owned interpreter facts are rejected", lambda: not facts_accepted(user_owned))
+check("trusted-host user-owned interpreter facts are accepted", lambda: facts_accepted(user_owned))
 
 user_alias_leaf = dataclasses.replace(clt_facts.alias_nodes[-1], uid=os.getuid() or 501)
 user_alias = dataclasses.replace(
     clt_facts, alias_nodes=clt_facts.alias_nodes[:-1] + (user_alias_leaf,)
 )
-check("user-owned interpreter alias facts are rejected", lambda: not facts_accepted(user_alias))
+check("trusted-host user-owned interpreter alias facts are accepted", lambda: facts_accepted(user_alias))
 
 writable_parent = dataclasses.replace(clt_facts.resolved_nodes[2], mode=0o775)
 writable_ancestor = dataclasses.replace(
@@ -466,7 +601,31 @@ writable_ancestor = dataclasses.replace(
     + (writable_parent,)
     + clt_facts.resolved_nodes[3:],
 )
-check("group-writable interpreter ancestor facts are rejected", lambda: not facts_accepted(writable_ancestor))
+check("group-writable interpreter ancestor facts are accepted", lambda: facts_accepted(writable_ancestor))
+
+world_writable_parent = dataclasses.replace(clt_facts.resolved_nodes[2], mode=0o777)
+world_writable_ancestor = dataclasses.replace(
+    clt_facts,
+    resolved_nodes=clt_facts.resolved_nodes[:2]
+    + (world_writable_parent,)
+    + clt_facts.resolved_nodes[3:],
+)
+check(
+    "world-writable interpreter ancestor facts are rejected",
+    lambda: not facts_accepted(world_writable_ancestor),
+)
+
+world_writable_alias_parent = dataclasses.replace(clt_facts.alias_nodes[2], mode=0o777)
+world_writable_alias_ancestor = dataclasses.replace(
+    clt_facts,
+    alias_nodes=clt_facts.alias_nodes[:2]
+    + (world_writable_alias_parent,)
+    + clt_facts.alias_nodes[3:],
+)
+check(
+    "world-writable interpreter alias ancestor facts are rejected",
+    lambda: not facts_accepted(world_writable_alias_ancestor),
+)
 
 writable_target = dataclasses.replace(clt_facts.resolved_target, mode=0o777)
 writable_executable = dataclasses.replace(
@@ -475,7 +634,19 @@ writable_executable = dataclasses.replace(
     resolved_target=writable_target,
     resolved_nodes=clt_facts.resolved_nodes[:-1] + (writable_target,),
 )
-check("group-writable interpreter executable facts are rejected", lambda: not facts_accepted(writable_executable))
+check("world-writable interpreter executable facts are rejected", lambda: not facts_accepted(writable_executable))
+
+group_writable_target = dataclasses.replace(clt_facts.resolved_target, mode=0o775)
+group_writable_executable = dataclasses.replace(
+    clt_facts,
+    alias_target=group_writable_target,
+    resolved_target=group_writable_target,
+    resolved_nodes=clt_facts.resolved_nodes[:-1] + (group_writable_target,),
+)
+check(
+    "group-writable interpreter executable facts are accepted",
+    lambda: facts_accepted(group_writable_executable),
+)
 
 setid_target = dataclasses.replace(clt_facts.resolved_target, mode=0o6755)
 setid_executable = dataclasses.replace(
@@ -516,7 +687,7 @@ regular_alias_mismatch = dataclasses.replace(
 mismatched_alias = dataclasses.replace(
     clt_facts, alias_nodes=clt_facts.alias_nodes[:-1] + (regular_alias_mismatch,)
 )
-check("regular interpreter alias identity mismatch is rejected", lambda: not facts_accepted(mismatched_alias))
+check("regular interpreter alias leaf is rejected", lambda: not facts_accepted(mismatched_alias))
 
 nonregular = dataclasses.replace(clt_facts.resolved_target, kind="other")
 nonregular_facts = dataclasses.replace(
@@ -540,9 +711,9 @@ check(
     ),
 )
 arbitrary_facts = interpreter_facts(
-    "/opt/root-owned/python3", "/opt/root-owned/python3.13"
+    "/opt/unreviewed/python3", "/opt/unreviewed/python3.13"
 )
-check("arbitrary root-owned interpreter families are rejected", lambda: not facts_accepted(arbitrary_facts))
+check("arbitrary interpreter families are rejected", lambda: not facts_accepted(arbitrary_facts))
 clt_unreviewed = dataclasses.replace(
     clt_facts,
     alias_path="/Library/Developer/CommandLineTools/unreviewed/python3",
@@ -586,10 +757,10 @@ check("boolean startup flags are rejected", lambda: not facts_accepted(clt_facts
 
 def multi_failure_diagnostic() -> bool:
     alias_bad = dataclasses.replace(
-        xcode_facts.alias_nodes[1], kind="other", uid=501, gid=80, mode=0o775
+        xcode_facts.alias_nodes[1], kind="other", uid=501, gid=80, mode=0o777
     )
     resolved_bad = dataclasses.replace(
-        xcode_facts.resolved_nodes[1], kind="other", uid=501, gid=80, mode=0o775
+        xcode_facts.resolved_nodes[1], kind="other", uid=501, gid=80, mode=0o777
     )
     facts = dataclasses.replace(
         xcode_facts,
@@ -608,11 +779,9 @@ def multi_failure_diagnostic() -> bool:
         ("flags", "no-site", -1),
         ("flags", "no-bytecode", -1),
         ("alias", "ancestor-directory", 1),
-        ("alias", "ancestor-root-owned", 1),
-        ("alias", "ancestor-not-writable", 1),
+        ("alias", "ancestor-not-world-writable", 1),
         ("resolved", "ancestor-directory", 1),
-        ("resolved", "ancestor-root-owned", 1),
-        ("resolved", "ancestor-not-writable", 1),
+        ("resolved", "ancestor-not-world-writable", 1),
     ]
     observed = [
         (item.side, item.predicate, item.component_index)
@@ -626,11 +795,48 @@ def multi_failure_diagnostic() -> bool:
         and all(item.basename == "Applications" for item in node_failures)
         and all(item.kind == "other" for item in node_failures)
         and all(item.uid == 501 and item.gid == 80 for item in node_failures)
-        and all(item.mode == "0775" for item in node_failures)
+        and all(item.mode == "0777" for item in node_failures)
     )
 
 
 check("diagnostic preserves every failure in deterministic order", multi_failure_diagnostic)
+
+
+def ownership_and_group_write_remain_diagnostic_only() -> bool:
+    accepted = MODULE._evaluate_interpreter_trust(
+        ci_xcode_facts, isolated=1, no_site=1, dont_write_bytecode=1
+    )
+    bad_target = dataclasses.replace(
+        ci_xcode_facts.resolved_target, mode=0o777
+    )
+    rejected_facts = dataclasses.replace(
+        ci_xcode_facts,
+        alias_target=bad_target,
+        resolved_nodes=ci_xcode_facts.resolved_nodes[:-1] + (bad_target,),
+        resolved_target=bad_target,
+    )
+    diagnostic = json.loads(
+        MODULE._startup_diagnostic(
+            MODULE._evaluate_interpreter_trust(
+                rejected_facts, isolated=1, no_site=1, dont_write_bytecode=1
+            )
+        )
+    )
+    leaf = diagnostic["failures"][0]
+    return (
+        accepted.accepted
+        and not accepted.failures
+        and leaf["predicate"] == "leaf-not-world-writable"
+        and leaf["uid"] == 501
+        and leaf["gid"] == 20
+        and leaf["mode"] == "0777"
+    )
+
+
+check(
+    "uid gid and group-write are diagnostic facts rather than trust authority",
+    ownership_and_group_write_remain_diagnostic_only,
+)
 
 
 def diagnostic_schema_is_bounded() -> bool:
@@ -824,7 +1030,7 @@ def every_diagnostic_predicate_and_node_kind_is_exercised() -> bool:
         )
     )
     bad_ancestor = dataclasses.replace(
-        xcode_facts.alias_nodes[1], kind="symlink", uid=501, gid=80, mode=0o775
+        xcode_facts.alias_nodes[1], kind="symlink", uid=501, gid=80, mode=0o777
     )
     evaluations.append(
         MODULE._evaluate_interpreter_trust(
@@ -839,15 +1045,15 @@ def every_diagnostic_predicate_and_node_kind_is_exercised() -> bool:
             dont_write_bytecode=1,
         )
     )
-    root_owned_failure = dataclasses.replace(
-        clt_facts.resolved_nodes[2], kind="directory", uid=501, gid=20, mode=0o755
+    world_writable_directory = dataclasses.replace(
+        clt_facts.resolved_nodes[2], kind="directory", uid=501, gid=20, mode=0o777
     )
     evaluations.append(
         MODULE._evaluate_interpreter_trust(
             dataclasses.replace(
                 clt_facts,
                 resolved_nodes=clt_facts.resolved_nodes[:2]
-                + (root_owned_failure,)
+                + (world_writable_directory,)
                 + clt_facts.resolved_nodes[3:],
             ),
             isolated=1,
@@ -903,6 +1109,21 @@ def every_diagnostic_predicate_and_node_kind_is_exercised() -> bool:
             dont_write_bytecode=1,
         )
     )
+    mismatched_target_node = dataclasses.replace(
+        clt_facts.resolved_target, ino=777
+    )
+    evaluations.append(
+        MODULE._evaluate_interpreter_trust(
+            dataclasses.replace(
+                clt_facts,
+                resolved_nodes=clt_facts.resolved_nodes[:-1]
+                + (mismatched_target_node,),
+            ),
+            isolated=1,
+            no_site=1,
+            dont_write_bytecode=1,
+        )
+    )
     setid = dataclasses.replace(clt_facts.resolved_target, mode=0o6755)
     evaluations.append(
         MODULE._evaluate_interpreter_trust(
@@ -933,13 +1154,11 @@ def every_diagnostic_predicate_and_node_kind_is_exercised() -> bool:
         "family-reviewed",
         "components-complete",
         "ancestor-directory",
-        "ancestor-root-owned",
-        "ancestor-not-writable",
-        "leaf-root-owned",
-        "leaf-kind",
+        "ancestor-not-world-writable",
+        "leaf-symlink",
         "leaf-identity",
         "leaf-regular",
-        "leaf-not-writable",
+        "leaf-not-world-writable",
         "leaf-no-setid",
         "leaf-executable",
         "alias-target-identity",

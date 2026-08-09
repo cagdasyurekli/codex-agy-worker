@@ -752,7 +752,7 @@ tests/test-update.sh          310-case offline transport/process/inventory/local
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
-tests/test-version-attestation-runner.py  136-case offline canonical fixed-profile runner suite
+tests/test-version-attestation-runner.py  157-case offline canonical fixed-profile runner suite
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
@@ -785,6 +785,14 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
   quota efficiency, or dual-selector composition inside agy.
 - A green doctor result covers offline prerequisites only. It does not predict live
   authentication, provider, sandbox, task, or dispatch behavior and never fixes them.
+- Version attestation uses the fixed `/usr/bin/python3 -I -S -B` launch and exact
+  reviewed Apple interpreter families. It trusts the selected interpreter, hosted
+  image, local account owner, and OS administrators; it checks canonical components,
+  alias/target identity, executable/no-setid mode, and rejects world-writable
+  directories or resolved executables.
+  UID/GID and owner/group writability remain bounded diagnostics, not binary
+  provenance. This is not same-user or hostile-PR tamper resistance, code-signing
+  verification, or OS attestation.
 
 ## License
 

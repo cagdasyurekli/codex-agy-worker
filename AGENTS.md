@@ -39,7 +39,7 @@ Keep these counts current when their suites change:
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
-- Canonical version-attestation runner: 136 offline fixed-profile/source-binding cases.
+- Canonical version-attestation runner: 157 offline fixed-profile/source-binding cases.
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution: 135 offline
@@ -135,9 +135,14 @@ only a passing test has not been shown to catch anything.
   canonical runner fixed to one snapshot-backed `--version` call and keep its
   persistent mutation harness offline and synthetic. The harness must bind the exact
   canonical source bytes before importing them. Production mode requires the fixed
-  isolated system-Python launch; trust the canonical resolved Apple system/CLT/Xcode
-  interpreter only after root-ownership, regular/executable mode, and non-writable
-  ancestor checks. Bind its snapshot, source, and private external parent to the prior
+  `/usr/bin/python3 -I -S -B` launch. Trust the selected reviewed Apple interpreter,
+  hosted image, local owner, and OS administrators; require exact path/component and
+  alias/target identity, regular executable/no-setid target, and no world-writable
+  directory or resolved executable. UID/GID and owner/group writability are
+  diagnostic facts, not provenance authority. Do not claim same-user or hostile-PR
+  tamper resistance, code signing,
+  binary provenance, or OS attestation. Bind snapshot, source, and external parent to
+  the prior
   evidence record. Every controller must use its
   one bounded, signal-masked process-group owner; publication and completion must
   remain inode-pinned, no-overwrite, parent-fsynced, and paired with weakened controls.
