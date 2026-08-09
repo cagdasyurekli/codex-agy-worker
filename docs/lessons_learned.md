@@ -261,6 +261,15 @@ trusted envelope or candidate digest when later tampering matters. Receipt exist
 does not replace `qa-gate.sh`, human diff review, signing, authenticity, correctness,
 or security evidence.
 
+Rendering is a view, not a new evidence authority. Validate the complete receipt and
+every explicitly supplied binding before producing a byte of text, then render only
+fixed labels, hashes, and bounded presence flags. Do not import raw paths, commands,
+prompts, logs, or worker prose into a “friendly” report. Keep receipt-only selection
+and recommendation-record validation side-effect-free: canonical recommendation
+generation belongs only to the explicit pre-gate publication input, never to later
+validation or rendering. A format change cannot improve `rejected` or `routed`, and
+`gate-passed` still needs human diff review.
+
 ## Distribution must preserve the trust boundary
 
 A public skill cannot depend on a developer's absolute checkout path or assume that

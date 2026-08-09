@@ -390,8 +390,8 @@ def require_string(record: dict[str, Any], key: str) -> str:
     return value
 
 
-def validate_selection_record(record: dict[str, Any]) -> None:
-    """Validate the exact semantic artifact contract without third-party packages."""
+def validate_selection_record_shape(record: dict[str, Any]) -> None:
+    """Validate the side-effect-free v1 selection-record shape and provenance."""
 
     if not isinstance(record, dict):
         raise CallerError("selection record must be one JSON object")
@@ -442,6 +442,23 @@ def validate_selection_record(record: dict[str, Any]) -> None:
             raise CallerError("selection record effort is invalid")
         if record.get("user_effort_source") not in SOURCE_NAMES:
             raise CallerError("selection record effort source is invalid")
+    elif resolved_model != user_model:
+        raise CallerError("selection record exact model resolution is inconsistent")
+
+
+def validate_selection_record(record: dict[str, Any]) -> None:
+    """Validate the exact semantic artifact contract against reviewed policy."""
+
+    validate_selection_record_shape(record)
+    mode = record["selection_mode"]
+    if mode == "tier":
+        return
+    user_model = record["user_model"]
+    resolved_model = record["resolved_agy_model"]
+    matrix_sha = record["matrix_sha256"]
+    matrix_version = record["matrix_agy_version"]
+    revision = record["matrix_source_revision"]
+    effort = record.get("user_effort")
     matrix, current_sha, current_version, current_revision = load_policy()
     if (matrix_sha, matrix_version, revision) != (
         current_sha,

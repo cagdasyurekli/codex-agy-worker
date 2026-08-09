@@ -529,6 +529,11 @@ receipt or creating chronology ambiguity.
 
 #### P0-B — Human Report renderer
 
+**Status:** Implemented as an isolated, offline-verified slice; merge and release
+remain separately approval-gated. Receipt-only selection and recommendation-record
+validation is side-effect-free; canonical recommendation generation remains only an
+explicit pre-gate publication-input check.
+
 - **User job:** Read or share a compact bounded result without pasting private job
   artifacts.
 - **Intended surface:** Add canonical `evidence-report.sh --receipt FILE
