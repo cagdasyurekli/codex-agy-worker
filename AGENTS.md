@@ -36,6 +36,7 @@ Keep these counts current when their suites change:
 
 - `qa-gate.sh`: 41 offline cases.
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
+- Evidence Report v1: 60 offline pure-rendering/privacy/binding/mutation cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
@@ -44,7 +45,7 @@ Keep these counts current when their suites change:
 - Canonical models-inventory attestation runner: 78 offline
   fixed-profile/version-binding/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 165 offline
+- Codex package/skill distribution and CI policy: 187 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 180 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
@@ -65,6 +66,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ```bash
 ./tests/test-qa-gate.sh        # offline, no agy, no network — must stay that way
 ./tests/test-evidence-receipt.sh # offline receipt/protocol/publication coverage
+./tests/test-evidence-report.sh # offline pure receipt renderer/privacy coverage
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
@@ -118,6 +120,11 @@ only a passing test has not been shown to catch anything.
   existing gate process before any verifier shell or interpreter starts. Cleanly abort
   the whole receipt operation on HUP/INT/TERM. Receipts remain unsigned and subject
   to human diff review.
+- **A human report is only a validated receipt view.** Render fixed bounded fields;
+  never include source, prompts, commands, paths, logs, or worker prose. Rendering
+  cannot change rejected/routed outcomes or turn `gate-passed` into acceptance.
+  Receipt-only selection and recommendation validation stays side-effect-free; only
+  explicit pre-gate publication input may run canonical recommendation coherence.
 - **`update.sh check` may need network, but must remain read-only.** Compatibility
   evidence for agy and Codex is reported as unchanged, drift-review, or
   evidence-unavailable; inconclusive evidence is never green. Metadata changes only

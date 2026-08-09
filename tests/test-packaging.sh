@@ -719,15 +719,38 @@ else
     bad "root and portable packages include Evidence Receipt v1"
 fi
 
+if [[ -x "$ROOT/evidence-report.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/evidence-report.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/recommendation_record.py" ]]; then
+    ok "root and portable packages include the pure Evidence Report renderer"
+else
+    bad "root and portable packages include the pure Evidence Report renderer"
+fi
+
+if grep -Fq 'is process-owning: it keeps signal rollback authority' \
+        "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py" \
+        && grep -Fq 'The `--output` CLI path is deliberately process-owning' \
+            "$ROOT/README.md" \
+        && grep -Fq 'file-output `main(argv)` is process-owning through `os._exit(0)`' \
+            "$ROOT/docs/REPO_MAP.md"; then
+    ok "Evidence Report documents its process-owning file-output boundary"
+else
+    bad "Evidence Report documents its process-owning file-output boundary"
+fi
+
 required_runtime_dependencies=(
     agy-worker.sh
     qa-gate.sh
     verify-job.sh
+    evidence-report.sh
     model-recommendation.sh
     model-selection.sh
     doctor.sh
     scripts/validate-envelope.py
     scripts/evidence_receipt.py
+    scripts/evidence_report.py
+    scripts/recommendation_record.py
     scripts/model-recommendation.py
     scripts/model_selection.py
     scripts/compatibility.py
@@ -833,8 +856,11 @@ done
 for specification in \
     'qa-gate.sh:executable' \
     'verify-job.sh:executable' \
+    'evidence-report.sh:executable' \
     'scripts/validate-envelope.py:executable' \
     'scripts/evidence_receipt.py:executable' \
+    'scripts/evidence_report.py:executable' \
+    'scripts/recommendation_record.py:executable' \
     'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \
     'schemas/evidence-receipt.schema.json:data' \
@@ -905,6 +931,13 @@ if grep -Fq 'run: ./tests/test-doctor.sh' "$ROOT/.github/workflows/test.yml" \
     ok "macOS CI runs the dedicated offline doctor suite"
 else
     bad "macOS CI runs the dedicated offline doctor suite"
+fi
+
+if grep -Fq 'run: ./tests/test-evidence-report.sh' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq 'runs-on: macos-latest' "$ROOT/.github/workflows/test.yml"; then
+    ok "macOS CI runs the dedicated offline Evidence Report suite"
+else
+    bad "macOS CI runs the dedicated offline Evidence Report suite"
 fi
 
 python_cache_exists() {
@@ -1243,6 +1276,20 @@ else
     bad "skill-folder-only copy publishes a bounded receipt offline"
 fi
 
+PATH="$TMP/receipt-no-network-bin:$PATH" NETWORK_MARKER="$TMP/receipt-network-called" \
+    "$copied_pipeline/evidence-report.sh" \
+    --receipt "$portable_receipt_parent/receipt.json" --format text \
+    > "$TMP/portable-report.out" 2> "$TMP/portable-report.err"
+portable_report_rc=$?
+if [[ "$portable_report_rc" == 0 && ! -s "$TMP/portable-report.err" ]] \
+        && grep -Fq 'Verdict: gate-passed' "$TMP/portable-report.out" \
+        && grep -Fq 'Human review: required' "$TMP/portable-report.out" \
+        && [[ ! -e "$TMP/receipt-network-called" ]]; then
+    ok "skill-folder-only copy renders a bounded receipt offline"
+else
+    bad "skill-folder-only copy renders a bounded receipt offline"
+fi
+
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     '[[ "$*" == "--version" ]] || exit 97' \
@@ -1381,6 +1428,7 @@ fi
 required_suite_paths=(
     tests/test-qa-gate.sh
     tests/test-evidence-receipt.sh
+    tests/test-evidence-report.sh
     tests/test-agy-worker.sh
     tests/test-update.sh
     tests/test-reporting.sh
@@ -1422,9 +1470,9 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all eleven suites and disclose public policy boundaries"
+    ok "governance docs require all twelve suites and disclose public policy boundaries"
 else
-    bad "governance docs require all eleven suites and disclose public policy boundaries"
+    bad "governance docs require all twelve suites and disclose public policy boundaries"
 fi
 
 python3 "$ROOT/scripts/validate-brand-assets.py" "$ROOT/docs/assets/brand" \

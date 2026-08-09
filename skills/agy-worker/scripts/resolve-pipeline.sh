@@ -26,7 +26,7 @@ is_pipeline() {
     fi
     pipeline_runtime_complete "$runtime_root" || return 1
 
-    for required in agy-worker.sh qa-gate.sh verify-job.sh model-recommendation.sh model-selection.sh doctor.sh; do
+    for required in agy-worker.sh qa-gate.sh verify-job.sh evidence-report.sh model-recommendation.sh model-selection.sh doctor.sh; do
         [[ -f "$pipeline_root/$required" && -x "$pipeline_root/$required" \
             && ! -L "$pipeline_root/$required" ]] || return 1
     done
@@ -54,11 +54,14 @@ pipeline_runtime_complete() {
         agy-worker.sh \
         qa-gate.sh \
         verify-job.sh \
+        evidence-report.sh \
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
         scripts/validate-envelope.py \
         scripts/evidence_receipt.py \
+        scripts/evidence_report.py \
+        scripts/recommendation_record.py \
         scripts/model-recommendation.py \
         scripts/model_selection.py \
         scripts/compatibility.py \

@@ -24,6 +24,7 @@ Run the offline suites and static checks before requesting review:
 ```bash
 ./tests/test-qa-gate.sh
 ./tests/test-evidence-receipt.sh
+./tests/test-evidence-report.sh
 ./tests/test-agy-worker.sh
 ./tests/test-update.sh
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py

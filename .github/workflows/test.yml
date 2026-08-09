@@ -36,6 +36,9 @@ jobs:
       - name: Evidence Receipt v1 suite
         run: ./tests/test-evidence-receipt.sh
 
+      - name: Evidence Report suite
+        run: ./tests/test-evidence-report.sh
+
       - name: dispatcher suite
         run: ./tests/test-agy-worker.sh
 
