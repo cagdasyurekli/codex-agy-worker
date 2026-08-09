@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The twelve offline suites need no agy process, network access, API key, or GitHub login.
+The thirteen offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -463,6 +463,82 @@ Gate controls:
 - Exit 15 is escalation, never acceptance. Read `open_questions` and decide whether
   one corrective dispatch is justified.
 
+### Manage one isolated local job
+
+`job.sh` records one explicit branch-backed worktree in a private external state
+file, delegates verification to `verify-job.sh`, and keeps every external action
+outside the lifecycle. It never dispatches agy, commits, pushes, opens a PR, merges,
+releases, or changes a model. Its Python entry is process-owning so signal authority
+survives output flush; invoke `job.sh` as a command/subprocess and do not embed its
+`main()` in a host process. Capture a full immutable base and create the state
+directory and worktree outside the repository:
+
+Lifecycle-owned Git commands use fixed `/usr/bin/git` with system/global and caller
+Git environment removed, a fresh private empty hooks directory, and prompts, pagers,
+fsmonitor, external diff, protocols, and recursive submodules disabled. `init` also
+rejects local included config that could authorize hooks, fsmonitor, pagers, or
+content filters, and rejects every effective `filter` attribute in the immutable base
+tree or repository info attributes. Branch names must equal Git's canonical
+`check-ref-format --branch` output byte-for-byte; reflog/revision shorthand is not a
+branch authority. These controls prevent lifecycle initialization from executing
+repository-provided checkout hooks or content filters; rejected preflight creates no
+state, ref, or worktree.
+
+```bash
+BASE="$(git rev-parse HEAD)"
+umask 077
+STATE_DIR="$(mktemp -d -t agyworker-job-state.XXXXXX)"
+WORKTREE_DIR="$(mktemp -d -t agyworker-job-worktree.XXXXXX)"
+rmdir "$WORKTREE_DIR"
+
+./job.sh init \
+  --state "$STATE_DIR/job.json" \
+  --repo "$(pwd -P)" \
+  --worktree "$WORKTREE_DIR" \
+  --branch codex/my-isolated-job \
+  --base "$BASE" \
+  --job-id my-isolated-job
+
+./job.sh status --state "$STATE_DIR/job.json"
+```
+
+Run the separately approved worker against the printed worktree through the normal
+dispatcher. Then bind the resulting envelope to the same gate and receipt protocol:
+
+```bash
+./job.sh verify \
+  --state "$STATE_DIR/job.json" \
+  --receipt "$STATE_DIR/receipt.json" \
+  --envelope envelope.json \
+  --only 'tests/**' --expect-edits \
+  --verify "git -C '$WORKTREE_DIR' diff --check"
+```
+
+For `verified-gate-passed`, `preserve-instructions` prints review/commit/integration
+commands but runs none of them. Cleanup is deliberately narrower: only Receipt exits
+`10`–`14` with verdict `rejected` qualify. First run `status` again and manually copy
+its current `job_id`, `state_sha256`, and `receipt_candidate_state_sha256` into one
+fresh command:
+
+```bash
+./job.sh cleanup \
+  --state "$STATE_DIR/job.json" \
+  --approve-job EXACT_JOB_ID \
+  --approve-state-sha CURRENT_STATE_SHA256 \
+  --approve-candidate-sha RECEIPT_CANDIDATE_STATE_SHA256
+```
+
+Cleanup revalidates the receipt, worktree registration, branch/ref/base, current
+candidate digest, deletion domain, and all three approvals. It persists progress
+before each destructive step, removes only the exact registered worktree, and deletes
+only the exact unchanged branch ref with compare-and-delete. A reconciled interrupted
+state returns without spending an old state approval; inspect the new status and issue
+a fresh command. Gate-passed, routed, committed, moved, tampered, stale, foreign,
+special-node, nested-repository, or digest-mismatched states are retained for manual
+recovery. Candidate-bound symlinks are removed as link nodes only and are never
+followed. The private mode-`0600` cleaned tombstone is retained; deleting it is a
+separate manual retention decision.
+
 ### Preserve a local Evidence Receipt v1
 
 `verify-job.sh` runs the same canonical gate and, only for gate outcomes `0` and
@@ -742,6 +818,7 @@ output, not its own recollection.
 
 ```
 agy-worker.sh                 dispatch a job, return a schema-valid envelope
+job.sh                        manage one explicit branch-backed local job lifecycle
 qa-gate.sh                    verify an envelope against the repo — the evidence
 verify-job.sh                 run the gate and durably publish Evidence Receipt v1
 evidence-report.sh            render a validated receipt as bounded text or Markdown
@@ -778,6 +855,7 @@ CODE_OF_CONDUCT.md            enforceable participation standards
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-evidence-report.sh  60-case offline pure renderer/privacy/mutation suite
+tests/test-job-lifecycle.py   94-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
@@ -788,8 +866,8 @@ tests/test-version-attestation-harness.py  55-case offline version-attestation m
 tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       187-case offline Codex package/CI-policy/relocation/landing suite
-tests/test-doctor.sh          180-case offline fake-tool/read-only doctor suite
+tests/test-packaging.sh       212-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-doctor.sh          184-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```

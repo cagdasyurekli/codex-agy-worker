@@ -746,11 +746,15 @@ else
 fi
 
 for dependency in \
+    'job.sh:lifecycle-entry' \
     'scripts/validate-envelope.py:python-helper' \
     'scripts/evidence_receipt.py:receipt-helper' \
+    'scripts/candidate_state.py:candidate-state-helper' \
+    'scripts/job_lifecycle.py:lifecycle-helper' \
     'scripts/model_selection.py:model-resolver' \
     'schemas/worker-result.schema.json:schema' \
     'schemas/evidence-receipt.schema.json:receipt-schema' \
+    'schemas/job-state.schema.json:lifecycle-schema' \
     'schemas/model-selection.schema.json:selection-schema' \
     'agents/repo-inventory.md:persona' \
     'compat/agy-upstream-head.txt:source-record' \

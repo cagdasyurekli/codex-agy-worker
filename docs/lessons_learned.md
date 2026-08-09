@@ -365,3 +365,29 @@ Do not launch `git cat-file` once per changed blob: the maximum-path fixture tur
 that design into thousands of processes and can consume the shared CI deadline.
 Feed fixed, full object IDs to one bounded batch reader and bind every response's
 order, ID, type, declared size, delimiter, total bytes, stderr, and completion.
+
+Do not make destructive lifecycle recovery an automatic continuation of old
+approval. Bind a private canonical state file to the exact repository, worktree,
+branch ref, immutable base, job ID, Receipt bytes, and candidate digest; advance it
+with sequence and previous-state hashes. Persist cleanup-in-progress before removing
+anything, record each completed Git step durably, and require fresh current-state,
+job, and candidate approvals on every new invocation. If reconciliation observes a
+completed worktree-removal step, publish that truth and stop before deleting the ref;
+the newly written state needs new approval. Remove a branch only with exact
+compare-and-delete against the recorded base, never a force-delete shortcut.
+
+A worktree is not an execution sandbox. `git worktree add` can run repository
+checkout hooks and content filters before a worker ever starts. Use one fixed
+sanitized Git runner, disable hooks and ambient helpers, inspect local included
+config, and reject every effective content-filter attribute before checkout. Branch
+validation must bind Git's canonical stdout rather than only its exit code: checkout
+shorthand such as `@{-1}` can canonicalize to a different ref. During cleanup, a ref
+probe's fatal exit is uncertainty, not absence; only the command's documented
+missing-ref status can advance a durable cleaned tombstone.
+
+A symlink inside a candidate is not automatically foreign data. The canonical gate
+digest binds its path, mode, and target. A cleanup scan may therefore delete the link
+node when the whole current candidate still matches the rejected Receipt, but it must
+use lstat-only traversal and never follow the target. Nested repositories, initialized
+submodules, mount/device changes, special nodes, and any digest drift remain manual
+recovery boundaries.
