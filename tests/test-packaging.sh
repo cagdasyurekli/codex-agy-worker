@@ -14,6 +14,564 @@ bad() { printf '  FAIL %s\n' "$1"; fail=$((fail+1)); }
 echo "Codex distribution offline test suite"
 echo
 
+ci_workflow_contract() {
+    python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = (
+    "      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n",
+    "      - name: committed diff hygiene\n",
+    "          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name }}\n",
+    "          AGY_WORKER_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}\n",
+    "          AGY_WORKER_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}\n",
+    "        run: ./scripts/ci-diff-check.sh\n",
+)
+assert all(text.count(item) == 1 for item in required)
+assert "git fetch" not in text
+assert "run: git diff --check\n" not in text
+PY
+}
+
+ci_helper_contract() {
+    python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sys
+
+shell = Path(sys.argv[1]).read_text(encoding="utf-8")
+source = Path(sys.argv[2]).read_text(encoding="utf-8")
+shell_required = (
+    'exec /usr/bin/python3 -I -S -B "$script_dir/ci_diff_check.py"',
+)
+source_required = {
+    'base + "..." + head, "--"': 1,
+    '"merge-base", base, head, limit=128, overall_deadline=deadline': 1,
+    'empty_tree + ".." + head, "--"': 1,
+    'base + ".." + head, "--"': 1,
+    '"--no-ext-diff", "--no-textconv"': 3,
+    '"diff-tree",': 1,
+    '"--raw",': 1,
+    '"--no-renames",': 1,
+    '_check_head_blob(new)': 1,
+    'deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS': 1,
+}
+assert all(shell.count(item) == 1 for item in shell_required)
+assert all(source.count(item) == count for item, count in source_required.items())
+assert "difflib" not in source
+assert "SequenceMatcher" not in source
+assert "git fetch" not in shell + source
+assert "shell=True" not in source
+PY
+}
+
+init_ci_repo() {
+    mkdir "$1"
+    git -C "$1" init -q
+    git -C "$1" config user.name test
+    git -C "$1" config user.email test@example.com
+}
+
+run_ci_check() {
+    (
+        cd "$1" || exit 1
+        AGY_WORKER_CI_EVENT_NAME="$2" \
+            AGY_WORKER_CI_BASE_SHA="$3" \
+            AGY_WORKER_CI_HEAD_SHA="$4" \
+            "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+    )
+}
+
+if ci_workflow_contract "$ROOT/.github/workflows/test.yml" \
+        && ci_helper_contract "$ROOT/scripts/ci-diff-check.sh" \
+            "$ROOT/scripts/ci_diff_check.py" \
+        && [[ -x "$ROOT/scripts/ci-diff-check.sh" ]] \
+        && [[ -x "$ROOT/scripts/ci_diff_check.py" ]]; then
+    ok "CI verifies the exact committed event range with full checkout history"
+else
+    bad "CI verifies the exact committed event range with full checkout history"
+fi
+
+cp "$ROOT/.github/workflows/test.yml" "$TMP/worktree-only.yml"
+python3 - "$TMP/worktree-only.yml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "        run: ./scripts/ci-diff-check.sh\n"
+assert text.count(old) == 1
+path.write_text(text.replace(old, "        run: git diff --check\n"), encoding="utf-8")
+PY
+if ! ci_workflow_contract "$TMP/worktree-only.yml" 2>/dev/null; then
+    ok "workflow policy rejects a worktree-only diff check"
+else
+    bad "workflow policy rejects a worktree-only diff check"
+fi
+
+cp "$ROOT/.github/workflows/test.yml" "$TMP/missing-diff-step.yml"
+python3 - "$TMP/missing-diff-step.yml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "        run: ./scripts/ci-diff-check.sh\n"
+assert text.count(old) == 1
+path.write_text(text.replace(old, ""), encoding="utf-8")
+PY
+if ! ci_workflow_contract "$TMP/missing-diff-step.yml" 2>/dev/null; then
+    ok "workflow policy rejects removal of the committed diff check"
+else
+    bad "workflow policy rejects removal of the committed diff check"
+fi
+
+mkdir "$TMP/ci-range-repo"
+git -C "$TMP/ci-range-repo" init -q
+git -C "$TMP/ci-range-repo" config user.name test
+git -C "$TMP/ci-range-repo" config user.email test@example.com
+printf 'base\n' > "$TMP/ci-range-repo/fixture.txt"
+git -C "$TMP/ci-range-repo" add fixture.txt
+git -C "$TMP/ci-range-repo" commit -qm base
+ci_base="$(git -C "$TMP/ci-range-repo" rev-parse HEAD)"
+printf 'good\n' > "$TMP/ci-range-repo/fixture.txt"
+git -C "$TMP/ci-range-repo" add fixture.txt
+git -C "$TMP/ci-range-repo" commit -qm good
+ci_good="$(git -C "$TMP/ci-range-repo" rev-parse HEAD)"
+
+(
+    cd "$TMP/ci-range-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=pull_request \
+        AGY_WORKER_CI_BASE_SHA="$ci_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_good" \
+        "$ROOT/scripts/ci-diff-check.sh"
+)
+ci_good_rc=$?
+if [[ "$ci_good_rc" == 0 ]]; then
+    ok "committed PR range accepts a whitespace-clean patch"
+else
+    bad "committed PR range accepts a whitespace-clean patch"
+fi
+
+printf 'bad   \n' > "$TMP/ci-range-repo/fixture.txt"
+git -C "$TMP/ci-range-repo" add fixture.txt
+git -C "$TMP/ci-range-repo" commit -qm bad
+ci_bad="$(git -C "$TMP/ci-range-repo" rev-parse HEAD)"
+git -C "$TMP/ci-range-repo" diff --check >/dev/null 2>&1
+plain_diff_rc=$?
+(
+    cd "$TMP/ci-range-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=pull_request \
+        AGY_WORKER_CI_BASE_SHA="$ci_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_bad" \
+        "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_bad_pr_rc=$?
+if [[ "$plain_diff_rc" == 0 && "$ci_bad_pr_rc" != 0 ]]; then
+    ok "committed PR range catches whitespace hidden by a clean worktree"
+else
+    bad "committed PR range catches whitespace hidden by a clean worktree"
+fi
+
+git -C "$TMP/ci-range-repo" checkout -q -b attribute-clean "$ci_base"
+printf 'fixture.txt -diff\n' > "$TMP/ci-range-repo/.gitattributes"
+printf 'clean\n' > "$TMP/ci-range-repo/fixture.txt"
+git -C "$TMP/ci-range-repo" add .gitattributes fixture.txt
+git -C "$TMP/ci-range-repo" commit -qm attribute-clean
+ci_attr_clean="$(git -C "$TMP/ci-range-repo" rev-parse HEAD)"
+(
+    cd "$TMP/ci-range-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=pull_request \
+        AGY_WORKER_CI_BASE_SHA="$ci_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_attr_clean" \
+        "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_attr_clean_rc=$?
+if [[ "$ci_attr_clean_rc" == 0 ]]; then
+    ok "attribute-suppressed clean committed blobs are accepted"
+else
+    bad "attribute-suppressed clean committed blobs are accepted"
+fi
+
+printf 'bad   \n' > "$TMP/ci-range-repo/fixture.txt"
+git -C "$TMP/ci-range-repo" add fixture.txt
+git -C "$TMP/ci-range-repo" commit -qm attribute-bad
+ci_attr_bad="$(git -C "$TMP/ci-range-repo" rev-parse HEAD)"
+git -C "$TMP/ci-range-repo" diff --check "$ci_base...$ci_attr_bad" -- \
+    >/dev/null 2>&1
+attribute_git_rc=$?
+(
+    cd "$TMP/ci-range-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=pull_request \
+        AGY_WORKER_CI_BASE_SHA="$ci_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_attr_bad" \
+        "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_attr_bad_rc=$?
+if [[ "$attribute_git_rc" == 0 && "$ci_attr_bad_rc" != 0 ]]; then
+    ok "raw committed-blob scan rejects a gitattributes diff suppression bypass"
+else
+    bad "raw committed-blob scan rejects a gitattributes diff suppression bypass"
+fi
+
+mkdir "$TMP/scanner-mutation"
+cp "$ROOT/scripts/ci-diff-check.sh" "$TMP/scanner-mutation/ci-diff-check.sh"
+cp "$ROOT/scripts/ci_diff_check.py" "$TMP/scanner-mutation/ci_diff_check.py"
+python3 - "$TMP/scanner-mutation/ci_diff_check.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "        _check_head_blob(new)\n"
+assert text.count(old) == 1
+path.write_text(text.replace(old, "        pass\n"), encoding="utf-8")
+PY
+chmod +x "$TMP/scanner-mutation/ci-diff-check.sh"
+(
+    cd "$TMP/ci-range-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=pull_request \
+        AGY_WORKER_CI_BASE_SHA="$ci_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_attr_bad" \
+        "$TMP/scanner-mutation/ci-diff-check.sh" >/dev/null 2>&1
+)
+scanner_mutation_rc=$?
+if [[ "$scanner_mutation_rc" == 0 ]]; then
+    ok "attribute bypass evidence kills raw committed-blob scanner removal"
+else
+    bad "attribute bypass evidence kills raw committed-blob scanner removal"
+fi
+
+cp "$ROOT/scripts/ci_diff_check.py" "$TMP/wrong-range.py"
+python3 - "$TMP/wrong-range.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = 'base + "..." + head, "--"'
+assert text.count(old) == 1
+path.write_text(
+    text.replace(old, 'head + "..." + base, "--"'),
+    encoding="utf-8",
+)
+PY
+if ! ci_helper_contract "$ROOT/scripts/ci-diff-check.sh" \
+        "$TMP/wrong-range.py" 2>/dev/null; then
+    ok "helper policy rejects a wrong-direction committed range"
+else
+    bad "helper policy rejects a wrong-direction committed range"
+fi
+
+(
+    cd "$TMP/ci-range-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=push \
+        AGY_WORKER_CI_BASE_SHA="$ci_good" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_bad" \
+        "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_bad_push_rc=$?
+if [[ "$ci_bad_push_rc" != 0 ]]; then
+    ok "committed push range rejects whitespace errors"
+else
+    bad "committed push range rejects whitespace errors"
+fi
+
+(
+    cd "$TMP/ci-range-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=push \
+        AGY_WORKER_CI_BASE_SHA="$ci_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_attr_clean" \
+        "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_clean_push_rc=$?
+if [[ "$ci_clean_push_rc" == 0 ]]; then
+    ok "committed noninitial push range accepts a clean patch"
+else
+    bad "committed noninitial push range accepts a clean patch"
+fi
+
+mkdir "$TMP/ci-initial-repo"
+git -C "$TMP/ci-initial-repo" init -q
+git -C "$TMP/ci-initial-repo" config user.name test
+git -C "$TMP/ci-initial-repo" config user.email test@example.com
+printf 'initial   \n' > "$TMP/ci-initial-repo/fixture.txt"
+git -C "$TMP/ci-initial-repo" add fixture.txt
+git -C "$TMP/ci-initial-repo" commit -qm initial
+ci_initial="$(git -C "$TMP/ci-initial-repo" rev-parse HEAD)"
+(
+    cd "$TMP/ci-initial-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=push \
+        AGY_WORKER_CI_BASE_SHA=0000000000000000000000000000000000000000 \
+        AGY_WORKER_CI_HEAD_SHA="$ci_initial" \
+        "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_initial_rc=$?
+if [[ "$ci_initial_rc" != 0 ]]; then
+    ok "initial push checks the root commit against the empty tree"
+else
+    bad "initial push checks the root commit against the empty tree"
+fi
+
+
+mkdir "$TMP/ci-initial-clean-repo"
+git -C "$TMP/ci-initial-clean-repo" init -q
+git -C "$TMP/ci-initial-clean-repo" config user.name test
+git -C "$TMP/ci-initial-clean-repo" config user.email test@example.com
+printf 'initial\n' > "$TMP/ci-initial-clean-repo/fixture.txt"
+git -C "$TMP/ci-initial-clean-repo" add fixture.txt
+git -C "$TMP/ci-initial-clean-repo" commit -qm initial
+ci_initial_clean="$(git -C "$TMP/ci-initial-clean-repo" rev-parse HEAD)"
+(
+    cd "$TMP/ci-initial-clean-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=push \
+        AGY_WORKER_CI_BASE_SHA=0000000000000000000000000000000000000000 \
+        AGY_WORKER_CI_HEAD_SHA="$ci_initial_clean" \
+        "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_initial_clean_rc=$?
+if [[ "$ci_initial_clean_rc" == 0 ]]; then
+    ok "initial push accepts a clean root commit"
+else
+    bad "initial push accepts a clean root commit"
+fi
+
+invalid_sha_rejected=1
+for invalid_case in \
+    "pull_request||$ci_good" \
+    "pull_request|$ci_base|" \
+    "pull_request|not-a-sha|$ci_good" \
+    "pull_request|$ci_base|not-a-sha"; do
+    IFS='|' read -r invalid_event invalid_base invalid_head <<EOF
+$invalid_case
+EOF
+    (
+        cd "$TMP/ci-range-repo" || exit 1
+        AGY_WORKER_CI_EVENT_NAME="$invalid_event" \
+            AGY_WORKER_CI_BASE_SHA="$invalid_base" \
+            AGY_WORKER_CI_HEAD_SHA="$invalid_head" \
+            "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+    )
+    [[ "$?" != 0 ]] || invalid_sha_rejected=0
+done
+if [[ "$invalid_sha_rejected" == 1 ]]; then
+    ok "missing and malformed event SHAs fail closed"
+else
+    bad "missing and malformed event SHAs fail closed"
+fi
+
+missing_object_rejected=1
+for invalid_case in \
+    "pull_request|1111111111111111111111111111111111111111|$ci_good" \
+    "pull_request|$ci_base|2222222222222222222222222222222222222222"; do
+    IFS='|' read -r invalid_event invalid_base invalid_head <<EOF
+$invalid_case
+EOF
+    (
+        cd "$TMP/ci-range-repo" || exit 1
+        AGY_WORKER_CI_EVENT_NAME="$invalid_event" \
+            AGY_WORKER_CI_BASE_SHA="$invalid_base" \
+            AGY_WORKER_CI_HEAD_SHA="$invalid_head" \
+            "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+    )
+    [[ "$?" != 0 ]] || missing_object_rejected=0
+done
+if [[ "$missing_object_rejected" == 1 ]]; then
+    ok "missing committed range objects fail closed"
+else
+    bad "missing committed range objects fail closed"
+fi
+
+(
+    cd "$TMP/ci-range-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=workflow_dispatch \
+        AGY_WORKER_CI_BASE_SHA="$ci_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_good" \
+        "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+)
+unknown_event_rc=$?
+if [[ "$unknown_event_rc" != 0 ]]; then
+    ok "unknown CI event names fail closed"
+else
+    bad "unknown CI event names fail closed"
+fi
+
+zero_sha_rejected=1
+for invalid_case in \
+    "pull_request|0000000000000000000000000000000000000000|$ci_good" \
+    "pull_request|$ci_base|0000000000000000000000000000000000000000" \
+    "push|$ci_base|0000000000000000000000000000000000000000"; do
+    IFS='|' read -r invalid_event invalid_base invalid_head <<EOF
+$invalid_case
+EOF
+    (
+        cd "$TMP/ci-range-repo" || exit 1
+        AGY_WORKER_CI_EVENT_NAME="$invalid_event" \
+            AGY_WORKER_CI_BASE_SHA="$invalid_base" \
+            AGY_WORKER_CI_HEAD_SHA="$invalid_head" \
+            "$ROOT/scripts/ci-diff-check.sh" >/dev/null 2>&1
+    )
+    [[ "$?" != 0 ]] || zero_sha_rejected=0
+done
+if [[ "$zero_sha_rejected" == 1 ]]; then
+    ok "zero PR base and zero event heads fail closed"
+else
+    bad "zero PR base and zero event heads fail closed"
+fi
+
+init_ci_repo "$TMP/ci-binary-repo"
+printf 'base\n' > "$TMP/ci-binary-repo/fixture.txt"
+git -C "$TMP/ci-binary-repo" add fixture.txt
+git -C "$TMP/ci-binary-repo" commit -qm base
+ci_binary_base="$(git -C "$TMP/ci-binary-repo" rev-parse HEAD)"
+python3 - "$TMP/ci-binary-repo/binary.dat" <<'PY'
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(b"binary\x00payload\n")
+PY
+git -C "$TMP/ci-binary-repo" add binary.dat
+git -C "$TMP/ci-binary-repo" commit -qm binary
+ci_binary_head="$(git -C "$TMP/ci-binary-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-binary-repo" pull_request \
+        "$ci_binary_base" "$ci_binary_head"; then
+    ok "binary committed additions fail closed"
+else
+    bad "binary committed additions fail closed"
+fi
+
+init_ci_repo "$TMP/ci-oversize-repo"
+printf 'base\n' > "$TMP/ci-oversize-repo/fixture.txt"
+git -C "$TMP/ci-oversize-repo" add fixture.txt
+git -C "$TMP/ci-oversize-repo" commit -qm base
+ci_oversize_base="$(git -C "$TMP/ci-oversize-repo" rev-parse HEAD)"
+python3 - "$TMP/ci-oversize-repo/oversize.txt" <<'PY'
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+PY
+git -C "$TMP/ci-oversize-repo" add oversize.txt
+git -C "$TMP/ci-oversize-repo" commit -qm oversize
+ci_oversize_head="$(git -C "$TMP/ci-oversize-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-oversize-repo" pull_request \
+        "$ci_oversize_base" "$ci_oversize_head"; then
+    ok "oversized committed blobs fail closed"
+else
+    bad "oversized committed blobs fail closed"
+fi
+
+init_ci_repo "$TMP/ci-type-repo"
+printf 'base\n' > "$TMP/ci-type-repo/fixture.txt"
+git -C "$TMP/ci-type-repo" add fixture.txt
+git -C "$TMP/ci-type-repo" commit -qm base
+ci_type_base="$(git -C "$TMP/ci-type-repo" rev-parse HEAD)"
+ln -s fixture.txt "$TMP/ci-type-repo/fixture-link"
+git -C "$TMP/ci-type-repo" add fixture-link
+git -C "$TMP/ci-type-repo" commit -qm symlink
+ci_type_head="$(git -C "$TMP/ci-type-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-type-repo" pull_request \
+        "$ci_type_base" "$ci_type_head"; then
+    ok "nonregular committed path types fail closed"
+else
+    bad "nonregular committed path types fail closed"
+fi
+
+git -C "$TMP/ci-type-repo" checkout -q -b gitlink "$ci_type_base"
+git -C "$TMP/ci-type-repo" update-index --add \
+    --cacheinfo "160000,$ci_type_base,nested"
+git -C "$TMP/ci-type-repo" commit -qm gitlink
+ci_gitlink_head="$(git -C "$TMP/ci-type-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-type-repo" pull_request \
+        "$ci_type_base" "$ci_gitlink_head"; then
+    ok "committed gitlinks fail closed"
+else
+    bad "committed gitlinks fail closed"
+fi
+
+init_ci_repo "$TMP/ci-rename-repo"
+printf 'clean\n' > "$TMP/ci-rename-repo/clean.txt"
+printf 'bad   \n' > "$TMP/ci-rename-repo/bad.txt"
+git -C "$TMP/ci-rename-repo" add clean.txt bad.txt
+git -C "$TMP/ci-rename-repo" commit -qm base
+ci_rename_base="$(git -C "$TMP/ci-rename-repo" rev-parse HEAD)"
+git -C "$TMP/ci-rename-repo" mv clean.txt clean-renamed.txt
+git -C "$TMP/ci-rename-repo" commit -qm clean-rename
+ci_clean_rename="$(git -C "$TMP/ci-rename-repo" rev-parse HEAD)"
+if run_ci_check "$TMP/ci-rename-repo" pull_request \
+        "$ci_rename_base" "$ci_clean_rename"; then
+    ok "clean committed renames are scanned and accepted"
+else
+    bad "clean committed renames are scanned and accepted"
+fi
+git -C "$TMP/ci-rename-repo" checkout -q -b bad-rename "$ci_rename_base"
+git -C "$TMP/ci-rename-repo" mv bad.txt bad-renamed.txt
+git -C "$TMP/ci-rename-repo" commit -qm bad-rename
+ci_bad_rename="$(git -C "$TMP/ci-rename-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-rename-repo" pull_request \
+        "$ci_rename_base" "$ci_bad_rename"; then
+    ok "renamed committed blobs are rescanned in full"
+else
+    bad "renamed committed blobs are rescanned in full"
+fi
+
+init_ci_repo "$TMP/ci-full-blob-repo"
+printf 'legacy   \nbase\n' > "$TMP/ci-full-blob-repo/fixture.txt"
+git -C "$TMP/ci-full-blob-repo" add fixture.txt
+git -C "$TMP/ci-full-blob-repo" commit -qm base
+ci_full_blob_base="$(git -C "$TMP/ci-full-blob-repo" rev-parse HEAD)"
+printf 'legacy   \nchanged\n' > "$TMP/ci-full-blob-repo/fixture.txt"
+git -C "$TMP/ci-full-blob-repo" add fixture.txt
+git -C "$TMP/ci-full-blob-repo" commit -qm changed
+ci_full_blob_head="$(git -C "$TMP/ci-full-blob-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-full-blob-repo" pull_request \
+        "$ci_full_blob_base" "$ci_full_blob_head"; then
+    ok "changed files reject preexisting full-blob whitespace defects"
+else
+    bad "changed files reject preexisting full-blob whitespace defects"
+fi
+
+init_ci_repo "$TMP/ci-linear-lines-repo"
+printf 'base\n' > "$TMP/ci-linear-lines-repo/base.txt"
+git -C "$TMP/ci-linear-lines-repo" add base.txt
+git -C "$TMP/ci-linear-lines-repo" commit -qm base
+ci_linear_lines_base="$(git -C "$TMP/ci-linear-lines-repo" rev-parse HEAD)"
+python3 - "$TMP/ci-linear-lines-repo/repeated.txt" <<'PY'
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(b"same line\n" * 5_000)
+PY
+git -C "$TMP/ci-linear-lines-repo" add repeated.txt
+git -C "$TMP/ci-linear-lines-repo" commit -qm repeated
+ci_linear_lines_head="$(git -C "$TMP/ci-linear-lines-repo" rev-parse HEAD)"
+if run_ci_check "$TMP/ci-linear-lines-repo" pull_request \
+        "$ci_linear_lines_base" "$ci_linear_lines_head"; then
+    ok "five thousand repeated lines complete under the linear scanner bound"
+else
+    bad "five thousand repeated lines complete under the linear scanner bound"
+fi
+
+init_ci_repo "$TMP/ci-max-paths-repo"
+printf 'base\n' > "$TMP/ci-max-paths-repo/base.txt"
+git -C "$TMP/ci-max-paths-repo" add base.txt
+git -C "$TMP/ci-max-paths-repo" commit -qm base
+ci_max_paths_base="$(git -C "$TMP/ci-max-paths-repo" rev-parse HEAD)"
+path_index=0
+while [[ "$path_index" -lt 1024 ]]; do
+    printf 'clean\n' > "$TMP/ci-max-paths-repo/path-$path_index.txt"
+    path_index=$((path_index + 1))
+done
+git -C "$TMP/ci-max-paths-repo" add .
+git -C "$TMP/ci-max-paths-repo" commit -qm max-paths
+ci_max_paths_head="$(git -C "$TMP/ci-max-paths-repo" rev-parse HEAD)"
+if run_ci_check "$TMP/ci-max-paths-repo" pull_request \
+        "$ci_max_paths_base" "$ci_max_paths_head"; then
+    ok "one thousand twenty-four small files complete under the path bound"
+else
+    bad "one thousand twenty-four small files complete under the path bound"
+fi
+
 if python3 - "$ROOT" <<'PY'
 import json
 from pathlib import Path

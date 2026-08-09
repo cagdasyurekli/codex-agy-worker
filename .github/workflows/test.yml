@@ -12,9 +12,18 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: committed diff hygiene
+        env:
+          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name }}
+          AGY_WORKER_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          AGY_WORKER_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: ./scripts/ci-diff-check.sh
 
       - name: syntax
-        run: for f in ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh; do bash -n "$f"; done
+        run: for f in ./*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh; do bash -n "$f"; done
 
       - name: Python syntax
         env:

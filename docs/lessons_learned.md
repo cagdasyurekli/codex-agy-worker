@@ -332,3 +332,14 @@ When hosted-runner trust facts drift, emit only bounded, canonical categories fr
 same evaluator that rejected them. Report every ordered violation, redact unreviewed
 path components, cap the record, and treat it as diagnostic evidence rather than a
 reason to relax the trust boundary.
+
+A clean worktree does not prove that a committed pull-request patch passes
+`git diff --check`. CI must check the GitHub event's immutable base-to-head range:
+base...head for pull requests, before..head for ordinary pushes, and the empty tree
+to head for an all-zero initial push. Give checkout enough history for those objects;
+do not repair a missing range by fetching an extra untrusted ref inside the gate.
+Repository `.gitattributes` can classify a path as `-diff` and make Git's own check
+skip its content, so pair that check with a globally bounded, linear raw-blob scan of
+every changed regular head file. The stricter scan rejects pre-existing hygiene
+defects in a changed file and rejects binary, oversized, or unsupported committed
+types fail-closed; it does not run diff algorithms or attribute-selected drivers.

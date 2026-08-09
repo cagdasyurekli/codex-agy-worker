@@ -730,6 +730,8 @@ scripts/compatibility.py      stdlib metadata/matrix validation and exact resolu
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
 scripts/version_attestation_runner.py fixed-profile snapshot version runner with bounded startup diagnostics; real use separately authorized
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
+scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
+scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
 scripts/official_github.py    fixed, proxyless, redirect-free GitHub REST evidence client
 scripts/official_distribution.py  fixed, bounded agy distribution-manifest canary
@@ -756,7 +758,7 @@ tests/test-version-attestation-runner.py  157-case offline canonical fixed-profi
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       135-case offline Codex package/relocation/landing suite
+tests/test-packaging.sh       161-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          180-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch

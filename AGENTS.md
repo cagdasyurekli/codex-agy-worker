@@ -42,8 +42,8 @@ Keep these counts current when their suites change:
 - Canonical version-attestation runner: 157 offline fixed-profile/source-binding cases.
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution: 135 offline
-  manifest/runtime-copy/relocation/landing cases.
+- Codex package/skill distribution and CI policy: 161 offline
+  manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 180 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
@@ -71,7 +71,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
 ./tests/test-proof-demo.sh      # offline synthetic pass/reject proof coverage
-bash -n ./*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
+bash -n ./*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
 (
   AGY_WORKER_PYCACHE="$(mktemp -d -t agyworker-pycache.XXXXXX)" || exit 1
   trap 'rm -rf -- "$AGY_WORKER_PYCACHE"' EXIT
@@ -150,6 +150,14 @@ only a passing test has not been shown to catch anything.
   environment overrides. Self-test mode may use only synthetic private fixtures and
   must have no path to production evidence. Green runner/harness tests authorize no
   agy, provider, or metadata call.
+- **CI diff hygiene audits committed bytes.** Keep checkout history sufficient for
+  the GitHub event range and run `scripts/ci-diff-check.sh`; its stdlib scanner must
+  inspect every changed regular head blob independently of Git attributes with a
+  linear, globally bounded scan. This deliberately rejects pre-existing hygiene
+  defects in a changed file. A plain
+  worktree-only `git diff --check` is not equivalent. Pull requests use base...head, pushes use
+  before..head, and an all-zero initial push compares the root commit to the empty
+  tree. Never fetch an extra ref inside this check.
 - **An inventory display label is not another model.** Interpret owner-captured
   `agy models` evidence line by line against the exact reviewed slug allowlist.
   `gpt-oss` is display text only when its line contains the one exact canonical
