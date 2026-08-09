@@ -316,3 +316,10 @@ exact source byte count and SHA before importing it, and make synthetic self-tes
 that same function with fixed test-only callables. A green generic lifecycle harness
 is useful evidence for its primitives, but it cannot substitute for exact production
 source provenance.
+
+Do not use the literal value of `sys.executable` as Apple system-interpreter
+provenance. `/usr/bin/python3` can report a versioned Xcode or Command Line Tools
+path that changes with the macOS image. Keep `-I -S -B` mandatory, resolve the actual
+executable fail-closed, restrict it to reviewed Apple system families, and verify the
+regular root-owned executable plus every non-writable ancestor instead of pinning one
+image-specific string.

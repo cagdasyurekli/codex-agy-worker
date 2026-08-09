@@ -764,15 +764,15 @@ for suite in "${required_suite_paths[@]}"; do
         governance_lists_all_suites=0
     fi
 done
-if ! grep -Fq 'python3 -I -S -B tests/test-version-attestation-harness.py' \
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py' \
         "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq 'python3 -I -S -B tests/test-version-attestation-harness.py' \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py' \
             "$ROOT/.github/pull_request_template.md"; then
     governance_lists_all_suites=0
 fi
-if ! grep -Fq 'python3 -I -S -B tests/test-version-attestation-runner.py' \
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py' \
         "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq 'python3 -I -S -B tests/test-version-attestation-runner.py' \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py' \
             "$ROOT/.github/pull_request_template.md"; then
     governance_lists_all_suites=0
 fi

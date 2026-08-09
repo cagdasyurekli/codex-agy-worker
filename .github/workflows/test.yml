@@ -34,10 +34,10 @@ jobs:
         run: ./tests/test-update.sh
 
       - name: canonical version attestation runner
-        run: python3 -I -S -B tests/test-version-attestation-runner.py
+        run: /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py
 
       - name: version attestation mutation harness
-        run: python3 -I -S -B tests/test-version-attestation-harness.py
+        run: /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py
 
       - name: reporting suite
         run: ./tests/test-reporting.sh

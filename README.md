@@ -752,7 +752,7 @@ tests/test-update.sh          310-case offline transport/process/inventory/local
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
-tests/test-version-attestation-runner.py  76-case offline canonical fixed-profile runner suite
+tests/test-version-attestation-runner.py  115-case offline canonical fixed-profile runner suite
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite

@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import pathlib
 import re
 import shutil
 import signal
@@ -123,6 +124,34 @@ mutated = source.replace(
 check("source validator rejects any post-reap group probe", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"    if not _production_startup_isolated():\n", b"    if False:\n", 1)
 check("source validator rejects isolated startup enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"        and isolated == 1\n", b"        and True\n", 1)
+check("source validator rejects isolated-flag enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"        and no_site == 1\n", b"        and True\n", 1)
+check("source validator rejects no-site enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"        and dont_write_bytecode == 1\n", b"        and True\n", 1)
+check("source validator rejects no-bytecode enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'node.kind != "directory" or node.uid != 0 or node.mode & 0o022', b'node.kind != "directory" or False or node.mode & 0o022', 1)
+check("source validator rejects interpreter ownership enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'node.kind != "directory" or node.uid != 0 or node.mode & 0o022', b'node.kind != "directory" or node.uid != 0 or False', 1)
+check("source validator rejects interpreter ancestor-mode enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'resolved_leaf.kind != "regular"', b'False', 1)
+check("source validator rejects regular-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"        or resolved_leaf.mode & 0o6000\n", b"        or False\n", 1)
+check("source validator rejects setid-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"        or not resolved_leaf.mode & 0o111\n", b"        or False\n", 1)
+check("source validator rejects executable-interpreter enforcement removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"    if parts == (\n", b"    if parts[-7:] == (\n", 1)
+check("source validator rejects CLT path suffix matching", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b'    if xcode_root and parts[5:] == ("usr", "bin", "python3"):\n',
+    b'    if xcode_root and parts[-3:] == ("usr", "bin", "python3"):\n',
+    1,
+)
+check("source validator rejects Xcode path suffix matching", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"    if len(tail) != 3 or", b"    if len(tail) < 3 or", 1)
+check("source validator rejects framework extra-component weakening", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"not _numeric_python_version(tail[0])", b"not tail[0]", 1)
+check("source validator rejects numeric framework-version weakening", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 check("source hash changes under a one-byte drift", lambda: hashlib.sha256(source + b"\n").hexdigest() != contract["sha256"])
 
 profile_root, profile = fresh_profile("profile")
@@ -247,6 +276,196 @@ def isolated_startup_ignores_python_hooks() -> bool:
 
 
 check("production CLI requires isolated no-site no-bytecode startup", isolated_startup_ignores_python_hooks)
+
+
+def interpreter_node(
+    kind: str, *, uid: int = 0, mode: int = 0o755, ino: int = 1
+) -> object:
+    return MODULE.InterpreterNode(dev=1, ino=ino, kind=kind, mode=mode, uid=uid)
+
+
+def interpreter_facts(alias: str, resolved: str) -> object:
+    target = interpreter_node("regular", ino=99)
+    alias_parts = pathlib.PurePosixPath(alias).parts
+    resolved_parts = pathlib.PurePosixPath(resolved).parts
+    return MODULE.InterpreterTrustFacts(
+        alias_path=alias,
+        alias_nodes=tuple(
+            [interpreter_node("directory", ino=index + 2) for index in range(len(alias_parts) - 1)]
+            + [interpreter_node("symlink", ino=90)]
+        ),
+        alias_target=target,
+        resolved_path=resolved,
+        resolved_nodes=tuple(
+            [interpreter_node("directory", ino=index + 102) for index in range(len(resolved_parts) - 1)]
+            + [target]
+        ),
+        resolved_target=target,
+    )
+
+
+def facts_accepted(facts: object, **flag_overrides: int) -> bool:
+    flags = {"isolated": 1, "no_site": 1, "dont_write_bytecode": 1}
+    flags.update(flag_overrides)
+    return MODULE._trusted_interpreter_facts(facts, **flags)
+
+
+clt_facts = interpreter_facts(
+    "/Library/Developer/CommandLineTools/usr/bin/python3",
+    "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
+)
+xcode_facts = interpreter_facts(
+    "/Applications/Xcode_26.0.app/Contents/Developer/usr/bin/python3",
+    "/Applications/Xcode_26.0.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.13/bin/python3.13",
+)
+check("root-owned CLT interpreter facts are accepted", lambda: facts_accepted(clt_facts))
+check("root-owned versioned Xcode interpreter facts are accepted", lambda: facts_accepted(xcode_facts))
+check("current isolated system interpreter facts are accepted", MODULE._production_startup_isolated)
+check(
+    "incomplete interpreter component facts are rejected",
+    lambda: not facts_accepted(
+        dataclasses.replace(clt_facts, resolved_nodes=clt_facts.resolved_nodes[1:])
+    ),
+)
+
+user_target = dataclasses.replace(clt_facts.resolved_target, uid=os.getuid() or 501)
+user_owned = dataclasses.replace(
+    clt_facts,
+    alias_target=user_target,
+    resolved_target=user_target,
+    resolved_nodes=clt_facts.resolved_nodes[:-1] + (user_target,),
+)
+check("user-owned interpreter facts are rejected", lambda: not facts_accepted(user_owned))
+
+user_alias_leaf = dataclasses.replace(clt_facts.alias_nodes[-1], uid=os.getuid() or 501)
+user_alias = dataclasses.replace(
+    clt_facts, alias_nodes=clt_facts.alias_nodes[:-1] + (user_alias_leaf,)
+)
+check("user-owned interpreter alias facts are rejected", lambda: not facts_accepted(user_alias))
+
+writable_parent = dataclasses.replace(clt_facts.resolved_nodes[2], mode=0o775)
+writable_ancestor = dataclasses.replace(
+    clt_facts,
+    resolved_nodes=clt_facts.resolved_nodes[:2]
+    + (writable_parent,)
+    + clt_facts.resolved_nodes[3:],
+)
+check("group-writable interpreter ancestor facts are rejected", lambda: not facts_accepted(writable_ancestor))
+
+writable_target = dataclasses.replace(clt_facts.resolved_target, mode=0o777)
+writable_executable = dataclasses.replace(
+    clt_facts,
+    alias_target=writable_target,
+    resolved_target=writable_target,
+    resolved_nodes=clt_facts.resolved_nodes[:-1] + (writable_target,),
+)
+check("group-writable interpreter executable facts are rejected", lambda: not facts_accepted(writable_executable))
+
+setid_target = dataclasses.replace(clt_facts.resolved_target, mode=0o6755)
+setid_executable = dataclasses.replace(
+    clt_facts,
+    alias_target=setid_target,
+    resolved_target=setid_target,
+    resolved_nodes=clt_facts.resolved_nodes[:-1] + (setid_target,),
+)
+check("setid interpreter executable facts are rejected", lambda: not facts_accepted(setid_executable))
+
+nonexecutable_target = dataclasses.replace(clt_facts.resolved_target, mode=0o644)
+nonexecutable = dataclasses.replace(
+    clt_facts,
+    alias_target=nonexecutable_target,
+    resolved_target=nonexecutable_target,
+    resolved_nodes=clt_facts.resolved_nodes[:-1] + (nonexecutable_target,),
+)
+check("non-executable interpreter facts are rejected", lambda: not facts_accepted(nonexecutable))
+
+symlink_parent = dataclasses.replace(clt_facts.alias_nodes[2], kind="symlink")
+symlink_ancestor = dataclasses.replace(
+    clt_facts,
+    alias_nodes=clt_facts.alias_nodes[:2]
+    + (symlink_parent,)
+    + clt_facts.alias_nodes[3:],
+)
+check("intermediate symlink facts are rejected", lambda: not facts_accepted(symlink_ancestor))
+
+resolved_symlink = dataclasses.replace(clt_facts.resolved_nodes[-1], kind="symlink")
+symlink_leaf = dataclasses.replace(
+    clt_facts, resolved_nodes=clt_facts.resolved_nodes[:-1] + (resolved_symlink,)
+)
+check("resolved symlink leaf facts are rejected", lambda: not facts_accepted(symlink_leaf))
+
+regular_alias_mismatch = dataclasses.replace(
+    clt_facts.alias_nodes[-1], kind="regular", ino=1234
+)
+mismatched_alias = dataclasses.replace(
+    clt_facts, alias_nodes=clt_facts.alias_nodes[:-1] + (regular_alias_mismatch,)
+)
+check("regular interpreter alias identity mismatch is rejected", lambda: not facts_accepted(mismatched_alias))
+
+nonregular = dataclasses.replace(clt_facts.resolved_target, kind="other")
+nonregular_facts = dataclasses.replace(
+    clt_facts,
+    alias_target=nonregular,
+    resolved_target=nonregular,
+    resolved_nodes=clt_facts.resolved_nodes[:-1] + (nonregular,),
+)
+check("nonregular interpreter facts are rejected", lambda: not facts_accepted(nonregular_facts))
+check(
+    "relative interpreter facts are rejected",
+    lambda: not facts_accepted(dataclasses.replace(clt_facts, alias_path="relative/python3")),
+)
+check(
+    "nonnormalized interpreter facts are rejected",
+    lambda: not facts_accepted(
+        dataclasses.replace(
+            clt_facts,
+            alias_path="/Library/Developer/CommandLineTools/usr/../usr/bin/python3",
+        )
+    ),
+)
+arbitrary_facts = interpreter_facts(
+    "/opt/root-owned/python3", "/opt/root-owned/python3.13"
+)
+check("arbitrary root-owned interpreter families are rejected", lambda: not facts_accepted(arbitrary_facts))
+clt_unreviewed = dataclasses.replace(
+    clt_facts,
+    alias_path="/Library/Developer/CommandLineTools/unreviewed/python3",
+)
+check("unreviewed CLT subpaths are rejected", lambda: not facts_accepted(clt_unreviewed))
+xcode_toolchain = dataclasses.replace(
+    xcode_facts,
+    alias_path="/Applications/Xcode_26.0.app/Contents/Developer/Toolchains/bin/python3",
+)
+check("alternate Xcode toolchain paths are rejected", lambda: not facts_accepted(xcode_toolchain))
+nonnumeric_framework = dataclasses.replace(
+    clt_facts,
+    resolved_path="/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/Current/bin/python3",
+)
+check("nonnumeric framework versions are rejected", lambda: not facts_accepted(nonnumeric_framework))
+extra_framework_component = dataclasses.replace(
+    clt_facts,
+    resolved_path="/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/extra/bin/python3.9",
+    resolved_nodes=clt_facts.resolved_nodes[:-1]
+    + (interpreter_node("directory", ino=999), clt_facts.resolved_nodes[-1]),
+)
+check("extra framework path components are rejected", lambda: not facts_accepted(extra_framework_component))
+wrong_framework_leaf = dataclasses.replace(
+    clt_facts,
+    resolved_path="/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python",
+)
+check("unreviewed framework executable names are rejected", lambda: not facts_accepted(wrong_framework_leaf))
+fake_xcode = interpreter_facts(
+    "/Applications/XcodeMalware.app/Contents/Developer/usr/bin/python3",
+    "/Applications/XcodeMalware.app/Contents/Developer/bin/python3.13",
+)
+check("unreviewed Xcode-like interpreter family is rejected", lambda: not facts_accepted(fake_xcode))
+check("isolated flag drift is rejected", lambda: not facts_accepted(clt_facts, isolated=0))
+check("no-site flag drift is rejected", lambda: not facts_accepted(clt_facts, no_site=0))
+check(
+    "no-bytecode flag drift is rejected",
+    lambda: not facts_accepted(clt_facts, dont_write_bytecode=0),
+)
+check("boolean startup flags are rejected", lambda: not facts_accepted(clt_facts, isolated=True))
 
 
 def self_test_accepts() -> bool:

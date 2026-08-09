@@ -90,6 +90,25 @@ class AttestationInterrupted(BaseException):
 
 
 @dataclass(frozen=True)
+class InterpreterNode:
+    dev: int
+    ino: int
+    kind: str
+    mode: int
+    uid: int
+
+
+@dataclass(frozen=True)
+class InterpreterTrustFacts:
+    alias_path: str
+    alias_nodes: tuple[InterpreterNode, ...]
+    alias_target: InterpreterNode
+    resolved_path: str
+    resolved_nodes: tuple[InterpreterNode, ...]
+    resolved_target: InterpreterNode
+
+
+@dataclass(frozen=True)
 class FileIdentity:
     ctime_ns: int
     dev: int
@@ -307,6 +326,29 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
             raise AttestationError("canonical runner uses group authority after reap")
     if len(named_calls(main_node, "_production_startup_isolated")) != 1:
         raise AttestationError("canonical runner lost isolated startup enforcement")
+    startup_requirements = {
+        "type(isolated)" + " is int": 1,
+        "isolated" + " == 1": 1,
+        "type(no_site)" + " is int": 1,
+        "no_site" + " == 1": 1,
+        "type(dont_write_bytecode)" + " is int": 1,
+        "dont_write_bytecode" + " == 1": 1,
+        "node.uid" + " != 0": 2,
+        "node.mode" + " & 0o022": 2,
+        "resolved_leaf.kind" + ' != "regular"': 1,
+        "resolved_leaf.uid" + " != 0": 1,
+        "resolved_leaf.mode" + " & 0o022": 1,
+        "resolved_leaf.mode" + " & 0o6000": 1,
+        "not resolved_leaf.mode" + " & 0o111": 1,
+        "os.open(resolved," + " os.O_RDONLY | CLOEXEC | NOFOLLOW)": 1,
+        "if parts" + " == (": 1,
+        "if xcode_root and parts[5:]" + ' == ("usr", "bin", "python3")': 1,
+        "len(tail)" + " != 3": 1,
+        "not _numeric_python_version" + "(tail[0])": 1,
+        "return tail[2]" + ' in {"python3", "python" + tail[0]}': 1,
+    }
+    if any(text.count(marker) != count for marker, count in startup_requirements.items()):
+        raise AttestationError("canonical runner lost interpreter trust enforcement")
     return {
         "byte_count": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
@@ -1109,16 +1151,199 @@ def run_offline_self_test() -> dict[str, object]:
         shutil.rmtree(root)
 
 
+def _interpreter_node(value: os.stat_result) -> InterpreterNode:
+    if stat.S_ISDIR(value.st_mode):
+        kind = "directory"
+    elif stat.S_ISREG(value.st_mode):
+        kind = "regular"
+    elif stat.S_ISLNK(value.st_mode):
+        kind = "symlink"
+    else:
+        kind = "other"
+    return InterpreterNode(
+        dev=value.st_dev,
+        ino=value.st_ino,
+        kind=kind,
+        mode=stat.S_IMODE(value.st_mode),
+        uid=value.st_uid,
+    )
+
+
+def _interpreter_path_nodes(path: str) -> tuple[InterpreterNode, ...]:
+    current = "/"
+    nodes = [_interpreter_node(os.lstat(current))]
+    for part in pathlib.PurePosixPath(path).parts[1:]:
+        current = os.path.join(current, part)
+        nodes.append(_interpreter_node(os.lstat(current)))
+    return tuple(nodes)
+
+
+def _collect_interpreter_trust_facts(executable: str) -> InterpreterTrustFacts:
+    if (
+        not executable
+        or not os.path.isabs(executable)
+        or os.path.normpath(executable) != executable
+    ):
+        raise AttestationError("interpreter path is not absolute and normalized")
+    resolved = os.path.realpath(executable)
+    if (
+        not os.path.isabs(resolved)
+        or os.path.normpath(resolved) != resolved
+        or os.path.realpath(resolved) != resolved
+    ):
+        raise AttestationError("resolved interpreter path is not canonical")
+    alias_nodes = _interpreter_path_nodes(executable)
+    resolved_nodes = _interpreter_path_nodes(resolved)
+    descriptor = os.open(resolved, os.O_RDONLY | CLOEXEC | NOFOLLOW)
+    try:
+        resolved_target = _interpreter_node(os.fstat(descriptor))
+    finally:
+        os.close(descriptor)
+    return InterpreterTrustFacts(
+        alias_path=executable,
+        alias_nodes=alias_nodes,
+        alias_target=_interpreter_node(os.stat(executable)),
+        resolved_path=resolved,
+        resolved_nodes=resolved_nodes,
+        resolved_target=resolved_target,
+    )
+
+
+def _numeric_python_version(value: str) -> bool:
+    parts = value.split(".")
+    return len(parts) == 2 and all(item.isdigit() and item for item in parts)
+
+
+def _reviewed_apple_interpreter_path(path: str) -> bool:
+    parts = pathlib.PurePosixPath(path).parts
+    if path == "/usr/bin/python3":
+        return True
+    if parts == (
+        "/",
+        "Library",
+        "Developer",
+        "CommandLineTools",
+        "usr",
+        "bin",
+        "python3",
+    ):
+        return True
+    xcode_app = parts[2] if len(parts) > 2 else ""
+    versioned_xcode = (
+        xcode_app.startswith("Xcode_")
+        and xcode_app.endswith(".app")
+        and all(
+            item.isdigit()
+            for item in xcode_app[len("Xcode_") : -len(".app")].split(".")
+        )
+    )
+    xcode_root = (
+        parts[1:5]
+        == ("Applications", xcode_app, "Contents", "Developer")
+        and (xcode_app == "Xcode.app" or versioned_xcode)
+    )
+    if xcode_root and parts[5:] == ("usr", "bin", "python3"):
+        return True
+    clt_framework = (
+        "/",
+        "Library",
+        "Developer",
+        "CommandLineTools",
+        "Library",
+        "Frameworks",
+        "Python3.framework",
+        "Versions",
+    )
+    xcode_framework = (
+        "/",
+        "Applications",
+        xcode_app,
+        "Contents",
+        "Developer",
+        "Library",
+        "Frameworks",
+        "Python3.framework",
+        "Versions",
+    )
+    prefix: tuple[str, ...]
+    if parts[: len(clt_framework)] == clt_framework:
+        prefix = clt_framework
+    elif xcode_root and parts[: len(xcode_framework)] == xcode_framework:
+        prefix = xcode_framework
+    else:
+        return False
+    tail = parts[len(prefix) :]
+    if len(tail) != 3 or tail[1] != "bin" or not _numeric_python_version(tail[0]):
+        return False
+    return tail[2] in {"python3", "python" + tail[0]}
+
+
+def _trusted_interpreter_facts(
+    facts: InterpreterTrustFacts,
+    *,
+    isolated: int,
+    no_site: int,
+    dont_write_bytecode: int,
+) -> bool:
+    if not (
+        type(isolated) is int
+        and isolated == 1
+        and type(no_site) is int
+        and no_site == 1
+        and type(dont_write_bytecode) is int
+        and dont_write_bytecode == 1
+    ):
+        return False
+    if not (
+        os.path.isabs(facts.alias_path)
+        and os.path.normpath(facts.alias_path) == facts.alias_path
+        and os.path.isabs(facts.resolved_path)
+        and os.path.normpath(facts.resolved_path) == facts.resolved_path
+        and _reviewed_apple_interpreter_path(facts.alias_path)
+        and _reviewed_apple_interpreter_path(facts.resolved_path)
+        and facts.alias_nodes
+        and facts.resolved_nodes
+        and len(facts.alias_nodes)
+        == len(pathlib.PurePosixPath(facts.alias_path).parts)
+        and len(facts.resolved_nodes)
+        == len(pathlib.PurePosixPath(facts.resolved_path).parts)
+    ):
+        return False
+    for node in facts.alias_nodes[:-1]:
+        if node.kind != "directory" or node.uid != 0 or node.mode & 0o022:
+            return False
+    alias_leaf = facts.alias_nodes[-1]
+    if alias_leaf.uid != 0 or alias_leaf.kind not in {"regular", "symlink"}:
+        return False
+    if alias_leaf.kind == "regular" and alias_leaf != facts.alias_target:
+        return False
+    for node in facts.resolved_nodes[:-1]:
+        if node.kind != "directory" or node.uid != 0 or node.mode & 0o022:
+            return False
+    resolved_leaf = facts.resolved_nodes[-1]
+    if (
+        resolved_leaf != facts.resolved_target
+        or facts.alias_target != facts.resolved_target
+        or resolved_leaf.kind != "regular"
+        or resolved_leaf.uid != 0
+        or resolved_leaf.mode & 0o022
+        or resolved_leaf.mode & 0o6000
+        or not resolved_leaf.mode & 0o111
+    ):
+        return False
+    return True
+
+
 def _production_startup_isolated() -> bool:
-    return (
-        sys.executable
-        in {
-            "/usr/bin/python3",
-            "/Library/Developer/CommandLineTools/usr/bin/python3",
-        }
-        and sys.flags.isolated == 1
-        and sys.flags.no_site == 1
-        and sys.flags.dont_write_bytecode == 1
+    try:
+        facts = _collect_interpreter_trust_facts(sys.executable)
+    except (AttestationError, OSError, ValueError):
+        return False
+    return _trusted_interpreter_facts(
+        facts,
+        isolated=sys.flags.isolated,
+        no_site=sys.flags.no_site,
+        dont_write_bytecode=sys.flags.dont_write_bytecode,
     )
 
 

@@ -155,7 +155,7 @@ installed-version/executable evidence binding or advance any `1.1.11` record.
 The provider-independent version-attestation prerequisite now has one canonical
 fixed-profile runner plus its persistent mutation harness. The runner owns the exact
 snapshot-backed version-only Popen path and a synthetic-only self-test; the harness
-binds its exact source bytes and digest before import. Their 76- and 55-case suites
+binds its exact source bytes and digest before import. Their 115- and 55-case suites
 replace one-off inline runners with bounded process-group ownership, inode-bound
 durable publication, atomic lifecycle completion, and paired weakened controls. They
 invoke no agy, provider, network, or private production evidence. This closes the
