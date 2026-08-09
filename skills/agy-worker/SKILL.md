@@ -272,6 +272,22 @@ returns that exit. A receipt uses only `gate-passed`, `rejected`, or `routed`; i
 calls a candidate accepted. It is explicitly unsigned and not tamper-evident. Even
 exit 0 still requires human diff review.
 
+To read or share the bounded receipt observations without pasting private job
+artifacts, render the validated receipt locally:
+
+```bash
+"$PIPELINE/evidence-report.sh" --receipt "$RECEIPT_DIR/job.json" --format text
+"$PIPELINE/evidence-report.sh" --receipt "$RECEIPT_DIR/job.json" \
+    --format markdown --output "$RECEIPT_DIR/job.md"
+```
+
+Standard output is the default; an explicit output path must be a new canonical
+absolute path and is published mode `0600` without overwrite. The renderer invokes
+neither agy, git, the gate, routing, nor the network. It reports only the validated
+verdict, gate outcome/exit, hashes, verifier labels, binding presence, and fixed
+unsigned/human-review limits. It does not make `gate-passed` accepted, and malformed,
+inconsistent, injection-shaped, or separately mismatched evidence produces no report.
+
 The evidence descriptor belongs only to the gate parent. The wrapper strips executable
 shell/Python startup controls from the evidence-mode gate, gate-owned Python runs in
 isolated/no-site mode, and the already-running gate closes the FD with a shell builtin

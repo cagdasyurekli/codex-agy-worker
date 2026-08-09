@@ -31,6 +31,11 @@ from model_selection import (  # noqa: E402
     EvidenceUnavailable,
     ReviewRequired,
     validate_selection_record,
+    validate_selection_record_shape,
+)
+from recommendation_record import (  # noqa: E402
+    RecommendationRecordError,
+    validate_recommendation_record,
 )
 
 
@@ -406,11 +411,14 @@ def recommendation_argv(value: dict[str, Any]) -> list[str]:
     return argv
 
 
-def validate_recommendation(
+def validate_recommendation_for_publication(
     value: Any, recommendation_script: Path
 ) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValidationFailure("pre-dispatch recommendation must be an object")
+    try:
+        validate_recommendation_record(value, required_stage="pre-dispatch")
+    except RecommendationRecordError as exc:
+        raise ValidationFailure("pre-dispatch recommendation is invalid") from exc
+    assert isinstance(value, dict)
     argv = recommendation_argv(value)
     try:
         completed = subprocess.run(
@@ -454,7 +462,6 @@ def selection_matches_recommendation(
 def validate_receipt(
     value: Any,
     schema: dict[str, Any],
-    recommendation_script: Path,
 ) -> dict[str, Any]:
     validate_schema(value, schema)
     if not isinstance(value, dict):
@@ -503,14 +510,17 @@ def validate_receipt(
             # selector shape below without re-probing agy.
             if not isinstance(selection, dict):
                 raise SelectionError("selection record must be one object")
-            from model_selection import validate_selection_record
-
-            validate_selection_record(selection)
+            validate_selection_record_shape(selection)
         except (SelectionError, ReviewRequired, EvidenceUnavailable) as exc:
             raise ValidationFailure("caller selection is not a valid G1 record") from exc
     recommendation = value.get("pre_dispatch_recommendation")
     if recommendation is not None:
-        recommendation = validate_recommendation(recommendation, recommendation_script)
+        try:
+            recommendation = validate_recommendation_record(
+                recommendation, required_stage="pre-dispatch"
+            )
+        except RecommendationRecordError as exc:
+            raise ValidationFailure("pre-dispatch recommendation is invalid") from exc
     if selection is not None and recommendation is not None:
         if not selection_matches_recommendation(selection, recommendation):
             raise ValidationFailure("selection and recommendation are inconsistent")
@@ -535,13 +545,26 @@ def load_selection(path: Path) -> dict[str, Any]:
         raise UsageFailure("selection input is not a current valid G1 record") from exc
 
 
-def load_recommendation(path: Path, recommendation_script: Path) -> dict[str, Any]:
+def load_recommendation_record(path: Path) -> dict[str, Any]:
     try:
         value = parse_json_bytes(
             read_real_file(path, "pre-dispatch recommendation"),
             "pre-dispatch recommendation",
         )
-        return validate_recommendation(value, recommendation_script)
+        return validate_recommendation_record(value, required_stage="pre-dispatch")
+    except (ValidationFailure, RecommendationRecordError) as exc:
+        raise UsageFailure("pre-dispatch recommendation is not canonical") from exc
+
+
+def load_recommendation_for_publication(
+    path: Path, recommendation_script: Path
+) -> dict[str, Any]:
+    try:
+        value = parse_json_bytes(
+            read_real_file(path, "pre-dispatch recommendation"),
+            "pre-dispatch recommendation",
+        )
+        return validate_recommendation_for_publication(value, recommendation_script)
     except ValidationFailure as exc:
         raise UsageFailure("pre-dispatch recommendation is not canonical") from exc
 
@@ -779,7 +802,7 @@ def publish_receipt(
     parent: Path,
     value: dict[str, Any],
     schema: dict[str, Any],
-    recommendation_script: Path,
+    _legacy_recommendation_script: Path | None = None,
     controller: SignalController | None = None,
 ) -> None:
     owns_controller = controller is None
@@ -799,7 +822,7 @@ def publish_receipt(
         os.fsync(descriptor)
         candidate_payload = read_real_file(temporary, "temporary receipt")
         candidate = parse_json_bytes(candidate_payload, "temporary receipt")
-        validate_receipt(candidate, schema, recommendation_script)
+        validate_receipt(candidate, schema)
         if candidate != value or candidate_payload != payload:
             raise PublicationFailure("temporary receipt bytes changed")
         require_private_parent(parent)
@@ -989,7 +1012,9 @@ def verify_main(
     schema = load_schema(schema_path)
     selection = load_selection(Path(selection_text)) if selection_text else None
     recommendation = (
-        load_recommendation(Path(recommendation_text), recommendation_script)
+        load_recommendation_for_publication(
+            Path(recommendation_text), recommendation_script
+        )
         if recommendation_text
         else None
     )
@@ -1094,13 +1119,13 @@ def verify_main(
             receipt["caller_selection"] = selection
         if recommendation is not None:
             receipt["pre_dispatch_recommendation"] = recommendation
-        validate_receipt(receipt, schema, recommendation_script)
+        validate_receipt(receipt, schema)
         publish_receipt(
             target,
             parent,
             receipt,
             schema,
-            recommendation_script,
+            None,
             controller,
         )
         result = gate_rc
@@ -1156,11 +1181,10 @@ def validate_main(argv: list[str], runtime_root: Path) -> int:
     )
     assert receipt_text
     schema = load_schema(runtime_root / "schemas/evidence-receipt.schema.json")
-    recommendation_script = runtime_root / "scripts/model-recommendation.py"
     value = parse_json_bytes(
         read_real_file(Path(receipt_text), "receipt"), "receipt"
     )
-    receipt = validate_receipt(value, schema, recommendation_script)
+    receipt = validate_receipt(value, schema)
     if envelope_text:
         payload = read_real_file(Path(envelope_text), "bound envelope")
         if sha256_bytes(payload) != receipt["envelope_sha256"]:
@@ -1170,9 +1194,7 @@ def validate_main(argv: list[str], runtime_root: Path) -> int:
         if receipt.get("caller_selection") != selection:
             raise ValidationFailure("bound selection does not match receipt")
     if recommendation_text:
-        recommendation = load_recommendation(
-            Path(recommendation_text), recommendation_script
-        )
+        recommendation = load_recommendation_record(Path(recommendation_text))
         if receipt.get("pre_dispatch_recommendation") != recommendation:
             raise ValidationFailure("bound recommendation does not match receipt")
     if initial_digest:

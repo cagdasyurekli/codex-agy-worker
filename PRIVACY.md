@@ -53,6 +53,15 @@ or modify the caller's configuration. Handled HUP, INT, and TERM interruptions r
 wrapper-owned snapshot, handoff, temporary, and partial receipt files. The user
 controls durable receipt retention just like other local artifacts.
 
+`evidence-report.sh` reads one explicitly named receipt and, when supplied, only the
+explicitly named binding artifacts. It performs no dispatch, routing, gate, git, or
+network action. Standard output is the default; an explicit new report file is mode
+`0600` and never overwrites. The report contains only bounded verdict/outcome labels,
+hashes, deterministic verifier labels, binding-presence flags, and fixed integrity
+and human-review statements. It excludes source, diffs, prompts, worker prose, raw
+commands or output, logs, credentials, and absolute repository paths. The report is
+still unsigned and cannot authenticate a rewritten receipt.
+
 The project does not delete these artifacts automatically. The person running the
 tool controls retention and should review and remove unneeded artifacts according to
 their own policy. Do not commit or paste raw logs into public reports.

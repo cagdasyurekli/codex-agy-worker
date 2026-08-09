@@ -9,86 +9,13 @@ import sys
 sys.dont_write_bytecode = True
 
 from model_selection import CallerError, EvidenceUnavailable, ReviewRequired, resolve_selection
-
-
-NAMED_TIERS = ("cheap", "bulk", "hard", "hardest")
-
-PRE_DISPATCH_EVIDENCE = {
-    "bounded-routine": (
-        "cheap",
-        "The driver classified the task as bounded and routine.",
-    ),
-    "batched-mechanical": (
-        "bulk",
-        "The driver identified a bounded batch of mechanical work.",
-    ),
-    "cross-file-bounded": (
-        "hard",
-        "The driver identified bounded cross-file reasoning with fixed acceptance criteria.",
-    ),
-    "high-complexity-bounded": (
-        "hardest",
-        "The driver identified a bounded high-complexity task with fixed acceptance criteria.",
-    ),
-}
-
-POST_GATE_EVIDENCE = {
-    "gate-accepted": (
-        False,
-        "The driver-owned gate accepted the independently observed repository state.",
-        "Acceptance supplies no reason to recommend a more expensive tier.",
-    ),
-    "driver-verification-failed": (
-        True,
-        "A driver-authored verification command failed against the candidate.",
-        "A bounded verification failure may benefit from one higher named tier.",
-    ),
-    "driver-quality-review-failed": (
-        True,
-        "Independent driver review found a bounded quality gap in the candidate.",
-        "A bounded quality gap may benefit from one higher named tier.",
-    ),
-    "expected-edits-missing": (
-        True,
-        "The gate independently found no edits for a job that required edits.",
-        "A bounded failure to produce the requested edit may benefit from one higher named tier.",
-    ),
-    "permission-failed": (
-        False,
-        "The driver classified the outcome as a permission failure.",
-        "A model change cannot grant permission; resolve the permission boundary instead.",
-    ),
-    "authentication-failed": (
-        False,
-        "The driver classified the outcome as an authentication failure.",
-        "A model change cannot authenticate the tool; resolve authentication instead.",
-    ),
-    "scope-policy-failed": (
-        False,
-        "The gate independently found a scope-policy violation.",
-        "A stronger model must not be used to bypass the driver-owned scope policy.",
-    ),
-    "human-required": (
-        False,
-        "The gate routed the outcome to a human decision.",
-        "A model change cannot supply authorization or make the required human decision.",
-    ),
-    "noncompleted-worker-outcome": (
-        False,
-        "The gate routed a partial, failed, or blocked worker outcome without accepting it.",
-        "An untrusted noncompleted status is not driver-owned evidence that more model spend would help.",
-    ),
-    "untrusted-worker-claim": (
-        False,
-        "The gate rejected untrusted command or test claims from the worker envelope.",
-        "A tier change does not turn worker claims into driver-owned evidence.",
-    ),
-    "invalid-envelope": (
-        False,
-        "The checked-in validator rejected the worker envelope contract.",
-        "Repair the contract or prompt boundary without inferring that more model spend is justified.",
-    ),
-}
+from recommendation_record import (
+    NAMED_TIERS,
+    POST_GATE_EVIDENCE,
+    PRE_DISPATCH_EVIDENCE,
+    RecommendationRecordError,
+    validate_recommendation_record,
+)
 
 SAFE_TIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+/-]*\Z")
 
@@ -287,6 +214,10 @@ def main(argv=None):
         result["matrix_sha256"] = selection["matrix_sha256"]
         result["matrix_agy_version"] = selection["matrix_agy_version"]
         result["matrix_source_revision"] = selection["matrix_source_revision"]
+    try:
+        validate_recommendation_record(result)
+    except RecommendationRecordError as exc:
+        parser.error(f"internal recommendation record validation failed: {exc}")
     json.dump(result, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0

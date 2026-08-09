@@ -46,11 +46,14 @@ doctor_runtime_complete() {
         agy-worker.sh \
         qa-gate.sh \
         verify-job.sh \
+        evidence-report.sh \
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
         scripts/validate-envelope.py \
         scripts/evidence_receipt.py \
+        scripts/evidence_report.py \
+        scripts/recommendation_record.py \
         scripts/model-recommendation.py \
         scripts/model_selection.py \
         scripts/compatibility.py \

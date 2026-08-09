@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The eleven offline suites need no agy process, network access, API key, or GitHub login.
+The twelve offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -521,6 +521,32 @@ python3 -B skills/agy-worker/runtime/scripts/evidence_receipt.py validate \
   --receipt "$RECEIPT_DIR/job.json" --envelope envelope.json
 ```
 
+Render the same validated receipt as compact text or Markdown without invoking agy,
+git, the gate, model routing, or the network:
+
+```bash
+./evidence-report.sh --receipt "$RECEIPT_DIR/job.json" --format text
+./evidence-report.sh --receipt "$RECEIPT_DIR/job.json" --format markdown \
+  --output "$RECEIPT_DIR/job.md"
+```
+
+Standard output is the default. `--output` must be one new canonical absolute path;
+the renderer publishes mode `0600` without overwrite. It reports only the validated
+receipt's verdict, gate outcome/exit, immutable hashes, deterministic verification
+labels, optional-binding presence, and fixed integrity/human-review limits. It never
+prints source, prompts, raw commands, logs, absolute repository paths, or worker prose.
+Malformed, inconsistent, unsupported, control-bearing, injection-shaped, oversized,
+or externally mismatched input produces no report. Optional `--envelope`,
+`--selection`, `--pre-recommendation`, `--initial-state-digest`, and
+`--final-state-digest` bind separately trusted artifacts before rendering. A report is
+still an unsigned rendering: it cannot authenticate a rewritten receipt, improve the
+gate verdict, or turn `gate-passed` into acceptance without human diff review.
+
+The stdout-only path returns normally and can be used for in-process pure rendering.
+The `--output` CLI path is deliberately process-owning: it retains signal rollback
+authority through an atomic `os._exit(0)` boundary. Run file-output mode as the
+documented command or a subprocess; do not call its `main(argv)` from a host process.
+
 `--allow-slash-commands` exists for callers who fully control the entire prompt, but
 is intentionally omitted from normal examples. It disables protection against
 embedded `/skill` or slash-command text; leave slash expansion disabled for content
@@ -718,6 +744,7 @@ output, not its own recollection.
 agy-worker.sh                 dispatch a job, return a schema-valid envelope
 qa-gate.sh                    verify an envelope against the repo — the evidence
 verify-job.sh                 run the gate and durably publish Evidence Receipt v1
+evidence-report.sh            render a validated receipt as bounded text or Markdown
 proof-demo.sh                 offline starter proof of one gate pass and one rejection
 model-recommendation.sh       repository compatibility wrapper for the advisory
 model-selection.sh            repository compatibility wrapper for explicit resolution
@@ -750,6 +777,7 @@ CODE_OF_CONDUCT.md            enforceable participation standards
 .github/pull_request_template.md  review and verification checklist
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
+tests/test-evidence-report.sh  60-case offline pure renderer/privacy/mutation suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
@@ -760,7 +788,7 @@ tests/test-version-attestation-harness.py  55-case offline version-attestation m
 tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       165-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       187-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          180-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
