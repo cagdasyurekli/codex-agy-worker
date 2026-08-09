@@ -37,7 +37,7 @@ Keep these counts current when their suites change:
 - `qa-gate.sh`: 41 offline cases.
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
 - Evidence Report v1: 60 offline pure-rendering/privacy/binding/mutation cases.
-- Safe local lifecycle: 94 offline state/receipt/Git-policy/cleanup/signal cases.
+- Safe local lifecycle: 95 offline state/receipt/Git-policy/cleanup/signal cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
@@ -46,9 +46,10 @@ Keep these counts current when their suites change:
 - Canonical models-inventory attestation runner: 78 offline
   fixed-profile/version-binding/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 212 offline
+- Codex package/skill distribution and CI policy: 214 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 184 offline fake-tool/read-only cases.
+- Public gate conformance v1: 78 offline manifest/fixture/permissive-gate/signal/cleanup cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
@@ -77,13 +78,14 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
+/usr/bin/python3 -I -S -B tests/test-conformance.py # offline public gate contract
 ./tests/test-proof-demo.sh      # offline synthetic pass/reject proof coverage
-bash -n ./*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
+bash -n ./*.sh conformance/*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh  # syntax
 (
   AGY_WORKER_PYCACHE="$(mktemp -d -t agyworker-pycache.XXXXXX)" || exit 1
   trap 'rm -rf -- "$AGY_WORKER_PYCACHE"' EXIT
   PYTHONPYCACHEPREFIX="$AGY_WORKER_PYCACHE" \
-    python3 -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+    python3 -m py_compile conformance/v1/*.py scripts/*.py skills/*/runtime/scripts/*.py
 )
 git diff --check
 ./ground-truth.sh              # regenerate agy facts before touching agy behaviour
@@ -140,6 +142,13 @@ only a passing test has not been shown to catch anything.
   or content-filter authority plus every effective base-tree/info filter attribute.
   Treat only documented `show-ref --verify --quiet` exit 1 as ref absence; fatal Git
   evidence must leave cleanup in progress for manual recovery.
+- **A supplied conformance gate is trusted executable code.** Its cleanup TCB includes
+  loaded code, the local owner and same-UID processes, and OS administrators. Keep
+  parent/root descriptors close-on-exec and no-follow, identities exact, and content
+  deletion bounded and descriptor-relative. Unlink symlinks without following them;
+  final pathname removal trusts that TCB. On pathname or identity drift, fail closed
+  with a possible residual and never scan for or chase a moved inode. Make no
+  same-user tamper-resistance or guaranteed hostile-gate cleanup claim.
 - **`update.sh check` may need network, but must remain read-only.** Compatibility
   evidence for agy and Codex is reported as unchanged, drift-review, or
   evidence-unavailable; inconclusive evidence is never green. Metadata changes only

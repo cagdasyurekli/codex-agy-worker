@@ -25,6 +25,7 @@
 - [ ] `./tests/test-reporting.sh`
 - [ ] `./tests/test-packaging.sh`
 - [ ] `./tests/test-doctor.sh`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-conformance.py`
 - [ ] `./tests/test-proof-demo.sh`
 - [ ] Bash and Python syntax checks
 - [ ] `git diff --check`

@@ -29,6 +29,18 @@ data, or unrelated files in a prompt or an allowed root.
 The project does not automatically submit GitHub issues, push code, merge branches,
 or publish releases. Those are separate actions with separate approval boundaries.
 
+The public conformance kit itself uses only checked-in synthetic content in private
+disposable local repositories and invokes no agy, provider, or network client. Its
+`--gate` argument is executable code selected by the user and runs with that user's
+normal privileges; the kit does not sandbox it or prevent a hostile implementation
+from reading files or using the network. Review a supplied gate before running it.
+The supplied gate and loaded code, local owner and same-UID processes, and OS
+administrators are trusted for cleanup pathname stability. Cleanup is descriptor-
+relative while exact parent/root identities remain unchanged; drift produces a
+sanitized failure and may leave a private residual. The runner never scans for or
+chases a moved directory and makes no same-user tamper-resistance claim. The kit
+discards bounded gate output and reports no fixture paths or captured bytes.
+
 ## Local artifacts and retention
 
 Each job can create local private artifacts under `logs/<job>/`, including the task,

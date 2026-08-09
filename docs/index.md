@@ -52,6 +52,13 @@ offline and does not run agy or alter the checkout. Its three-line output is sta
 evidence for those fixed cases only: it is not human review, candidate acceptance,
 general correctness, a security certification, a benchmark, or production proof.
 
+Integrations and forks can also run the
+[public v1 gate conformance kit](https://github.com/cagdasyurekli/codex-agy-worker/blob/main/docs/CONFORMANCE.md).
+Its eleven versioned synthetic fixtures test exact gate exits, including ignored
+files, verifier mutation, mutable bases, and human-required routing. Passing is
+fixture compatibility only, not security certification or real-job proof; the
+supplied gate runs with the current user's privileges and must be reviewed first.
+
 ## Install and explore
 
 Use the GitHub repository as the source of truth. Review the cloned commit—or the
