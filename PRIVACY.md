@@ -62,6 +62,28 @@ and human-review statements. It excludes source, diffs, prompts, worker prose, r
 commands or output, logs, credentials, and absolute repository paths. The report is
 still unsigned and cannot authenticate a rewritten receipt.
 
+`job.sh` stores one explicitly named mode-`0600` lifecycle state file in an
+owner-private external directory. It contains canonical absolute repository,
+worktree, Git-common-directory, and receipt paths; filesystem identities; the exact
+branch, immutable base, and job ID; state-history, receipt, and candidate SHA-256
+bindings; gate exit/verdict; and cleanup progress. `status` emits only bounded state,
+match, and hash facts. `preserve-instructions` prints local Git commands and paths
+only when explicitly requested; it executes none. The lifecycle performs no network,
+provider, dispatch, commit, or publication action. Rejected-only cleanup removes the
+exact registered disposable worktree and unchanged branch ref after fresh explicit
+hash approvals, but deliberately retains the cleaned private state tombstone. Partial
+or ambiguous states are retained for manual recovery rather than automatically
+deleted.
+
+Lifecycle-owned Git execution ignores system/global and caller Git configuration,
+uses a private empty hooks directory, and disables prompts, pagers, fsmonitor,
+external diff, protocols, and recursive submodules. Before worktree creation it
+rejects local included hook/helper/filter configuration and any effective base-tree
+or repository-info content-filter attribute. It therefore does not grant repository
+hooks or filters execution authority during lifecycle initialization. Fatal or
+ambiguous ref evidence is never treated as absence and retains the truthful recovery
+state.
+
 The project does not delete these artifacts automatically. The person running the
 tool controls retention and should review and remove unneeded artifacts according to
 their own policy. Do not commit or paste raw logs into public reports.

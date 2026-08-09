@@ -728,6 +728,16 @@ else
     bad "root and portable packages include the pure Evidence Report renderer"
 fi
 
+if [[ -x "$ROOT/job.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/job.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/job_lifecycle.py" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/candidate_state.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/job-state.schema.json" ]]; then
+    ok "root and portable packages include the safe local job lifecycle"
+else
+    bad "root and portable packages include the safe local job lifecycle"
+fi
+
 if grep -Fq 'is process-owning: it keeps signal rollback authority' \
         "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py" \
         && grep -Fq 'The `--output` CLI path is deliberately process-owning' \
@@ -741,6 +751,7 @@ fi
 
 required_runtime_dependencies=(
     agy-worker.sh
+    job.sh
     qa-gate.sh
     verify-job.sh
     evidence-report.sh
@@ -754,11 +765,14 @@ required_runtime_dependencies=(
     scripts/model-recommendation.py
     scripts/model_selection.py
     scripts/compatibility.py
+    scripts/candidate_state.py
+    scripts/job_lifecycle.py
     scripts/doctor-metadata.py
     schemas/worker-result.schema.json
     schemas/evidence-receipt.schema.json
     schemas/model-selection.schema.json
     schemas/model-recommendation.schema.json
+    schemas/job-state.schema.json
     agents/bulk-test-writer.md
     agents/repo-inventory.md
     agents/diff-reviewer.md
@@ -854,6 +868,7 @@ for parent in scripts agents schemas compat; do
 done
 
 for specification in \
+    'job.sh:executable' \
     'qa-gate.sh:executable' \
     'verify-job.sh:executable' \
     'evidence-report.sh:executable' \
@@ -861,9 +876,12 @@ for specification in \
     'scripts/evidence_receipt.py:executable' \
     'scripts/evidence_report.py:executable' \
     'scripts/recommendation_record.py:executable' \
+    'scripts/candidate_state.py:executable' \
+    'scripts/job_lifecycle.py:executable' \
     'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \
     'schemas/evidence-receipt.schema.json:data' \
+    'schemas/job-state.schema.json:data' \
     'agents/repo-inventory.md:data' \
     'compat/agy-verified-version.txt:data' \
     'compat/agy-model-effort-matrix.json:data'; do
@@ -1464,15 +1482,23 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py
         || [[ ! -f "$ROOT/scripts/models_attestation_runner.py" ]]; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-job-lifecycle.py' \
+            "$ROOT/.github/workflows/test.yml"; then
+    governance_lists_all_suites=0
+fi
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all twelve suites and disclose public policy boundaries"
+    ok "governance docs require all thirteen suites and disclose public policy boundaries"
 else
-    bad "governance docs require all twelve suites and disclose public policy boundaries"
+    bad "governance docs require all thirteen suites and disclose public policy boundaries"
 fi
 
 python3 "$ROOT/scripts/validate-brand-assets.py" "$ROOT/docs/assets/brand" \

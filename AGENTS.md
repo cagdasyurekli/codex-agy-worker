@@ -37,6 +37,7 @@ Keep these counts current when their suites change:
 - `qa-gate.sh`: 41 offline cases.
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
 - Evidence Report v1: 60 offline pure-rendering/privacy/binding/mutation cases.
+- Safe local lifecycle: 94 offline state/receipt/Git-policy/cleanup/signal cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
@@ -45,9 +46,9 @@ Keep these counts current when their suites change:
 - Canonical models-inventory attestation runner: 78 offline
   fixed-profile/version-binding/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 187 offline
+- Codex package/skill distribution and CI policy: 212 offline
   manifest/runtime-copy/relocation/landing/range cases.
-- `doctor.sh`: 180 offline fake-tool/read-only cases.
+- `doctor.sh`: 184 offline fake-tool/read-only cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
@@ -67,6 +68,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-qa-gate.sh        # offline, no agy, no network — must stay that way
 ./tests/test-evidence-receipt.sh # offline receipt/protocol/publication coverage
 ./tests/test-evidence-report.sh # offline pure receipt renderer/privacy coverage
+/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py # offline disposable Git lifecycle
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
@@ -125,6 +127,19 @@ only a passing test has not been shown to catch anything.
   cannot change rejected/routed outcomes or turn `gate-passed` into acceptance.
   Receipt-only selection and recommendation validation stays side-effect-free; only
   explicit pre-gate publication input may run canonical recommendation coherence.
+- **Lifecycle cleanup spends fresh explicit authority.** State stays in an external
+  owner-private file and binds the exact repo/worktree/ref/base/job/Receipt/candidate.
+  Only rejected exits 10-14 may clean. Reconcile each completed Git step durably,
+  stop when reconciliation changes the state SHA, and require fresh job/state/candidate
+  approvals before the next destructive step. Remove the exact registered worktree,
+  then compare-delete only the unchanged ref; never force-delete a branch, follow a
+  symlink target, clean routed/passed work, or infer approval from old state.
+  Accept only an exact canonical branch name, and run every lifecycle-owned Git
+  command through the fixed sanitized Git policy. Checkout initialization disables
+  hooks and ambient config/helpers and rejects configured fsmonitor, pager, include,
+  or content-filter authority plus every effective base-tree/info filter attribute.
+  Treat only documented `show-ref --verify --quiet` exit 1 as ref absence; fatal Git
+  evidence must leave cleanup in progress for manual recovery.
 - **`update.sh check` may need network, but must remain read-only.** Compatibility
   evidence for agy and Codex is reported as unchanged, drift-review, or
   evidence-unavailable; inconclusive evidence is never green. Metadata changes only

@@ -613,7 +613,7 @@ explicit pre-gate publication-input check.
 
 ### P1 — integrate the evidence boundary without broadening autonomy
 
-#### P1-A — Safe local lifecycle
+#### P1-A — Safe local lifecycle (implemented)
 
 - **User job:** Create, inspect, verify, and deliberately clean an isolated job without
   manually reproducing the full worktree recipe.
@@ -646,6 +646,14 @@ explicit pre-gate publication-input check.
 - **Done/exit criteria:** Crash-safe state transitions; cleanup only for an explicitly
   approved, exact hash-bound rejected disposable state; no loss of gate-passed or
   accepted work; no external action; and independent destructive-target review.
+- **Implemented boundary:** The canonical portable runtime owns the v1 state machine,
+  shared candidate-state digest, Receipt validation, progress reconciliation, and
+  compare-and-delete cleanup. The root command is only a compatibility wrapper.
+  Ninety-four offline cases cover accepted and rejected lifecycle paths, canonical
+  branch authority, hook/filter-free fixed Git execution, durability, stale approval,
+  ref-error separation, deletion-domain, signal, and weakened-authority mutations.
+  Cleanup never follows symlinks, never deletes a commit, and retains the cleaned
+  state file.
 
 #### P1-B — Full public conformance kit
 

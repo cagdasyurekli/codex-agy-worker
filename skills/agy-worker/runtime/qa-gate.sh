@@ -375,55 +375,8 @@ PY
 }
 
 snapshot_repo() {
-    gate_python - "$repo" "$base" <<'PY'
-import hashlib
-import os
-import stat
-import subprocess
-import sys
-
-repo, base = sys.argv[1:3]
-
-def git_output(*args):
-    return subprocess.run(
-        ["git", "-C", repo, *args], check=True,
-        stdout=subprocess.PIPE).stdout
-
-def git_paths(*args):
-    output = git_output(*args)
-    return sorted(part for part in output.split(b"\0") if part)
-
-digest = hashlib.sha256()
-tracked_diff = git_output(
-    "diff", "--binary", "--no-ext-diff", "--no-textconv",
-    "--submodule=short", base, "--")
-digest.update(len(tracked_diff).to_bytes(8, "big"))
-digest.update(tracked_diff)
-paths = set(git_paths("ls-files", "--others", "--exclude-standard", "-z", "--"))
-paths.update(git_paths(
-    "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--"))
-for raw_path in sorted(paths):
-    path = raw_path.decode("utf-8", "surrogateescape")
-    full_path = os.path.join(repo, path)
-    digest.update(len(raw_path).to_bytes(8, "big"))
-    digest.update(raw_path)
-    try:
-        metadata = os.lstat(full_path)
-    except FileNotFoundError:
-        digest.update(b"deleted")
-        continue
-    digest.update(str(stat.S_IFMT(metadata.st_mode)).encode("ascii"))
-    digest.update(str(stat.S_IMODE(metadata.st_mode)).encode("ascii"))
-    if stat.S_ISLNK(metadata.st_mode):
-        digest.update(os.readlink(full_path).encode("utf-8", "surrogateescape"))
-    elif stat.S_ISREG(metadata.st_mode):
-        with open(full_path, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-    else:
-        digest.update(b"non-regular")
-print(digest.hexdigest())
-PY
+    gate_python "$SCRIPT_DIR/scripts/candidate_state.py" \
+        --repo "$repo" --base "$base"
 }
 
 if [[ -n "$evidence_fd" ]]; then
