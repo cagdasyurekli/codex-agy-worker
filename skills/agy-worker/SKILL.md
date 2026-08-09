@@ -317,6 +317,17 @@ verdict, gate outcome/exit, hashes, verifier labels, binding presence, and fixed
 unsigned/human-review limits. It does not make `gate-passed` accepted, and malformed,
 inconsistent, injection-shaped, or separately mismatched evidence produces no report.
 
+For provider-independent regression comparisons only, `benchmark.sh prepare|run|report`
+uses the checked-in synthetic manifest and one attempt per ordered caller variant. It
+calls no agy/provider/network path and cannot rank, route, recommend, retry, or change
+a selector. Use a canonical owner-`0700` directory outside the checkout and follow
+`docs/BENCHMARKING.md` in the repository. A complete checkout binds its clean commit;
+a folder-only copy instead binds the reviewed portable source revision and exact
+source manifest without inventing Git provenance. Nested schemas constrain the public
+v1 structures; runtime checks retain cross-field and canonical-byte authority. Live
+benchmarking is not implemented; do not infer authorization for it from an offline
+plan.
+
 The evidence descriptor belongs only to the gate parent. The wrapper strips executable
 shell/Python startup controls from the evidence-mode gate, gate-owned Python runs in
 isolated/no-site mode, and the already-running gate closes the FD with a shell builtin

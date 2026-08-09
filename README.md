@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The fourteen offline suites need no agy process, network access, API key, or GitHub login.
+The fifteen offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -823,6 +823,24 @@ your own install rather than treating historical observations as a current contr
   `~/.gemini/config/agents/<name>.md`. A workspace `.agents/agents/<name>/agent.md` is
   not discovered.
 
+## Reproducible offline benchmarks
+
+[`benchmark.sh`](docs/BENCHMARKING.md) preregisters ordered caller-selected variants
+against the frozen public synthetic manifest, then runs exactly one offline candidate
+attempt per variant-task pair through `verify-job.sh`. It makes no agy, provider, or
+network call. In a complete checkout the immutable plan binds the clean source
+commit. In a folder-only bundle it instead binds the reviewed portable source
+revision and exact no-extra source manifest; it never invents a Git commit. Both
+layouts bind the exact runner, schemas, manifest, fixtures, gate, wrapper,
+selections, and policy. The separate unsigned
+result binds raw Receipt v1 hashes and validated gate facts.
+
+The report is a pure completeness view in manifest order. It does not score, rank,
+choose a winner, route, recommend, retry, fall back, or turn `gate-passed` into human
+acceptance. Results live only in an explicit canonical owner-`0700` directory outside
+the checkout. Live/provider benchmarking is not implemented and requires a separate
+reviewed slice, accepted agy executable/version evidence, and explicit authorization.
+
 ### A note on where these came from
 
 This project began as multi-model research into agy's own interface. The models that
@@ -844,6 +862,7 @@ job.sh                        manage one explicit branch-backed local job lifecy
 qa-gate.sh                    verify an envelope against the repo — the evidence
 verify-job.sh                 run the gate and durably publish Evidence Receipt v1
 evidence-report.sh            render a validated receipt as bounded text or Markdown
+benchmark.sh                  prepare/run/report fixed provider-independent benchmarks
 proof-demo.sh                 offline starter proof of one gate pass and one rejection
 conformance/run.sh            public v1 synthetic qa-gate fixture runner
 conformance/v1/               pinned manifest, envelopes, and repository contents
@@ -867,6 +886,7 @@ scripts/official_distribution.py  fixed, bounded agy distribution-manifest canar
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
 skills/agy-worker/            canonical self-contained Agent Skill and runtime
 skills/agy-worker/runtime/    dispatcher, gate, advisory, personas, schema, Python helpers
+benchmarks/v1/                frozen public synthetic benchmark manifest and inputs
 skills/agy-worker/runtime/compat/  byte-synced portable agy metadata and selection matrix
 .codex-plugin/plugin.json     OpenAI skills-only plugin package metadata
 docs/REPO_MAP.md              hand-maintained ownership, data flow, and trust map
@@ -879,6 +899,7 @@ CODE_OF_CONDUCT.md            enforceable participation standards
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-evidence-report.sh  60-case offline pure renderer/privacy/mutation suite
+tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-job-lifecycle.py   95-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
@@ -890,8 +911,8 @@ tests/test-version-attestation-harness.py  55-case offline version-attestation m
 tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       214-case offline Codex package/CI-policy/relocation/landing suite
-tests/test-doctor.sh          184-case offline fake-tool/read-only doctor suite
+tests/test-packaging.sh       259-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-doctor.sh          188-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     78-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch

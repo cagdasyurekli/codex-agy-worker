@@ -37,6 +37,7 @@ Keep these counts current when their suites change:
 - `qa-gate.sh`: 41 offline cases.
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
 - Evidence Report v1: 60 offline pure-rendering/privacy/binding/mutation cases.
+- Offline Benchmark v1: 104 offline plan/Receipt/result/report/privacy/mutation cases.
 - Safe local lifecycle: 95 offline state/receipt/Git-policy/cleanup/signal cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
@@ -46,9 +47,9 @@ Keep these counts current when their suites change:
 - Canonical models-inventory attestation runner: 78 offline
   fixed-profile/version-binding/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 214 offline
+- Codex package/skill distribution and CI policy: 259 offline
   manifest/runtime-copy/relocation/landing/range cases.
-- `doctor.sh`: 184 offline fake-tool/read-only cases.
+- `doctor.sh`: 188 offline fake-tool/read-only cases.
 - Public gate conformance v1: 78 offline manifest/fixture/permissive-gate/signal/cleanup cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
@@ -69,6 +70,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-qa-gate.sh        # offline, no agy, no network — must stay that way
 ./tests/test-evidence-receipt.sh # offline receipt/protocol/publication coverage
 ./tests/test-evidence-report.sh # offline pure receipt renderer/privacy coverage
+/usr/bin/python3 -I -S -B tests/test-benchmark.py # offline synthetic benchmark coverage
 /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py # offline disposable Git lifecycle
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
@@ -149,6 +151,17 @@ only a passing test has not been shown to catch anything.
   final pathname removal trusts that TCB. On pathname or identity drift, fail closed
   with a possible residual and never scan for or chase a moved inode. Make no
   same-user tamper-resistance or guaranteed hostile-gate cleanup claim.
+- **Benchmark v1 is not model evaluation or routing.** It preregisters caller
+  selections and fixed public synthetic tasks, spends one attempt per pair, and binds
+  the existing Receipt v1 verdict without changing it. Keep result roots external and
+  owner-only. Never add ranking, winner, retry, fallback, route, recommendation, live
+  provider execution, or persona-registry claims to the offline command.
+  A complete checkout binds its clean full commit; a folder-only bundle binds the
+  reviewed portable source revision, exact source manifest, modes, runner, schemas,
+  gate, wrapper, and fixtures. Never invent a Git commit for the portable case or
+  accept missing, extra, writable, symlinked, or hash-drifted authority. The JSON
+  schemas own the nested v1 structure; runtime validation owns cross-field equality
+  and canonical-byte checks.
 - **`update.sh check` may need network, but must remain read-only.** Compatibility
   evidence for agy and Codex is reported as unchanged, drift-review, or
   evidence-unavailable; inconclusive evidence is never green. Metadata changes only

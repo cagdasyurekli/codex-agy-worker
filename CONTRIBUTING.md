@@ -25,6 +25,7 @@ Run the offline suites and static checks before requesting review:
 ./tests/test-qa-gate.sh
 ./tests/test-evidence-receipt.sh
 ./tests/test-evidence-report.sh
+/usr/bin/python3 -I -S -B tests/test-benchmark.py
 /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py
 ./tests/test-agy-worker.sh
 ./tests/test-update.sh
