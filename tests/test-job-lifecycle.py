@@ -668,23 +668,54 @@ for lifecycle_signal in MODULE.SIGNALS:
     check(f"signal {lifecycle_signal} after command return wins before process exit", lambda lifecycle_signal=lifecycle_signal: completion_signal(lifecycle_signal))
 
 
-def distinct_second_signal() -> bool:
-    marker = TMP / "double-signal.marker"
-    child_code = "import pathlib,signal,time,sys;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(4);pathlib.Path(sys.argv[1]).write_text('late')"
+def distinct_second_signal(module_path: Path, label: str) -> tuple[int, bool, bool]:
+    marker = TMP / f"double-signal-{label}.late"
+    cleanup_marker = TMP / f"double-signal-{label}.cleanup"
+    child_code = (
+        "import os,pathlib,signal,time,sys;"
+        "signal.pthread_sigmask(signal.SIG_UNBLOCK,(signal.SIGTERM,));"
+        "signal.signal(signal.SIGTERM,lambda *_:(pathlib.Path(sys.argv[2]).write_text('cleanup'),os.kill(os.getppid(),signal.SIGTERM)));"
+        "time.sleep(4);pathlib.Path(sys.argv[1]).write_text('late')"
+    )
     script = (
         "import importlib.util,os,signal,sys,threading;"
-        f"p={str(MODULE_PATH)!r};s=importlib.util.spec_from_file_location('life_double',p);m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);"
+        f"sys.path.insert(0,{str(MODULE_PATH.parent)!r});"
+        f"p={str(module_path)!r};s=importlib.util.spec_from_file_location('life_double',p);m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);"
         "[signal.signal(n,m._interrupt) for n in m.SIGNALS];"
         "threading.Timer(.2,lambda:os.kill(os.getpid(),signal.SIGHUP)).start();"
-        "threading.Timer(.22,lambda:os.kill(os.getpid(),signal.SIGTERM)).start();"
-        f"\ntry:m.run_process([{PYTHON!r},'-I','-S','-B','-c',{child_code!r},{str(marker)!r}])\nexcept m.JobSignal as e:raise SystemExit(128+e.number)"
+        f"\ntry:m.run_process([{PYTHON!r},'-I','-S','-B','-c',{child_code!r},{str(marker)!r},{str(cleanup_marker)!r}])\nexcept m.JobSignal as e:raise SystemExit(128+e.number)"
     )
     result = subprocess.run([PYTHON, "-I", "-S", "-B", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False)
     time.sleep(0.2)
-    return result.returncode == 129 and not marker.exists()
+    return result.returncode, cleanup_marker.exists(), marker.exists()
 
 
-check("distinct second signal cannot replace first exit or interrupt cleanup", distinct_second_signal)
+secure_signal_result = distinct_second_signal(MODULE_PATH, "secure")
+check(
+    "distinct second signal cannot replace first exit or interrupt cleanup",
+    lambda: secure_signal_result == (129, True, False),
+)
+
+signal_mutant = TMP / "job-lifecycle-signal-overwrite.py"
+signal_source = MODULE_PATH.read_text(encoding="utf-8")
+signal_guard = "    if FIRST_SIGNAL is not None:\n        return\n"
+assert signal_source.count(signal_guard) == 1
+signal_mutant.write_text(
+    signal_source.replace(
+        signal_guard,
+        "    if FIRST_SIGNAL is not None:\n"
+        "        FIRST_SIGNAL = number\n"
+        "        raise JobSignal(number)\n",
+        1,
+    ),
+    encoding="utf-8",
+)
+signal_mutant.chmod(0o600)
+mutated_signal_result = distinct_second_signal(signal_mutant, "mutant")
+check(
+    "first-signal overwrite mutation is killed by cleanup-entry handshake",
+    lambda: mutated_signal_result == (143, True, False),
+)
 
 
 source = MODULE_PATH.read_bytes()

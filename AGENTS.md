@@ -37,7 +37,7 @@ Keep these counts current when their suites change:
 - `qa-gate.sh`: 41 offline cases.
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
 - Evidence Report v1: 60 offline pure-rendering/privacy/binding/mutation cases.
-- Safe local lifecycle: 94 offline state/receipt/Git-policy/cleanup/signal cases.
+- Safe local lifecycle: 95 offline state/receipt/Git-policy/cleanup/signal cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.

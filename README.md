@@ -879,7 +879,7 @@ CODE_OF_CONDUCT.md            enforceable participation standards
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-evidence-report.sh  60-case offline pure renderer/privacy/mutation suite
-tests/test-job-lifecycle.py   94-case offline state/Git-policy/receipt/cleanup/signal suite
+tests/test-job-lifecycle.py   95-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
