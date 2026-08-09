@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The ten offline suites need no agy process, network access, API key, or GitHub login.
+The eleven offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -730,6 +730,7 @@ scripts/compatibility.py      stdlib metadata/matrix validation and exact resolu
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
 scripts/version_attestation_runner.py fixed-profile snapshot version runner with bounded startup diagnostics; real use separately authorized
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
+scripts/models_attestation_runner.py fixed-profile snapshot models inventory runner; real use separately authorized
 scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
 scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
@@ -756,6 +757,7 @@ tests/test-official-github.py test-only fixed-endpoint transport adversary harne
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
 tests/test-version-attestation-runner.py  157-case offline canonical fixed-profile runner suite
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
+tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       165-case offline Codex package/CI-policy/relocation/landing suite
