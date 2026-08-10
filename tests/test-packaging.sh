@@ -771,6 +771,7 @@ required_runtime_dependencies=(
     verify-job.sh
     evidence-report.sh
     benchmark.sh
+    persona-evidence.sh
     model-recommendation.sh
     model-selection.sh
     doctor.sh
@@ -778,6 +779,7 @@ required_runtime_dependencies=(
     scripts/evidence_receipt.py
     scripts/evidence_report.py
     scripts/benchmark.py
+    scripts/persona_registry.py
     scripts/recommendation_record.py
     scripts/model-recommendation.py
     scripts/model_selection.py
@@ -792,6 +794,20 @@ required_runtime_dependencies=(
     schemas/job-state.schema.json
     schemas/benchmark-plan.schema.json
     schemas/benchmark-result.schema.json
+    schemas/persona-dispatch.schema.json
+    schemas/persona-human-review.schema.json
+    schemas/persona-run-evidence.schema.json
+    schemas/persona-run-manifest.schema.json
+    schemas/persona-tool-attestation.schema.json
+    schemas/persona-transition-approval.schema.json
+    schemas/persona-verifier.schema.json
+    schemas/persona-version-attestation.schema.json
+    compat/persona-evidence.schema.json
+    compat/persona-registry.schema.json
+    compat/personas/manifest.json
+    compat/personas/bulk-test-writer.json
+    compat/personas/diff-reviewer.json
+    compat/personas/repo-inventory.json
     benchmarks/v1/manifest.json
     benchmarks/v1/portable-source.json
     benchmarks/v1/tasks/exact-edit/initial.txt
@@ -898,10 +914,12 @@ for specification in \
     'verify-job.sh:executable' \
     'evidence-report.sh:executable' \
     'benchmark.sh:executable' \
+    'persona-evidence.sh:executable' \
     'scripts/validate-envelope.py:executable' \
     'scripts/evidence_receipt.py:executable' \
     'scripts/evidence_report.py:executable' \
     'scripts/benchmark.py:executable' \
+    'scripts/persona_registry.py:executable' \
     'scripts/recommendation_record.py:executable' \
     'scripts/candidate_state.py:executable' \
     'scripts/job_lifecycle.py:executable' \
@@ -911,6 +929,11 @@ for specification in \
     'schemas/job-state.schema.json:data' \
     'schemas/benchmark-plan.schema.json:data' \
     'schemas/benchmark-result.schema.json:data' \
+    'schemas/persona-run-manifest.schema.json:data' \
+    'schemas/persona-transition-approval.schema.json:data' \
+    'compat/persona-evidence.schema.json:data' \
+    'compat/persona-registry.schema.json:data' \
+    'compat/personas/manifest.json:data' \
     'benchmarks/v1/manifest.json:data' \
     'benchmarks/v1/portable-source.json:data' \
     'agents/repo-inventory.md:data' \
@@ -990,6 +1013,23 @@ if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-benchmark.py' \
     ok "CI and public docs expose only provider-independent Benchmark v1"
 else
     bad "CI and public docs expose only provider-independent Benchmark v1"
+fi
+
+if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
+        "$ROOT/.github/workflows/test.yml" \
+        && [[ -x "$ROOT/persona-evidence.sh" \
+            && -x "$ROOT/skills/agy-worker/runtime/persona-evidence.sh" \
+            && -x "$ROOT/skills/agy-worker/runtime/scripts/persona_registry.py" ]] \
+        && grep -Fq 'Statuses are evidence levels, not trust labels' "$ROOT/README.md" \
+        && grep -Fq 'For the shipped `offline-only` records it is a local,' \
+            "$ROOT/docs/PERSONAS.md" \
+        && grep -Fq 'fixed sanitized read-only Git object commands' \
+            "$ROOT/docs/PERSONAS.md" \
+        && grep -Fq 'not publish or revalidate the private evidence' \
+            "$ROOT/docs/PERSONAS.md"; then
+    ok "CI and public docs expose the non-authoritative persona registry"
+else
+    bad "CI and public docs expose the non-authoritative persona registry"
 fi
 
 if grep -Fq 'run: ./tests/test-evidence-report.sh' "$ROOT/.github/workflows/test.yml" \
@@ -1565,15 +1605,23 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
             "$ROOT/.github/workflows/test.yml"; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-persona-evidence.py' \
+            "$ROOT/.github/workflows/test.yml"; then
+    governance_lists_all_suites=0
+fi
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all fifteen suites and disclose public policy boundaries"
+    ok "governance docs require all sixteen suites and disclose public policy boundaries"
 else
-    bad "governance docs require all fifteen suites and disclose public policy boundaries"
+    bad "governance docs require all sixteen suites and disclose public policy boundaries"
 fi
 
 if grep -Fq 'same-UID processes' "$ROOT/README.md" \

@@ -64,6 +64,10 @@ For provider-independent release comparisons, the
 caller-selected variants, then records only canonical gate receipts and completeness
 facts. It has no live provider mode, score, ranking, winner, route, or recommendation.
 
+The [Persona Evidence Registry v1](PERSONAS.md) separately validates fixed shipped
+persona sources, mode restrictions, and exact public contract bindings. Its statuses
+are evidence levels, not trust labels, routing inputs, or acceptance authority.
+
 ## Install and explore
 
 Use the GitHub repository as the source of truth. Review the cloned commit—or the

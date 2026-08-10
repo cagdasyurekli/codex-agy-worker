@@ -49,6 +49,7 @@ doctor_runtime_complete() {
         verify-job.sh \
         evidence-report.sh \
         benchmark.sh \
+        persona-evidence.sh \
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
@@ -56,6 +57,7 @@ doctor_runtime_complete() {
         scripts/evidence_receipt.py \
         scripts/evidence_report.py \
         scripts/benchmark.py \
+        scripts/persona_registry.py \
         scripts/recommendation_record.py \
         scripts/model-recommendation.py \
         scripts/model_selection.py \
@@ -87,6 +89,20 @@ doctor_runtime_complete() {
         schemas/job-state.schema.json \
         schemas/benchmark-plan.schema.json \
         schemas/benchmark-result.schema.json \
+        schemas/persona-dispatch.schema.json \
+        schemas/persona-human-review.schema.json \
+        schemas/persona-run-evidence.schema.json \
+        schemas/persona-run-manifest.schema.json \
+        schemas/persona-tool-attestation.schema.json \
+        schemas/persona-transition-approval.schema.json \
+        schemas/persona-verifier.schema.json \
+        schemas/persona-version-attestation.schema.json \
+        compat/persona-evidence.schema.json \
+        compat/persona-registry.schema.json \
+        compat/personas/manifest.json \
+        compat/personas/bulk-test-writer.json \
+        compat/personas/diff-reviewer.json \
+        compat/personas/repo-inventory.json \
         benchmarks/v1/manifest.json \
         benchmarks/v1/portable-source.json \
         benchmarks/v1/tasks/exact-edit/initial.txt \

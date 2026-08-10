@@ -718,11 +718,11 @@ explicit pre-gate publication-input check.
   unimplemented, separately reviewed and approved future slice requiring accepted agy
   executable/version evidence plus explicit Google/Gemini data scope and cost.
 
-#### P1-D — Persona evidence registry
+#### P1-D — Persona evidence registry (implemented)
 
 - **User job:** Distinguish offline persona contract coverage from honest escalation
   and accepted real-candidate evidence.
-- **Intended surface:** Validated `compat/personas/<name>.json` records and a generated
+- **Implemented surface:** Validated `compat/personas/<name>.json` records and a generated
   documentation table. Runtime persona selection remains an explicit hardcoded
   allowlist; target repositories cannot register executable personas dynamically.
 - **Dependencies:** Receipt v1 and public benchmark fixtures.
@@ -738,6 +738,15 @@ explicit pre-gate publication-input check.
 - **Docs and AGENTS impact:** Update README persona matrix, limitations, REPO_MAP, and
   current evidence boundaries. Keep one-off run history out of AGENTS.
 - **Size:** M for registry; real exercises are separate approved operational work.
+- **Implemented evidence:** Provider-independent cases cover the fixed
+  allowlist, canonical and folder-only records, public P1-C hash bindings, frontmatter
+  and dispatcher mode restrictions, deterministic reporting, all three state
+  contracts, semantic Receipt/dispatch/tool/version/verifier/diff coherence, strict
+  Git ancestry and blob/mode/allowlist rules, maintainer/human-review records, privacy,
+  schema structure, and weakening mutations. Protected-main ancestry proves ordering,
+  not reviewer identity or a signature. All
+  shipped records remain `offline-only`; no historical run has the public bindings
+  required for promotion.
 - **Done/exit criteria:** Every shipped persona has precise evidence status; no
   stronger claim than its reproducible records support.
 

@@ -428,3 +428,19 @@ Receipt bytes; the benchmark result is only an unsigned serialization of those f
 A deterministic report should expose completeness in manifest order, not invent a
 score, winner, retry, fallback, route, recommendation, usage estimate, or persona
 quality claim. Keep provider-backed benchmarking as a separate reviewed boundary.
+
+Do not turn historical persona anecdotes into a trust label. A useful prompt can
+produce an honest escalation, and a test-writing prompt can still be rejected by the
+gate. Registry state must bind the exact persona source and mode contract plus public
+evidence bytes. Offline P1-C fixtures that never execute the persona prove only the
+contract shape. Real escalation and accepted-candidate states require separate public
+Receipt/base/selection/verifier/tool and maintainer-approval bindings; promotion is a
+reviewed source change, never a runtime action. Keep target repositories out of the
+allowlist and keep P1-C free of persona quality semantics.
+
+Hashing an opaque “approval” file is not review evidence. Parse and cohere canonical
+Receipt, dispatch, tool/version, selection, verifier, candidate-diff, approval, and
+human-review records, then read their exact `100644` blobs from immutable Git objects.
+Require evidence, approval/review, and transition as strict ancestor stages. Be honest
+about the boundary: protected-main ancestry proves ordering under the maintainer and
+local-Git TCB, not human identity or a cryptographic signature.
