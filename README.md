@@ -344,6 +344,25 @@ not cheap one-line edits. `diff-reviewer` remains unexercised on a real job.
 Personas are injected as prompt text, **not** via agy's `--agent` flag, because
 `--agent` silently disables `--json-schema` enforcement (see below).
 
+[`persona-evidence.sh`](docs/PERSONAS.md) validates the fixed shipped-persona
+registry and reproduces its documentation table. All three shipped personas remain
+`offline-only`: their records bind exact frontmatter/mode restrictions and the public
+P1-C contract bytes, but that synthetic candidate does not execute a persona.
+Historical real exercises lack the public Receipt/base/verifier/tool bindings needed
+to promote a registry state. Future upper states require immutable public Git blobs
+in three strict phases: evidence, separate approval/review, then registry transition.
+This validates protected-main sequencing and exact bytes/modes, not cryptographic
+reviewer identity or signatures; portable bundles reject upper states.
+
+| Persona | Allowed modes | Evidence status | Public evidence |
+|---|---|---|---|
+| `bulk-test-writer` | `plan`, `accept-edits` | `offline-only` | P1-C public contract; persona not executed |
+| `diff-reviewer` | `plan` | `offline-only` | P1-C public contract; persona not executed |
+| `repo-inventory` | `plan` | `offline-only` | P1-C public contract; persona not executed |
+
+Statuses are evidence levels, not trust labels or acceptance authority. The registry
+cannot rank, route, select, execute, promote, or dynamically register a persona.
+
 ### Common options
 
 | Worker option | Environment equivalent | Meaning |
@@ -863,6 +882,7 @@ qa-gate.sh                    verify an envelope against the repo — the eviden
 verify-job.sh                 run the gate and durably publish Evidence Receipt v1
 evidence-report.sh            render a validated receipt as bounded text or Markdown
 benchmark.sh                  prepare/run/report fixed provider-independent benchmarks
+persona-evidence.sh           validate/report fixed persona evidence records
 proof-demo.sh                 offline starter proof of one gate pass and one rejection
 conformance/run.sh            public v1 synthetic qa-gate fixture runner
 conformance/v1/               pinned manifest, envelopes, and repository contents
@@ -887,6 +907,7 @@ scripts/bug-report.py         privacy filter and SHA-bound gh submission
 skills/agy-worker/            canonical self-contained Agent Skill and runtime
 skills/agy-worker/runtime/    dispatcher, gate, advisory, personas, schema, Python helpers
 benchmarks/v1/                frozen public synthetic benchmark manifest and inputs
+compat/personas/              fixed public persona evidence records and manifest
 skills/agy-worker/runtime/compat/  byte-synced portable agy metadata and selection matrix
 .codex-plugin/plugin.json     OpenAI skills-only plugin package metadata
 docs/REPO_MAP.md              hand-maintained ownership, data flow, and trust map
@@ -900,6 +921,7 @@ tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-evidence-report.sh  60-case offline pure renderer/privacy/mutation suite
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
+tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-job-lifecycle.py   95-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
@@ -911,8 +933,8 @@ tests/test-version-attestation-harness.py  55-case offline version-attestation m
 tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       259-case offline Codex package/CI-policy/relocation/landing suite
-tests/test-doctor.sh          188-case offline fake-tool/read-only doctor suite
+tests/test-packaging.sh       311-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-doctor.sh          218-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     78-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
@@ -931,6 +953,9 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
   are rejected; multi-repository mutation is intentionally unsupported.
 - `bulk-test-writer` has been exercised but has not yet produced an accepted real job;
   `diff-reviewer` remains untested against a real job.
+- Persona registry status is currently `offline-only` for every shipped persona.
+  Historical exercises are not promoted without public Receipt/base/verifier/tool and
+  maintainer-approval bindings.
 - No stable updater release tag has been exercised against the public repository yet;
   update behavior is proven with local offline release remotes.
 - GitHub submission is tested with a fake `gh`; no live issue was created.

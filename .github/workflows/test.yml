@@ -42,6 +42,9 @@ jobs:
       - name: offline benchmark suite
         run: /usr/bin/python3 -I -S -B tests/test-benchmark.py
 
+      - name: persona evidence registry suite
+        run: /usr/bin/python3 -I -S -B tests/test-persona-evidence.py
+
       - name: local job lifecycle suite
         run: /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py
 

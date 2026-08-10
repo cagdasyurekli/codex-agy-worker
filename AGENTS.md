@@ -38,6 +38,7 @@ Keep these counts current when their suites change:
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
 - Evidence Report v1: 60 offline pure-rendering/privacy/binding/mutation cases.
 - Offline Benchmark v1: 104 offline plan/Receipt/result/report/privacy/mutation cases.
+- Persona Evidence Registry v1: 124 offline semantic-chain/Git-ancestry/portable/mutation cases.
 - Safe local lifecycle: 95 offline state/receipt/Git-policy/cleanup/signal cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
@@ -47,9 +48,9 @@ Keep these counts current when their suites change:
 - Canonical models-inventory attestation runner: 78 offline
   fixed-profile/version-binding/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 259 offline
+- Codex package/skill distribution and CI policy: 311 offline
   manifest/runtime-copy/relocation/landing/range cases.
-- `doctor.sh`: 188 offline fake-tool/read-only cases.
+- `doctor.sh`: 218 offline fake-tool/read-only cases.
 - Public gate conformance v1: 78 offline manifest/fixture/permissive-gate/signal/cleanup cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
@@ -71,6 +72,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-evidence-receipt.sh # offline receipt/protocol/publication coverage
 ./tests/test-evidence-report.sh # offline pure receipt renderer/privacy coverage
 /usr/bin/python3 -I -S -B tests/test-benchmark.py # offline synthetic benchmark coverage
+/usr/bin/python3 -I -S -B tests/test-persona-evidence.py # offline persona evidence registry
 /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py # offline disposable Git lifecycle
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
@@ -221,6 +223,14 @@ only a passing test has not been shown to catch anything.
   Complete plugins and explicit standalone installs may resolve the checkout, while
   skill-folder-only copies use the bundled runtime. Never publish a local
   `.pipeline-root`, bake in a checkout path, or add an automatic fetch fallback.
+- **Persona evidence is not persona trust.** Keep the runtime persona allowlist fixed
+  and target-repository registration impossible. `offline-only` binds exact public
+  persona/frontmatter/mode and P1-C contract bytes but does not execute the persona.
+  Higher states require separate public Receipt/base/selection/verifier/tool and
+  maintainer-approval bindings. Upper states require immutable evidence, separate
+  approval/review, then transition commits; this proves protected-main sequencing,
+  not reviewer identity or a signature. Never auto-promote, rank, route, accept, or add persona
+  quality labels to the P1-C producer.
 - **The doctor observes; it never repairs.** Keep it offline and read-only, probe only
   exact semantic version/repository commands, expose no paths or raw output, and do
   not scan personal configuration. Green covers offline prerequisites only—not auth,
