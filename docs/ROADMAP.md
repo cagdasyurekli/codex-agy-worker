@@ -197,6 +197,13 @@ account HOME/local owner and same-UID processes, reviewed source/interpreter, an
 admins are trusted, and the runner does not validate HOME contents or claim same-user
 tamper resistance. It is neither a fallback nor a retry in the auth-isolated runner.
 
+The separate `models_capture_profile.py` preparation tool is process-inert and
+offline-tested. It derives the existing ten-field canonical capture profile only from
+explicit stdin paths plus no-follow account/source/snapshot/version-evidence
+descriptors, and publishes a mode-0600 no-overwrite file with rollback on failure or
+interruption. It does not enumerate HOME, read ambient configuration, invoke agy or
+any provider, interpret inventory, or grant authorization for the future capture.
+
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a
 runner-image mismatch; it does not make that environment trusted or satisfy the gate.

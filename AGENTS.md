@@ -63,10 +63,12 @@ Keep these counts current when their suites change:
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
 - Canonical models-inventory attestation runner: 113 offline
   fixed-profile/version-binding/environment/parser/process cases.
-- Explicit-account models capture runner: 69 offline
+- Explicit-account models capture runner: 73 offline
   profile/account-TCB/environment/capture/publication/process cases.
+- Explicit-account models capture profile builder: 118 offline canonical-profile,
+  external-evidence, descriptor, publication, and mutation cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 347 offline
+- Codex package/skill distribution and CI policy: 349 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
 - Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
@@ -99,6 +101,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py # offline fake-child mutation harness
 /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py # offline fake inventory attestation
 /usr/bin/python3 -I -S -B tests/test-models-capture-runner.py # offline fake-account capture only
+/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py # offline profile preparation only
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
@@ -246,6 +249,9 @@ only a passing test has not been shown to catch anything.
   the reviewed runner sources, account HOME, local owner/same-UID processes,
   interpreter, and OS admins as TCB: AST mutations detect selected drift and do not
   prove hostile-source or same-UID tamper resistance.
+  The process-inert profile builder has the same reviewed-source/local-owner/
+  same-UID/interpreter/OS-admin TCB; its self-check is a fail-closed reviewed-byte
+  guard, not resistance to coordinated hostile-source edits.
 - **CI diff hygiene audits committed bytes.** Keep checkout history sufficient for
   the GitHub event range and run `scripts/ci-diff-check.sh`; its stdlib scanner must
   inspect every changed regular head blob independently of Git attributes with a
