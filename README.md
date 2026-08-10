@@ -95,9 +95,10 @@ or chases a moved directory. This is not same-user tamper resistance. See
 
 ## Roadmap
 
-[The product roadmap](docs/ROADMAP.md) lists proposed, dependency-ordered feature
-slices. Those items are plans, not current CLI behavior or implementation claims;
-each slice requires its own approval, tests, review, and pull request.
+[The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
+their explicit implemented or blocked status. Source, tests, and this README remain
+the authority for current CLI behavior; every new slice still requires its own
+approval, tests, review, and pull request.
 
 ---
 

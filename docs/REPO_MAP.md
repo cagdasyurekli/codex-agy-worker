@@ -218,7 +218,7 @@ does not establish same-user tamper resistance.
 | `.github/workflows/test.yml`, `scripts/ci-diff-check.sh`, `scripts/ci_diff_check.py` | macOS CI for committed PR/push diff hygiene, syntax, and all seventeen offline suites. Checkout supplies the event range; the helper performs no fetch and linearly scans changed immutable head blobs from one bounded `git cat-file --batch` process, independently of attributes or diff drivers. | packaging policy tests plus GitHub Actions |
 | `.github/workflows/compatibility-watch.yml` | Weekly/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
-| `docs/ROADMAP.md` | Planned dependency-ordered product slices, approval gates, and honest success measures; not current behavior | human review; implementation claims remain prohibited until their slices land |
+| `docs/ROADMAP.md` | Dependency-ordered product slices with explicit implemented or blocked status, approval gates, and honest success measures; source, tests, and README remain current-behavior authority | human review; implementation claims remain prohibited until their slices land |
 | `AGENTS.md`, `docs/lessons_learned.md`, this file | Durable contributor rules and architecture | `agents-md-auditor` after material changes |
 
 ## Trust boundaries
