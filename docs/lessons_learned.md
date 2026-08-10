@@ -254,6 +254,14 @@ own canonical policy and agree when both are supplied; it still cannot participa
 in acceptance or change the selected model. Never bind a later post-gate advisory by
 rewriting a one-pass receipt.
 
+CI formatting is another presentation boundary, not an integration authority. Build
+canonical JSON from the validated bounded report fields instead of serializing the
+receipt again. Keep Markdown dynamic values on a narrow atom grammar and reject final
+payloads that can start workflow commands or inject links/HTML. A Step Summary mode
+should write stdout like every other format; shell redirection to
+`GITHUB_STEP_SUMMARY` must remain explicit in trusted workflow code so the renderer
+cannot discover CI environment paths, comment, upload, or acquire GitHub credentials.
+
 Durability and non-overwrite are separate properties. Write and validate a same-dir
 mode-`0600` temporary, `fsync` it, publish with an atomic hard link that refuses an
 existing target, `fsync` the parent, remove the temporary, and `fsync` the parent

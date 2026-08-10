@@ -319,6 +319,7 @@ artifacts, render the validated receipt locally:
 "$PIPELINE/evidence-report.sh" --receipt "$RECEIPT_DIR/job.json" --format text
 "$PIPELINE/evidence-report.sh" --receipt "$RECEIPT_DIR/job.json" \
     --format markdown --output "$RECEIPT_DIR/job.md"
+"$PIPELINE/evidence-report.sh" --receipt "$RECEIPT_DIR/job.json" --format json
 ```
 
 Standard output is the default; an explicit output path must be a new canonical
@@ -327,6 +328,10 @@ neither agy, git, the gate, routing, nor the network. It reports only the valida
 verdict, gate outcome/exit, hashes, verifier labels, binding presence, and fixed
 unsigned/human-review limits. It does not make `gate-passed` accepted, and malformed,
 inconsistent, injection-shaped, or separately mismatched evidence produces no report.
+`--format github-step-summary` emits CI-safe Markdown only to stdout or the same
+explicit private `--output` path. The renderer never reads `GITHUB_STEP_SUMMARY`;
+workflow code must redirect stdout explicitly, and fork-controlled jobs must receive
+no secrets or private receipt paths.
 
 For provider-independent regression comparisons only, `benchmark.sh prepare|run|report`
 uses the checked-in synthetic manifest and one attempt per ordered caller variant. It

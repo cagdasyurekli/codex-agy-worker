@@ -764,6 +764,32 @@ else
     bad "Evidence Report documents its process-owning file-output boundary"
 fi
 
+if grep -Fq 'REPORT_FORMATS = ("text", "json", "markdown", "github-step-summary")' \
+        "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py" \
+        && ! grep -Eq 'GITHUB_STEP_SUMMARY|os\.environ' \
+            "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py"; then
+    ok "portable Evidence Report owns exact CI-safe formats without environment discovery"
+else
+    bad "portable Evidence Report owns exact CI-safe formats without environment discovery"
+fi
+
+if grep -Fq -- '--format github-step-summary >> "${GITHUB_STEP_SUMMARY:?}"' \
+        "$ROOT/README.md" \
+        && grep -Fq 'fork-controlled paths, repository content, tokens, or secrets' \
+            "$ROOT/README.md"; then
+    ok "README keeps GitHub Step Summary redirection explicit and fork-safe"
+else
+    bad "README keeps GitHub Step Summary redirection explicit and fork-safe"
+fi
+
+if grep -Fq 'or implicit environment-file write was added' "$ROOT/docs/ROADMAP.md" \
+        && grep -Fq 'never discovers or writes `GITHUB_STEP_SUMMARY`' \
+            "$ROOT/PRIVACY.md"; then
+    ok "roadmap and privacy docs bound the local-only CI reporter surface"
+else
+    bad "roadmap and privacy docs bound the local-only CI reporter surface"
+fi
+
 required_runtime_dependencies=(
     agy-worker.sh
     job.sh

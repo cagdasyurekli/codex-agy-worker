@@ -189,6 +189,60 @@ case(
     and b"Human review: required" in first.stdout,
 )
 
+report_json = run(base, "json")
+expected_json = {
+    "caller_selection_bound": False,
+    "envelope_sha256": "b" * 64,
+    "final_candidate_state_sha256": "f" * 64,
+    "gate_authority": "qa-gate",
+    "gate_exit": 0,
+    "gate_outcome": "gate-passed",
+    "human_review_required_before_acceptance": True,
+    "initial_candidate_state_sha256": "e" * 64,
+    "integrity": {"signed": False, "tamper_evident": False},
+    "kind": "agy-worker-evidence-report",
+    "path_policy_sha256": "c" * 64,
+    "pre_dispatch_recommendation_bound": False,
+    "recommendations_participated_in_acceptance": False,
+    "resolved_base": "a" * 40,
+    "schema_version": 1,
+    "verdict": "gate-passed",
+    "verification_labels": ["verify-001", "verify-002"],
+}
+expected_json_bytes = json.dumps(
+    expected_json, sort_keys=True, separators=(",", ":")
+).encode("ascii") + b"\n"
+case(
+    "JSON renderer emits only the exact canonical bounded report representation",
+    report_json.returncode == 0
+    and report_json.stderr == b""
+    and report_json.stdout == expected_json_bytes
+    and "command_sha256" not in json.loads(report_json.stdout),
+)
+
+step_summary = run(base, "github-step-summary")
+case(
+    "GitHub Step Summary rendering is deterministic Markdown without commands or HTML",
+    step_summary.returncode == 0
+    and step_summary.stderr == b""
+    and step_summary.stdout.startswith(b"# Evidence Report v1 (GitHub Step Summary)\n")
+    and b"\n::" not in step_summary.stdout
+    and b"](" not in step_summary.stdout
+    and b"<" not in step_summary.stdout,
+)
+
+for exit_code, expected in ((0, "gate-passed"), (10, "rejected"), (15, "routed")):
+    for output_format in ("json", "markdown", "github-step-summary"):
+        rendered = run(receipt(exit_code), output_format)
+        if output_format == "json":
+            exact = json.loads(rendered.stdout)["verdict"] == expected
+        else:
+            exact = f"- Verdict: `{expected}`\n".encode("ascii") in rendered.stdout
+        case(
+            f"{output_format} preserves exact {expected} verdict",
+            rendered.returncode == 0 and rendered.stderr == b"" and exact,
+        )
+
 print()
 print("explicit private output publication:")
 output = TMP / "report.txt"
@@ -212,6 +266,26 @@ case("relative output is rejected", relative.returncode == 64)
 case(
     "successful publication leaves no temporary",
     not any(path.name.startswith(".report.txt.evidence-report.") for path in TMP.iterdir()),
+)
+json_output = TMP / "report.json"
+json_published = run(base, "json", extra=("--output", str(json_output)))
+case(
+    "explicit JSON output publishes the exact canonical representation",
+    json_published.returncode == 0
+    and json_published.stdout == b""
+    and json_output.read_bytes() == expected_json_bytes
+    and stat.S_IMODE(json_output.stat().st_mode) == 0o600,
+)
+summary_output = TMP / "step-summary.md"
+summary_published = run(
+    base, "github-step-summary", extra=("--output", str(summary_output))
+)
+case(
+    "explicit Step Summary output uses the same private durable publication path",
+    summary_published.returncode == 0
+    and summary_published.stdout == b""
+    and summary_output.read_bytes() == step_summary.stdout
+    and stat.S_IMODE(summary_output.stat().st_mode) == 0o600,
 )
 
 print()
@@ -238,6 +312,7 @@ control = copy.deepcopy(base); control["verifiers"][0]["label"] = "verify-001\ns
 case("control-character label produces no report", run(control).returncode == 1)
 injection = copy.deepcopy(base); injection["verifiers"][0]["label"] = "[x](file:///secret)"
 case("Markdown-link injection produces no report", run(injection, "markdown").returncode == 1)
+case("Step Summary rejects the same Markdown-link injection", run(injection, "github-step-summary").returncode == 1)
 missing = copy.deepcopy(base); missing["verifiers"] = []
 case("receipt without verification evidence produces no report", run(missing).returncode == 1)
 
@@ -418,6 +493,87 @@ case(
     "renderer validation occurs before either output surface",
     report_source.index("receipt = validate_receipt(") < report_source.index("payload = render_text(")
     < report_source.index("publish_new(Path(output_path), payload)"),
+)
+case(
+    "renderer never discovers or writes the GitHub Step Summary environment path",
+    "GITHUB_STEP_SUMMARY" not in report_source and "os.environ" not in report_source,
+)
+try:
+    evidence_report._validate_rendered_payload(
+        b"::warning file=/private/path::secret\n", "github-step-summary"
+    )
+    workflow_rejected = False
+except evidence_report.ValidationFailure:
+    workflow_rejected = True
+case("workflow-command syntax is rejected by the final output gate", workflow_rejected)
+try:
+    evidence_report._validate_rendered_payload(
+        b"# report\n- label: [secret](file:///private/path)\n", "markdown"
+    )
+    markdown_rejected = False
+except evidence_report.ValidationFailure:
+    markdown_rejected = True
+case("Markdown link syntax is rejected by the final output gate", markdown_rejected)
+
+mutated_report_source = report_source.replace(
+    'or text.startswith("::") or "\\n::" in text', "", 1
+)
+mutated_namespace = {
+    "__name__": "evidence_report_workflow_mutation",
+    "__file__": str(SCRIPTS / "evidence_report.py"),
+}
+exec(
+    compile(mutated_report_source, "<evidence-report-workflow-mutation>", "exec"),
+    mutated_namespace,
+    mutated_namespace,
+)
+try:
+    mutated_namespace["_validate_rendered_payload"](
+        b"::warning::secret\n", "github-step-summary"
+    )
+    workflow_mutation_exposed = True
+except mutated_namespace["ValidationFailure"]:
+    workflow_mutation_exposed = False
+case("workflow-command guard removal mutation is detected", workflow_mutation_exposed)
+
+markdown_guard = '''if output_format in ("markdown", "github-step-summary") and any(
+        marker in text for marker in ("](", "<")
+    ):'''
+markdown_mutated_source = report_source.replace(markdown_guard, "if False:", 1)
+markdown_mutated_namespace = {
+    "__name__": "evidence_report_markdown_mutation",
+    "__file__": str(SCRIPTS / "evidence_report.py"),
+}
+exec(
+    compile(markdown_mutated_source, "<evidence-report-markdown-mutation>", "exec"),
+    markdown_mutated_namespace,
+    markdown_mutated_namespace,
+)
+try:
+    markdown_mutated_namespace["_validate_rendered_payload"](
+        b"# report\n- label: [secret](file:///private/path)\n", "markdown"
+    )
+    markdown_mutation_exposed = True
+except markdown_mutated_namespace["ValidationFailure"]:
+    markdown_mutation_exposed = False
+case("Markdown guard removal mutation is detected", markdown_mutation_exposed)
+
+summary_env = TMP / "must-remain-untouched.md"
+summary_env.write_bytes(b"sentinel\n")
+previous_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+os.environ["GITHUB_STEP_SUMMARY"] = str(summary_env)
+try:
+    implicit = run(base, "github-step-summary")
+finally:
+    if previous_summary is None:
+        os.environ.pop("GITHUB_STEP_SUMMARY", None)
+    else:
+        os.environ["GITHUB_STEP_SUMMARY"] = previous_summary
+case(
+    "GitHub summary environment file is never written implicitly",
+    implicit.returncode == 0
+    and implicit.stdout.startswith(b"# Evidence Report v1")
+    and summary_env.read_bytes() == b"sentinel\n",
 )
 
 fault_target = TMP / "fault-report.txt"
