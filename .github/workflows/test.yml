@@ -66,6 +66,9 @@ jobs:
       - name: canonical models inventory attestation runner
         run: /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py
 
+      - name: explicit-account models capture runner
+        run: /usr/bin/python3 -I -S -B tests/test-models-capture-runner.py
+
       - name: reporting suite
         run: ./tests/test-reporting.sh
 

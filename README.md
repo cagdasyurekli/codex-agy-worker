@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The seventeen offline suites need no agy process, network access, API key, or GitHub login.
+The eighteen offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -790,12 +790,40 @@ deliberately launches its one child with a fresh private empty `HOME`, `TMPDIR`,
 XDG directories plus a closed fixed environment. It never inherits or copies caller
 credentials or Python startup state. If `agy models` needs a logged-in account, this
 runner rejects and publishes no accepted completion marker; that expected rejection
-cannot advance the active `1.1.10` matrix. A future real-account inventory capture
-requires a separate reviewed capture-only runner/profile and explicit authorization
-for that account boundary, not a fallback in the current accepting runner. The
-runner's source-contract mutations are selected drift checks under a trusted reviewed
-source and local-owner boundary; they do not prove hostile-source or same-UID tamper
-resistance. Stronger assurance would require a separately trusted launcher or harness.
+cannot advance the active `1.1.10` matrix.
+
+A separate `scripts/models_capture_runner.py` defines the future capture mechanism
+without invoking it. Its strict canonical stdin profile names one explicit owner-
+`0700` account HOME and its held directory identity. Production use is valid only
+after a user separately authorizes that exact account path and the one snapshot-
+backed `agy models` call. The child receives that HOME plus capture-owned private
+TMP/XDG/cwd directories and a fixed closed environment. The runner revalidates every
+HOME path component without following symlinks before and after the child, but it
+neither reads nor validates account contents. The external CLI may read, write, or
+mutate that authorized HOME and create account caches according to its own behavior;
+the runner cannot inventory, prevent, or revert those HOME changes, and residuals may
+remain even when capture fails. The selected account HOME, local owner
+and same-UID processes, reviewed interpreter and source, and OS administrators remain
+its trusted computing base; it makes no same-user tamper-resistance claim.
+
+After process-group closure, every capture-owned TMP/XDG/cwd directory must again be
+the same empty directory or publication fails closed. Successful bounded exit-zero
+execution publishes otherwise uninterpreted private mode-`0600` stdout/stderr, exact
+source and profile bytes, a `status: captured` record, and the final detached
+`models.capture.sha256` marker under a new owner-private evidence root. A capture is
+not an accepted inventory or binding and cannot update compatibility metadata,
+select a model, route work, or prove a provider backend. Output interpretation,
+including authentication, license, permission, quota, rate-limit, interactive, and
+inventory semantics, belongs to later offline reconciliation. Capture itself rejects
+nonzero, overflow, timeout, identity/scratch drift, or publication failure with no
+final marker. There is no login helper, prompt, retry, fallback, task dispatch, or
+provider job. The CLI prints only sanitized JSON containing the private artifact
+root, capture SHA-256, and `captured` status; it never prints raw streams or the
+account HOME. All checked-in coverage uses synthetic account roots; this runner's
+presence neither performs nor authorizes a real-account call. Source-contract
+mutations are selected drift checks under the reviewed-source/local-owner TCB, not
+proof against coordinated hostile source changes. Stronger assurance would require
+a separately trusted launcher.
 
 The human-reviewed agy baseline is `1.1.10` at source revision
 `bfab12dac5bd090015a89cf82e65093d13b567d9`. The fixed official sources, one
@@ -951,6 +979,7 @@ scripts/compatibility_probe.py bounded process-group supervisor for fixed eviden
 scripts/version_attestation_runner.py fixed-profile snapshot version runner with bounded startup diagnostics; real use separately authorized
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
 scripts/models_attestation_runner.py auth-isolated snapshot models runner; not a live-account capture path
+scripts/models_capture_runner.py explicit-account capture-only models runner; never auto-invoked
 scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
 scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
@@ -984,13 +1013,14 @@ tests/test-official-github.py test-only fixed-endpoint transport adversary harne
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
 tests/test-version-attestation-runner.py  157-case offline canonical fixed-profile runner suite
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
-tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
+tests/test-models-attestation-runner.py  113-case offline fixed-profile inventory attestation suite
+tests/test-models-capture-runner.py  69-case offline fake-account capture-only suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       346-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       347-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
-tests/test-conformance.py     79-case offline public gate-contract/adversary suite
+tests/test-conformance.py     81-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```
 

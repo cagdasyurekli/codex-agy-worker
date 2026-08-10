@@ -20,6 +20,21 @@ completion. Re-read the effective instruction hierarchy, keep this root file
 concise and repository-wide, and keep release notes or one-off run history out of
 `AGENTS.md`.
 
+## Codex subagent routing
+
+When Codex delegates repository work, use `gpt-5.6-terra` at medium effort for
+mechanical implementation and test integration, raising it to high only for a wider
+mechanical surface. Use `gpt-5.6-sol` at high effort for security, process-lifecycle,
+and adversarial verification, or xhigh for a repeated or unusually subtle semantic
+failure. For separately authorized bounded Git, PR, and CI publication work, use
+`gpt-5.6-terra` at low or medium effort. After the same semantic miss recurs, use a
+fresh-context `gpt-5.6-sol` xhigh verifier or diagnostician.
+
+Do not escalate reasoning because of a service disconnect; resume the existing
+work. Diagnose external CI timing systematically. Escalate for missed security
+reasoning or a repeated semantic bypass. These are Codex-subagent settings only:
+they never change caller-owned agy model, effort, thinking, selection, or routing.
+
 ## Ground truth about agy
 
 Never describe agy's CLI from memory — including your own. Run `./ground-truth.sh`
@@ -48,11 +63,13 @@ Keep these counts current when their suites change:
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
 - Canonical models-inventory attestation runner: 113 offline
   fixed-profile/version-binding/environment/parser/process cases.
+- Explicit-account models capture runner: 69 offline
+  profile/account-TCB/environment/capture/publication/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 346 offline
+- Codex package/skill distribution and CI policy: 347 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
-- Public gate conformance v1: 79 offline manifest/fixture/permissive-gate/signal/cleanup cases.
+- Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
@@ -81,6 +98,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
 /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py # offline fake-child mutation harness
 /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py # offline fake inventory attestation
+/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py # offline fake-account capture only
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
@@ -217,10 +235,17 @@ only a passing test has not been shown to catch anything.
   credentials, Python startup paths, or ambient environment into this runner. An
   auth-required `agy models` result must reject without a completion marker and cannot
   advance the `1.1.10` matrix. The accepted `1.1.11` version binding proves only the
-  version snapshot/source/argv observation; a future real-account inventory needs a
-  separate reviewed capture-only runner and explicit account authorization. Treat
-  the reviewed runner source and local owner as TCB: its AST mutation checks detect
-  selected drift and do not prove hostile-source or same-UID tamper resistance.
+  version snapshot/source/argv observation. Production use of the separate capture-
+  only runner remains dormant until the user authorizes its exact account HOME,
+  profile, and one call. It publishes `captured`, never accepted, evidence and cannot
+  advance metadata. A bounded exit-zero stream is retained without inventory/error
+  interpretation, while capture-owned scratch/cache/cwd must be empty after group
+  closure. The authorized external CLI may read, write, mutate, or cache in HOME;
+  the runner cannot detect or revert those changes, and residuals may remain after a
+  rejected capture. Treat
+  the reviewed runner sources, account HOME, local owner/same-UID processes,
+  interpreter, and OS admins as TCB: AST mutations detect selected drift and do not
+  prove hostile-source or same-UID tamper resistance.
 - **CI diff hygiene audits committed bytes.** Keep checkout history sufficient for
   the GitHub event range and run `scripts/ci-diff-check.sh`; its stdlib scanner must
   inspect every changed regular head blob independently of Git attributes with a

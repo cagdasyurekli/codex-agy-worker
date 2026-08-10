@@ -86,6 +86,20 @@ line-semantic parser into a private completion record. Offline synthetic coverag
 authority to review that mechanism, not authority to run it or advance compatibility
 metadata.
 
+Authentication isolation and real-account observation are different products. Keep
+the accepting inventory runner on an empty closed HOME, and put any future account-
+dependent observation behind a separate capture-only profile that names the exact
+owner-private HOME identity. Pass only that HOME plus private scratch/cache paths,
+revalidate the nofollow component chain around the child, require capture-owned
+scratch/cache/cwd to be empty again after process-group closure, retain arbitrary
+bounded exit-zero raw bytes privately without semantic interpretation, and label the
+result `captured`, never accepted. The runner must not read account contents itself,
+attempt login, retry, route, or update metadata. The authorized external CLI may
+still read, write, mutate, or cache in HOME; the runner cannot detect or undo that
+behavior or guarantee no residual after rejection. Fake-account tests can prove the
+wiring; they do not authorize a real account or remove the local-owner, same-UID,
+interpreter, and OS-administrator TCB.
+
 An official installer channel can move before a public release/source repository.
 Observe that difference through one fixed, bounded manifest canary, but do not turn a
 distribution version or checksum into source or behavior evidence. Disable proxies,
