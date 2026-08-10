@@ -133,9 +133,9 @@ an earlier implementation because it shares a schema or helper.
 
 ### G0 — Compatibility Reconciliation & Watch
 
-**G0-F2 status:** Provider-independent transport hardening is implemented offline for
-review. Read-only project/agy/Codex release and source observations now use exact
-fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
+**G0-F2 status:** Provider-independent transport hardening is implemented, merged, and
+offline-verified. Read-only project/agy/Codex release and source observations now use
+exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
 ambient-Git transport path and is not claimed hardened by this slice. No agy `1.1.11`
@@ -329,8 +329,8 @@ provenance, code-signing verification, or OS attestation.
 
 ### G1 — Explicit Model & Effort Selection
 
-**Status:** Implemented as an isolated, offline-verified slice; merge and release
-remain separately approval-gated.
+**Status:** Implemented, merged, and offline-verified; release remains separately
+approval-gated.
 
 - **User job:** Select an exact advertised agy model or a verified base-model/effort
   pair directly, without disguising the choice as a tier or allowing a recommendation
@@ -423,8 +423,8 @@ remain separately approval-gated.
 
 #### P0-A — Evidence Receipt v1
 
-**Status:** Implemented as an isolated, offline-verified slice; merge and release
-remain separately approval-gated.
+**Status:** Implemented, merged, and offline-verified; release remains separately
+approval-gated.
 
 - **User job:** Preserve what the driver checked, against which immutable base and
   policy, and what the gate concluded without sharing source, prompts, raw logs, or
@@ -529,8 +529,8 @@ receipt or creating chronology ambiguity.
 
 #### P0-B — Human Report renderer
 
-**Status:** Implemented as an isolated, offline-verified slice; merge and release
-remain separately approval-gated. Receipt-only selection and recommendation-record
+**Status:** Implemented, merged, and offline-verified; release remains separately
+approval-gated. Receipt-only selection and recommendation-record
 validation is side-effect-free; canonical recommendation generation remains only an
 explicit pre-gate publication-input check.
 
@@ -655,7 +655,7 @@ remains intentionally outside the Doctor contract.
 - **Implemented boundary:** The canonical portable runtime owns the v1 state machine,
   shared candidate-state digest, Receipt validation, progress reconciliation, and
   compare-and-delete cleanup. The root command is only a compatibility wrapper.
-  Ninety-four offline cases cover accepted and rejected lifecycle paths, canonical
+  Ninety-five offline cases cover accepted and rejected lifecycle paths, canonical
   branch authority, hook/filter-free fixed Git execution, durability, stale approval,
   ref-error separation, deletion-domain, signal, and weakened-authority mutations.
   Cleanup never follows symlinks, never deletes a commit, and retains the cleaned
@@ -684,7 +684,7 @@ remains intentionally outside the Doctor contract.
   implementations rejected, and no “certified secure” language.
 - **Implemented boundary:** The repository-only v1 kit binds eleven exact synthetic
   gate cases, manifest/source hashes, fixed verifier kinds, private disposable Git
-  repositories, and per-process time/output limits. Seventy-eight offline adversarial
+  repositories, and per-process time/output limits. Seventy-nine offline adversarial
   cases reject source drift and permissive gates while proving HUP/INT/TERM cleanup,
   FD-relative no-follow deletion, cleanup bounds, and fail-closed residual handling
   under an explicit gate/loaded-code/local-owner/same-UID/OS-admin TCB. The runner
@@ -826,6 +826,16 @@ acceptance operation.
 
 #### P2-B — Provider-reported usage and latency
 
+**Status:** Blocked on current-version terminal-event evidence. The repository's
+historical agy `1.1.9` observation and synthetic test streams do not establish the
+current contract for usage, duration, or turn fields. Unblocking requires a separately
+approved, executable/version-bound one-attempt public synthetic run; owner-private raw
+NDJSON; and a sanitized reviewed record binding event order and cardinality, exact
+field names and types, null/missing behavior, nested usage keys, duplicate/failure
+semantics, and invocation/source/version hashes. Official docs/source must be
+reconciled, and any undocumented behavior remains explicitly version-pinned empirical
+evidence. Until then no usage parser or schema may be treated as current.
+
 - **User job:** Inspect one run's reported token, turn, and duration telemetry to make
   a manual batching decision.
 - **Intended surface:** `usage-report.sh --stream FILE` for one explicitly selected
@@ -848,6 +858,15 @@ acceptance operation.
   stable source and a separately approved contract.
 
 #### P2-C — Optional local list/show/prune
+
+**Status:** Blocked on demonstrated recurring accumulation and a reviewed managed-root
+contract. The stable per-job lifecycle does not yet define a canonical inventory root
+or prove that manual cleanup is recurring friction. Unblocking requires opt-in,
+sanitized evidence from explicit owner-private lifecycle roots showing repeated
+retention or cleanup burden without paths or raw state, followed by an explicit
+contract for the managed-root inventory, list/show scope, exact prune deletion domain,
+and approval binding. Existing current-state, rejected-Receipt, and candidate-digest
+checks remain mandatory; age alone never authorizes deletion.
 
 - **User job:** Find and deliberately remove old locally managed job records after the
   lifecycle format is stable.
