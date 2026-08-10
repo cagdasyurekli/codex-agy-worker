@@ -397,28 +397,21 @@ except (OSError, ValueError):
     early_marker_pid = 0
 
 
-def kill_test_process_group(pgid: int) -> bool:
+def test_cleanup_issued_or_absent(pgid: int) -> bool:
     if pgid <= 0 or pgid == os.getpgrp():
         return False
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
         return True
-    group_deadline = time.monotonic() + 0.75
-    while time.monotonic() < group_deadline:
-        try:
-            os.killpg(pgid, 0)
-        except ProcessLookupError:
-            return True
-        time.sleep(0.01)
-    return False
+    return True
 
 
 try:
     early_pgid = os.getpgid(early_pid) if early_pid > 0 else 0
 except ProcessLookupError:
     early_pgid = 0
-early_group_gone = kill_test_process_group(early_pgid)
+early_cleanup_issued_or_absent = test_cleanup_issued_or_absent(early_pgid)
 check(
     "post-return arm observes a mutation that removes process-group closure",
     lambda: (
@@ -427,11 +420,12 @@ check(
         and early_pgid > 0
         and early_pgid != os.getpgrp()
         and early_marker_pid == early_pid
-        and early_group_gone
+        and early_cleanup_issued_or_absent
     ),
 )
 
-zero_group_killpg_calls = []
+test_group_killpg_calls = []
+absent_test_group_killpg_calls = []
 real_test_getpgid = os.getpgid
 real_test_killpg = os.killpg
 try:
@@ -439,7 +433,11 @@ try:
         raise ProcessLookupError
 
     def record_test_killpg(pgid: int, signum: int) -> None:
-        zero_group_killpg_calls.append((pgid, signum))
+        test_group_killpg_calls.append((pgid, signum))
+
+    def absent_test_group_killpg(pgid: int, signum: int) -> None:
+        absent_test_group_killpg_calls.append((pgid, signum))
+        raise ProcessLookupError
 
     os.getpgid = missing_test_group
     os.killpg = record_test_killpg
@@ -447,8 +445,15 @@ try:
         missing_test_pgid = os.getpgid(early_pid)
     except ProcessLookupError:
         missing_test_pgid = 0
-    missing_test_group_gone = kill_test_process_group(missing_test_pgid)
-    current_test_group_gone = kill_test_process_group(os.getpgrp())
+    missing_test_cleanup_issued_or_absent = test_cleanup_issued_or_absent(
+        missing_test_pgid
+    )
+    current_test_cleanup_issued_or_absent = test_cleanup_issued_or_absent(
+        os.getpgrp()
+    )
+    valid_test_cleanup_issued_or_absent = test_cleanup_issued_or_absent(424242)
+    os.killpg = absent_test_group_killpg
+    absent_test_cleanup_issued_or_absent = test_cleanup_issued_or_absent(424243)
 finally:
     os.getpgid = real_test_getpgid
     os.killpg = real_test_killpg
@@ -457,7 +462,7 @@ test_source = Path(__file__).read_bytes()
 
 def test_group_cleanup_guard_contract(data: bytes) -> bool:
     try:
-        body = data.split(b"def kill_test_process_group(", 1)[1].split(
+        body = data.split(b"def test_cleanup_issued_or_absent(", 1)[1].split(
             b"try:\n    early_pgid =", 1
         )[0]
         guard_at = body.index(
@@ -466,7 +471,12 @@ def test_group_cleanup_guard_contract(data: bytes) -> bool:
         kill_at = body.index(b"os.killpg(pgid, signal.SIGKILL)")
     except (IndexError, ValueError):
         return False
-    return guard_at < kill_at
+    return (
+        guard_at < kill_at
+        and body.count(b"os.killpg(pgid, signal.SIGKILL)") == 1
+        and body.count(b"os.killpg(") == 1
+        and b"os.killpg(pgid, 0)" not in body
+    )
 
 
 test_group_nonpositive_guard_mutant = test_source.replace(
@@ -490,13 +500,30 @@ test_group_guard_reorder_mutant = test_source.replace(
     b"            return False",
     1,
 )
+test_group_post_signal_probe_mutant = test_source.replace(
+    b"    except ProcessLookupError:\n        return True\n    return True\n",
+    b"    except ProcessLookupError:\n        return True\n"
+    b"    os.killpg(pgid, 0)\n"
+    b"    return True\n",
+    1,
+)
+test_group_second_signal_mutant = test_source.replace(
+    b"    except ProcessLookupError:\n        return True\n    return True\n",
+    b"    except ProcessLookupError:\n        return True\n"
+    b"    os.killpg(pgid, signal.SIGTERM)\n"
+    b"    return True\n",
+    1,
+)
 check(
-    "missing or current mutant PGID never receives a process-group signal",
+    "test cleanup guards invalid/current groups and issues one bounded kill",
     lambda: (
         missing_test_pgid == 0
-        and not missing_test_group_gone
-        and not current_test_group_gone
-        and zero_group_killpg_calls == []
+        and not missing_test_cleanup_issued_or_absent
+        and not current_test_cleanup_issued_or_absent
+        and test_group_killpg_calls == [(424242, signal.SIGKILL)]
+        and valid_test_cleanup_issued_or_absent
+        and absent_test_group_killpg_calls == [(424243, signal.SIGKILL)]
+        and absent_test_cleanup_issued_or_absent
         and test_group_cleanup_guard_contract(test_source)
         and test_group_nonpositive_guard_mutant != test_source
         and not test_group_cleanup_guard_contract(test_group_nonpositive_guard_mutant)
@@ -504,6 +531,10 @@ check(
         and not test_group_cleanup_guard_contract(test_group_current_guard_mutant)
         and test_group_guard_reorder_mutant != test_source
         and not test_group_cleanup_guard_contract(test_group_guard_reorder_mutant)
+        and test_group_post_signal_probe_mutant != test_source
+        and not test_group_cleanup_guard_contract(test_group_post_signal_probe_mutant)
+        and test_group_second_signal_mutant != test_source
+        and not test_group_cleanup_guard_contract(test_group_second_signal_mutant)
     ),
 )
 

@@ -668,32 +668,40 @@ for lifecycle_signal in MODULE.SIGNALS:
     check(f"signal {lifecycle_signal} after command return wins before process exit", lambda lifecycle_signal=lifecycle_signal: completion_signal(lifecycle_signal))
 
 
-def distinct_second_signal(module_path: Path, label: str) -> tuple[int, bool, bool]:
+def distinct_second_signal(module_path: Path, label: str) -> tuple[int, bool, bool, bool]:
     marker = TMP / f"double-signal-{label}.late"
     cleanup_marker = TMP / f"double-signal-{label}.cleanup"
+    ready_marker = TMP / f"double-signal-{label}.ready"
     child_code = (
         "import os,pathlib,signal,time,sys;"
-        "signal.pthread_sigmask(signal.SIG_UNBLOCK,(signal.SIGTERM,));"
         "signal.signal(signal.SIGTERM,lambda *_:(pathlib.Path(sys.argv[2]).write_text('cleanup'),os.kill(os.getppid(),signal.SIGTERM)));"
+        "ready=pathlib.Path(sys.argv[3]);ready.write_text('ready');ready.chmod(0o600);"
+        "signal.pthread_sigmask(signal.SIG_UNBLOCK,(signal.SIGTERM,));"
         "time.sleep(4);pathlib.Path(sys.argv[1]).write_text('late')"
     )
     script = (
-        "import importlib.util,os,signal,sys,threading;"
+        "import importlib.util,os,signal,stat,sys,threading,time;"
         f"sys.path.insert(0,{str(MODULE_PATH.parent)!r});"
         f"p={str(module_path)!r};s=importlib.util.spec_from_file_location('life_double',p);m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);"
         "[signal.signal(n,m._interrupt) for n in m.SIGNALS];"
-        "threading.Timer(.2,lambda:os.kill(os.getpid(),signal.SIGHUP)).start();"
-        f"\ntry:m.run_process([{PYTHON!r},'-I','-S','-B','-c',{child_code!r},{str(marker)!r},{str(cleanup_marker)!r}])\nexcept m.JobSignal as e:raise SystemExit(128+e.number)"
+        "\ndef arm():\n deadline=time.monotonic()+1\n while time.monotonic()<deadline:\n  try:\n   info=os.stat(sys.argv[1]);ready=open(sys.argv[1]).read()=='ready' and stat.S_IMODE(info.st_mode)==0o600\n  except OSError: ready=False\n  if ready: os.kill(os.getpid(),signal.SIGHUP);return\n  time.sleep(.005)\n os._exit(97)\n"
+        "threading.Thread(target=arm,daemon=True).start();"
+        f"\ntry:m.run_process([{PYTHON!r},'-I','-S','-B','-c',{child_code!r},{str(marker)!r},{str(cleanup_marker)!r},{str(ready_marker)!r}])\nexcept m.JobSignal as e:raise SystemExit(128+e.number)"
+        f"\nif __name__=='__main__': pass\n"
     )
-    result = subprocess.run([PYTHON, "-I", "-S", "-B", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False)
+    result = subprocess.run([PYTHON, "-I", "-S", "-B", "-c", script, str(ready_marker)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5, check=False)
     time.sleep(0.2)
-    return result.returncode, cleanup_marker.exists(), marker.exists()
+    try:
+        ready = ready_marker.read_text() == "ready" and stat.S_IMODE(ready_marker.stat().st_mode) == 0o600
+    except OSError:
+        ready = False
+    return result.returncode, ready, cleanup_marker.exists(), marker.exists()
 
 
 secure_signal_result = distinct_second_signal(MODULE_PATH, "secure")
 check(
     "distinct second signal cannot replace first exit or interrupt cleanup",
-    lambda: secure_signal_result == (129, True, False),
+    lambda: secure_signal_result == (129, True, True, False),
 )
 
 signal_mutant = TMP / "job-lifecycle-signal-overwrite.py"
@@ -714,7 +722,113 @@ signal_mutant.chmod(0o600)
 mutated_signal_result = distinct_second_signal(signal_mutant, "mutant")
 check(
     "first-signal overwrite mutation is killed by cleanup-entry handshake",
-    lambda: mutated_signal_result == (143, True, False),
+    lambda: mutated_signal_result == (143, True, True, False),
+)
+
+
+def default_term_cleanup() -> bool:
+    process = subprocess.Popen(
+        [PYTHON, "-I", "-S", "-B", "-c", "import time; time.sleep(4)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    MODULE._terminate_process(process)
+    return process.returncode is not None
+
+
+check("default-TERM child is reaped by the sole lifecycle wait", default_term_cleanup)
+
+
+def permission_error_cleanup(raise_on: int) -> bool:
+    class FakeProcess:
+        pid = 424242
+        returncode: int | None = None
+
+        def __init__(self) -> None:
+            self.wait_calls = 0
+
+        def wait(self, timeout: float) -> int:
+            self.wait_calls += 1
+            self.returncode = 0
+            return 0
+
+    process = FakeProcess()
+    calls: list[tuple[int, int]] = []
+    original_killpg = MODULE.os.killpg
+    original_sleep = MODULE.time.sleep
+
+    def injected_killpg(pgid: int, signum: int) -> None:
+        calls.append((pgid, signum))
+        if len(calls) == raise_on:
+            raise PermissionError("synthetic denied group signal")
+
+    try:
+        MODULE.os.killpg = injected_killpg
+        MODULE.time.sleep = lambda _seconds: None
+        MODULE._terminate_process(process)
+    finally:
+        MODULE.os.killpg = original_killpg
+        MODULE.time.sleep = original_sleep
+    return (
+        calls == [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)]
+        and process.wait_calls == 1
+        and process.returncode == 0
+    )
+
+
+for permission_error_call in (1, 2):
+    check(
+        f"PermissionError on process-group signal {permission_error_call} still reaps once",
+        lambda permission_error_call=permission_error_call: permission_error_cleanup(permission_error_call),
+    )
+
+
+test_source = Path(__file__).read_bytes()
+
+
+def distinct_second_signal_contract(data: bytes) -> bool:
+    start = data.index(b"def distinct_second_signal")
+    end = data.index(b"\n\nsecure_signal_result", start)
+    body = data[start:end]
+    handler = b"signal.signal(signal.SIGTERM,lambda *_:(pathlib.Path(sys.argv[2]).write_text('cleanup'),os.kill(os.getppid(),signal.SIGTERM)));"
+    unblock = b"signal.pthread_sigmask(signal.SIG_UNBLOCK,(signal.SIGTERM,));"
+    return (
+        handler in body
+        and unblock in body
+        and body.index(handler) < body.index(unblock)
+        and b"ready.chmod(0o600);" in body
+        and b"time.monotonic()+1" in body
+        and b"while time.monotonic()<deadline:" in body
+        and b"threading.Timer" not in body
+    )
+
+
+handshake_without_private_ready = test_source.replace(b"ready.chmod(0o600);", b"", 1)
+handshake_without_bounded_wait = test_source.replace(
+    b"time.monotonic()+1", b"time.monotonic()", 1
+)
+handshake_unblock_before_handler = test_source.replace(
+    b'        "signal.signal(signal.SIGTERM,lambda *_:(pathlib.Path(sys.argv[2]).write_text(\'cleanup\'),os.kill(os.getppid(),signal.SIGTERM)));"\n'
+    b'        "ready=pathlib.Path(sys.argv[3]);ready.write_text(\'ready\');ready.chmod(0o600);"\n'
+    b'        "signal.pthread_sigmask(signal.SIG_UNBLOCK,(signal.SIGTERM,));"\n',
+    b'        "signal.pthread_sigmask(signal.SIG_UNBLOCK,(signal.SIGTERM,));"\n'
+    b'        "signal.signal(signal.SIGTERM,lambda *_:(pathlib.Path(sys.argv[2]).write_text(\'cleanup\'),os.kill(os.getppid(),signal.SIGTERM)));"\n'
+    b'        "ready=pathlib.Path(sys.argv[3]);ready.write_text(\'ready\');ready.chmod(0o600);"\n',
+    1,
+)
+check(
+    "second-signal proof requires bounded private readiness and handler-before-unblock",
+    lambda: (
+        distinct_second_signal_contract(test_source)
+        and handshake_without_private_ready != test_source
+        and not distinct_second_signal_contract(handshake_without_private_ready)
+        and handshake_without_bounded_wait != test_source
+        and not distinct_second_signal_contract(handshake_without_bounded_wait)
+        and handshake_unblock_before_handler != test_source
+        and not distinct_second_signal_contract(handshake_unblock_before_handler)
+    ),
 )
 
 
@@ -882,6 +996,26 @@ def process_group_contract(data: bytes) -> bool:
 check("process-group authority is used only before leader reap", lambda: process_group_contract(source))
 mutated = source.replace(b"        process.wait(timeout=0.75)\n", b"        process.wait(timeout=0.75)\n        os.killpg(process.pid, 0)\n", 1)
 check("mutation adding post-reap process-group probe is killed", lambda: not process_group_contract(mutated))
+
+
+def process_group_error_contract(data: bytes) -> bool:
+    start = data.index(b"def _terminate_process")
+    end = data.index(b"\ndef run_process", start)
+    body = data[start:end]
+    return body.count(b"except (ProcessLookupError, PermissionError):") == 2
+
+
+permission_error_mutant = source.replace(
+    b"except (ProcessLookupError, PermissionError):", b"except ProcessLookupError:", 1
+)
+check(
+    "process-group cleanup keeps PermissionError non-authoritative before sole reap",
+    lambda: (
+        process_group_error_contract(source)
+        and permission_error_mutant != source
+        and not process_group_error_contract(permission_error_mutant)
+    ),
+)
 
 
 def state_fsync_contract(data: bytes) -> bool:

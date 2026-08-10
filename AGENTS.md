@@ -54,7 +54,7 @@ Keep these counts current when their suites change:
 - Evidence Report v1: 80 offline pure-rendering/privacy/CI-format/binding/mutation cases.
 - Offline Benchmark v1: 104 offline plan/Receipt/result/report/privacy/mutation cases.
 - Persona Evidence Registry v1: 124 offline semantic-chain/Git-ancestry/portable/mutation cases.
-- Safe local lifecycle: 95 offline state/receipt/Git-policy/cleanup/signal cases.
+- Safe local lifecycle: 100 offline state/receipt/Git-policy/cleanup/signal cases.
 - Data-only Workload Profiles v1: 89 offline schema/allowlist/portable/mutation cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
