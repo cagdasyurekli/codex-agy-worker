@@ -68,6 +68,11 @@ The [Persona Evidence Registry v1](PERSONAS.md) separately validates fixed shipp
 persona sources, mode restrictions, and exact public contract bindings. Its statuses
 are evidence levels, not trust labels, routing inputs, or acceptance authority.
 
+The [data-only Workload Profiles v1](PROFILES.md) lists fixed non-executable
+mode/persona/path-shape skeletons. Profiles never select a model or tier, load a
+repository, carry a command or authorization, dispatch work, or affect acceptance;
+the caller must still provide every executable and scope-bearing input.
+
 ## Install and explore
 
 Use the GitHub repository as the source of truth. Review the cloned commit—or the

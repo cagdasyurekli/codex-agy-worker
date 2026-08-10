@@ -60,6 +60,21 @@ All shipped records are currently `offline-only`. The registry binds public cont
 bytes and mode restrictions; it does not execute, trust, rank, route, accept, or
 promote a persona, and target repositories cannot register one dynamically.
 
+To inspect one fixed non-executable workload skeleton without dispatching or reading
+a target repository:
+
+```bash
+"$PIPELINE/profile.sh" list
+"$PIPELINE/profile.sh" show bounded-test-backfill
+```
+
+A profile may suggest only one maintained mode, persona, and closed repo-relative
+path-policy shape. It supplies no repository, path, tier/model/effort value, verifier
+or shell command, external root, authorization, route, acceptance, dispatch, or Git
+action. The caller must still provide approval, exact repository, exact path policy,
+selected tier, and verification commands. Never load profiles from a target repo,
+environment variable, home directory, or caller path.
+
 ## Data boundary and sandbox requirement (read first)
 
 `agy` is an external CLI backed by Google/Gemini services. A dispatch can transmit

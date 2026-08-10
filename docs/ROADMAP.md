@@ -795,6 +795,10 @@ semantically honest mapping; “job rejected” is not automatically a test-case
 
 #### P2-A — Data-only workload profiles
 
+**Status:** Implemented provider-independently as a fixed v1 data bundle and pure
+list/show renderer. It performs no dispatch, repository discovery, routing, or
+acceptance operation.
+
 - **User job:** Start common bounded jobs from a maintained skeleton without hiding
   policy choices.
 - **Intended surface:** Bundled `profiles/*.json` plus `profile.sh list|show NAME`.
@@ -813,6 +817,12 @@ semantically honest mapping; “job rejected” is not automatically a test-case
 - **Size:** M.
 - **Done/exit criteria:** Profiles reduce typing without deciding cost, executing
   policy, or expanding read scope.
+- **Implemented evidence:** Eighty-nine offline cases bind the exact three-profile
+  manifest, canonical list/show bytes, maintained mode/persona pairs, closed
+  repo-relative path-policy shapes, all caller-required fields, portable parity,
+  schema/inventory/hash/mode/symlink/bound enforcement, hidden-source non-discovery,
+  and weakened-policy mutations. No profile contains or obtains a selected value,
+  executable command, path, authorization, dispatch, route, acceptance, or Git action.
 
 #### P2-B — Provider-reported usage and latency
 

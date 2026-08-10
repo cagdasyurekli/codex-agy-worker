@@ -60,6 +60,14 @@ configuration disabled; it never follows an evidence pathname into private stora
 Future non-offline states require public canonical evidence, approval/review, and
 transition blobs in strict ancestry. Private evidence cannot be described as public.
 
+The workload-profile command is local, read-only, and data-only. It reads only the
+fixed bundled v1 manifest, schema, and three public profile records and writes one
+canonical JSON value to stdout. It never reads a target repository, caller path,
+home-directory profile, environment-selected source, personal configuration, prompt,
+log, or private evidence, and invokes no git, agy, provider, or network client. A
+shown profile is not authorization and contains no repository/path, selected model or
+tier, verifier command, dispatch, route, acceptance, or external action.
+
 ## Local artifacts and retention
 
 Each job can create local private artifacts under `logs/<job>/`, including the task,
