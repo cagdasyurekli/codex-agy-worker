@@ -1005,7 +1005,7 @@ tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/m
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
-tests/test-job-lifecycle.py   95-case offline state/Git-policy/receipt/cleanup/signal suite
+tests/test-job-lifecycle.py   100-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
