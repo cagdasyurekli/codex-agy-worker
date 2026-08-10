@@ -638,13 +638,15 @@ python3 -B skills/agy-worker/runtime/scripts/evidence_receipt.py validate \
   --receipt "$RECEIPT_DIR/job.json" --envelope envelope.json
 ```
 
-Render the same validated receipt as compact text or Markdown without invoking agy,
-git, the gate, model routing, or the network:
+Render the same validated receipt as compact text, canonical JSON, Markdown, or a
+GitHub Step Summary without invoking agy, git, the gate, model routing, or the
+network:
 
 ```bash
 ./evidence-report.sh --receipt "$RECEIPT_DIR/job.json" --format text
 ./evidence-report.sh --receipt "$RECEIPT_DIR/job.json" --format markdown \
   --output "$RECEIPT_DIR/job.md"
+./evidence-report.sh --receipt "$RECEIPT_DIR/job.json" --format json
 ```
 
 Standard output is the default. `--output` must be one new canonical absolute path;
@@ -658,6 +660,19 @@ or externally mismatched input produces no report. Optional `--envelope`,
 `--final-state-digest` bind separately trusted artifacts before rendering. A report is
 still an unsigned rendering: it cannot authenticate a rewritten receipt, improve the
 gate verdict, or turn `gate-passed` into acceptance without human diff review.
+
+In GitHub Actions, redirect stdout explicitly; the reporter never discovers or writes
+`GITHUB_STEP_SUMMARY` itself:
+
+```yaml
+- name: Render bounded evidence summary
+  shell: bash
+  run: ./evidence-report.sh --receipt "$RUNNER_TEMP/job.json" --format github-step-summary >> "${GITHUB_STEP_SUMMARY:?}"
+```
+
+Do not pass fork-controlled paths, repository content, tokens, or secrets to this
+step. It validates one previously produced receipt, emits no workflow commands, and
+does not comment, upload an artifact, or call a GitHub API.
 
 The stdout-only path returns normally and can be used for in-process pure rendering.
 The `--output` CLI path is deliberately process-owning: it retains signal rollback
@@ -919,7 +934,7 @@ CODE_OF_CONDUCT.md            enforceable participation standards
 .github/pull_request_template.md  review and verification checklist
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
-tests/test-evidence-report.sh  60-case offline pure renderer/privacy/mutation suite
+tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/mutation suite
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-job-lifecycle.py   95-case offline state/Git-policy/receipt/cleanup/signal suite
@@ -933,7 +948,7 @@ tests/test-version-attestation-harness.py  55-case offline version-attestation m
 tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       311-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       314-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          218-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     78-case offline public gate-contract/adversary suite

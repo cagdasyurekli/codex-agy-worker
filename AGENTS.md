@@ -36,7 +36,7 @@ Keep these counts current when their suites change:
 
 - `qa-gate.sh`: 41 offline cases.
 - Evidence Receipt v1: 88 offline gate-protocol/publication/privacy cases.
-- Evidence Report v1: 60 offline pure-rendering/privacy/binding/mutation cases.
+- Evidence Report v1: 80 offline pure-rendering/privacy/CI-format/binding/mutation cases.
 - Offline Benchmark v1: 104 offline plan/Receipt/result/report/privacy/mutation cases.
 - Persona Evidence Registry v1: 124 offline semantic-chain/Git-ancestry/portable/mutation cases.
 - Safe local lifecycle: 95 offline state/receipt/Git-policy/cleanup/signal cases.
@@ -48,7 +48,7 @@ Keep these counts current when their suites change:
 - Canonical models-inventory attestation runner: 78 offline
   fixed-profile/version-binding/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 311 offline
+- Codex package/skill distribution and CI policy: 314 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 218 offline fake-tool/read-only cases.
 - Public gate conformance v1: 78 offline manifest/fixture/permissive-gate/signal/cleanup cases.
@@ -133,6 +133,9 @@ only a passing test has not been shown to catch anything.
   cannot change rejected/routed outcomes or turn `gate-passed` into acceptance.
   Receipt-only selection and recommendation validation stays side-effect-free; only
   explicit pre-gate publication input may run canonical recommendation coherence.
+  JSON is a canonical report view, not the raw receipt. GitHub Step Summary output
+  goes only to stdout or an explicit new file; never discover or write the workflow
+  environment path, emit workflow commands, call a GitHub API, comment, or upload.
 - **Lifecycle cleanup spends fresh explicit authority.** State stays in an external
   owner-private file and binds the exact repo/worktree/ref/base/job/Receipt/candidate.
   Only rejected exits 10-14 may clean. Reconcile each completed Git step durably,
