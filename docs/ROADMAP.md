@@ -172,14 +172,21 @@ invoke no agy, provider, network, or private production evidence. This closes th
 offline version provenance prerequisite only.
 
 A separate canonical models-inventory runner now binds one exact `models` Popen to
-an accepted version binding and the same attested snapshot. Its 78-case offline suite
+an accepted version binding and the same attested snapshot. Its 113-case offline suite
 uses synthetic executables only, pins the exact 11-line semantic parser and corrected
 normalized hash, enforces 25-second/64-KiB bounds and private detached publication,
-and kills mutations of the executable override, logical argv, bounds, parser,
-version-binding digest, and completion marker. It never exposes `/model`, `/effort`,
-selector, retry, or provider-job surfaces. Running it against retained production
-evidence remains a separate explicit authorization and independent review; the
-checked-in `1.1.10` metadata and fail-closed matrix remain unchanged meanwhile.
+and kills mutations of the executable override, logical argv, private cwd, stream
+wiring, exact closed environment, bounds, parser, version-binding digest, and
+completion marker. Its child always receives fresh private empty HOME/TMP/XDG roots;
+it never inherits or copies caller credentials or Python startup state. The accepted
+`1.1.11` binding proves only the version snapshot/source/argv observation. An
+auth-required inventory therefore rejects without an accepted marker and cannot
+advance the checked-in `1.1.10` metadata or fail-closed matrix. A future live-account
+inventory needs a separate reviewed capture-only runner/profile and explicit account
+authorization; it is not a fallback or retry in this runner. The source-contract
+mutations provide selected drift sensitivity under a reviewed-source/local-owner TCB;
+they do not prove hostile-source or same-UID tamper resistance. Stronger assurance is
+a separate future trusted-launcher or harness decision.
 
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a

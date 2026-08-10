@@ -115,8 +115,110 @@ check("completion binding is detached and last", lambda: MODULE.OUTPUT_FILES[-1]
 
 mutated = source.replace(b"                executable=profile.snapshot_path,\n", b"", 1)
 check("mutation removing executable override is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"                executable=profile.snapshot_path,", b"                executable=profile.source_path,", 1)
+check("mutation changing the attested executable is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"            process = calls.popen(\n", b"            calls.popen(argv)\n            process = calls.popen(\n", 1)
 check("mutation adding a second Popen is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"            process = calls.popen(\n", b"            subprocess.Popen(argv)\n            process = calls.popen(\n", 1)
+check("mutation adding a direct fallback Popen is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"def hidden_popen(*args, **kwargs):\n    return subprocess.Popen(*args, **kwargs)\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+).replace(
+    b"            process = calls.popen(\n",
+    b"            hidden_popen(argv)\n            process = calls.popen(\n",
+    1,
+)
+check("mutation hiding a second Popen in a helper is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"def hidden_run(*args, **kwargs):\n    return subprocess.run(*args, **kwargs)\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+).replace(
+    b"            process = calls.popen(\n",
+    b"            hidden_run(argv, check=False)\n            process = calls.popen(\n",
+    1,
+)
+check("mutation hiding subprocess run in a helper is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"hidden_run = subprocess.run\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+).replace(
+    b"            process = calls.popen(\n",
+    b"            hidden_run(argv, check=False)\n            process = calls.popen(\n",
+    1,
+)
+check("mutation aliasing subprocess run is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"hidden_subprocess = subprocess\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+).replace(
+    b"            process = calls.popen(\n",
+    b"            hidden_subprocess.run(argv, check=False)\n            process = calls.popen(\n",
+    1,
+)
+check("mutation aliasing the subprocess module is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"            process = calls.popen(\n",
+    b"            hidden_calls = calls\n            hidden_calls.popen(argv)\n            process = calls.popen(\n",
+    1,
+)
+check("mutation aliasing injected call authority is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"def hidden_dynamic_run(*args, **kwargs):\n    return importlib.import_module('subprocess').run(*args, **kwargs)\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+).replace(
+    b"            process = calls.popen(\n",
+    b"            hidden_dynamic_run(argv, check=False)\n            process = calls.popen(\n",
+    1,
+)
+check("mutation dynamically importing subprocess is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"hidden_dict_run = subprocess.__dict__['run']\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+)
+check("mutation looking up subprocess through module dict is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"hidden_getattribute_run = subprocess.__getattribute__('run')\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+)
+check("mutation looking up subprocess through getattribute is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"def hidden_dict_run(*args, **kwargs):\n    return subprocess.__dict__['run'](*args, **kwargs)\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+).replace(
+    b"            process_active = True\n",
+    b"            process_active = True\n            hidden_dict_run(argv, check=False)\n",
+    1,
+)
+check("mutation launching through module dict after tracked Popen is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"import subprocess\n",
+    b"import subprocess\nfrom subprocess import call as hidden_call\n",
+    1,
+).replace(
+    b"            process = calls.popen(\n",
+    b"            hidden_call(argv)\n            process = calls.popen(\n",
+    1,
+)
+check("mutation importing a subprocess launch alias is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"def hidden_system(command):\n    return os.system(command)\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+).replace(
+    b"            process = calls.popen(\n",
+    b"            hidden_system(profile.source_path)\n            process = calls.popen(\n",
+    1,
+)
+check("mutation hiding os system in a helper is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b'        argv = [profile.source_path, "models"]', b'        argv = [profile.source_path, "/model"]', 1)
 check("mutation changing logical argv is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"        deadline = started + WALL_SECONDS", b"        deadline = started + 999", 1)
@@ -155,6 +257,130 @@ mutated = replace_last(source, b"stderr_sha = _validate_stderr(stderr, stderr_co
 check("mutation bypassing exact stderr validation is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"                    or os.listdir(child)\n", b"", 1)
 check("mutation permitting nonempty version directories is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'            "HOME": str(root / "home"),', b'            "HOME": os.environ["HOME"],', 1)
+check("mutation inheriting caller HOME is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)\n", b"        environment.update(os.environ)\n        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)\n", 1)
+check("mutation merging caller environment is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'            "TMPDIR": str(root / "tmp"),\n', b"", 1)
+check("mutation omitting private TMPDIR is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'            "XDG_CONFIG_HOME": str(root / "xdg-config"),\n', b"", 1)
+check("mutation omitting private XDG config is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'            "PATH": "/usr/bin:/bin",\n', b'            "PATH": "/usr/bin:/bin",\n            "PYTHONPATH": os.environ.get("PYTHONPATH", ""),\n', 1)
+check("mutation inheriting Python startup path is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"                env=environment,", b"                env=os.environ.copy(),", 1)
+check("mutation bypassing fixed environment is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b'                cwd=str(root / "cwd"),', b"                cwd=profile.temp_parent,", 1)
+check("mutation changing private cwd is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"                stdin=subprocess.DEVNULL,", b"                stdin=subprocess.PIPE,", 1)
+check("mutation exposing child stdin is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"                stderr=subprocess.PIPE,", b"                stderr=subprocess.DEVNULL,", 1)
+check("mutation removing bounded stderr capture is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"            _revalidate_private_directories(root, private_directory_identities)\n",
+    b"",
+    1,
+)
+check("mutation removing private directory revalidation is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"            process = calls.popen(\n",
+    b'            shutil.rmtree(root / "home")\n            os.symlink(os.environ["HOME"], root / "home")\n            process = calls.popen(\n',
+    1,
+)
+check("mutation swapping caller HOME after revalidation is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"            process_active = True\n",
+    b'            process_active = True\n            shutil.rmtree(root / "home")\n            os.symlink(os.environ["HOME"], root / "home")\n',
+    1,
+)
+check("mutation swapping caller HOME after Popen is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        started = time.monotonic()\n",
+    b'        os.symlink(os.environ["HOME"], root / "home")\n        started = time.monotonic()\n',
+    1,
+)
+check("mutation adding a post-launch filesystem symlink is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        started = time.monotonic()\n",
+    b'        shutil.rmtree(root / "home")\n        started = time.monotonic()\n',
+    1,
+)
+check("mutation adding post-launch recursive deletion is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"class ModelsAttestationError(ValueError):\n",
+    b"def hidden_home_swap(root):\n    shutil.rmtree(root / 'home')\n    os.symlink(os.environ['HOME'], root / 'home')\n\n\nclass ModelsAttestationError(ValueError):\n",
+    1,
+).replace(
+    b"        started = time.monotonic()\n",
+    b"        hidden_home_swap(root)\n        started = time.monotonic()\n",
+    1,
+)
+check("mutation invoking a hidden HOME swap helper post-launch is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        started = time.monotonic()\n",
+    b"        run_offline_self_test()\n        started = time.monotonic()\n",
+    1,
+)
+check("mutation recursively invoking offline self-test post-launch is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"    if process.stdout is None or process.stderr is None:\n",
+    b"    run_offline_self_test()\n    if process.stdout is None or process.stderr is None:\n",
+    1,
+)
+check("mutation recursively launching through capture is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(
+    b"        result = run_attestation(profile, profile_source=data)\n",
+    b"        result = run_attestation(profile, profile_source=data)\n        run_offline_self_test()\n",
+    1,
+)
+check("mutation recursively launching through production main is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = replace_last(
+    source,
+    b"os.O_RDONLY | version.DIRECTORY | version.CLOEXEC | version.NOFOLLOW,\n",
+    b"os.O_RDONLY | version.DIRECTORY | version.CLOEXEC,\n",
+)
+check("mutation removing private directory nofollow is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+
+
+def private_directories_are_revalidated() -> bool:
+    root = TMP / "private-directory-revalidation"
+    root.mkdir(mode=0o700)
+    expected = {}
+    for name in MODULE.PRIVATE_DIRECTORY_NAMES:
+        child = root / name
+        child.mkdir(mode=0o700)
+        expected[name] = MODULE._private_directory_identity(child)
+    MODULE._revalidate_private_directories(root, expected)
+    return True
+
+
+check("all six private directories accept exact empty identities", private_directories_are_revalidated)
+
+
+def private_directory_symlink_swaps_reject() -> bool:
+    root = TMP / "private-directory-symlink-swaps"
+    root.mkdir(mode=0o700)
+    target = root / "caller-home"
+    target.mkdir(mode=0o700)
+    (target / "session.marker").write_bytes(b"private-synthetic-marker\n")
+    expected = {}
+    for name in MODULE.PRIVATE_DIRECTORY_NAMES:
+        child = root / name
+        child.mkdir(mode=0o700)
+        expected[name] = MODULE._private_directory_identity(child)
+    for name in MODULE.PRIVATE_DIRECTORY_NAMES:
+        child = root / name
+        saved = root / (name + ".owned")
+        child.rename(saved)
+        os.symlink(target, child)
+        rejected = rejects(lambda: MODULE._revalidate_private_directories(root, expected))
+        child.unlink()
+        saved.rename(child)
+        if not rejected:
+            return False
+    return (target / "session.marker").read_bytes() == b"private-synthetic-marker\n"
+
+
+check("symlink swaps of every private directory reject without target mutation", private_directory_symlink_swaps_reject)
 
 minimal = {
     "inventory_normalized_sha256": MODULE.EXPECTED_NORMALIZED_SHA256,
@@ -226,11 +452,37 @@ def positive_call_contract() -> bool:
         args, kwargs = seen[0]
         artifact = Path(str(result["artifact_root"]))
         binding = json.loads((artifact / "models.binding.json").read_text("ascii"))
+        expected_environment = {
+            "HOME": str(artifact / "home"),
+            "TMPDIR": str(artifact / "tmp"),
+            "XDG_CONFIG_HOME": str(artifact / "xdg-config"),
+            "XDG_CACHE_HOME": str(artifact / "xdg-cache"),
+            "XDG_STATE_HOME": str(artifact / "xdg-state"),
+            "LANG": "C",
+            "LC_ALL": "C",
+            "NO_COLOR": "1",
+            "TERM": "dumb",
+            "PATH": "/usr/bin:/bin",
+        }
         return (
             len(seen) == 1
             and args == ([profile.source_path, "models"],)
             and kwargs["executable"] == profile.snapshot_path
+            and kwargs["stdin"] is subprocess.DEVNULL
+            and kwargs["stdout"] is subprocess.PIPE
+            and kwargs["stderr"] is subprocess.PIPE
+            and kwargs["cwd"] == str(artifact / "cwd")
+            and kwargs["env"] == expected_environment
             and kwargs["start_new_session"] is True
+            and set(kwargs) == {
+                "cwd",
+                "env",
+                "executable",
+                "start_new_session",
+                "stderr",
+                "stdin",
+                "stdout",
+            }
             and result["normalized_sha256"] == MODULE.EXPECTED_NORMALIZED_SHA256
             and binding["version"]["binding_sha256"] == profile.version_binding_sha256
             and binding["profile"]["byte_count"] == len(exact_profile)
@@ -262,6 +514,62 @@ check("malformed inventory is rejected", lambda: rejected_execution("malformed",
 check("auth failure text is rejected", lambda: rejected_execution("auth", models_stderr=b"authentication required\n"))
 check("stdout overflow is rejected", lambda: rejected_execution("stdout-overflow", models_stdout=b"x" * (MODULE.STREAM_LIMIT + 1)))
 check("stderr overflow is rejected", lambda: rejected_execution("stderr-overflow", models_stderr=b"x" * (MODULE.STREAM_LIMIT + 1)))
+
+
+def auth_required_inventory_stays_rejected() -> bool:
+    root = TMP / "auth-required-isolation"
+    root.mkdir(mode=0o700)
+    profile = MODULE._synthetic_profile(root, models_require_session=True)
+    metadata_paths = (
+        ROOT / "compat" / "agy-verified-version.txt",
+        ROOT / "compat" / "agy-last-reviewed.txt",
+        ROOT / "compat" / "agy-upstream-head.txt",
+        ROOT / "compat" / "agy-model-effort-matrix.json",
+        ROOT / "compat" / "agy-model-effort-matrix.sha256",
+        ROOT / "compat" / "agy-distribution-manifest.json",
+        ROOT / "compat" / "sources.md",
+    )
+    metadata_before = {path: path.read_bytes() for path in metadata_paths}
+    direct = subprocess.run(
+        [profile.source_path, "models"],
+        executable=profile.snapshot_path,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(root),
+        env={
+            "HOME": str(root / "caller-home"),
+            "TMPDIR": str(root),
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": "/usr/bin:/bin",
+        },
+        check=False,
+    )
+    try:
+        rejected = rejects(
+            lambda: MODULE.run_attestation(
+                profile,
+                module_source=source,
+                stderr_contract=empty_stderr_contract,
+            )
+        )
+        metadata_after = {path: path.read_bytes() for path in metadata_paths}
+        return (
+            direct.returncode == 0
+            and direct.stdout == MODULE._inventory_bytes()
+            and rejected
+            and metadata_before == metadata_after
+            and not any(root.glob("agy-models-attestation.*/models.binding.sha256"))
+        )
+    finally:
+        cleanup_profile(root, profile)
+
+
+check(
+    "auth-required inventory rejects without completion or metadata advance",
+    auth_required_inventory_stays_rejected,
+)
 
 
 def version_binding_mismatch() -> bool:

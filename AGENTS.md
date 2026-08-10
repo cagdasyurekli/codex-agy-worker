@@ -46,8 +46,8 @@ Keep these counts current when their suites change:
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
 - Canonical version-attestation runner: 157 offline fixed-profile/source-binding cases.
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
-- Canonical models-inventory attestation runner: 78 offline
-  fixed-profile/version-binding/parser/process cases.
+- Canonical models-inventory attestation runner: 113 offline
+  fixed-profile/version-binding/environment/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution and CI policy: 346 offline
   manifest/runtime-copy/relocation/landing/range cases.
@@ -211,6 +211,16 @@ only a passing test has not been shown to catch anything.
   environment overrides. Self-test mode may use only synthetic private fixtures and
   must have no path to production evidence. Green runner/harness tests authorize no
   agy, provider, or metadata call.
+- **The current models runner is deliberately auth-isolated.** Its one child receives
+  only a fresh private empty HOME, TMPDIR, and XDG roots plus the exact fixed locale,
+  terminal, color, and PATH values. Never inherit or copy the caller's HOME,
+  credentials, Python startup paths, or ambient environment into this runner. An
+  auth-required `agy models` result must reject without a completion marker and cannot
+  advance the `1.1.10` matrix. The accepted `1.1.11` version binding proves only the
+  version snapshot/source/argv observation; a future real-account inventory needs a
+  separate reviewed capture-only runner and explicit account authorization. Treat
+  the reviewed runner source and local owner as TCB: its AST mutation checks detect
+  selected drift and do not prove hostile-source or same-UID tamper resistance.
 - **CI diff hygiene audits committed bytes.** Keep checkout history sufficient for
   the GitHub event range and run `scripts/ci-diff-check.sh`; its stdlib scanner must
   inspect every changed regular head blob independently of Git attributes with a
