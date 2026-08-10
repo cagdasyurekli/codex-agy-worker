@@ -52,7 +52,7 @@ Keep these counts current when their suites change:
 - Codex package/skill distribution and CI policy: 346 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
-- Public gate conformance v1: 78 offline manifest/fixture/permissive-gate/signal/cleanup cases.
+- Public gate conformance v1: 79 offline manifest/fixture/permissive-gate/signal/cleanup cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined

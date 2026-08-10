@@ -206,19 +206,60 @@ descendant_gate = write_gate(
     "normal-descendants",
     f"""
 /bin/bash -c 'trap "" HUP INT TERM; echo $$ >> {str(descendant_log)!r}; /bin/sleep 1; echo late >> {str(late_marker)!r}; while :; do /bin/sleep 1; done' >/dev/null 2>&1 &
+child_pid=$!
+child_ready=0
+for ((child_ready_attempt = 0; child_ready_attempt < 200; child_ready_attempt++)); do
+  if /usr/bin/grep -Fxq "$child_pid" {str(descendant_log)!r}; then
+    child_ready=1
+    break
+  fi
+  /bin/sleep 0.005
+done
+[[ "$child_ready" == 1 ]] || exit 97
 exec {str(GATE)!r} "$@"
 """,
 )
+descendant_gate_source = descendant_gate.read_bytes()
+
+
+def descendant_barrier_contract(data: bytes) -> bool:
+    required = (
+        b"child_pid=$!",
+        b"child_ready=0",
+        b"child_ready_attempt < 200",
+        b'/usr/bin/grep -Fxq "$child_pid"',
+        b"/bin/sleep 0.005",
+        b'[[ "$child_ready" == 1 ]] || exit 97',
+    )
+    return all(data.count(item) == 1 for item in required)
+
+
+descendant_barrier_mutation = descendant_gate_source.replace(
+    b'[[ "$child_ready" == 1 ]] || exit 97', b":", 1
+)
+check(
+    "closed-stdio descendant proof requires a bounded child-ready barrier",
+    lambda: (
+        descendant_barrier_contract(descendant_gate_source)
+        and not descendant_barrier_contract(descendant_barrier_mutation)
+    ),
+)
 descendant_result = run(descendant_gate)
 descendant_pids = [int(item) for item in descendant_log.read_text().splitlines()] if descendant_log.exists() else []
-time.sleep(1.1)
-descendants_gone = len(descendant_pids) == 11
-for descendant_pid in descendant_pids:
-    try:
-        os.kill(descendant_pid, 0)
-    except ProcessLookupError:
-        continue
-    descendants_gone = False
+descendant_deadline = time.monotonic() + 1.5
+while True:
+    live_descendants = []
+    for descendant_pid in descendant_pids:
+        try:
+            os.kill(descendant_pid, 0)
+        except ProcessLookupError:
+            continue
+        live_descendants.append(descendant_pid)
+    if not live_descendants or time.monotonic() >= descendant_deadline:
+        break
+    time.sleep(0.01)
+descendants_gone = len(descendant_pids) == 11 and not live_descendants
+for descendant_pid in live_descendants:
     try:
         os.kill(descendant_pid, signal.SIGKILL)
     except ProcessLookupError:
