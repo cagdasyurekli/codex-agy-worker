@@ -131,6 +131,16 @@ behavior into broader agy `1.1.10` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
+### v0.2.0 release scope
+
+Version 0.2.0 releases the completed provider-independent roadmap through P2-A:
+G0/G1, P0-A through P0-D, P1-A through P1-E, and P2-A. P2-B and P2-C are not release
+blockers and are deferred rather than left as active implementation goals. Their
+sections retain the exact evidence and policy prerequisites required before either
+may be reconsidered. Deferral does not weaken the active agy `1.1.10` baseline,
+advance the unreconciled `1.1.11` evidence, or claim live provider or cleanup
+behavior.
+
 ### G0 — Compatibility Reconciliation & Watch
 
 **G0-F2 status:** Provider-independent transport hardening is implemented, merged, and
@@ -826,7 +836,8 @@ acceptance operation.
 
 #### P2-B — Provider-reported usage and latency
 
-**Status:** Blocked on current-version terminal-event evidence. The repository's
+**Status:** Deferred; no implementation path exists within the current evidence
+boundary. The repository's
 historical agy `1.1.9` observation and synthetic test streams do not establish the
 current contract for usage, duration, or turn fields. Unblocking requires a separately
 approved, executable/version-bound one-attempt public synthetic run; owner-private raw
@@ -859,8 +870,9 @@ evidence. Until then no usage parser or schema may be treated as current.
 
 #### P2-C — Optional local list/show/prune
 
-**Status:** Blocked on demonstrated recurring accumulation and a reviewed managed-root
-contract. The stable per-job lifecycle does not yet define a canonical inventory root
+**Status:** Deferred; no implementation path exists until recurring accumulation is
+demonstrated and a managed-root contract is reviewed. The stable per-job lifecycle
+does not yet define a canonical inventory root
 or prove that manual cleanup is recurring friction. Unblocking requires opt-in,
 sanitized evidence from explicit owner-private lifecycle roots showing repeated
 retention or cleanup burden without paths or raw state, followed by an explicit

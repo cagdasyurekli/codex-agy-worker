@@ -96,7 +96,10 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or blocked status. Source, tests, and this README remain
+their explicit implemented or deferred status. Version 0.2.0 contains the completed
+provider-independent roadmap through P2-A; P2-B and P2-C are deferred because their
+required live terminal-event and recurring-accumulation evidence does not exist.
+Source, tests, and this README remain
 the authority for current CLI behavior; every new slice still requires its own
 approval, tests, review, and pull request.
 
