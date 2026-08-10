@@ -202,14 +202,18 @@ check("gate mismatch reports only bounded fixture and exits", lambda: always_res
 
 descendant_log = TMP / "normal-descendants.log"
 late_marker = TMP / "normal-descendants.late"
+descendant_ready_dir = TMP / "normal-descendants.ready"
+descendant_ready_dir.mkdir(mode=0o700)
 descendant_gate = write_gate(
     "normal-descendants",
     f"""
-/bin/bash -c 'trap "" HUP INT TERM; echo $$ >> {str(descendant_log)!r}; /bin/sleep 1; echo late >> {str(late_marker)!r}; while :; do /bin/sleep 1; done' >/dev/null 2>&1 &
+child_ready_case=$(/usr/bin/mktemp -d {str(descendant_ready_dir)!r}/case.XXXXXXXX) || exit 97
+child_ready_path="$child_ready_case/ready"
+/bin/bash -c 'trap "" HUP INT TERM; echo $$ >> "$1"; while :; do if [[ ! -e "$2" ]]; then printf "%s\\n" "$$" > "$2"; fi; /bin/sleep 1; echo late >> "$3"; done' child {str(descendant_log)!r} "$child_ready_path" {str(late_marker)!r} >/dev/null 2>&1 &
 child_pid=$!
 child_ready=0
 for ((child_ready_attempt = 0; child_ready_attempt < 200; child_ready_attempt++)); do
-  if /usr/bin/grep -Fxq "$child_pid" {str(descendant_log)!r}; then
+  if [[ -f "$child_ready_path" ]] && /usr/bin/grep -Fxq "$child_pid" "$child_ready_path"; then
     child_ready=1
     break
   fi
@@ -224,28 +228,64 @@ descendant_gate_source = descendant_gate.read_bytes()
 
 def descendant_barrier_contract(data: bytes) -> bool:
     required = (
+        b"child_ready_case=$(/usr/bin/mktemp -d ",
+        b'child_ready_path="$child_ready_case/ready"',
+        b'trap "" HUP INT TERM; echo $$ >> "$1"; while :; do',
+        b'printf "%s\\n" "$$" > "$2"',
         b"child_pid=$!",
         b"child_ready=0",
         b"child_ready_attempt < 200",
-        b'/usr/bin/grep -Fxq "$child_pid"',
+        b'[[ -f "$child_ready_path" ]]',
+        b'/usr/bin/grep -Fxq "$child_pid" "$child_ready_path"',
         b"/bin/sleep 0.005",
         b'[[ "$child_ready" == 1 ]] || exit 97',
     )
-    return all(data.count(item) == 1 for item in required)
+    if not all(data.count(item) == 1 for item in required):
+        return False
+    ordered = (
+        b'trap "" HUP INT TERM',
+        b'echo $$ >> "$1"',
+        b"while :; do",
+        b'printf "%s\\n" "$$" > "$2"',
+        b"/bin/sleep 1",
+        b'echo late >> "$3"',
+    )
+    return tuple(data.index(item) for item in ordered) == tuple(
+        sorted(data.index(item) for item in ordered)
+    )
 
 
-descendant_barrier_mutation = descendant_gate_source.replace(
-    b'[[ "$child_ready" == 1 ]] || exit 97', b":", 1
+descendant_barrier_removal = descendant_gate_source.replace(
+    b'printf "%s\\n" "$$" > "$2"', b":", 1
+)
+descendant_barrier_reorder = descendant_gate_source.replace(
+    b'echo $$ >> "$1"; while :; do if [[ ! -e "$2" ]]; then printf "%s\\n" "$$" > "$2"; fi;',
+    b'echo $$ >> "$1"; printf "%s\\n" "$$" > "$2"; while :; do if [[ ! -e "$2" ]]; then :; fi;',
+    1,
 )
 check(
     "closed-stdio descendant proof requires a bounded child-ready barrier",
     lambda: (
         descendant_barrier_contract(descendant_gate_source)
-        and not descendant_barrier_contract(descendant_barrier_mutation)
+        and descendant_barrier_removal != descendant_gate_source
+        and not descendant_barrier_contract(descendant_barrier_removal)
+        and descendant_barrier_reorder != descendant_gate_source
+        and not descendant_barrier_contract(descendant_barrier_reorder)
     ),
 )
 descendant_result = run(descendant_gate)
 descendant_pids = [int(item) for item in descendant_log.read_text().splitlines()] if descendant_log.exists() else []
+try:
+    descendant_ready_pids = sorted(
+        int(path.read_text().strip())
+        for path in descendant_ready_dir.glob("case.*/ready")
+    )
+except (OSError, ValueError):
+    descendant_ready_pids = []
+descendants_ready = (
+    len(descendant_ready_pids) == 11
+    and descendant_ready_pids == sorted(descendant_pids)
+)
 descendant_deadline = time.monotonic() + 1.5
 while True:
     live_descendants = []
@@ -270,6 +310,7 @@ check(
         descendant_result.returncode == 0
         and descendant_result.stdout == EXPECTED
         and descendant_result.stderr == b""
+        and descendants_ready
         and descendants_gone
         and not late_marker.exists()
     ),
