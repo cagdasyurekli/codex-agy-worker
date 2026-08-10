@@ -49,6 +49,17 @@ private workspace, prints only `doctor: interrupted`, and exits `3` without a re
 The bundle's `scripts`, `agents`, `schemas`, and `compat` parents must be contained
 real directories; parent-directory symlinks fail closed even when they point inward.
 
+To inspect the fixed shipped-persona evidence levels without dispatching anything:
+
+```bash
+"$PIPELINE/persona-evidence.sh" validate
+"$PIPELINE/persona-evidence.sh" report
+```
+
+All shipped records are currently `offline-only`. The registry binds public contract
+bytes and mode restrictions; it does not execute, trust, rank, route, accept, or
+promote a persona, and target repositories cannot register one dynamically.
+
 ## Data boundary and sandbox requirement (read first)
 
 `agy` is an external CLI backed by Google/Gemini services. A dispatch can transmit

@@ -50,6 +50,16 @@ It stores no provider prompt, response, usage, pricing, credential, or raw worke
 The report is a pure validated completeness view and uploads nothing. Live
 benchmarking is not implemented.
 
+The persona evidence registry is also local and read-only. It validates only
+checked-in public persona, registry, schema, and P1-C contract hashes and renders a
+bounded deterministic table. It does not read target repositories, prompts, worker
+logs, private evidence, personal configuration, or environment-selected registries;
+it performs no dispatch, benchmark, gate, provider, or network operation. Checkout
+upper-state validation runs fixed read-only Git object queries with global/system
+configuration disabled; it never follows an evidence pathname into private storage.
+Future non-offline states require public canonical evidence, approval/review, and
+transition blobs in strict ancestry. Private evidence cannot be described as public.
+
 ## Local artifacts and retention
 
 Each job can create local private artifacts under `logs/<job>/`, including the task,

@@ -8,6 +8,8 @@ tools:
     - list_dir
 hidden: true
 inheritMcp: false
+agyWorkerModes:
+    - plan
 ---
 
 # Agent System Instructions

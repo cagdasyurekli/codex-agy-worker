@@ -11,6 +11,9 @@ tools:
     - multi_replace_file_content
 hidden: true
 inheritMcp: false
+agyWorkerModes:
+    - plan
+    - accept-edits
 ---
 
 # Agent System Instructions
