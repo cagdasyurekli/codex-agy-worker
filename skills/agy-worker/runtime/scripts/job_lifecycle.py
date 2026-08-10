@@ -604,14 +604,14 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
     time.sleep(0.25)
     # Keep the unreaped leader as the PGID reservation and send KILL before the
     # sole wait. There are deliberately no group probes or signals after wait.
     try:
         os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
     try:
         process.wait(timeout=0.75)
