@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The fifteen offline suites need no agy process, network access, API key, or GitHub login.
+The seventeen offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -362,6 +362,25 @@ reviewer identity or signatures; portable bundles reject upper states.
 
 Statuses are evidence levels, not trust labels or acceptance authority. The registry
 cannot rank, route, select, execute, promote, or dynamically register a persona.
+
+### Data-only workload profiles
+
+[`profile.sh`](docs/PROFILES.md) lists three fixed maintained skeletons without
+loading a repository or dispatching anything:
+
+```bash
+./profile.sh list
+./profile.sh show bounded-test-backfill
+```
+
+`show` prints canonical JSON that may suggest one maintained mode, persona, and
+repo-relative path-policy shape. It is deliberately non-executable and explicitly
+requires the caller to provide approval, exact repository, exact path policy,
+selected tier, and verification commands. Profiles contain no repository path,
+model/tier/effort value, command, external root, authorization, routing, acceptance,
+dispatch, or Git action. Only the fixed hash-bound bundle is read; target repositories,
+environment variables, home directories, and caller-supplied profile paths are never
+profile sources.
 
 ### Common options
 
@@ -898,6 +917,7 @@ verify-job.sh                 run the gate and durably publish Evidence Receipt 
 evidence-report.sh            render a validated receipt as bounded text or Markdown
 benchmark.sh                  prepare/run/report fixed provider-independent benchmarks
 persona-evidence.sh           validate/report fixed persona evidence records
+profile.sh                    list/show fixed non-executable workload profiles
 proof-demo.sh                 offline starter proof of one gate pass and one rejection
 conformance/run.sh            public v1 synthetic qa-gate fixture runner
 conformance/v1/               pinned manifest, envelopes, and repository contents
@@ -937,6 +957,7 @@ tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol sui
 tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/mutation suite
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
+tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   95-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
@@ -948,10 +969,10 @@ tests/test-version-attestation-harness.py  55-case offline version-attestation m
 tests/test-models-attestation-runner.py  78-case offline fixed-profile inventory attestation suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       314-case offline Codex package/CI-policy/relocation/landing suite
-tests/test-doctor.sh          218-case offline fake-tool/read-only doctor suite
+tests/test-packaging.sh       346-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
-tests/test-conformance.py     78-case offline public gate-contract/adversary suite
+tests/test-conformance.py     79-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```
 

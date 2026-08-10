@@ -161,6 +161,21 @@ oversize, timeout, HUP, INT, or TERM, and do so before reading the task or publi
 selection provenance. Signal cleanup must preserve the conventional `128 + signal`
 status instead of relabelling interruption as unavailable evidence.
 
+## A convenience skeleton must not become policy
+
+Repeated command inputs tempt a tool to hide choices inside a “profile.” Keep the
+profile surface data-only and closed: fixed hash-bound source files may suggest a
+maintained mode, persona, and repo-relative path-policy shape, but they must never
+carry a selected tier/model/effort, repository/path, executable verifier, external
+root, authorization, dispatch, routing, acceptance, or Git action. Make every
+caller-owned input explicit in the rendered value.
+
+Do not discover target-repository, home-directory, environment-selected, or arbitrary
+caller profile files. That would let untrusted local content expand scope or smuggle
+execution policy into a convenience feature. Validate the fixed portable inventory,
+modes, canonical bytes, semantic pairings, and hashes before rendering; list/show
+remains pure stdout and cannot replace lifecycle, gate, or human review.
+
 ## Model routing is explicit
 
 The caller selects the tier or direct model/effort input. Built-in retries reuse the same model; gate failures do

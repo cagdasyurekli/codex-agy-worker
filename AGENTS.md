@@ -40,6 +40,7 @@ Keep these counts current when their suites change:
 - Offline Benchmark v1: 104 offline plan/Receipt/result/report/privacy/mutation cases.
 - Persona Evidence Registry v1: 124 offline semantic-chain/Git-ancestry/portable/mutation cases.
 - Safe local lifecycle: 95 offline state/receipt/Git-policy/cleanup/signal cases.
+- Data-only Workload Profiles v1: 89 offline schema/allowlist/portable/mutation cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
@@ -48,10 +49,10 @@ Keep these counts current when their suites change:
 - Canonical models-inventory attestation runner: 78 offline
   fixed-profile/version-binding/parser/process cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 314 offline
+- Codex package/skill distribution and CI policy: 346 offline
   manifest/runtime-copy/relocation/landing/range cases.
-- `doctor.sh`: 218 offline fake-tool/read-only cases.
-- Public gate conformance v1: 78 offline manifest/fixture/permissive-gate/signal/cleanup cases.
+- `doctor.sh`: 239 offline fake-tool/read-only cases.
+- Public gate conformance v1: 79 offline manifest/fixture/permissive-gate/signal/cleanup cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
@@ -74,6 +75,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 /usr/bin/python3 -I -S -B tests/test-benchmark.py # offline synthetic benchmark coverage
 /usr/bin/python3 -I -S -B tests/test-persona-evidence.py # offline persona evidence registry
 /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py # offline disposable Git lifecycle
+/usr/bin/python3 -I -S -B tests/test-workload-profiles.py # offline data-only profiles
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
@@ -167,6 +169,13 @@ only a passing test has not been shown to catch anything.
   accept missing, extra, writable, symlinked, or hash-drifted authority. The JSON
   schemas own the nested v1 structure; runtime validation owns cross-field equality
   and canonical-byte checks.
+- **A workload profile is data, not a driver.** It may suggest one maintained mode,
+  persona, and closed repo-relative path-policy shape, but it cannot name a repository
+  or path, select a tier/model/effort, carry a verifier or shell command, authorize
+  work, dispatch, route, accept, or perform Git actions. The caller still supplies
+  approval, exact repository, exact path policy, selected tier, and verification.
+  Load only the fixed hash-bound bundle; never discover profiles from a target repo,
+  environment variable, home directory, or caller path.
 - **`update.sh check` may need network, but must remain read-only.** Compatibility
   evidence for agy and Codex is reported as unchanged, drift-review, or
   evidence-unavailable; inconclusive evidence is never green. Metadata changes only
