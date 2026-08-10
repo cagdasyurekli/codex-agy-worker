@@ -558,6 +558,9 @@ explicit pre-gate publication-input check.
 
 #### P0-C — Read-only Doctor
 
+**Status:** Implemented and offline-verified; live authentication/provider readiness
+remains intentionally outside the Doctor contract.
+
 - **User job:** Diagnose readiness before spending provider quota or changing personal
   configuration.
 - **Intended surface:** Add canonical `doctor.sh [--repo DIR]
@@ -586,6 +589,8 @@ explicit pre-gate publication-input check.
   mutation, and offline fake-tool coverage for every reported state.
 
 #### P0-D — 60-second offline proof demo
+
+**Status:** Implemented as the bounded starter subset retained by conformance v1.
 
 - **User job:** See the project's differentiator in under one minute without agy,
   credentials, network, or API credits.
@@ -752,6 +757,9 @@ explicit pre-gate publication-input check.
 
 #### P1-E — CI-safe JSON, Markdown, and GitHub Step Summary reporter
 
+**Status:** Implemented as an offline-only extension of the pure P0-B renderer; no
+GitHub API, comment, upload, or implicit environment-file write was added.
+
 - **User job:** Render an already produced receipt in CI without custom parsing or a
   networked bot.
 - **Intended surface:** Extend the report command with `--format json|markdown|github-step-summary`.
@@ -774,6 +782,10 @@ explicit pre-gate publication-input check.
 - **Size:** M.
 - **Done/exit criteria:** Offline deterministic reporters, no network permissions, and
   exact rejected-state visibility.
+- **Implemented evidence:** Eighty offline cases bind canonical bounded JSON,
+  Markdown and Step Summary bytes, all three receipt verdicts, explicit private
+  no-overwrite publication, workflow-command/Markdown rejection, environment-file
+  non-discovery, signals, and weakening mutations.
 
 Do not commit to SARIF: a gate run is not naturally a static-analysis result with
 locations/rules. Do not add JUnit unless a concrete consumer first demonstrates a

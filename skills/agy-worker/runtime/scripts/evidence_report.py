@@ -26,6 +26,7 @@ from evidence_receipt import (  # noqa: E402
     ValidationFailure,
     load_schema,
     parse_json_bytes,
+    published_bytes,
     read_real_file,
     require_sha,
     sha256_bytes,
@@ -39,6 +40,7 @@ from recommendation_record import (  # noqa: E402
 
 MAX_REPORT_BYTES = 64 * 1024
 SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+REPORT_FORMATS = ("text", "json", "markdown", "github-step-summary")
 
 
 class UsageFailure(ValueError):
@@ -98,6 +100,61 @@ def _yes(value: bool) -> str:
     return "yes" if value else "no"
 
 
+def build_report(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Return the bounded report representation, never the raw receipt."""
+    return {
+        "caller_selection_bound": "caller_selection" in receipt,
+        "envelope_sha256": receipt["envelope_sha256"],
+        "final_candidate_state_sha256": receipt["final_candidate_state_sha256"],
+        "gate_authority": receipt["gate_authority"],
+        "gate_exit": receipt["gate_exit"],
+        "gate_outcome": receipt["gate_outcome"],
+        "human_review_required_before_acceptance": True,
+        "initial_candidate_state_sha256": receipt["initial_candidate_state_sha256"],
+        "integrity": {
+            "signed": False,
+            "tamper_evident": False,
+        },
+        "kind": "agy-worker-evidence-report",
+        "path_policy_sha256": receipt["path_policy_sha256"],
+        "pre_dispatch_recommendation_bound": "pre_dispatch_recommendation" in receipt,
+        "recommendations_participated_in_acceptance": False,
+        "resolved_base": receipt["resolved_base"],
+        "schema_version": 1,
+        "verdict": receipt["verdict"],
+        "verification_labels": [entry["label"] for entry in receipt["verifiers"]],
+    }
+
+
+def _safe_markdown_atom(value: str) -> str:
+    if not value or any(
+        character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+        for character in value
+    ):
+        raise ValidationFailure("report value is not safe for Markdown")
+    return value
+
+
+def _validate_rendered_payload(payload: bytes, output_format: str) -> bytes:
+    if not payload or len(payload) > MAX_REPORT_BYTES:
+        raise ValidationFailure("rendered report is empty or oversized")
+    try:
+        text = payload.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise ValidationFailure("rendered report is not ASCII") from exc
+    if "\r" in text or "\x00" in text or text.startswith("::") or "\n::" in text:
+        raise ValidationFailure("rendered report contains workflow-command syntax")
+    if output_format in ("markdown", "github-step-summary") and any(
+        marker in text for marker in ("](", "<")
+    ):
+        raise ValidationFailure("rendered report contains unsafe Markdown syntax")
+    return payload
+
+
+def render_json(receipt: dict[str, Any]) -> bytes:
+    return published_bytes(build_report(receipt))
+
+
 def render_text(receipt: dict[str, Any]) -> bytes:
     labels = [entry["label"] for entry in receipt["verifiers"]]
     lines = [
@@ -120,20 +177,21 @@ def render_text(receipt: dict[str, Any]) -> bytes:
     return ("\n".join(lines) + "\n").encode("ascii")
 
 
-def render_markdown(receipt: dict[str, Any]) -> bytes:
-    labels = [entry["label"] for entry in receipt["verifiers"]]
+def render_markdown(receipt: dict[str, Any], *, step_summary: bool = False) -> bytes:
+    labels = [_safe_markdown_atom(entry["label"]) for entry in receipt["verifiers"]]
     label_text = ", ".join(f"`{label}`" for label in labels)
+    heading = "# Evidence Report v1 (GitHub Step Summary)" if step_summary else "# Evidence Report v1"
     lines = [
-        "# Evidence Report v1",
+        heading,
         "",
-        f"- Verdict: `{receipt['verdict']}`",
-        f"- Gate outcome: `{receipt['gate_outcome']}` (exit `{receipt['gate_exit']}`)",
-        f"- Gate authority: `{receipt['gate_authority']}`",
-        f"- Resolved base: `{receipt['resolved_base']}`",
-        f"- Envelope SHA-256: `{receipt['envelope_sha256']}`",
-        f"- Path policy SHA-256: `{receipt['path_policy_sha256']}`",
-        f"- Initial candidate state SHA-256: `{receipt['initial_candidate_state_sha256']}`",
-        f"- Final candidate state SHA-256: `{receipt['final_candidate_state_sha256']}`",
+        f"- Verdict: `{_safe_markdown_atom(receipt['verdict'])}`",
+        f"- Gate outcome: `{_safe_markdown_atom(receipt['gate_outcome'])}` (exit `{receipt['gate_exit']}`)",
+        f"- Gate authority: `{_safe_markdown_atom(receipt['gate_authority'])}`",
+        f"- Resolved base: `{_safe_markdown_atom(receipt['resolved_base'])}`",
+        f"- Envelope SHA-256: `{_safe_markdown_atom(receipt['envelope_sha256'])}`",
+        f"- Path policy SHA-256: `{_safe_markdown_atom(receipt['path_policy_sha256'])}`",
+        f"- Initial candidate state SHA-256: `{_safe_markdown_atom(receipt['initial_candidate_state_sha256'])}`",
+        f"- Final candidate state SHA-256: `{_safe_markdown_atom(receipt['final_candidate_state_sha256'])}`",
         f"- Verification labels ({len(labels)}): {label_text}",
         f"- Caller selection bound: **{_yes('caller_selection' in receipt)}**",
         f"- Pre-dispatch recommendation bound: **{_yes('pre_dispatch_recommendation' in receipt)}**",
@@ -328,7 +386,7 @@ def publish_new(target: Path, payload: bytes) -> PublishedReport:
 def run(arguments: list[str]) -> PublishedReport | None:
     parser = Parser(prog="evidence-report.sh")
     parser.add_argument("--receipt", action="append")
-    parser.add_argument("--format", action="append", choices=("text", "markdown"))
+    parser.add_argument("--format", action="append", choices=REPORT_FORMATS)
     parser.add_argument("--output", action="append")
     parser.add_argument("--envelope", action="append")
     parser.add_argument("--selection", action="append")
@@ -359,9 +417,15 @@ def run(arguments: list[str]) -> PublishedReport | None:
         initial_digest=initial_digest,
         final_digest=final_digest,
     )
-    payload = render_text(receipt) if output_format == "text" else render_markdown(receipt)
-    if len(payload) > MAX_REPORT_BYTES:
-        raise ValidationFailure("rendered report is oversized")
+    if output_format == "text":
+        payload = render_text(receipt)
+    elif output_format == "json":
+        payload = render_json(receipt)
+    else:
+        payload = render_markdown(
+            receipt, step_summary=output_format == "github-step-summary"
+        )
+    payload = _validate_rendered_payload(payload, output_format)
     if output_path is None:
         sys.stdout.buffer.write(payload)
         sys.stdout.buffer.flush()
