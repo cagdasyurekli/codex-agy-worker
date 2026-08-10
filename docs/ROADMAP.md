@@ -181,12 +181,21 @@ completion marker. Its child always receives fresh private empty HOME/TMP/XDG ro
 it never inherits or copies caller credentials or Python startup state. The accepted
 `1.1.11` binding proves only the version snapshot/source/argv observation. An
 auth-required inventory therefore rejects without an accepted marker and cannot
-advance the checked-in `1.1.10` metadata or fail-closed matrix. A future live-account
-inventory needs a separate reviewed capture-only runner/profile and explicit account
-authorization; it is not a fallback or retry in this runner. The source-contract
-mutations provide selected drift sensitivity under a reviewed-source/local-owner TCB;
-they do not prove hostile-source or same-UID tamper resistance. Stronger assurance is
-a separate future trusted-launcher or harness decision.
+advance the checked-in `1.1.10` metadata or fail-closed matrix.
+
+A separate capture-only runner/profile is now implemented and offline-tested with
+fake account roots. It binds an explicit account HOME identity, the accepted version
+binding, and retained snapshot. After group closure its private scratch/cache/cwd must
+be unchanged and empty; any bounded exit-zero stdout/stderr is otherwise captured
+without inventory or error interpretation. It can publish only a private `captured`
+record plus `models.capture.sha256`; it cannot accept inventory or advance metadata.
+Its existence does not authorize or perform a real-account call. That future action
+still requires explicit authorization for the exact account HOME/profile and one
+call. The external CLI may read, write, mutate, or cache within that HOME; the runner
+cannot detect or revert those changes, and residuals can remain after rejection. The
+account HOME/local owner and same-UID processes, reviewed source/interpreter, and OS
+admins are trusted, and the runner does not validate HOME contents or claim same-user
+tamper resistance. It is neither a fallback nor a retry in the auth-isolated runner.
 
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a

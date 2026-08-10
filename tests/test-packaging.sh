@@ -14,6 +14,42 @@ bad() { printf '  FAIL %s\n' "$1"; fail=$((fail+1)); }
 echo "Codex distribution offline test suite"
 echo
 
+if python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import os
+import stat
+import subprocess
+import sys
+
+root = Path(sys.argv[1])
+listed = subprocess.run(
+    ["git", "-C", str(root), "ls-files", "-z"],
+    check=True,
+    stdout=subprocess.PIPE,
+).stdout.split(b"\0")
+paths = {item.decode("utf-8") for item in listed if item}
+paths.update(("scripts/models_capture_runner.py", "tests/test-models-capture-runner.py"))
+for relative in sorted(paths):
+    path = root / relative
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        continue
+    if stat.S_ISREG(info.st_mode):
+        content = path.read_bytes()
+    elif stat.S_ISLNK(info.st_mode):
+        content = os.readlink(path).encode("utf-8", "surrogateescape")
+    else:
+        continue
+    forbidden = b"/Users/" + b"cagdasyurekli/"
+    assert forbidden not in content, relative
+PY
+then
+    ok "public repository sources contain no personal absolute path"
+else
+    bad "public repository sources contain no personal absolute path"
+fi
+
 ci_workflow_contract() {
     python3 - "$1" <<'PY'
 from pathlib import Path
@@ -1649,6 +1685,16 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py
         || [[ ! -f "$ROOT/scripts/models_attestation_runner.py" ]]; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-models-capture-runner.py' \
+            "$ROOT/.github/workflows/test.yml" \
+        || [[ ! -f "$ROOT/scripts/models_capture_runner.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-models-capture-runner.py" ]]; then
+    governance_lists_all_suites=0
+fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
         "$ROOT/CONTRIBUTING.md" \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
@@ -1695,9 +1741,9 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all seventeen suites and disclose public policy boundaries"
+    ok "governance docs require all eighteen suites and disclose public policy boundaries"
 else
-    bad "governance docs require all seventeen suites and disclose public policy boundaries"
+    bad "governance docs require all eighteen suites and disclose public policy boundaries"
 fi
 
 if grep -Fq 'same-UID processes' "$ROOT/README.md" \

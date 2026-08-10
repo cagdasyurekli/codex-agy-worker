@@ -129,6 +129,31 @@ The project does not delete these artifacts automatically. The person running th
 tool controls retention and should review and remove unneeded artifacts according to
 their own policy. Do not commit or paste raw logs into public reports.
 
+The explicit-account models capture runner is a separate, never-automatic future
+action. Its checked-in tests use only disposable synthetic account roots and make no
+agy, provider, or network call. A production invocation would require separate user
+authorization for the exact canonical owner-`0700` account HOME/profile and one
+snapshot-backed `agy models` call. The external CLI may read account contents or use
+credentials under its own behavior. It may also write or mutate normal HOME state and
+create caches. The runner does not enumerate those contents and cannot detect,
+prevent, or revert HOME changes; account residuals may remain even when capture
+rejects. The account HOME, local owner and same-UID processes, reviewed source and
+interpreter, and OS administrators are trusted.
+
+After group closure, capture-owned TMP/XDG/cwd must be unchanged and empty. On a
+bounded exit-zero observation the runner retains otherwise uninterpreted raw
+stdout/stderr, exact profile and runner bytes, bounded summary, and capture record in
+a new owner-private directory; files are mode `0600` and raw bytes are never printed.
+The sanitized console JSON contains only the artifact root, capture SHA-256, and
+`captured` status. The final marker is `models.capture.sha256`, not an accepted
+binding. Output semantics such as authentication, license, permission, quota,
+rate-limit, interactive, or inventory content are decided only by later offline
+reconciliation. Nonzero, overflow, timeout, identity/scratch drift, or publication
+failure publishes no final marker. The runner never logs in, prompts, retries, falls
+back, dispatches a task, selects or routes a model, changes metadata, or uploads the
+artifacts. The user controls retention and must not commit the private profile or raw
+evidence.
+
 ## Support and changes
 
 Questions about this disclosure can be opened through the route in
