@@ -1020,7 +1020,7 @@ tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       347-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
-tests/test-conformance.py     79-case offline public gate-contract/adversary suite
+tests/test-conformance.py     81-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
 ```
 

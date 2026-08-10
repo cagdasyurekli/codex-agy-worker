@@ -20,6 +20,21 @@ completion. Re-read the effective instruction hierarchy, keep this root file
 concise and repository-wide, and keep release notes or one-off run history out of
 `AGENTS.md`.
 
+## Codex subagent routing
+
+When Codex delegates repository work, use `gpt-5.6-terra` at medium effort for
+mechanical implementation and test integration, raising it to high only for a wider
+mechanical surface. Use `gpt-5.6-sol` at high effort for security, process-lifecycle,
+and adversarial verification, or xhigh for a repeated or unusually subtle semantic
+failure. For separately authorized bounded Git, PR, and CI publication work, use
+`gpt-5.6-terra` at low or medium effort. After the same semantic miss recurs, use a
+fresh-context `gpt-5.6-sol` xhigh verifier or diagnostician.
+
+Do not escalate reasoning because of a service disconnect; resume the existing
+work. Diagnose external CI timing systematically. Escalate for missed security
+reasoning or a repeated semantic bypass. These are Codex-subagent settings only:
+they never change caller-owned agy model, effort, thinking, selection, or routing.
+
 ## Ground truth about agy
 
 Never describe agy's CLI from memory — including your own. Run `./ground-truth.sh`
@@ -54,7 +69,7 @@ Keep these counts current when their suites change:
 - Codex package/skill distribution and CI policy: 347 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
-- Public gate conformance v1: 79 offline manifest/fixture/permissive-gate/signal/cleanup cases.
+- Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
 Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined

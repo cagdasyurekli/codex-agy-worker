@@ -209,7 +209,8 @@ descendant_gate = write_gate(
     f"""
 child_ready_case=$(/usr/bin/mktemp -d {str(descendant_ready_dir)!r}/case.XXXXXXXX) || exit 97
 child_ready_path="$child_ready_case/ready"
-/bin/bash -c 'trap "" HUP INT TERM; echo $$ >> "$1"; while :; do if [[ ! -e "$2" ]]; then printf "%s\\n" "$$" > "$2"; fi; /bin/sleep 1; echo late >> "$3"; done' child {str(descendant_log)!r} "$child_ready_path" {str(late_marker)!r} >/dev/null 2>&1 &
+child_arm_path="$child_ready_case/arm"
+/bin/bash -c 'trap "" HUP INT TERM; echo $$ >> "$1"; while :; do if [[ ! -e "$2" ]]; then printf "%s\\n" "$$" > "$2"; fi; if [[ -e "$3" ]]; then echo $$ >> "$4"; fi; /bin/sleep 0.01; done' child {str(descendant_log)!r} "$child_ready_path" "$child_arm_path" {str(late_marker)!r} >/dev/null 2>&1 &
 child_pid=$!
 child_ready=0
 for ((child_ready_attempt = 0; child_ready_attempt < 200; child_ready_attempt++)); do
@@ -230,8 +231,10 @@ def descendant_barrier_contract(data: bytes) -> bool:
     required = (
         b"child_ready_case=$(/usr/bin/mktemp -d ",
         b'child_ready_path="$child_ready_case/ready"',
+        b'child_arm_path="$child_ready_case/arm"',
         b'trap "" HUP INT TERM; echo $$ >> "$1"; while :; do',
         b'printf "%s\\n" "$$" > "$2"',
+        b'if [[ -e "$3" ]]; then echo $$ >> "$4"; fi',
         b"child_pid=$!",
         b"child_ready=0",
         b"child_ready_attempt < 200",
@@ -247,11 +250,13 @@ def descendant_barrier_contract(data: bytes) -> bool:
         b'echo $$ >> "$1"',
         b"while :; do",
         b'printf "%s\\n" "$$" > "$2"',
-        b"/bin/sleep 1",
-        b'echo late >> "$3"',
+        b'if [[ -e "$3" ]]; then echo $$ >> "$4"; fi',
+        b"/bin/sleep 0.01",
     )
-    return tuple(data.index(item) for item in ordered) == tuple(
-        sorted(data.index(item) for item in ordered)
+    return (
+        tuple(data.index(item) for item in ordered)
+        == tuple(sorted(data.index(item) for item in ordered))
+        and b'> "$child_arm_path"' not in data
     )
 
 
@@ -263,29 +268,48 @@ descendant_barrier_reorder = descendant_gate_source.replace(
     b'echo $$ >> "$1"; printf "%s\\n" "$$" > "$2"; while :; do if [[ ! -e "$2" ]]; then :; fi;',
     1,
 )
+descendant_arm_before_return = descendant_gate_source.replace(
+    b'[[ "$child_ready" == 1 ]] || exit 97\nexec ',
+    b'[[ "$child_ready" == 1 ]] || exit 97\n: > "$child_arm_path"\nexec ',
+    1,
+)
 check(
-    "closed-stdio descendant proof requires a bounded child-ready barrier",
+    "closed-stdio descendant proof requires causal ready and post-return arm barriers",
     lambda: (
         descendant_barrier_contract(descendant_gate_source)
         and descendant_barrier_removal != descendant_gate_source
         and not descendant_barrier_contract(descendant_barrier_removal)
         and descendant_barrier_reorder != descendant_gate_source
         and not descendant_barrier_contract(descendant_barrier_reorder)
+        and descendant_arm_before_return != descendant_gate_source
+        and not descendant_barrier_contract(descendant_arm_before_return)
     ),
 )
 descendant_result = run(descendant_gate)
 descendant_pids = [int(item) for item in descendant_log.read_text().splitlines()] if descendant_log.exists() else []
 try:
-    descendant_ready_pids = sorted(
-        int(path.read_text().strip())
-        for path in descendant_ready_dir.glob("case.*/ready")
-    )
+    descendant_ready_paths = sorted(descendant_ready_dir.glob("case.*/ready"))
+    descendant_ready_pids = sorted(int(path.read_text().strip()) for path in descendant_ready_paths)
 except (OSError, ValueError):
+    descendant_ready_paths = []
     descendant_ready_pids = []
 descendants_ready = (
     len(descendant_ready_pids) == 11
     and descendant_ready_pids == sorted(descendant_pids)
 )
+descendant_arm_paths = [path.parent / "arm" for path in descendant_ready_paths]
+descendant_arms_unset_before_return = (
+    len(descendant_arm_paths) == 11
+    and all(not path.exists() for path in descendant_arm_paths)
+)
+try:
+    for path in descendant_arm_paths:
+        path.write_bytes(b"armed-after-run-return\n")
+        path.chmod(0o600)
+except OSError:
+    descendant_arms_published = False
+else:
+    descendant_arms_published = len(descendant_arm_paths) == 11
 descendant_deadline = time.monotonic() + 1.5
 while True:
     live_descendants = []
@@ -311,8 +335,175 @@ check(
         and descendant_result.stdout == EXPECTED
         and descendant_result.stderr == b""
         and descendants_ready
+        and descendant_arms_unset_before_return
+        and descendant_arms_published
         and descendants_gone
         and not late_marker.exists()
+    ),
+)
+
+early_ready = TMP / "early-return-descendant.ready"
+early_arm = TMP / "early-return-descendant.arm"
+early_marker = TMP / "early-return-descendant.late"
+early_wrapper = write_gate(
+    "early-return-descendant",
+    f"""
+/bin/bash -c 'trap "" HUP INT TERM; printf "%s\\n" "$$" > "$1"; while [[ ! -e "$2" ]]; do /bin/sleep 0.01; done; printf "%s\\n" "$$" > "$3"; while :; do /bin/sleep 1; done' child {str(early_ready)!r} {str(early_arm)!r} {str(early_marker)!r} >/dev/null 2>&1 &
+child_pid=$!
+for ((attempt = 0; attempt < 200; attempt++)); do
+  if [[ -f {str(early_ready)!r} ]] && /usr/bin/grep -Fxq "$child_pid" {str(early_ready)!r}; then
+    exit 0
+  fi
+  /bin/sleep 0.005
+done
+exit 97
+""",
+)
+early_env = {
+    "HOME": str(TMP),
+    "LANG": "C",
+    "LC_ALL": "C",
+    "PATH": "/usr/bin:/bin",
+}
+real_close_process_group = MODULE._close_process_group
+early_return_result = None
+try:
+    MODULE._close_process_group = lambda process: process.wait(timeout=0.75)
+    early_return_result = MODULE._run_bounded(
+        [str(early_wrapper)],
+        cwd=TMP,
+        env=early_env,
+        timeout=2.0,
+        stdout_limit=128,
+        stderr_limit=128,
+    )
+finally:
+    MODULE._close_process_group = real_close_process_group
+try:
+    early_pid = int(early_ready.read_text().strip())
+except (OSError, ValueError):
+    early_pid = 0
+try:
+    early_arm.write_bytes(b"armed-after-run-return\n")
+    early_arm.chmod(0o600)
+except OSError:
+    pass
+early_deadline = time.monotonic() + 0.75
+while not early_marker.exists() and time.monotonic() < early_deadline:
+    time.sleep(0.01)
+try:
+    early_marker_pid = int(early_marker.read_text().strip())
+except (OSError, ValueError):
+    early_marker_pid = 0
+
+
+def kill_test_process_group(pgid: int) -> bool:
+    if pgid <= 0 or pgid == os.getpgrp():
+        return False
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    group_deadline = time.monotonic() + 0.75
+    while time.monotonic() < group_deadline:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+try:
+    early_pgid = os.getpgid(early_pid) if early_pid > 0 else 0
+except ProcessLookupError:
+    early_pgid = 0
+early_group_gone = kill_test_process_group(early_pgid)
+check(
+    "post-return arm observes a mutation that removes process-group closure",
+    lambda: (
+        early_return_result == (0, b"", b"")
+        and early_pid > 0
+        and early_pgid > 0
+        and early_pgid != os.getpgrp()
+        and early_marker_pid == early_pid
+        and early_group_gone
+    ),
+)
+
+zero_group_killpg_calls = []
+real_test_getpgid = os.getpgid
+real_test_killpg = os.killpg
+try:
+    def missing_test_group(_pid: int) -> int:
+        raise ProcessLookupError
+
+    def record_test_killpg(pgid: int, signum: int) -> None:
+        zero_group_killpg_calls.append((pgid, signum))
+
+    os.getpgid = missing_test_group
+    os.killpg = record_test_killpg
+    try:
+        missing_test_pgid = os.getpgid(early_pid)
+    except ProcessLookupError:
+        missing_test_pgid = 0
+    missing_test_group_gone = kill_test_process_group(missing_test_pgid)
+    current_test_group_gone = kill_test_process_group(os.getpgrp())
+finally:
+    os.getpgid = real_test_getpgid
+    os.killpg = real_test_killpg
+test_source = Path(__file__).read_bytes()
+
+
+def test_group_cleanup_guard_contract(data: bytes) -> bool:
+    try:
+        body = data.split(b"def kill_test_process_group(", 1)[1].split(
+            b"try:\n    early_pgid =", 1
+        )[0]
+        guard_at = body.index(
+            b"if pgid <= 0 or pgid == os.getpgrp():\n        return False"
+        )
+        kill_at = body.index(b"os.killpg(pgid, signal.SIGKILL)")
+    except (IndexError, ValueError):
+        return False
+    return guard_at < kill_at
+
+
+test_group_nonpositive_guard_mutant = test_source.replace(
+    b"if pgid <= 0 or pgid == os.getpgrp():\n        return False",
+    b"if pgid < 0 or pgid == os.getpgrp():\n        return False",
+    1,
+)
+test_group_current_guard_mutant = test_source.replace(
+    b"if pgid <= 0 or pgid == os.getpgrp():\n        return False",
+    b"if pgid <= 0:\n        return False",
+    1,
+)
+test_group_guard_reorder_mutant = test_source.replace(
+    b"    if pgid <= 0 or pgid == os.getpgrp():\n"
+    b"        return False\n"
+    b"    try:\n"
+    b"        os.killpg(pgid, signal.SIGKILL)",
+    b"    try:\n"
+    b"        os.killpg(pgid, signal.SIGKILL)\n"
+    b"        if pgid <= 0 or pgid == os.getpgrp():\n"
+    b"            return False",
+    1,
+)
+check(
+    "missing or current mutant PGID never receives a process-group signal",
+    lambda: (
+        missing_test_pgid == 0
+        and not missing_test_group_gone
+        and not current_test_group_gone
+        and zero_group_killpg_calls == []
+        and test_group_cleanup_guard_contract(test_source)
+        and test_group_nonpositive_guard_mutant != test_source
+        and not test_group_cleanup_guard_contract(test_group_nonpositive_guard_mutant)
+        and test_group_current_guard_mutant != test_source
+        and not test_group_cleanup_guard_contract(test_group_current_guard_mutant)
+        and test_group_guard_reorder_mutant != test_source
+        and not test_group_cleanup_guard_contract(test_group_guard_reorder_mutant)
     ),
 )
 
