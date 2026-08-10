@@ -196,16 +196,31 @@ check("signal after durable link leaves no final or temp", interrupted_link_roll
 
 
 supervisor_dir = TMP / "supervisor"; supervisor_dir.mkdir(mode=0o700)
+SUCCESS_TIMEOUT = 5.0
 
 
-def bounded(code: str, *arguments: str, timeout: float = 1.0) -> tuple[int, bytes, bytes]:
+def bounded(code: str, *arguments: str, timeout: float = SUCCESS_TIMEOUT) -> tuple[int, bytes, bytes]:
     return MODULE.run_bounded(["/usr/bin/python3", "-I", "-S", "-B", "-c", code, *arguments], supervisor_dir, timeout)
 
 
 check("bounded supervisor preserves a clean zero exit", lambda: bounded("raise SystemExit(0)")[0] == 0)
 check("bounded supervisor preserves a nonzero exit", lambda: bounded("raise SystemExit(14)")[0] == 14)
 check("bounded supervisor rejects stdout overflow", lambda: rejects(lambda: bounded("import os;os.write(1,b'x'*131073)")))
-check("bounded supervisor rejects a wall timeout", lambda: rejects(lambda: bounded("import time;time.sleep(2)", timeout=0.1)))
+
+
+def timeout_authority_pair() -> bool:
+    child = "import time;time.sleep(2)"
+    secure_rejects = rejects(lambda: bounded(child, timeout=0.1))
+    real = MODULE.run_bounded
+    MODULE.run_bounded = lambda argv, cwd, timeout: real(argv, cwd, SUCCESS_TIMEOUT)
+    try:
+        weakening_exposed = not rejects(lambda: bounded(child, timeout=0.1))
+    finally:
+        MODULE.run_bounded = real
+    return secure_rejects and weakening_exposed
+
+
+check("bounded supervisor rejects a wall timeout and kills timeout weakening", timeout_authority_pair)
 check("bounded supervisor sanitizes launch failure", lambda: rejects(lambda: MODULE.run_bounded([str(supervisor_dir / "missing")], supervisor_dir, 0.1)))
 
 
