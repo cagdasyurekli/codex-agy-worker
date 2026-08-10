@@ -31,7 +31,7 @@ doctor_runtime_complete() {
     [[ -d "$runtime_root" && ! -L "$runtime_root" ]] || return 1
     runtime_canonical="$(CDPATH= cd -- "$runtime_root" 2>/dev/null && pwd -P)" \
         || return 1
-    for parent in scripts agents schemas compat benchmarks; do
+    for parent in scripts agents schemas compat benchmarks profiles; do
         [[ -d "$runtime_canonical/$parent" \
             && ! -L "$runtime_canonical/$parent" ]] || return 1
         parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$parent" \
@@ -50,6 +50,7 @@ doctor_runtime_complete() {
         evidence-report.sh \
         benchmark.sh \
         persona-evidence.sh \
+        profile.sh \
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
@@ -58,6 +59,7 @@ doctor_runtime_complete() {
         scripts/evidence_report.py \
         scripts/benchmark.py \
         scripts/persona_registry.py \
+        scripts/workload_profiles.py \
         scripts/recommendation_record.py \
         scripts/model-recommendation.py \
         scripts/model_selection.py \
@@ -97,6 +99,7 @@ doctor_runtime_complete() {
         schemas/persona-transition-approval.schema.json \
         schemas/persona-verifier.schema.json \
         schemas/persona-version-attestation.schema.json \
+        schemas/workload-profile.schema.json \
         compat/persona-evidence.schema.json \
         compat/persona-registry.schema.json \
         compat/personas/manifest.json \
@@ -109,6 +112,10 @@ doctor_runtime_complete() {
         benchmarks/v1/tasks/exact-edit/candidate.txt \
         benchmarks/v1/tasks/exact-edit/envelope.json \
         benchmarks/v1/variants/bulk.json \
+        profiles/v1/manifest.json \
+        profiles/v1/bounded-test-backfill.json \
+        profiles/v1/diff-review.json \
+        profiles/v1/repository-inventory.json \
         agents/bulk-test-writer.md \
         agents/repo-inventory.md \
         agents/diff-reviewer.md \

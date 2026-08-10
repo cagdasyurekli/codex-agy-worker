@@ -753,6 +753,23 @@ else
     bad "root and portable packages include offline Benchmark v1"
 fi
 
+if [[ -x "$ROOT/profile.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/profile.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/workload_profiles.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/workload-profile.schema.json" ]] \
+        && cmp -s "$ROOT/profiles/v1/manifest.json" \
+            "$ROOT/skills/agy-worker/runtime/profiles/v1/manifest.json" \
+        && cmp -s "$ROOT/profiles/v1/bounded-test-backfill.json" \
+            "$ROOT/skills/agy-worker/runtime/profiles/v1/bounded-test-backfill.json" \
+        && cmp -s "$ROOT/profiles/v1/diff-review.json" \
+            "$ROOT/skills/agy-worker/runtime/profiles/v1/diff-review.json" \
+        && cmp -s "$ROOT/profiles/v1/repository-inventory.json" \
+            "$ROOT/skills/agy-worker/runtime/profiles/v1/repository-inventory.json"; then
+    ok "root and portable packages include data-only Workload Profiles v1"
+else
+    bad "root and portable packages include data-only Workload Profiles v1"
+fi
+
 if grep -Fq 'is process-owning: it keeps signal rollback authority' \
         "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py" \
         && grep -Fq 'The `--output` CLI path is deliberately process-owning' \
@@ -798,6 +815,7 @@ required_runtime_dependencies=(
     evidence-report.sh
     benchmark.sh
     persona-evidence.sh
+    profile.sh
     model-recommendation.sh
     model-selection.sh
     doctor.sh
@@ -806,6 +824,7 @@ required_runtime_dependencies=(
     scripts/evidence_report.py
     scripts/benchmark.py
     scripts/persona_registry.py
+    scripts/workload_profiles.py
     scripts/recommendation_record.py
     scripts/model-recommendation.py
     scripts/model_selection.py
@@ -828,6 +847,7 @@ required_runtime_dependencies=(
     schemas/persona-transition-approval.schema.json
     schemas/persona-verifier.schema.json
     schemas/persona-version-attestation.schema.json
+    schemas/workload-profile.schema.json
     compat/persona-evidence.schema.json
     compat/persona-registry.schema.json
     compat/personas/manifest.json
@@ -840,6 +860,10 @@ required_runtime_dependencies=(
     benchmarks/v1/tasks/exact-edit/candidate.txt
     benchmarks/v1/tasks/exact-edit/envelope.json
     benchmarks/v1/variants/bulk.json
+    profiles/v1/manifest.json
+    profiles/v1/bounded-test-backfill.json
+    profiles/v1/diff-review.json
+    profiles/v1/repository-inventory.json
     agents/bulk-test-writer.md
     agents/repo-inventory.md
     agents/diff-reviewer.md
@@ -901,7 +925,7 @@ else
     bad "resolver accepts bundle-owned real runtime parent directories"
 fi
 
-for parent in scripts agents schemas compat benchmarks; do
+for parent in scripts agents schemas compat benchmarks profiles; do
     for link_kind in absolute relative in-root; do
         parent_copy="$TMP/parent-$parent-$link_kind"
         foreign_parent="$TMP/foreign-$parent-$link_kind"
@@ -941,11 +965,13 @@ for specification in \
     'evidence-report.sh:executable' \
     'benchmark.sh:executable' \
     'persona-evidence.sh:executable' \
+    'profile.sh:executable' \
     'scripts/validate-envelope.py:executable' \
     'scripts/evidence_receipt.py:executable' \
     'scripts/evidence_report.py:executable' \
     'scripts/benchmark.py:executable' \
     'scripts/persona_registry.py:executable' \
+    'scripts/workload_profiles.py:executable' \
     'scripts/recommendation_record.py:executable' \
     'scripts/candidate_state.py:executable' \
     'scripts/job_lifecycle.py:executable' \
@@ -957,11 +983,13 @@ for specification in \
     'schemas/benchmark-result.schema.json:data' \
     'schemas/persona-run-manifest.schema.json:data' \
     'schemas/persona-transition-approval.schema.json:data' \
+    'schemas/workload-profile.schema.json:data' \
     'compat/persona-evidence.schema.json:data' \
     'compat/persona-registry.schema.json:data' \
     'compat/personas/manifest.json:data' \
     'benchmarks/v1/manifest.json:data' \
     'benchmarks/v1/portable-source.json:data' \
+    'profiles/v1/manifest.json:data' \
     'agents/repo-inventory.md:data' \
     'compat/agy-verified-version.txt:data' \
     'compat/agy-model-effort-matrix.json:data'; do
@@ -1056,6 +1084,20 @@ if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
     ok "CI and public docs expose the non-authoritative persona registry"
 else
     bad "CI and public docs expose the non-authoritative persona registry"
+fi
+
+if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
+        "$ROOT/.github/workflows/test.yml" \
+        && [[ -x "$ROOT/profile.sh" \
+            && -x "$ROOT/skills/agy-worker/runtime/profile.sh" \
+            && -x "$ROOT/skills/agy-worker/runtime/scripts/workload_profiles.py" ]] \
+        && grep -Fq '[`profile.sh`](docs/PROFILES.md)' "$ROOT/README.md" \
+        && grep -Fq 'Profiles never contain a repository or filesystem path' \
+            "$ROOT/docs/PROFILES.md" \
+        && grep -Fq 'profile is data, not a driver' "$ROOT/AGENTS.md"; then
+    ok "CI and public docs expose only fixed data-only workload profiles"
+else
+    bad "CI and public docs expose only fixed data-only workload profiles"
 fi
 
 if grep -Fq 'run: ./tests/test-evidence-report.sh' "$ROOT/.github/workflows/test.yml" \
@@ -1639,15 +1681,23 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
             "$ROOT/.github/workflows/test.yml"; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-workload-profiles.py' \
+            "$ROOT/.github/workflows/test.yml"; then
+    governance_lists_all_suites=0
+fi
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all sixteen suites and disclose public policy boundaries"
+    ok "governance docs require all seventeen suites and disclose public policy boundaries"
 else
-    bad "governance docs require all sixteen suites and disclose public policy boundaries"
+    bad "governance docs require all seventeen suites and disclose public policy boundaries"
 fi
 
 if grep -Fq 'same-UID processes' "$ROOT/README.md" \

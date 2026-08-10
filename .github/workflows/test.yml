@@ -48,6 +48,9 @@ jobs:
       - name: local job lifecycle suite
         run: /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py
 
+      - name: data-only workload profiles suite
+        run: /usr/bin/python3 -I -S -B tests/test-workload-profiles.py
+
       - name: dispatcher suite
         run: ./tests/test-agy-worker.sh
 

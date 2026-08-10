@@ -19,6 +19,7 @@
 - [ ] `/usr/bin/python3 -I -S -B tests/test-benchmark.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-persona-evidence.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-workload-profiles.py`
 - [ ] `./tests/test-agy-worker.sh`
 - [ ] `./tests/test-update.sh`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py`
