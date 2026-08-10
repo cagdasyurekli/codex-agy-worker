@@ -783,6 +783,20 @@ accepted only on the same line as `gpt-oss-120b-medium`; it never becomes a twel
 model. Parsing inventory does not bind an installed version, advance a baseline, or
 activate the matrix.
 
+The accepted `1.1.11` version binding is narrower still: it binds one version-only
+snapshot/source/argv observation, not inventory, authentication, provider behavior,
+an official source revision, or a metadata update. The canonical models runner
+deliberately launches its one child with a fresh private empty `HOME`, `TMPDIR`, and
+XDG directories plus a closed fixed environment. It never inherits or copies caller
+credentials or Python startup state. If `agy models` needs a logged-in account, this
+runner rejects and publishes no accepted completion marker; that expected rejection
+cannot advance the active `1.1.10` matrix. A future real-account inventory capture
+requires a separate reviewed capture-only runner/profile and explicit authorization
+for that account boundary, not a fallback in the current accepting runner. The
+runner's source-contract mutations are selected drift checks under a trusted reviewed
+source and local-owner boundary; they do not prove hostile-source or same-UID tamper
+resistance. Stronger assurance would require a separately trusted launcher or harness.
+
 The human-reviewed agy baseline is `1.1.10` at source revision
 `bfab12dac5bd090015a89cf82e65093d13b567d9`. The fixed official sources, one
 sandbox-correct 11-slug inventory, and two bounded single-selector jobs are recorded
@@ -936,7 +950,7 @@ scripts/compatibility.py      stdlib metadata/matrix validation and exact resolu
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
 scripts/version_attestation_runner.py fixed-profile snapshot version runner with bounded startup diagnostics; real use separately authorized
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
-scripts/models_attestation_runner.py fixed-profile snapshot models inventory runner; real use separately authorized
+scripts/models_attestation_runner.py auth-isolated snapshot models runner; not a live-account capture path
 scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
 scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence

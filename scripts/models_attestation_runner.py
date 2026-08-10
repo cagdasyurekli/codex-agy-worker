@@ -41,6 +41,28 @@ EXPECTED_STDERR_SHA256 = "53f588bc9a928f4a66908deacaca57dddc7e7ce177a0cc3586b5a5
 PROFILE_LIMIT = 16_384
 STREAM_LIMIT = 64 * 1024
 WALL_SECONDS = 25.0
+PRIVATE_DIRECTORY_NAMES = (
+    "cwd",
+    "home",
+    "tmp",
+    "xdg-config",
+    "xdg-cache",
+    "xdg-state",
+)
+PRODUCTION_AST_SHA256 = {
+    "ModelsProfile": "819b2a1e9acc5953bc89db8e17a479cec748e13c67faa1feb912b9af944e98ce",
+    "_canonical_json": "fabcd67b48b36dd92128417c318ccecdd1afe85e1373ef80f1e51657032a3255",
+    "_source_bytes": "73af25ae16ae24028b6735807f8d4d09d4755f46eed29e952dd069e46f1811c5",
+    "_canonical_sources": "23327104eef19d6ba010b62a144fa6336d5fcce65a8c25877bf6bc1c2bf2f792",
+    "_validate_production_profile": "d604722e6d0c518b46a47c49af9c9008c75bb27096447ba1d7aab4ddfba6c268",
+    "_validate_version_evidence": "cc1a4f0d89d28badbdfed02e88f47592af0938f2ca8e06611697d56d36984fef",
+    "_capture": "4407c26e7ae4be1754d9ccefd48c9d1ba367da93d39aa1cb619a312de343c952",
+    "_validate_stderr": "0abacd437c8dc19669339c2c3273342fd0e9a2d0b20fd7a0817e69d971d64eff",
+    "_private_directory_identity": "4a19c9e4b92eabdced7ca4d79fad544cc2c532964d8ad28ba19d87927fadb31d",
+    "_revalidate_private_directories": "d50498ba403904036956f13335864ec1a38b0ca5a0b0eb0a4881c487edefa20a",
+    "run_attestation": "e1eac1e41ab4e739da32c8f57cabef376fd77fc66c916d263d4e22f72daaa95c",
+    "main": "7a148f4079cb229639f4c0fe53fd18e14117514bbc3e734700939ccd64fd0c0b",
+}
 PROFILE_KEYS = frozenset(
     {
         "inventory_normalized_sha256",
@@ -252,42 +274,414 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    production_nodes: dict[str, ast.AST] = {
+        name: classes[name] if name == "ModelsProfile" else functions[name]
+        for name in PRODUCTION_AST_SHA256
+        if (name == "ModelsProfile" and name in classes)
+        or (name != "ModelsProfile" and name in functions)
+    }
+    if set(production_nodes) != set(PRODUCTION_AST_SHA256):
+        raise ModelsAttestationError("models production call graph is incomplete")
+    for name, expected_sha256 in PRODUCTION_AST_SHA256.items():
+        observed_sha256 = hashlib.sha256(
+            ast.dump(production_nodes[name], include_attributes=False).encode("utf-8")
+        ).hexdigest()
+        if observed_sha256 != expected_sha256:
+            raise ModelsAttestationError("models production call graph changed")
     run_node = functions.get("run_attestation")
     capture_node = functions.get("_capture")
     version_node = functions.get("_validate_version_evidence")
     production_node = functions.get("_validate_production_profile")
+    private_directory_node = functions.get("_private_directory_identity")
+    revalidate_directories_node = functions.get("_revalidate_private_directories")
     main_node = functions.get("main")
     if (
         run_node is None
         or capture_node is None
         or version_node is None
         or production_node is None
+        or private_directory_node is None
+        or revalidate_directories_node is None
         or main_node is None
     ):
         raise ModelsAttestationError("models source authority is incomplete")
-    popen = [
+    subprocess_launch_attributes = {
+        "Popen",
+        "call",
+        "check_call",
+        "check_output",
+        "getoutput",
+        "getstatusoutput",
+        "run",
+    }
+    os_launch_attributes = {
+        "fork",
+        "forkpty",
+        "popen",
+        "posix_spawn",
+        "posix_spawnp",
+        "system",
+    }
+    def process_module_reference(node: ast.AST) -> tuple[str, str] | None:
+        if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Name):
+            return None
+        module = node.value.id
+        attribute = node.attr
+        if module == "subprocess" and attribute in subprocess_launch_attributes:
+            return module, attribute
+        if module == "os" and (
+            attribute in os_launch_attributes
+            or attribute.startswith(("exec", "spawn"))
+        ):
+            return module, attribute
+        if module == "asyncio" and attribute.startswith("create_subprocess"):
+            return module, attribute
+        if module == "calls" and attribute == "popen":
+            return module, attribute
+        return None
+
+    launch_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and process_module_reference(node.func) is not None
+    ]
+    if len(launch_calls) != 1:
+        raise ModelsAttestationError("models runner must contain one child-launch authority")
+    call = launch_calls[0]
+    if call not in tuple(ast.walk(run_node)):
+        raise ModelsAttestationError("models child launch moved outside its owner")
+    process_module_imports = [
+        item
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for item in node.names
+        if item.name in {"asyncio", "os", "subprocess"}
+    ]
+    if sorted((item.name, item.asname) for item in process_module_imports) != [
+        ("os", None),
+        ("subprocess", None),
+    ]:
+        raise ModelsAttestationError("models process module authority changed")
+    parents = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in {"os", "subprocess"}
+            and node.attr in {"__dict__", "__getattribute__"}
+        ):
+            raise ModelsAttestationError("models dynamic process lookup changed")
+        if isinstance(node, ast.ImportFrom) and node.module in {"os", "subprocess"}:
+            if any(
+                item.name in subprocess_launch_attributes
+                or item.name in os_launch_attributes
+                or item.name.startswith(("exec", "spawn"))
+                for item in node.names
+            ):
+                raise ModelsAttestationError("models process alias authority changed")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in {"__import__", "eval", "exec"}:
+                raise ModelsAttestationError("models dynamic launch authority changed")
+            if (
+                node.func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id in {"os", "subprocess"}
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+                and (
+                    node.args[1].value in subprocess_launch_attributes
+                    or node.args[1].value in os_launch_attributes
+                    or node.args[1].value.startswith(("exec", "spawn"))
+                )
+            ):
+                raise ModelsAttestationError("models dynamic launch authority changed")
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "import_module"
+        ):
+            raise ModelsAttestationError("models dynamic process import changed")
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Load)
+            and node.id in {"os", "subprocess"}
+        ):
+            continue
+        parent = parents[id(node)]
+        if isinstance(parent, ast.Attribute) and parent.value is node:
+            continue
+        if (
+            node.id == "os"
+            and isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Name)
+            and parent.func.id == "getattr"
+            and len(parent.args) >= 2
+            and parent.args[0] is node
+            and isinstance(parent.args[1], ast.Constant)
+            and parent.args[1].value in {"O_CLOEXEC", "O_NOFOLLOW"}
+        ):
+            continue
+        raise ModelsAttestationError("models process module alias changed")
+    capture_process_args = [
+        item for item in capture_node.args.args if item.arg == "process"
+    ]
+    run_process_annotations = [
+        node
+        for node in ast.walk(run_node)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "process"
+    ]
+    if len(capture_process_args) != 1 or len(run_process_annotations) != 1:
+        raise ModelsAttestationError("models process typing authority changed")
+    expected_popen_references = [
+        node
+        for annotation in (
+            capture_process_args[0].annotation,
+            run_process_annotations[0].annotation,
+        )
+        for node in ast.walk(annotation)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "subprocess"
+        and node.attr == "Popen"
+    ]
+    observed_launch_references = [
+        node
+        for node in ast.walk(tree)
+        if process_module_reference(node) is not None
+    ]
+    expected_launch_references = [*expected_popen_references, call.func]
+    if (
+        len(observed_launch_references) != len(expected_launch_references)
+        or {id(node) for node in observed_launch_references}
+        != {id(node) for node in expected_launch_references}
+    ):
+        raise ModelsAttestationError("models process alias authority changed")
+    calls_popen_references = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "calls"
+        and node.attr == "popen"
+    ]
+    if len(calls_popen_references) != 1 or calls_popen_references[0] is not call.func:
+        raise ModelsAttestationError("models injected Popen authority changed")
+    calls_loads = [
+        node
+        for node in ast.walk(run_node)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id == "calls"
+    ]
+    if len(calls_loads) != 5:
+        raise ModelsAttestationError("models injected call authority changed")
+    filesystem_mutation_attributes = {
+        "chmod",
+        "chown",
+        "copy",
+        "copy2",
+        "copyfile",
+        "link",
+        "mkdir",
+        "mkfifo",
+        "mknod",
+        "move",
+        "open",
+        "remove",
+        "rename",
+        "renames",
+        "replace",
+        "rmdir",
+        "rmtree",
+        "symlink",
+        "symlink_to",
+        "touch",
+        "truncate",
+        "unlink",
+        "write_bytes",
+        "write_text",
+    }
+    filesystem_mutations = [
         node
         for node in ast.walk(run_node)
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "calls"
-        and node.func.attr == "popen"
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == "open")
+            or (
+                isinstance(node.func, ast.Attribute)
+                and (
+                    node.func.attr in filesystem_mutation_attributes
+                    or (
+                        isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "shutil"
+                    )
+                )
+            )
+        )
     ]
-    if len(popen) != 1:
-        raise ModelsAttestationError("models runner must contain one Popen authority")
-    call = popen[0]
+    expected_filesystem_mutations = {
+        "Call(func=Attribute(value=Name(id='os', ctx=Load()), attr='chmod', "
+        "ctx=Load()), args=[Name(id='root', ctx=Load()), Constant(value=448)], "
+        "keywords=[])",
+        "Call(func=Attribute(value=Name(id='child', ctx=Load()), attr='mkdir', "
+        "ctx=Load()), args=[], keywords=[keyword(arg='mode', "
+        "value=Constant(value=448))])",
+    }
+    if (
+        len(filesystem_mutations) != 2
+        or {ast.dump(node) for node in filesystem_mutations}
+        != expected_filesystem_mutations
+    ):
+        raise ModelsAttestationError("models filesystem mutation authority changed")
+    launch_statements = [
+        node
+        for node in ast.walk(run_node)
+        if isinstance(node, ast.Assign) and call in tuple(ast.walk(node))
+    ]
+    launch_owners = [
+        node
+        for node in ast.walk(run_node)
+        if isinstance(node, ast.Try)
+        and len(launch_statements) == 1
+        and launch_statements[0] in node.body
+    ]
+    if len(launch_owners) != 1:
+        raise ModelsAttestationError("models pre-spawn authority changed")
+    launch_body = launch_owners[0].body
+    launch_indexes = [
+        index
+        for index, statement in enumerate(launch_body)
+        if call in tuple(ast.walk(statement))
+    ]
+    expected_revalidation = (
+        "Call(func=Name(id='_revalidate_private_directories', ctx=Load()), "
+        "args=[Name(id='root', ctx=Load()), "
+        "Name(id='private_directory_identities', ctx=Load())], keywords=[])"
+    )
+    if (
+        len(launch_body) != 3
+        or launch_indexes != [1]
+        or not isinstance(launch_body[0], ast.Expr)
+        or ast.dump(launch_body[0].value) != expected_revalidation
+        or not isinstance(launch_body[2], ast.Assign)
+        or len(launch_body[2].targets) != 1
+        or not isinstance(launch_body[2].targets[0], ast.Name)
+        or launch_body[2].targets[0].id != "process_active"
+        or not isinstance(launch_body[2].value, ast.Constant)
+        or launch_body[2].value.value is not True
+    ):
+        raise ModelsAttestationError("models private directory revalidation moved")
     keywords = {item.arg: item.value for item in call.keywords if item.arg is not None}
     if not (
-        len(call.args) == 1
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "calls"
+        and call.func.attr == "popen"
+        and len(call.args) == 1
+        and len(call.keywords) == 7
+        and set(keywords)
+        == {
+            "cwd",
+            "env",
+            "executable",
+            "start_new_session",
+            "stderr",
+            "stdin",
+            "stdout",
+        }
         and isinstance(call.args[0], ast.Name)
         and call.args[0].id == "argv"
-        and isinstance(keywords.get("executable"), ast.Attribute)
-        and keywords["executable"].attr == "snapshot_path"
+        and ast.dump(keywords.get("executable"))
+        == "Attribute(value=Name(id='profile', ctx=Load()), attr='snapshot_path', ctx=Load())"
+        and ast.dump(keywords.get("stdin"))
+        == "Attribute(value=Name(id='subprocess', ctx=Load()), attr='DEVNULL', ctx=Load())"
+        and ast.dump(keywords.get("stdout"))
+        == "Attribute(value=Name(id='subprocess', ctx=Load()), attr='PIPE', ctx=Load())"
+        and ast.dump(keywords.get("stderr"))
+        == "Attribute(value=Name(id='subprocess', ctx=Load()), attr='PIPE', ctx=Load())"
+        and ast.dump(keywords.get("cwd"))
+        == "Call(func=Name(id='str', ctx=Load()), args=[BinOp(left=Name(id='root', ctx=Load()), op=Div(), right=Constant(value='cwd'))], keywords=[])"
+        and isinstance(keywords.get("env"), ast.Name)
+        and keywords["env"].id == "environment"
         and isinstance(keywords.get("start_new_session"), ast.Constant)
         and keywords["start_new_session"].value is True
     ):
         raise ModelsAttestationError("models Popen contract changed")
+    environment_assignments = [
+        node
+        for node in ast.walk(run_node)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "environment"
+    ]
+    environment_loads = [
+        node
+        for node in ast.walk(run_node)
+        if isinstance(node, ast.Name)
+        and node.id == "environment"
+        and isinstance(node.ctx, ast.Load)
+    ]
+    if len(environment_assignments) != 1 or environment_loads != [keywords["env"]]:
+        raise ModelsAttestationError("models environment authority changed")
+    environment_value = environment_assignments[0].value
+    if not isinstance(environment_value, ast.Dict):
+        raise ModelsAttestationError("models environment authority changed")
+    environment_keys = (
+        "HOME",
+        "TMPDIR",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_STATE_HOME",
+        "LANG",
+        "LC_ALL",
+        "NO_COLOR",
+        "TERM",
+        "PATH",
+    )
+    if tuple(
+        item.value if isinstance(item, ast.Constant) and isinstance(item.value, str) else None
+        for item in environment_value.keys
+    ) != environment_keys:
+        raise ModelsAttestationError("models environment authority changed")
+    expected_private_values = {
+        "HOME": "home",
+        "TMPDIR": "tmp",
+        "XDG_CONFIG_HOME": "xdg-config",
+        "XDG_CACHE_HOME": "xdg-cache",
+        "XDG_STATE_HOME": "xdg-state",
+    }
+    expected_literals = {
+        "LANG": "C",
+        "LC_ALL": "C",
+        "NO_COLOR": "1",
+        "TERM": "dumb",
+        "PATH": "/usr/bin:/bin",
+    }
+    for key, value in zip(environment_keys, environment_value.values):
+        if key in expected_private_values:
+            expected = (
+                "Call(func=Name(id='str', ctx=Load()), "
+                "args=[BinOp(left=Name(id='root', ctx=Load()), op=Div(), "
+                f"right=Constant(value={expected_private_values[key]!r}))], keywords=[])"
+            )
+            if ast.dump(value) != expected:
+                raise ModelsAttestationError("models environment authority changed")
+        elif not (
+            isinstance(value, ast.Constant)
+            and value.value == expected_literals[key]
+        ):
+            raise ModelsAttestationError("models environment authority changed")
     argv_assignments = [
         node
         for node in ast.walk(run_node)
@@ -303,6 +697,10 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
     capture_text = ast.get_source_segment(text, capture_node) or ""
     version_text = ast.get_source_segment(text, version_node) or ""
     production_text = ast.get_source_segment(text, production_node) or ""
+    private_directory_text = ast.get_source_segment(text, private_directory_node) or ""
+    revalidate_directories_text = (
+        ast.get_source_segment(text, revalidate_directories_node) or ""
+    )
     main_text = ast.get_source_segment(text, main_node) or ""
     required_run = (
         "deadline = started + WALL_SECONDS",
@@ -319,6 +717,16 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         or "or os.listdir(child)" not in version_text
         or "profile.version_binding_sha256 != EXPECTED_VERSION_BINDING_SHA256"
         not in production_text
+        or "version.DIRECTORY | version.CLOEXEC | version.NOFOLLOW"
+        not in private_directory_text
+        or "observed.st_uid != os.getuid()" not in private_directory_text
+        or "stat.S_IMODE(observed.st_mode) != 0o700" not in private_directory_text
+        or "or os.listdir(descriptor)" not in private_directory_text
+        or "return version.FileIdentity.from_stat(observed)" not in private_directory_text
+        or "tuple(expected) != PRIVATE_DIRECTORY_NAMES"
+        not in revalidate_directories_text
+        or "_private_directory_identity(root / name) != expected[name]"
+        not in revalidate_directories_text
         or "_validate_production_profile(profile)\n        result = run_attestation(profile)"
         in main_text
     ):
@@ -545,6 +953,35 @@ def _validate_stderr(
     return observed_sha256
 
 
+def _private_directory_identity(path: Path) -> version.FileIdentity:
+    descriptor = os.open(
+        str(path),
+        os.O_RDONLY | version.DIRECTORY | version.CLOEXEC | version.NOFOLLOW,
+    )
+    try:
+        observed = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(observed.st_mode)
+            or observed.st_uid != os.getuid()
+            or stat.S_IMODE(observed.st_mode) != 0o700
+            or os.listdir(descriptor)
+        ):
+            raise ModelsAttestationError("private models directory changed")
+        return version.FileIdentity.from_stat(observed)
+    finally:
+        os.close(descriptor)
+
+
+def _revalidate_private_directories(
+    root: Path, expected: dict[str, version.FileIdentity]
+) -> None:
+    if tuple(expected) != PRIVATE_DIRECTORY_NAMES:
+        raise ModelsAttestationError("private models directory inventory changed")
+    for name in PRIVATE_DIRECTORY_NAMES:
+        if _private_directory_identity(root / name) != expected[name]:
+            raise ModelsAttestationError("private models directory identity changed")
+
+
 def run_attestation(
     profile: ModelsProfile,
     *,
@@ -587,8 +1024,11 @@ def run_attestation(
         root = Path(tempfile.mkdtemp(prefix="agy-models-attestation.", dir=profile.temp_parent))
         os.chmod(root, 0o700)
         publisher = version.Publisher(root, calls)
-        for name in ("cwd", "home", "tmp", "xdg-config", "xdg-cache", "xdg-state"):
-            (root / name).mkdir(mode=0o700)
+        private_directory_identities: dict[str, version.FileIdentity] = {}
+        for name in PRIVATE_DIRECTORY_NAMES:
+            child = root / name
+            child.mkdir(mode=0o700)
+            private_directory_identities[name] = _private_directory_identity(child)
         runner_sha = publisher.publish("models_runner.py", runner_source)
         publisher.publish("models_runner.py.sha256", (runner_sha + "\n").encode("ascii"))
         parser_sha = publisher.publish("agy_inventory.py", inventory_source)
@@ -617,6 +1057,7 @@ def run_attestation(
         }
         blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
         try:
+            _revalidate_private_directories(root, private_directory_identities)
             process = calls.popen(
                 argv,
                 executable=profile.snapshot_path,
@@ -834,14 +1275,28 @@ def _synthetic_profile(
     models_stderr: bytes = b"",
     models_exit: int = 0,
     models_delay: float = 0.0,
+    models_require_session: bool = False,
 ) -> ModelsProfile:
     source = root / "agy"
     selected_stdout = _inventory_bytes() if models_stdout is None else models_stdout
+    session_guard = b""
+    if models_require_session:
+        caller_home = root / "caller-home"
+        caller_home.mkdir(mode=0o700)
+        session_marker = caller_home / "session.marker"
+        session_marker.write_bytes(b"synthetic\n")
+        session_marker.chmod(0o600)
+        session_guard = (
+            b" if not os.path.isfile(os.path.join(os.environ['HOME'],'session.marker')):\n"
+            b"  os.write(2,b'login-state-unavailable\\n')\n"
+            b"  raise SystemExit(0)\n"
+        )
     dual = (
         b"#!/usr/bin/python3\nimport os,sys,time\n"
         b"if sys.argv[1:] == ['--version']: os.write(1,b'1.1.11\\n')\n"
         b"elif sys.argv[1:] == ['models']:\n"
         + f" time.sleep({models_delay!r})\n".encode("ascii")
+        + session_guard
         + b" os.write(1," + repr(selected_stdout).encode("ascii") + b")\n"
         + b" os.write(2," + repr(models_stderr).encode("ascii") + b")\n"
         + f" raise SystemExit({models_exit})\n".encode("ascii")
