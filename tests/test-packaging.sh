@@ -31,6 +31,8 @@ paths = {item.decode("utf-8") for item in listed if item}
 paths.update((
     "scripts/models_capture_runner.py",
     "tests/test-models-capture-runner.py",
+    "scripts/version_bootstrap_runner.py",
+    "tests/test-version-bootstrap-runner.py",
     "scripts/models_capture_profile.py",
     "tests/test-models-capture-profile.py",
 ))
@@ -1681,6 +1683,16 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.p
             "$ROOT/.github/pull_request_template.md"; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-version-bootstrap-runner.py' \
+            "$ROOT/.github/workflows/test.yml" \
+        || [[ ! -f "$ROOT/scripts/version_bootstrap_runner.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-version-bootstrap-runner.py" ]]; then
+    governance_lists_all_suites=0
+fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
         "$ROOT/CONTRIBUTING.md" \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
@@ -1756,19 +1768,47 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all nineteen suites and disclose public policy boundaries"
+    ok "governance docs require all twenty suites and disclose public policy boundaries"
 else
-    bad "governance docs require all nineteen suites and disclose public policy boundaries"
+    bad "governance docs require all twenty suites and disclose public policy boundaries"
 fi
 
-if grep -Fq 'Explicit-account models capture runner: 73 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-runner.py  73-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-models-capture-runner.py` (73 fake-account cases)' \
+bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
+    "$ROOT/.github/workflows/test.yml" | cut -d: -f1)"
+bootstrap_suite_line="$(grep -nF 'repository-only version bootstrap runner' \
+    "$ROOT/.github/workflows/test.yml" | cut -d: -f1)"
+if grep -Fq 'Explicit-account models capture runner: 82 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-runner.py  82-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-runner.py` (82 fake-account cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-profile.py 118-case' "$ROOT/README.md"; then
-    ok "capture-runner and profile-suite measured counts stay synchronized"
+        && grep -Fq 'Repository-only version bootstrap runner: 139 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-version-bootstrap-runner.py  139-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-version-bootstrap-runner.py` (139 synthetic cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-models-capture-profile.py 118-case' "$ROOT/README.md" \
+        && [[ -n "$bootstrap_preflight_line" ]] \
+        && [[ -n "$bootstrap_suite_line" ]] \
+        && (( bootstrap_preflight_line < bootstrap_suite_line )) \
+        && grep -Fq '/usr/bin/python3 -I -S -B -' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq 'sys.implementation.name == "cpython"' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq 'sys.version_info[:2] == (3, 9)' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq 'sys.flags.isolated == 1' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq 'sys.flags.no_site == 1' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq 'sys.flags.dont_write_bytecode == 1' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq 'sys.flags.ignore_environment == 1' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
+            "$ROOT/.github/workflows/test.yml"; then
+    ok "bootstrap, capture-runner, and profile-suite measured counts stay synchronized"
 else
-    bad "capture-runner and profile-suite measured counts stay synchronized"
+    bad "bootstrap, capture-runner, and profile-suite measured counts stay synchronized"
+fi
+
+if [[ -x "$ROOT/scripts/version_bootstrap_runner.py" ]] \
+        && [[ -x "$ROOT/tests/test-version-bootstrap-runner.py" ]] \
+        && ! grep -Fq 'skills/agy-worker/runtime/version_bootstrap_runner.py' "$ROOT/README.md"; then
+    ok "bootstrap remains an executable repository-only surface"
+else
+    bad "bootstrap remains an executable repository-only surface"
 fi
 
 profile_builder_identity="$(/usr/bin/python3 -I -S -B - "$ROOT/scripts/models_capture_profile.py" <<'PY'
