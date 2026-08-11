@@ -13,6 +13,7 @@ import os
 import shutil
 import signal
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -145,6 +146,58 @@ def cleanup(root: Path, old: tuple[str, str]) -> None:
         shutil.rmtree(root)
 
 
+def profile_cli_command(
+    mode: str,
+    request: bytes,
+    *,
+    source_sha: str | None = None,
+    binding_sha: str | None = None,
+    setup: str = "",
+    late_path: Path | None = None,
+) -> tuple[list[str], bytes]:
+    child = (
+        "import importlib.util,os,pathlib,signal,stat,sys;"
+        f"p={str(MODULE_PATH)!r};"
+        "s=importlib.util.spec_from_file_location('capture_profile_cli_test',p);"
+        "m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);"
+    )
+    if source_sha is not None and binding_sha is not None:
+        child += (
+            f"m.EXPECTED_SOURCE_SHA256={source_sha!r};"
+            f"m.EXPECTED_VERSION_BINDING_SHA256={binding_sha!r};"
+        )
+    child += setup + f"m.main([{mode!r}]);"
+    if late_path is not None:
+        child += f"pathlib.Path({str(late_path)!r}).write_bytes(b'returned\\n')"
+    return ["/usr/bin/python3", "-I", "-S", "-B", "-c", child], request
+
+
+def profile_cli(
+    mode: str,
+    request: bytes,
+    *,
+    source_sha: str | None = None,
+    binding_sha: str | None = None,
+    setup: str = "",
+    late_path: Path | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    command, encoded = profile_cli_command(
+        mode,
+        request,
+        source_sha=source_sha,
+        binding_sha=binding_sha,
+        setup=setup,
+        late_path=late_path,
+    )
+    return subprocess.run(
+        command,
+        input=encoded,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
 def normalized_ast_sha256(data: bytes) -> str:
     tree = ast.parse(data.decode("utf-8"))
     for node in tree.body:
@@ -179,9 +232,9 @@ check(
         normalized_ast_sha256(SOURCE),
     ) == (
         0o755,
-        41_149,
-        "8da7d669d9d7b8bde3feac18e1a42ec576f4d5ef72424c00a4f7b8564da6c883",
-        "08fb914a7d33cc46979e23a7741b7686345f719046d6a1325decde730ca289b0",
+        44_660,
+        "f934c48857c286665a1cad91450a87419bdb3286fb66e1b0c4a6b5b87aa180cb",
+        "798fd1b42d4b45e0e0687f25e8fbaaa19f412e4975e50f4ae7ecfe22e9e58d1b",
     ),
 )
 
@@ -193,7 +246,7 @@ for index, (old, new) in enumerate((
     (b"_verify_regular(snapshot_parent, snapshot_fd, snapshot_identity, snapshot_leaf, EXPECTED_SOURCE_SHA256)", b"pass"),
     (b"os.O_WRONLY | os.O_CREAT | os.O_EXCL | CLOEXEC | NOFOLLOW", b"os.O_WRONLY | os.O_CREAT | CLOEXEC | NOFOLLOW"),
     (b"os.link(\n            temporary_name, final_name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False\n        )", b"os.rename(temporary_name, final_name, src_dir_fd=parent, dst_dir_fd=parent)"),
-    (b"os.fsync(parent)\n        if not _remove_owned(parent, temporary_name, temporary_identity):", b"if not _remove_owned(parent, temporary_name, temporary_identity):"),
+    (b"os.fsync(parent)\n        _poll()\n        if not _remove_owned(parent, temporary_name, temporary_identity):", b"if not _remove_owned(parent, temporary_name, temporary_identity):"),
     (b"if _canonical_json(profile.as_mapping()) != data:", b"if False:"),
     (b"or value.st_nlink != 1\n            or value.st_size > maximum", b"or False"),
     (b"or stat.S_IMODE(value.st_mode) != 0o600\n            or value.st_nlink != 1", b"or False"),
@@ -719,28 +772,30 @@ def foreign_final_survives_signal_cleanup() -> bool:
     root, request, old = fixture("foreign-final-signal")
     output = Path(request["output_path"])
     foreign = b"foreign-signal\n"
-    original_link = MODULE.os.link
-    old_stdin = MODULE.sys.stdin
-    old_stdout = MODULE.sys.stdout
-
-    def racing_link(*args: object, **kwargs: object) -> object:
-        write_private(output, foreign)
-        os.kill(os.getpid(), signal.SIGHUP)
-        return original_link(*args, **kwargs)
-
-    MODULE.os.link = racing_link
-    MODULE.sys.stdin = type("Input", (), {"buffer": io.BytesIO(MODULE._canonical_json(request))})()
-    MODULE.sys.stdout = io.StringIO()
     try:
+        completed = profile_cli(
+            "--prepare",
+            MODULE._canonical_json(request),
+            source_sha=MODULE.EXPECTED_SOURCE_SHA256,
+            binding_sha=MODULE.EXPECTED_VERSION_BINDING_SHA256,
+            setup=(
+                f"output=pathlib.Path({str(output)!r});foreign={foreign!r};real_link=m.os.link;"
+                "exec(\"def racing_link(*args,**kwargs):\\n"
+                " output.write_bytes(foreign)\\n"
+                " output.chmod(0o600)\\n"
+                " os.kill(os.getpid(),signal.SIGHUP)\\n"
+                " return real_link(*args,**kwargs)\");"
+                "m.os.link=racing_link;"
+            ),
+        )
         return (
-            MODULE.main(["--prepare"]) == 128 + signal.SIGHUP
+            completed.returncode == 128 + signal.SIGHUP
+            and completed.stdout == b""
+            and completed.stderr == b"models capture profile: interrupted\n"
             and output.read_bytes() == foreign
             and not list(root.glob("output-parent/.models.capture.profile.*.tmp"))
         )
     finally:
-        MODULE.os.link = original_link
-        MODULE.sys.stdin = old_stdin
-        MODULE.sys.stdout = old_stdout
         cleanup(root, old)
 
 
@@ -774,31 +829,32 @@ for label in ("spacing", "ordering", "newline", "double"):
 
 def redacted_console() -> bool:
     data = b'{"account_home":"/secret/account","output_path":"/secret/out/models.capture.profile.json"}\n'
-    old_stdin = MODULE.sys.stdin
-    old_stderr = MODULE.sys.stderr
-    stderr = io.StringIO()
-    MODULE.sys.stdin = type("Input", (), {"buffer": io.BytesIO(data)})()
-    MODULE.sys.stderr = stderr
-    try:
-        return MODULE.main(["--prepare"]) == 2 and "/secret" not in stderr.getvalue() and "traceback" not in stderr.getvalue().lower()
-    finally:
-        MODULE.sys.stdin = old_stdin
-        MODULE.sys.stderr = old_stderr
+    completed = profile_cli("--prepare", data)
+    combined = completed.stdout + completed.stderr
+    return (
+        completed.returncode == 2
+        and completed.stdout == b""
+        and b"/secret" not in combined
+        and b"traceback" not in combined.lower()
+    )
 
 
 check("invalid request console is redacted", redacted_console)
 
 
 def signal_console() -> bool:
-    old_prepare = MODULE.prepare
-    old_stdin = MODULE.sys.stdin
-    MODULE.prepare = lambda _data: (_ for _ in ()).throw(MODULE.ModelsCaptureProfileInterrupted(signal.SIGTERM))
-    MODULE.sys.stdin = type("Input", (), {"buffer": io.BytesIO(b"{}\n")})()
-    try:
-        return MODULE.main(["--prepare"]) == 128 + signal.SIGTERM
-    finally:
-        MODULE.prepare = old_prepare
-        MODULE.sys.stdin = old_stdin
+    completed = profile_cli(
+        "--prepare",
+        b"{}\n",
+        setup=(
+            "m.prepare=lambda _data:(os.kill(os.getpid(),signal.SIGTERM),{})[1];"
+        ),
+    )
+    return (
+        completed.returncode == 128 + signal.SIGTERM
+        and completed.stdout == b""
+        and completed.stderr == b"models capture profile: interrupted\n"
+    )
 
 
 check("first lifecycle signal produces exact interrupted exit", signal_console)
@@ -806,38 +862,127 @@ check("first lifecycle signal produces exact interrupted exit", signal_console)
 
 def publication_signal_rolls_back_and_preserves_first() -> bool:
     root, request, old = fixture("publication-signal")
-    real_fsync = MODULE.os.fsync
-    old_stdin = MODULE.sys.stdin
-    old_stdout = MODULE.sys.stdout
-    directories = 0
-
-    def signaling_fsync(descriptor: int) -> None:
-        nonlocal directories
-        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-            directories += 1
-            if directories == 1:
-                os.kill(os.getpid(), signal.SIGHUP)
-            elif directories == 2:
-                os.kill(os.getpid(), signal.SIGTERM)
-        real_fsync(descriptor)
-
-    MODULE.os.fsync = signaling_fsync
-    MODULE.sys.stdin = type("Input", (), {"buffer": io.BytesIO(MODULE._canonical_json(request))})()
-    MODULE.sys.stdout = io.StringIO()
     try:
+        completed = profile_cli(
+            "--prepare",
+            MODULE._canonical_json(request),
+            source_sha=MODULE.EXPECTED_SOURCE_SHA256,
+            binding_sha=MODULE.EXPECTED_VERSION_BINDING_SHA256,
+            setup=(
+                "real_fsync=m.os.fsync;state={'directories':0};"
+                "exec(\"def signaling_fsync(descriptor):\\n"
+                " if stat.S_ISDIR(os.fstat(descriptor).st_mode):\\n"
+                "  state['directories']+=1\\n"
+                "  if state['directories']==1: os.kill(os.getpid(),signal.SIGHUP)\\n"
+                "  elif state['directories']==2: os.kill(os.getpid(),signal.SIGTERM)\\n"
+                " real_fsync(descriptor)\");"
+                "m.os.fsync=signaling_fsync;"
+            ),
+        )
         return (
-            MODULE.main(["--prepare"]) == 128 + signal.SIGHUP
-            and directories >= 2
+            completed.returncode == 128 + signal.SIGHUP
+            and completed.stdout == b""
+            and completed.stderr == b"models capture profile: interrupted\n"
             and not Path(request["output_path"]).exists()
         )
     finally:
-        MODULE.os.fsync = real_fsync
-        MODULE.sys.stdin = old_stdin
-        MODULE.sys.stdout = old_stdout
         cleanup(root, old)
 
 
 check("publication signal rolls back exact file and preserves first signal", publication_signal_rolls_back_and_preserves_first)
+
+
+def production_prepare_success_has_no_python_return() -> bool:
+    root, request, old = fixture("production-prepare-success")
+    late = root / "late.return"
+    try:
+        completed = profile_cli(
+            "--prepare",
+            MODULE._canonical_json(request),
+            source_sha=MODULE.EXPECTED_SOURCE_SHA256,
+            binding_sha=MODULE.EXPECTED_VERSION_BINDING_SHA256,
+            late_path=late,
+        )
+        value = json.loads(completed.stdout)
+        output = Path(request["output_path"])
+        return (
+            completed.returncode == 0
+            and completed.stderr == b""
+            and completed.stdout == MODULE._canonical_json(value)
+            and value["status"] == "prepared"
+            and output.is_file()
+            and not late.exists()
+        )
+    finally:
+        cleanup(root, old)
+
+
+check("process-owned profile prepare flushes one result without Python return", production_prepare_success_has_no_python_return)
+
+
+def production_profile_reverse_pending_priority() -> bool:
+    root, request, old = fixture("production-reverse-pending")
+    setup = (
+        "real_prepare=m.prepare;"
+        "exec(\"def signaling_prepare(data):\\n"
+        " result=real_prepare(data)\\n"
+        " os.kill(os.getpid(),signal.SIGTERM)\\n"
+        " os.kill(os.getpid(),signal.SIGHUP)\\n"
+        " return result\");"
+        "m.prepare=signaling_prepare;"
+    )
+    try:
+        completed = profile_cli(
+            "--prepare",
+            MODULE._canonical_json(request),
+            source_sha=MODULE.EXPECTED_SOURCE_SHA256,
+            binding_sha=MODULE.EXPECTED_VERSION_BINDING_SHA256,
+            setup=setup,
+        )
+        return (
+            completed.returncode == 128 + signal.SIGHUP
+            and completed.stdout == b""
+            and completed.stderr == b"models capture profile: interrupted\n"
+            and not Path(request["output_path"]).exists()
+        )
+    finally:
+        cleanup(root, old)
+
+
+check("profile CLI reverse pending delivery selects fixed HUP priority", production_profile_reverse_pending_priority)
+
+
+def production_profile_broken_stdout_rolls_back() -> bool:
+    root, request, old = fixture("production-broken-stdout")
+    command, encoded = profile_cli_command(
+        "--prepare",
+        MODULE._canonical_json(request),
+        source_sha=MODULE.EXPECTED_SOURCE_SHA256,
+        binding_sha=MODULE.EXPECTED_VERSION_BINDING_SHA256,
+    )
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+    process.stdin.write(encoded)
+    process.stdin.close()
+    process.stdout.close()
+    stderr = process.stderr.read()
+    returncode = process.wait(timeout=10)
+    try:
+        return (
+            returncode == 2
+            and stderr == b"models capture profile: rejected\n"
+            and not Path(request["output_path"]).exists()
+        )
+    finally:
+        cleanup(root, old)
+
+
+check("profile CLI broken stdout rolls back the provisional profile", production_profile_broken_stdout_rolls_back)
 check("validate request rejects extra authority", lambda: rejects(lambda: MODULE.validate(MODULE._canonical_json({"profile_path": "/x", "extra": 1}))))
 check("validate request rejects a noncanonical path", lambda: rejects(lambda: MODULE.validate(MODULE._canonical_json({"profile_path": "relative"}))))
 

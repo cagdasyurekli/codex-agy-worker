@@ -27,7 +27,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, NoReturn, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 
 sys.dont_write_bytecode = True
@@ -88,95 +88,10 @@ class AttestationError(ValueError):
     """A fixed-profile attestation requirement failed closed."""
 
 
-class AttestationInterrupted(SystemExit):
+class AttestationInterrupted(BaseException):
     def __init__(self, signum: int):
-        super().__init__(128 + signum)
+        super().__init__(signum)
         self.signum = signum
-
-
-class SignalController:
-    """Latch owned lifecycle signals and select by fixed priority at checkpoints."""
-
-    def __init__(self, owned: Sequence[signal.Signals]) -> None:
-        self.owned = tuple(owned)
-        self.observed: set[int] = set()
-        self.selected: Optional[int] = None
-
-    def latch(self, signum: int, _frame: object = None) -> None:
-        if signum in self.owned:
-            self.observed.add(signum)
-
-    def merge_pending(self) -> None:
-        while True:
-            pending = set(signal.sigpending()).intersection(self.owned)
-            chosen = next((item for item in self.owned if item in pending), None)
-            if chosen is None:
-                return
-            self.latch(signal.sigwait({chosen}))
-
-    def choose(self) -> Optional[int]:
-        if self.selected is None:
-            self.selected = next(
-                (item for item in self.owned if item in self.observed), None
-            )
-        return self.selected
-
-    def poll(self) -> None:
-        chosen = self.choose()
-        if chosen is not None:
-            raise AttestationInterrupted(chosen)
-
-
-@dataclass
-class LifecycleState:
-    controller: SignalController
-    entry_mask: set[signal.Signals]
-    old_handlers: dict[signal.Signals, object]
-    installed_handlers: list[signal.Signals]
-
-
-def _acquire_lifecycle() -> LifecycleState:
-    required = ("pthread_sigmask", "sigpending", "sigwait")
-    if not all(hasattr(signal, name) for name in required):
-        raise AttestationError("required signal primitives are unavailable")
-    entry_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
-    old_handlers = {item: signal.getsignal(item) for item in LIFECYCLE_SIGNALS}
-    owned = tuple(
-        item
-        for item in LIFECYCLE_SIGNALS
-        if item not in entry_mask and old_handlers[item] is not signal.SIG_IGN
-    )
-    controller = SignalController(owned)
-    installed: list[signal.Signals] = []
-    try:
-        for item in owned:
-            signal.signal(item, controller.latch)
-            installed.append(item)
-        controller.merge_pending()
-        return LifecycleState(controller, entry_mask, old_handlers, installed)
-    except BaseException:
-        for item in reversed(installed):
-            signal.signal(item, old_handlers[item])
-        signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
-        raise
-
-
-def _activate_lifecycle(state: LifecycleState) -> None:
-    signal.pthread_sigmask(signal.SIG_SETMASK, state.entry_mask)
-    state.controller.poll()
-
-
-def _atomic_exit(code: int, descriptor: int, message: bytes) -> NoReturn:
-    try:
-        remaining = memoryview(message)
-        while remaining:
-            written = os.write(descriptor, remaining)
-            if written <= 0:
-                break
-            remaining = remaining[written:]
-    except OSError:
-        pass
-    os._exit(code)
 
 
 @dataclass(frozen=True)
@@ -361,6 +276,11 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         != ast.dump(expected, include_attributes=False)
     ):
         raise AttestationError("canonical runner lost its fixed logical argv")
+    if (
+        text.count("signal.signal(item, signal.SIG_IGN)") != 4
+        or text.count("ignore_until_unblocked = True") != 4
+    ):
+        raise AttestationError("canonical runner lost its terminal signal disarm")
     functions = {
         node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
     }
@@ -368,18 +288,8 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
     publish_node = functions.get("publish")
     rollback_node = functions.get("rollback")
     main_node = functions.get("main")
-    acquire_node = functions.get("_acquire_lifecycle")
-    activate_node = functions.get("_activate_lifecycle")
-    write_node = functions.get("_write_all")
-    if not all(
-        (run_node, publish_node, rollback_node, main_node, acquire_node, activate_node, write_node)
-    ):
+    if not all((run_node, publish_node, rollback_node, main_node)):
         raise AttestationError("canonical runner lost a fixed lifecycle function")
-    acquire_text = ast.get_source_segment(text, acquire_node) or ""
-    run_text = ast.get_source_segment(text, run_node) or ""
-    rollback_text = ast.get_source_segment(text, rollback_node) or ""
-    read_text = ast.get_source_segment(text, functions.get("_read_stdin")) or ""
-    main_text = ast.get_source_segment(text, main_node) or ""
 
     def named_calls(node: ast.AST, name: str) -> list[ast.Call]:
         return [
@@ -392,37 +302,31 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
             )
         ]
 
-    def blocks_owned(call: ast.Call) -> bool:
+    def blocks_lifecycle(call: ast.Call) -> bool:
         return (
             len(call.args) == 2
             and isinstance(call.args[0], ast.Attribute)
             and call.args[0].attr == "SIG_BLOCK"
-            and isinstance(call.args[1], ast.Attribute)
-            and isinstance(call.args[1].value, ast.Name)
-            and call.args[1].value.id == "controller"
-            and call.args[1].attr == "owned"
+            and isinstance(call.args[1], ast.Name)
+            and call.args[1].id == "LIFECYCLE_SIGNALS"
         )
 
+    early_mask = named_calls(run_node, "pthread_sigmask")
+    validations = named_calls(run_node, "_validate_prior")
+    roots = named_calls(run_node, "mkdtemp")
     if (
-        len(named_calls(main_node, "_acquire_lifecycle")) != 1
-        or len(named_calls(main_node, "_activate_lifecycle")) != 1
-        or len(named_calls(main_node, "_read_stdin")) != 1
-        or len(named_calls(run_node, "_acquire_lifecycle")) != 1
-        or len(named_calls(run_node, "_activate_lifecycle")) != 1
-        or not any(blocks_owned(call) for call in named_calls(run_node, "pthread_sigmask"))
+        not any(blocks_lifecycle(call) for call in early_mask)
+        or not validations
+        or not roots
+        or min(call.lineno for call in early_mask if blocks_lifecycle(call))
+        > min(validations[0].lineno, roots[0].lineno)
     ):
         raise AttestationError("canonical runner lost full-lifecycle signal coverage")
-    if (
-        "old_handlers[item] is not signal.SIG_IGN" not in acquire_text
-        or "if item not in entry_mask" not in acquire_text
-        or "entry_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)" not in acquire_text
-        or run_text.count("controller.merge_pending()") < 8
-        or run_text.count("controller.poll()") < 13
-        or run_text.count("signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)") != 5
-        or not named_calls(rollback_node, "pthread_sigmask")
-        or "owned = self.controller.owned" not in rollback_text
-    ):
-        raise AttestationError("canonical lifecycle ownership or polling changed")
+    for node in (publish_node, rollback_node):
+        if not any(
+            blocks_lifecycle(call) for call in named_calls(node, "pthread_sigmask")
+        ):
+            raise AttestationError("canonical publication lost signal-masked cleanup")
     group_closes = named_calls(run_node, "_close_reserved_group")
     process_disarms = [
         item
@@ -457,38 +361,92 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         or len(named_calls(main_node, "_startup_diagnostic")) != 1
     ):
         raise AttestationError("canonical runner lost isolated startup enforcement")
-    lifecycle_markers = (
-        "process_owned and completion_linearized",
-        "_write_all(sys.stdout.buffer.fileno(), _canonical_json(result), controller)",
-        "signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)",
-        "os._exit(0)",
-        "for item in reversed(lifecycle.installed_handlers)",
-        "if not startup.accepted:",
-        "raise AttestationError(\"production startup rejected\")",
-        "data = _read_stdin(lifecycle.controller)",
-    )
+    startup_assignments = [
+        item
+        for item in main_node.body
+        if isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Name)
+        and item.targets[0].id == "startup"
+        and isinstance(item.value, ast.Call)
+        and isinstance(item.value.func, ast.Name)
+        and item.value.func.id == "_production_startup_evaluation"
+        and not item.value.args
+        and not item.value.keywords
+    ]
+    startup_guards = [
+        item
+        for item in main_node.body
+        if isinstance(item, ast.If)
+        and isinstance(item.test, ast.UnaryOp)
+        and isinstance(item.test.op, ast.Not)
+        and isinstance(item.test.operand, ast.Attribute)
+        and item.test.operand.attr == "accepted"
+        and isinstance(item.test.operand.value, ast.Name)
+        and item.test.operand.value.id == "startup"
+    ]
+    stdin_reads = [
+        item
+        for item in ast.walk(main_node)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "read"
+        and isinstance(item.func.value, ast.Attribute)
+        and item.func.value.attr == "buffer"
+        and isinstance(item.func.value.value, ast.Attribute)
+        and item.func.value.value.attr == "stdin"
+        and isinstance(item.func.value.value.value, ast.Name)
+        and item.func.value.value.value.id == "sys"
+    ]
+    profile_reads = [
+        item
+        for item in main_node.body
+        if isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Name)
+        and item.targets[0].id == "data"
+        and isinstance(item.value, ast.Call)
+        and item.value in stdin_reads
+        and not item.value.keywords
+        and len(item.value.args) == 1
+        and isinstance(item.value.args[0], ast.BinOp)
+        and isinstance(item.value.args[0].op, ast.Add)
+        and isinstance(item.value.args[0].left, ast.Name)
+        and item.value.args[0].left.id == "PROFILE_LIMIT"
+        and isinstance(item.value.args[0].right, ast.Constant)
+        and item.value.args[0].right.value == 1
+    ]
     if (
-        any(text.count(marker) < 1 for marker in lifecycle_markers)
-        or "descriptor = sys.stdin.buffer.fileno()" not in read_text
-        or "min(64 * 1024, PROFILE_LIMIT + 1 - len(data))" not in read_text
-        or "if not startup.accepted:" not in main_text
-        or any(
-            isinstance(item, ast.Call)
-            and isinstance(item.func, ast.Attribute)
-            and item.func.attr == "read"
-            and isinstance(item.func.value, ast.Attribute)
-            and item.func.value.attr == "buffer"
-            and isinstance(item.func.value.value, ast.Attribute)
-            and item.func.value.value.attr == "stdin"
-            for item in ast.walk(tree)
-        )
+        len(startup_assignments) != 1
+        or len(startup_guards) != 1
+        or len(stdin_reads) != 1
+        or len(profile_reads) != 1
+    ):
+        raise AttestationError("canonical runner lost startup guard structure")
+    startup_guard = startup_guards[0]
+    if (
+        len(startup_guard.body) != 2
+        or not isinstance(startup_guard.body[0], ast.Expr)
+        or not isinstance(startup_guard.body[0].value, ast.Call)
+        or not isinstance(startup_guard.body[0].value.func, ast.Attribute)
+        or startup_guard.body[0].value.func.attr != "write"
+        or len(startup_guard.body[0].value.args) != 1
+        or not isinstance(startup_guard.body[0].value.args[0], ast.Call)
+        or not isinstance(startup_guard.body[0].value.args[0].func, ast.Name)
+        or startup_guard.body[0].value.args[0].func.id != "_startup_diagnostic"
+        or len(startup_guard.body[0].value.args[0].args) != 1
+        or not isinstance(startup_guard.body[0].value.args[0].args[0], ast.Name)
+        or startup_guard.body[0].value.args[0].args[0].id != "startup"
+        or not isinstance(startup_guard.body[1], ast.Return)
+        or not isinstance(startup_guard.body[1].value, ast.Constant)
+        or startup_guard.body[1].value.value != 64
         or not (
-            main_text.index("startup = _production_startup_evaluation()")
-            < main_text.index("if not startup.accepted:")
-            < main_text.index("data = _read_stdin(lifecycle.controller)")
+            startup_assignments[0].lineno
+            < startup_guard.lineno
+            < profile_reads[0].lineno
         )
     ):
-        raise AttestationError("canonical completion handoff changed")
+        raise AttestationError("canonical runner startup rejection can fall through")
     startup_requirements = {
         "isolated_ok = type(isolated)" + " is int and isolated == 1": 1,
         "no_site_ok = type(no_site)" + " is int and no_site == 1": 1,
@@ -514,7 +472,7 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         "if tail[2]" + ' not in {"python3", "python" + tail[0]}': 1,
         'if family == "unreviewed"' + " or component_index < 0": 1,
         "if len(failures)" + " >= STARTUP_FAILURE_LIMIT": 1,
-        "diagnostic = " + "_startup_diagnostic(startup)": 1,
+        "sys.stderr.buffer.write(" + "_startup_diagnostic(startup))": 1,
         '"failures": ' + "[dataclasses.asdict(item) for item in evaluation.failures]": 1,
         'return _collection_failure("invalid-path", ' + "**flags)": 1,
         'return _collection_failure("missing", ' + "**flags)": 1,
@@ -601,41 +559,25 @@ def _open_dir(path: str) -> int:
         raise
 
 
-def _hash_fd(
-    descriptor: int, size: int, controller: Optional[SignalController] = None
-) -> str:
+def _hash_fd(descriptor: int, size: int) -> str:
     os.lseek(descriptor, 0, os.SEEK_SET)
     digest = hashlib.sha256()
     remaining = size
     while remaining:
-        if controller is not None:
-            controller.poll()
         block = os.read(descriptor, min(remaining, 1024 * 1024))
-        if controller is not None:
-            controller.poll()
         if not block:
             raise AttestationError("file ended before its attested size")
         digest.update(block)
         remaining -= len(block)
-    if controller is not None:
-        controller.poll()
     if os.read(descriptor, 1) != b"":
         raise AttestationError("file exceeded its attested size")
-    if controller is not None:
-        controller.poll()
     return digest.hexdigest()
 
 
-def _write_all(
-    descriptor: int, data: bytes, controller: Optional[SignalController] = None
-) -> None:
+def _write_all(descriptor: int, data: bytes) -> None:
     remaining = memoryview(data)
     while remaining:
-        if controller is not None:
-            controller.poll()
         written = os.write(descriptor, remaining)
-        if controller is not None:
-            controller.poll()
         if written <= 0:
             raise AttestationError("artifact write failed")
         remaining = remaining[written:]
@@ -657,15 +599,9 @@ def _exact_unlink(parent_fd: int, name: str, inode: int) -> None:
 class Publisher:
     """Owner-private no-overwrite publisher with inode-pinned rollback."""
 
-    def __init__(
-        self,
-        root: Path,
-        calls: RunnerCalls = REAL_CALLS,
-        controller: Optional[SignalController] = None,
-    ) -> None:
+    def __init__(self, root: Path, calls: RunnerCalls = REAL_CALLS) -> None:
         self.root = root
         self.calls = calls
-        self.controller = controller
         self.root_fd = _open_dir(str(root))
         root_stat = os.fstat(self.root_fd)
         if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
@@ -676,13 +612,10 @@ class Publisher:
         os.close(self.root_fd)
 
     def rollback(self) -> None:
-        owned = self.controller.owned if self.controller is not None else LIFECYCLE_SIGNALS
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, owned)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
         try:
             failure: Optional[BaseException] = None
             for name, inode in tuple(self.owned.items()):
-                if self.controller is not None:
-                    self.controller.merge_pending()
                 try:
                     _exact_unlink(self.root_fd, name, inode)
                     self.owned.pop(name, None)
@@ -697,16 +630,12 @@ class Publisher:
             if failure is not None:
                 raise failure
         finally:
-            if self.controller is not None:
-                self.controller.merge_pending()
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
 
     def publish(self, name: str, data: bytes) -> str:
         if not name or "/" in name or name in (".", ".."):
             raise AttestationError("invalid artifact name")
-        blocked: Optional[set[signal.Signals]] = None
-        if self.controller is None:
-            blocked = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
         temporary = f".{name}.{secrets.token_hex(12)}.tmp"
         descriptor = -1
         inode: Optional[int] = None
@@ -719,10 +648,8 @@ class Publisher:
                 dir_fd=self.root_fd,
             )
             os.fchmod(descriptor, 0o600)
-            _write_all(descriptor, data, self.controller)
+            _write_all(descriptor, data)
             self.calls.fsync(descriptor)
-            if self.controller is not None:
-                self.controller.poll()
             staged = os.fstat(descriptor)
             inode = staged.st_ino
             os.close(descriptor)
@@ -750,12 +677,8 @@ class Publisher:
                 raise AttestationError("artifact identity changed")
             self.owned[name] = inode
             self.calls.fsync(self.root_fd)
-            if self.controller is not None:
-                self.controller.poll()
             os.unlink(temporary, dir_fd=self.root_fd)
             self.calls.fsync(self.root_fd)
-            if self.controller is not None:
-                self.controller.poll()
             return hashlib.sha256(data).hexdigest()
         except BaseException:
             if descriptor >= 0:
@@ -776,8 +699,7 @@ class Publisher:
                 if removed:
                     self.calls.fsync(self.root_fd)
             finally:
-                if blocked is not None:
-                    signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+                signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
 
 
 def _read_at(parent_fd: int, name: str, cap: int) -> bytes:
@@ -899,14 +821,8 @@ def _validate_prior(profile: AttestationProfile) -> None:
 
 
 def _open_attested(
-    path: str,
-    identity: FileIdentity,
-    sha256: str,
-    expected_mode: int,
-    controller: Optional[SignalController] = None,
+    path: str, identity: FileIdentity, sha256: str, expected_mode: int
 ) -> tuple[int, int]:
-    if controller is not None:
-        controller.poll()
     parent = _open_dir(os.path.dirname(path))
     leaf = os.path.basename(path)
     descriptor = os.open(leaf, os.O_RDONLY | CLOEXEC | NOFOLLOW, dir_fd=parent)
@@ -918,7 +834,7 @@ def _open_attested(
         or stat.S_IMODE(raw.st_mode) != expected_mode
         or raw.st_nlink != 1
         or observed != identity
-        or _hash_fd(descriptor, identity.size, controller) != sha256
+        or _hash_fd(descriptor, identity.size) != sha256
         or FileIdentity.from_stat(os.fstat(descriptor)) != identity
     ):
         os.close(descriptor)
@@ -933,10 +849,7 @@ def _verify_attested_path(
     held: int,
     identity: FileIdentity,
     sha256: str,
-    controller: Optional[SignalController] = None,
 ) -> FileIdentity:
-    if controller is not None:
-        controller.poll()
     leaf = os.path.basename(path)
     held_identity = FileIdentity.from_stat(os.fstat(held))
     path_identity = FileIdentity.from_stat(
@@ -945,14 +858,14 @@ def _verify_attested_path(
     reopened = os.open(leaf, os.O_RDONLY | CLOEXEC | NOFOLLOW, dir_fd=parent)
     try:
         reopened_identity = FileIdentity.from_stat(os.fstat(reopened))
-        reopened_sha = _hash_fd(reopened, identity.size, controller)
+        reopened_sha = _hash_fd(reopened, identity.size)
     finally:
         os.close(reopened)
     if (
         held_identity != identity
         or path_identity != identity
         or reopened_identity != identity
-        or _hash_fd(held, identity.size, controller) != sha256
+        or _hash_fd(held, identity.size) != sha256
         or reopened_sha != sha256
     ):
         raise AttestationError("attested executable path changed")
@@ -1015,9 +928,7 @@ def _close_reserved_group(
 
 
 def _capture(
-    process: subprocess.Popen[bytes],
-    deadline: float,
-    controller: Optional[SignalController] = None,
+    process: subprocess.Popen[bytes], deadline: float
 ) -> tuple[bytes, bytes]:
     if process.stdout is None or process.stderr is None:
         raise AttestationError("version process did not expose bounded streams")
@@ -1033,18 +944,12 @@ def _capture(
         for descriptor in buffers:
             selector.register(descriptor, selectors.EVENT_READ)
         while selector.get_map():
-            if controller is not None:
-                controller.poll()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise AttestationError("version process timed out")
             for key, _mask in selector.select(min(remaining, 0.05)):
-                if controller is not None:
-                    controller.poll()
                 stream, captured = buffers[key.fd]
                 block = os.read(key.fd, min(64, STREAM_LIMIT + 1 - len(captured)))
-                if controller is not None:
-                    controller.poll()
                 if not block:
                     selector.unregister(key.fd)
                     stream.close()
@@ -1052,8 +957,6 @@ def _capture(
                 captured.extend(block)
                 if len(captured) > STREAM_LIMIT:
                     raise AttestationError("version output exceeded its bound")
-    if controller is not None:
-        controller.poll()
     return bytes(buffers[stdout_descriptor][1]), bytes(buffers[stderr_descriptor][1])
 
 
@@ -1070,24 +973,13 @@ def run_attestation(
     *,
     calls: RunnerCalls = REAL_CALLS,
     module_source: Optional[bytes] = None,
-    lifecycle: Optional[LifecycleState] = None,
-    process_owned: bool = False,
 ) -> dict[str, object]:
-    """Run one observation; only production owns the final process boundary."""
+    """Run one fixed version observation and publish its private binding."""
 
-    if lifecycle is None:
-        lifecycle = _acquire_lifecycle()
-        try:
-            _activate_lifecycle(lifecycle)
-        except BaseException:
-            signal.pthread_sigmask(signal.SIG_BLOCK, lifecycle.controller.owned)
-            lifecycle.controller.merge_pending()
-            for item in reversed(lifecycle.installed_handlers):
-                signal.signal(item, lifecycle.old_handlers[item])
-            lifecycle.controller.merge_pending()
-            signal.pthread_sigmask(signal.SIG_SETMASK, lifecycle.entry_mask)
-            raise
-    controller = lifecycle.controller
+    if not all(hasattr(signal, name) for name in ("pthread_sigmask", "sigpending", "sigwait")):
+        raise AttestationError("required signal primitives are unavailable")
+    entry_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
+    old_handlers = {item: signal.getsignal(item) for item in LIFECYCLE_SIGNALS}
     source_bytes: bytes
     source_contract: dict[str, object]
     root: Optional[Path] = None
@@ -1095,34 +987,26 @@ def run_attestation(
     source_parent = source_fd = snapshot_parent = snapshot_fd = None
     process: Optional[subprocess.Popen[bytes]] = None
     process_active = False
-    completion_linearized = False
-    original_error: Optional[BaseException] = None
-    result: Optional[dict[str, object]] = None
+    disarmed = False
+    ignore_until_unblocked = False
+
+    def interrupted(signum: int, _frame: object) -> None:
+        raise AttestationInterrupted(signum)
+
+    for item in LIFECYCLE_SIGNALS:
+        signal.signal(item, interrupted)
+    signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
     try:
-        controller.poll()
         source_bytes = _module_source() if module_source is None else module_source
-        controller.poll()
         source_contract = validate_source_contract(source_bytes)
-        controller.poll()
         _validate_prior(profile)
-        controller.poll()
         temp_parent_fd = _open_dir(profile.temp_parent)
         os.close(temp_parent_fd)
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
-        try:
-            controller.merge_pending()
-            controller.poll()
-            root = Path(tempfile.mkdtemp(prefix="agy-version-recovery.", dir=profile.temp_parent))
-        finally:
-            controller.merge_pending()
-            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
-        controller.poll()
+        root = Path(tempfile.mkdtemp(prefix="agy-version-recovery.", dir=profile.temp_parent))
         os.chmod(root, 0o700)
-        publisher = Publisher(root, calls, controller)
+        publisher = Publisher(root, calls)
         for name in ("cwd", "home", "tmp", "xdg-config", "xdg-cache", "xdg-state"):
-            controller.poll()
             (root / name).mkdir(mode=0o700)
-        controller.poll()
         runner_sha = publisher.publish("runner.py", source_bytes)
         publisher.publish("runner.py.sha256", (runner_sha + "\n").encode("ascii"))
         if runner_sha != source_contract["sha256"]:
@@ -1132,14 +1016,12 @@ def run_attestation(
             profile.source_identity,
             profile.source_sha256,
             0o755,
-            controller,
         )
         snapshot_parent, snapshot_fd = _open_attested(
             profile.snapshot_path,
             profile.snapshot_identity,
             profile.source_sha256,
             0o500,
-            controller,
         )
         argv = [profile.source_path, "--version"]
         environment = {
@@ -1154,10 +1036,8 @@ def run_attestation(
             "TERM": "dumb",
             "PATH": "/usr/bin:/bin",
         }
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
         try:
-            controller.merge_pending()
-            controller.poll()
             process = calls.popen(
                 argv,
                 executable=profile.snapshot_path,
@@ -1168,25 +1048,18 @@ def run_attestation(
                 env=environment,
                 start_new_session=True,
             )
-            if type(process.pid) is not int or process.pid <= 1 or process.pid == os.getpgrp():
-                raise AttestationError("version process group is unsafe")
             process_active = True
         finally:
-            controller.merge_pending()
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
-        controller.poll()
         started = time.monotonic()
         deadline = started + WALL_SECONDS
-        stdout, stderr = _capture(process, deadline, controller)
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
+        stdout, stderr = _capture(process, deadline)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
         try:
-            controller.merge_pending()
             exit_code = _close_reserved_group(process, calls)
             process_active = False
         finally:
-            controller.merge_pending()
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
-        controller.poll()
         if exit_code != 0 or stdout != EXPECTED_STDOUT or stderr != b"":
             raise AttestationError("version result did not match the fixed contract")
         source_post = _verify_attested_path(
@@ -1195,7 +1068,6 @@ def run_attestation(
             source_fd,
             profile.source_identity,
             profile.source_sha256,
-            controller,
         )
         snapshot_post = _verify_attested_path(
             snapshot_parent,
@@ -1203,7 +1075,6 @@ def run_attestation(
             snapshot_fd,
             profile.snapshot_identity,
             profile.source_sha256,
-            controller,
         )
         stdout_sha = publisher.publish("version.stdout", stdout)
         stderr_sha = publisher.publish("version.stderr", stderr)
@@ -1265,11 +1136,25 @@ def run_attestation(
         }
         binding_bytes = _canonical_json(binding)
         binding_sha = publisher.publish("version.binding.json", binding_bytes)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
         publisher.publish(
             "version.binding.sha256", (binding_sha + "\n").encode("ascii")
         )
-        controller.poll()
-        result = {
+        pending = set(signal.sigpending()).intersection(LIFECYCLE_SIGNALS)
+        if pending:
+            first = signal.sigwait(pending)
+            publisher.rollback()
+            raise AttestationInterrupted(first)
+        for item in LIFECYCLE_SIGNALS:
+            signal.signal(item, signal.SIG_IGN)
+        pending = set(signal.sigpending()).intersection(LIFECYCLE_SIGNALS)
+        if pending:
+            first = signal.sigwait(pending)
+            publisher.rollback()
+            raise AttestationInterrupted(first)
+        disarmed = True
+        ignore_until_unblocked = True
+        return {
             "artifact_root": str(root),
             "binding_sha256": binding_sha,
             "call_count": 1,
@@ -1280,81 +1165,57 @@ def run_attestation(
             "stderr_sha256": hashlib.sha256(b"").hexdigest(),
             "stdout_sha256": hashlib.sha256(EXPECTED_STDOUT).hexdigest(),
         }
-        if process_owned:
-            sys.stdout.buffer.flush()
-            _write_all(sys.stdout.buffer.fileno(), _canonical_json(result), controller)
-            sys.stdout.buffer.flush()
-        signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
-        controller.merge_pending()
-        controller.poll()
-        completion_linearized = True
-    except BaseException as exc:
-        original_error = exc
-    finally:
-        signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
-        if process_owned and completion_linearized:
-            os._exit(0)
+    except AttestationInterrupted as exc:
+        signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
+        if process is not None and process_active:
+            _terminate_group(process, calls)
+        if publisher is not None:
+            publisher.rollback()
+        for item in LIFECYCLE_SIGNALS:
+            signal.signal(item, signal.SIG_IGN)
+        ignore_until_unblocked = True
+        raise SystemExit(128 + exc.signum)
+    except BaseException:
+        signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
         cleanup_failure: Optional[BaseException] = None
-        if not completion_linearized:
-            controller.merge_pending()
-            if process is not None and process_active:
-                try:
-                    _terminate_group(process, calls)
-                    process_active = False
-                except BaseException as exc:
-                    cleanup_failure = exc
-            if publisher is not None:
-                try:
-                    publisher.rollback()
-                except BaseException as exc:
-                    if cleanup_failure is None:
-                        cleanup_failure = exc
-            controller.merge_pending()
-        for descriptor in (snapshot_fd, snapshot_parent, source_fd, source_parent):
-            if descriptor is not None:
-                try:
-                    os.close(descriptor)
-                except OSError:
-                    pass
+        if process is not None and process_active:
+            try:
+                _terminate_group(process, calls)
+            except BaseException as exc:
+                cleanup_failure = exc
         if publisher is not None:
             try:
-                publisher.close()
+                publisher.rollback()
             except BaseException as exc:
                 if cleanup_failure is None:
                     cleanup_failure = exc
-        if process_owned:
-            controller.merge_pending()
-            selected = controller.choose()
-            _atomic_exit(
-                128 + selected if selected is not None else 2,
-                sys.stderr.buffer.fileno(),
-                b"version attestation runner: interrupted\n"
-                if selected is not None
-                else b"version attestation runner: rejected\n",
-            )
-        for item in reversed(lifecycle.installed_handlers):
-            try:
-                signal.signal(item, lifecycle.old_handlers[item])
-            except BaseException as exc:
-                if cleanup_failure is None:
-                    cleanup_failure = exc
-        if not completion_linearized:
-            controller.merge_pending()
-        try:
-            signal.pthread_sigmask(signal.SIG_SETMASK, lifecycle.entry_mask)
-        except BaseException as exc:
-            if cleanup_failure is None:
-                cleanup_failure = exc
-        if original_error is None and cleanup_failure is not None:
-            original_error = cleanup_failure
-    selected = controller.choose()
-    if selected is not None and not completion_linearized:
-        raise AttestationInterrupted(selected)
-    if original_error is not None:
-        raise original_error
-    if result is None:
-        raise AttestationError("version attestation did not produce a result")
-    return result
+        for item in LIFECYCLE_SIGNALS:
+            signal.signal(item, signal.SIG_IGN)
+        ignore_until_unblocked = True
+        if cleanup_failure is not None:
+            raise cleanup_failure
+        raise
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
+        for descriptor in (snapshot_fd, snapshot_parent, source_fd, source_parent):
+            if descriptor is not None:
+                os.close(descriptor)
+        if publisher is not None:
+            publisher.close()
+        if ignore_until_unblocked:
+            signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
+            for item, handler in old_handlers.items():
+                try:
+                    signal.signal(item, handler)
+                except BaseException:
+                    pass
+        elif not disarmed:
+            for item, handler in old_handlers.items():
+                try:
+                    signal.signal(item, handler)
+                except BaseException:
+                    pass
+            signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
 
 
 FAKE_EXECUTABLE = b"#!/usr/bin/python3\nimport sys\nsys.stdout.write('1.1.11\\n')\n"
@@ -1817,19 +1678,6 @@ def _startup_diagnostic(evaluation: InterpreterTrustEvaluation) -> bytes:
     return json.dumps(fallback, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
 
 
-def _read_stdin(controller: SignalController) -> bytes:
-    data = bytearray()
-    descriptor = sys.stdin.buffer.fileno()
-    while len(data) <= PROFILE_LIMIT:
-        controller.poll()
-        block = os.read(descriptor, min(64 * 1024, PROFILE_LIMIT + 1 - len(data)))
-        controller.poll()
-        if not block:
-            break
-        data.extend(block)
-    return bytes(data)
-
-
 def main(argv: Sequence[str]) -> int:
     if list(argv) == ["--self-test"]:
         try:
@@ -1842,41 +1690,19 @@ def main(argv: Sequence[str]) -> int:
     if list(argv) != ["--attest-version"]:
         print("version attestation runner: invalid invocation", file=sys.stderr)
         return 64
+    startup = _production_startup_evaluation()
+    if not startup.accepted:
+        sys.stderr.buffer.write(_startup_diagnostic(startup))
+        return 64
+    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)
     try:
-        lifecycle = _acquire_lifecycle()
-    except BaseException:
-        _atomic_exit(2, sys.stderr.buffer.fileno(), b"version attestation runner: rejected\n")
-    diagnostic = b"version attestation runner: rejected\n"
-    usage = False
-    try:
-        _activate_lifecycle(lifecycle)
-        startup = _production_startup_evaluation()
-        lifecycle.controller.poll()
-        if not startup.accepted:
-            diagnostic = _startup_diagnostic(startup)
-            usage = True
-            raise AttestationError("production startup rejected")
-        data = _read_stdin(lifecycle.controller)
         profile = AttestationProfile.from_bytes(data)
-        lifecycle.controller.poll()
-    except BaseException:
-        signal.pthread_sigmask(signal.SIG_BLOCK, lifecycle.controller.owned)
-        lifecycle.controller.merge_pending()
-        selected = lifecycle.controller.choose()
-        _atomic_exit(
-            128 + selected if selected is not None else (64 if usage else 2),
-            sys.stderr.buffer.fileno(),
-            b"version attestation runner: interrupted\n"
-            if selected is not None
-            else diagnostic,
-        )
-    run_attestation(
-        profile,
-        lifecycle=lifecycle,
-        module_source=_module_source(),
-        process_owned=True,
-    )
-    _atomic_exit(2, sys.stderr.buffer.fileno(), b"version attestation runner: rejected\n")
+        result = run_attestation(profile)
+    except (AttestationError, OSError, subprocess.SubprocessError):
+        print("version attestation runner: rejected", file=sys.stderr)
+        return 2
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
 
 
 if __name__ == "__main__":

@@ -33,8 +33,8 @@ TERM_GRACE_SECONDS = 0.20
 KILL_GRACE_SECONDS = 0.75
 HANDSHAKE_SECONDS = 1.50
 HANDSHAKE_LIMIT = 64
-CANONICAL_RUNNER_BYTES = 62988
-CANONICAL_RUNNER_SHA256 = "e6bd55d2d0ab6c542745fd1bb1af4f6f4b7f163abb6f8c78597a24475d501d28"
+CANONICAL_RUNNER_BYTES = 69242
+CANONICAL_RUNNER_SHA256 = "0e2632c2de1dc2651693dce942429b3219d551eb5a979aa2d8d273ee0aa95d6b"
 
 
 class HarnessError(ValueError):
@@ -502,25 +502,57 @@ def atomic_completion(
     disarm: Callable[[], None],
     *,
     policy: MutationPolicy = SECURE_POLICY,
+    test_handoff: Optional[Callable[[], None]] = None,
 ) -> None:
-    """Linearize final publication while lifecycle signals remain blocked."""
+    """Linearize completion; only an explicit test handoff may return."""
 
     _require_signal_primitives()
     previous_mask = None
+    owned = LIFECYCLE_SIGNALS
     if policy.block_completion_signals:
         previous_mask = signal.pthread_sigmask(
             signal.SIG_BLOCK, LIFECYCLE_SIGNALS
         )
+        handlers = {item: signal.getsignal(item) for item in LIFECYCLE_SIGNALS}
+        owned = tuple(
+            item
+            for item in LIFECYCLE_SIGNALS
+            if item not in previous_mask and handlers[item] is not signal.SIG_IGN
+        )
+        signal.pthread_sigmask(signal.SIG_SETMASK, set(previous_mask) | set(owned))
     rollback_started = False
+
+    def pending_signal() -> Optional[int]:
+        observed = set()
+        while True:
+            pending = set(signal.sigpending()).intersection(owned)
+            chosen = next((item for item in owned if item in pending), None)
+            if chosen is None:
+                break
+            observed.add(signal.sigwait({chosen}))
+        return next((item for item in owned if item in observed), None)
+
     try:
         marker()
-        pending = set(signal.sigpending()).intersection(LIFECYCLE_SIGNALS)
-        if pending:
-            first = signal.sigwait(pending)
+        first = pending_signal()
+        if first is not None:
             rollback_started = True
             rollback()
             raise HarnessInterrupted(first)
         disarm()
+        first = pending_signal()
+        if first is not None:
+            rollback_started = True
+            rollback()
+            raise HarnessInterrupted(first)
+        if test_handoff is None:
+            os._exit(0)
+        test_handoff()
+        first = pending_signal()
+        if first is not None:
+            rollback_started = True
+            rollback()
+            raise HarnessInterrupted(first)
     except BaseException:
         if policy.rollback_completion_exceptions and not rollback_started:
             rollback_started = True

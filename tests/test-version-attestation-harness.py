@@ -11,7 +11,9 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -204,6 +206,143 @@ def completion_failure_rolls_back_and_restores_mask(failure_point: str) -> bool:
 
 check("marker failure rolls back and restores the caller signal mask", lambda: completion_failure_rolls_back_and_restores_mask("marker"))
 check("disarm failure rolls back and restores the caller signal mask", lambda: completion_failure_rolls_back_and_restores_mask("disarm"))
+
+
+def process_owned_completion_does_not_return() -> bool:
+    case = MODULE._private_case(TMP, "process-owned-completion")
+    marker = case / "version.binding.sha256"
+    late = case / "late.return"
+    child = (
+        "import importlib.util,pathlib,sys;"
+        f"p={str(MODULE_PATH)!r};"
+        "s=importlib.util.spec_from_file_location('harness_completion_child',p);"
+        "m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);"
+        f"marker=pathlib.Path({str(marker)!r});late=pathlib.Path({str(late)!r});"
+        "m.atomic_completion(lambda:marker.write_bytes(b'digest\\n'),"
+        "lambda:marker.unlink(),lambda:None);"
+        "late.write_bytes(b'returned\\n')"
+    )
+    completed = subprocess.run(
+        ["/usr/bin/python3", "-I", "-S", "-B", "-c", child],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    return (
+        completed.returncode == 0
+        and completed.stdout == b""
+        and completed.stderr == b""
+        and marker.read_bytes() == b"digest\n"
+        and not late.exists()
+    )
+
+
+check("process-owned completion exits without Python return or late side effect", process_owned_completion_does_not_return)
+
+
+def handoff_exception_case(policy: object, marker_should_remain: bool) -> bool:
+    case = MODULE._private_case(TMP, f"handoff-exception-{marker_should_remain}")
+    publisher = MODULE.DurablePublisher(case)
+    marker = case / "version.binding.sha256"
+    before = MODULE.signal.pthread_sigmask(MODULE.signal.SIG_BLOCK, [])
+    caught = False
+    try:
+        MODULE.atomic_completion(
+            lambda: publisher.publish(marker.name, b"digest\n"),
+            publisher.rollback,
+            lambda: None,
+            policy=policy,
+            test_handoff=lambda: (_ for _ in ()).throw(
+                MODULE.HarnessError("synthetic handoff failure")
+            ),
+        )
+    except MODULE.HarnessError:
+        caught = True
+    after = MODULE.signal.pthread_sigmask(MODULE.signal.SIG_BLOCK, [])
+    remained = marker.exists()
+    if remained:
+        publisher.rollback()
+    publisher.close()
+    return caught and after == before and remained is marker_should_remain
+
+
+check(
+    "explicit handoff exception rolls back and restores the caller mask",
+    lambda: handoff_exception_case(MODULE.SECURE_POLICY, False),
+)
+check(
+    "rollback-omission mutation leaks the handoff-exception marker",
+    lambda: handoff_exception_case(
+        dataclasses.replace(MODULE.SECURE_POLICY, rollback_completion_exceptions=False),
+        True,
+    ),
+)
+
+
+def handoff_pending_priority() -> bool:
+    case = MODULE._private_case(TMP, "handoff-pending-priority")
+    publisher = MODULE.DurablePublisher(case)
+    marker = case / "version.binding.sha256"
+    before = MODULE.signal.pthread_sigmask(MODULE.signal.SIG_BLOCK, [])
+
+    def reverse_order_handoff() -> None:
+        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), signal.SIGHUP)
+
+    try:
+        MODULE.atomic_completion(
+            lambda: publisher.publish(marker.name, b"digest\n"),
+            publisher.rollback,
+            lambda: None,
+            test_handoff=reverse_order_handoff,
+        )
+    except MODULE.HarnessInterrupted as exc:
+        after = MODULE.signal.pthread_sigmask(MODULE.signal.SIG_BLOCK, [])
+        absent = not marker.exists()
+        no_owned_pending = not set(MODULE.signal.sigpending()).intersection(
+            MODULE.LIFECYCLE_SIGNALS
+        )
+        publisher.close()
+        return (
+            exc.signum == signal.SIGHUP
+            and after == before
+            and absent
+            and no_owned_pending
+        )
+    publisher.close()
+    return False
+
+
+check("explicit handoff consumes accumulated signals by fixed HUP priority", handoff_pending_priority)
+
+
+def caller_blocked_pending_signal_is_not_consumed() -> bool:
+    case = MODULE._private_case(TMP, "caller-blocked-pending")
+    publisher = MODULE.DurablePublisher(case)
+    marker = case / "version.binding.sha256"
+    entry = signal.pthread_sigmask(signal.SIG_BLOCK, (signal.SIGTERM,))
+    os.kill(os.getpid(), signal.SIGTERM)
+    try:
+        MODULE.atomic_completion(
+            lambda: publisher.publish(marker.name, b"digest\n"),
+            publisher.rollback,
+            lambda: None,
+            test_handoff=lambda: None,
+        )
+        return (
+            marker.exists()
+            and signal.SIGTERM in signal.sigpending()
+            and signal.SIGTERM in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+        )
+    finally:
+        if signal.SIGTERM in signal.sigpending():
+            signal.sigwait({signal.SIGTERM})
+        signal.pthread_sigmask(signal.SIG_SETMASK, entry)
+        publisher.rollback()
+        publisher.close()
+
+
+check("explicit handoff leaves caller-blocked pending signals to the caller", caller_blocked_pending_signal_is_not_consumed)
 
 completion_failure_root = MODULE._private_case(TMP, "completion-failure-cases")
 completion_failure_cases = MODULE.run_completion_failure_cases(completion_failure_root)

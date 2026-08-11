@@ -66,7 +66,7 @@ VERSION_ROOT_FILES = frozenset(
     }
 )
 OUTPUT_BASENAME = "models.capture.profile.json"
-MODULE_AST_SHA256 = "08fb914a7d33cc46979e23a7741b7686345f719046d6a1325decde730ca289b0"
+MODULE_AST_SHA256 = "798fd1b42d4b45e0e0687f25e8fbaaa19f412e4975e50f4ae7ecfe22e9e58d1b"
 LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = os.O_NOFOLLOW
 CLOEXEC = os.O_CLOEXEC
@@ -90,11 +90,14 @@ ALLOWED_IMPORTED_CALLS = frozenset(
         ("os", "path", "abspath"), ("os", "path", "commonpath"),
         ("os", "path", "dirname"), ("os", "path", "normpath"),
         ("os", "path", "split"), ("os", "read"), ("os", "stat"),
-        ("os", "unlink"), ("os", "urandom"), ("os", "write"),
+        ("os", "unlink"), ("os", "urandom"), ("os", "write"), ("os", "_exit"),
         ("signal", "getsignal"), ("signal", "pthread_sigmask"),
         ("signal", "signal"), ("signal", "sigpending"), ("signal", "sigwait"),
         ("stat", "S_IMODE"), ("stat", "S_ISDIR"), ("stat", "S_ISREG"),
-        ("sys", "stdin", "buffer", "read"),
+        ("sys", "stdin", "buffer", "fileno"),
+        ("sys", "stdout", "buffer", "fileno"),
+        ("sys", "stdout", "buffer", "flush"),
+        ("sys", "stderr", "buffer", "fileno"),
     }
 )
 FORBIDDEN_SYMBOL_PREFIXES = (
@@ -120,7 +123,7 @@ PRODUCTION_HELPER_NAMES = frozenset(
         "_hash_descriptor", "_inside", "_open_directory", "_open_regular", "_owns_inode",
         "_profile_from_request", "_publish_profile", "_read_at", "_reject_overlap",
         "_remove_owned", "_require_absolute", "_strict_json", "_validate_version_evidence",
-        "_verify_regular",
+        "_verify_regular", "_poll",
     }
 )
 REPOSITORY_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -128,16 +131,117 @@ ACTIVE_OUTPUT_PATH: Optional[str] = None
 ACTIVE_OUTPUT_IDENTITY: Optional[FileIdentity] = None
 ACTIVE_FIRST_SIGNAL: Optional[int] = None
 ACTIVE_SIGNAL_MODE = False
+ACTIVE_CONTROLLER = None
 
 
 class ModelsCaptureProfileError(ValueError):
     """The supplied maintenance authority is invalid or changed."""
 
 
-class ModelsCaptureProfileInterrupted(BaseException):
+class ModelsCaptureProfileInterrupted(SystemExit):
     def __init__(self, signum: int):
-        super().__init__(signum)
+        super().__init__(128 + signum)
         self.signum = signum
+
+
+class SignalController:
+    def __init__(self, owned: Sequence[signal.Signals]) -> None:
+        self.owned = tuple(owned)
+        self.observed: set[int] = set()
+        self.selected: Optional[int] = None
+
+    def latch(self, signum: int, _frame: object = None) -> None:
+        if signum in self.owned:
+            self.observed.add(signum)
+
+    def merge_pending(self) -> None:
+        while True:
+            pending = set(signal.sigpending()).intersection(self.owned)
+            chosen = next((item for item in self.owned if item in pending), None)
+            if chosen is None:
+                return
+            self.latch(signal.sigwait({chosen}))
+
+    def choose(self) -> Optional[int]:
+        if self.selected is None:
+            self.selected = next(
+                (item for item in self.owned if item in self.observed), None
+            )
+        return self.selected
+
+    def poll(self) -> None:
+        chosen = self.choose()
+        if chosen is not None:
+            raise ModelsCaptureProfileInterrupted(chosen)
+
+
+@dataclass
+class LifecycleState:
+    controller: SignalController
+    entry_mask: set[signal.Signals]
+    old_handlers: dict[signal.Signals, object]
+    installed_handlers: list[signal.Signals]
+
+
+def _acquire_lifecycle() -> LifecycleState:
+    if not all(
+        hasattr(signal, name) for name in ("pthread_sigmask", "sigpending", "sigwait")
+    ):
+        raise ModelsCaptureProfileError("required signal primitives are unavailable")
+    entry_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
+    old_handlers = {item: signal.getsignal(item) for item in LIFECYCLE_SIGNALS}
+    owned = tuple(
+        item
+        for item in LIFECYCLE_SIGNALS
+        if item not in entry_mask and old_handlers[item] is not signal.SIG_IGN
+    )
+    controller = SignalController(owned)
+    installed: list[signal.Signals] = []
+    try:
+        for item in owned:
+            signal.signal(item, controller.latch)
+            installed.append(item)
+        controller.merge_pending()
+        return LifecycleState(controller, entry_mask, old_handlers, installed)
+    except BaseException:
+        for item in reversed(installed):
+            signal.signal(item, old_handlers[item])
+        signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
+        raise
+
+
+def _activate_lifecycle(state: LifecycleState) -> None:
+    signal.pthread_sigmask(signal.SIG_SETMASK, state.entry_mask)
+    state.controller.poll()
+
+
+def _poll() -> None:
+    if ACTIVE_CONTROLLER is not None:
+        ACTIVE_CONTROLLER.poll()
+
+
+def _write_all(descriptor: int, data: bytes, controller: SignalController) -> None:
+    remaining = memoryview(data)
+    while remaining:
+        controller.poll()
+        written = os.write(descriptor, remaining)
+        controller.poll()
+        if written <= 0:
+            raise ModelsCaptureProfileError("profile result write failed")
+        remaining = remaining[written:]
+
+
+def _atomic_exit(code: int, descriptor: int, message: bytes) -> None:
+    try:
+        remaining = memoryview(message)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                break
+            remaining = remaining[written:]
+    except OSError:
+        pass
+    os._exit(code)
 
 
 def _strict_json(data: bytes) -> object:
@@ -383,13 +487,17 @@ def _hash_descriptor(descriptor: int, size: int) -> str:
     digest = hashlib.sha256()
     remaining = size
     while remaining:
+        _poll()
         block = os.read(descriptor, min(65_536, remaining))
+        _poll()
         if not block:
             raise ModelsCaptureProfileError("attested executable truncated")
         digest.update(block)
         remaining -= len(block)
+    _poll()
     if os.read(descriptor, 1):
         raise ModelsCaptureProfileError("attested executable grew")
+    _poll()
     os.lseek(descriptor, 0, os.SEEK_SET)
     return digest.hexdigest()
 
@@ -599,7 +707,9 @@ def _publish_profile(output_path: str, data: bytes) -> str:
     except FileNotFoundError:
         pass
     try:
+        _poll()
         for _index in range(32):
+            _poll()
             candidate = ".models.capture.profile." + os.urandom(16).hex() + ".tmp"
             try:
                 descriptor = os.open(
@@ -625,11 +735,14 @@ def _publish_profile(output_path: str, data: bytes) -> str:
         try:
             written = 0
             while written < len(data):
+                _poll()
                 count = os.write(descriptor, data[written:])
+                _poll()
                 if count <= 0:
                     raise ModelsCaptureProfileError("private publication write failed")
                 written += count
             os.fsync(descriptor)
+            _poll()
             temporary_identity = FileIdentity.from_stat(os.fstat(descriptor))
             if (
                 temporary_identity.uid != os.getuid()
@@ -660,10 +773,12 @@ def _publish_profile(output_path: str, data: bytes) -> str:
         ):
             raise ModelsCaptureProfileError("private publication link changed")
         os.fsync(parent)
+        _poll()
         if not _remove_owned(parent, temporary_name, temporary_identity):
             raise ModelsCaptureProfileError("private publication temporary changed")
         temporary_name = None
         os.fsync(parent)
+        _poll()
         observed_final_identity = FileIdentity.from_stat(
             os.stat(final_name, dir_fd=parent, follow_symlinks=False)
         )
@@ -904,11 +1019,19 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
     return {"byte_count": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 
 
-def _read_stdin() -> bytes:
-    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)
+def _read_stdin(controller: SignalController) -> bytes:
+    descriptor = sys.stdin.buffer.fileno()
+    data = bytearray()
+    while len(data) <= PROFILE_LIMIT:
+        controller.poll()
+        block = os.read(descriptor, min(64 * 1024, PROFILE_LIMIT + 1 - len(data)))
+        controller.poll()
+        if not block:
+            break
+        data.extend(block)
     if len(data) > PROFILE_LIMIT:
         raise ModelsCaptureProfileError("request is oversized")
-    return data
+    return bytes(data)
 
 
 def _module_bytes() -> bytes:
@@ -932,61 +1055,58 @@ def _module_bytes() -> bytes:
 
 
 def main(argv: Sequence[str]) -> int:
-    global ACTIVE_FIRST_SIGNAL, ACTIVE_OUTPUT_IDENTITY, ACTIVE_OUTPUT_PATH, ACTIVE_SIGNAL_MODE
+    global ACTIVE_CONTROLLER, ACTIVE_FIRST_SIGNAL, ACTIVE_OUTPUT_IDENTITY, ACTIVE_OUTPUT_PATH, ACTIVE_SIGNAL_MODE
     if list(argv) not in (["--prepare"], ["--validate"]):
         print("models capture profile: invalid invocation", file=sys.stderr)
         return 64
-    old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
-    old_handlers = {item: signal.getsignal(item) for item in LIFECYCLE_SIGNALS}
+    try:
+        lifecycle = _acquire_lifecycle()
+    except BaseException:
+        _atomic_exit(2, sys.stderr.buffer.fileno(), b"models capture profile: rejected\n")
     ACTIVE_FIRST_SIGNAL = None
     ACTIVE_OUTPUT_IDENTITY = None
     ACTIVE_OUTPUT_PATH = None
     ACTIVE_SIGNAL_MODE = True
-
-    def interrupted(signum: int, _frame: object) -> None:
-        global ACTIVE_FIRST_SIGNAL
-        if ACTIVE_FIRST_SIGNAL is None:
-            ACTIVE_FIRST_SIGNAL = signum
-        raise ModelsCaptureProfileInterrupted(ACTIVE_FIRST_SIGNAL)
-
-    for item in LIFECYCLE_SIGNALS:
-        signal.signal(item, interrupted)
-    signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
+    ACTIVE_CONTROLLER = lifecycle.controller
     try:
+        _activate_lifecycle(lifecycle)
         source = _module_bytes()
+        lifecycle.controller.poll()
         validate_source_contract(source)
-        result = prepare(_read_stdin()) if argv[0] == "--prepare" else validate(_read_stdin())
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
-        pending = set(signal.sigpending()).intersection(LIFECYCLE_SIGNALS)
-        if pending:
-            first = ACTIVE_FIRST_SIGNAL if ACTIVE_FIRST_SIGNAL is not None else signal.sigwait(pending)
-            ACTIVE_FIRST_SIGNAL = first
-            _rollback_profile_path(ACTIVE_OUTPUT_PATH, ACTIVE_OUTPUT_IDENTITY)
-            raise ModelsCaptureProfileInterrupted(first)
-        print(json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
-        return 0
-    except ModelsCaptureProfileInterrupted as exc:
-        signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
-        first = ACTIVE_FIRST_SIGNAL if ACTIVE_FIRST_SIGNAL is not None else exc.signum
-        _rollback_profile_path(ACTIVE_OUTPUT_PATH, ACTIVE_OUTPUT_IDENTITY)
-        return 128 + first
+        lifecycle.controller.poll()
+        request = _read_stdin(lifecycle.controller)
+        result = prepare(request) if argv[0] == "--prepare" else validate(request)
+        lifecycle.controller.poll()
+        encoded = _canonical_json(result)
+        sys.stdout.buffer.flush()
+        _write_all(sys.stdout.buffer.fileno(), encoded, lifecycle.controller)
+        sys.stdout.buffer.flush()
+        signal.pthread_sigmask(signal.SIG_BLOCK, lifecycle.controller.owned)
+        lifecycle.controller.merge_pending()
+        lifecycle.controller.poll()
+        os._exit(0)
     except BaseException:
-        print("models capture profile: rejected", file=sys.stderr)
-        return 2
-    finally:
-        signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
-        for item in LIFECYCLE_SIGNALS:
-            signal.signal(item, signal.SIG_IGN)
-        pending = set(signal.sigpending()).intersection(LIFECYCLE_SIGNALS)
-        if pending:
-            signal.sigwait(pending)
-        for item, handler in old_handlers.items():
-            signal.signal(item, handler)
+        signal.pthread_sigmask(signal.SIG_BLOCK, lifecycle.controller.owned)
+        lifecycle.controller.merge_pending()
+        cleanup_failed = False
+        try:
+            _rollback_profile_path(ACTIVE_OUTPUT_PATH, ACTIVE_OUTPUT_IDENTITY)
+        except BaseException:
+            cleanup_failed = True
+        lifecycle.controller.merge_pending()
+        selected = lifecycle.controller.choose()
         ACTIVE_SIGNAL_MODE = False
+        ACTIVE_CONTROLLER = None
         ACTIVE_OUTPUT_IDENTITY = None
         ACTIVE_OUTPUT_PATH = None
         ACTIVE_FIRST_SIGNAL = None
-        signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
+        _atomic_exit(
+            128 + selected if selected is not None else 2,
+            sys.stderr.buffer.fileno(),
+            b"models capture profile: interrupted\n"
+            if selected is not None
+            else b"models capture profile: rejected\n",
+        )
 
 
 if __name__ == "__main__":
