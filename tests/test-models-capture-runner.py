@@ -504,6 +504,78 @@ def account_overlap() -> bool:
 check("account HOME cannot overlap capture evidence authority", account_overlap)
 
 
+def account_executable_overlap(kind: str, relation: str) -> bool:
+    root, profile, _base = fixture("account-executable-" + kind + "-" + relation)
+    try:
+        if relation == "under":
+            path = Path(profile.account_home) / ("agy.source" if kind == "source" else "agy.snapshot")
+            path.write_bytes(b"synthetic\n")
+            path.chmod(0o755 if kind == "source" else 0o500)
+        elif relation == "equal":
+            path = Path(profile.account_home)
+        elif relation == "ancestor":
+            path = Path(profile.account_home).parent
+        else:
+            raise AssertionError(relation)
+        candidate = dataclasses.replace(
+            profile,
+            source_path=str(path) if kind == "source" else profile.source_path,
+            snapshot_path=str(path) if kind == "snapshot" else profile.snapshot_path,
+        )
+        return rejects(lambda: MODULE._validate_account_policy(candidate))
+    finally:
+        cleanup(root)
+
+
+for executable_kind in ("source", "snapshot"):
+    for containment in ("under", "equal", "ancestor"):
+        check(
+            "production consumer rejects " + executable_kind + " " + containment + " account HOME",
+            lambda executable_kind=executable_kind, containment=containment: account_executable_overlap(
+                executable_kind, containment
+            ),
+        )
+
+
+guard = (
+    b"    if any(\n"
+    b"        os.path.commonpath((path, profile.account_home)) in {path, profile.account_home}\n"
+    b"        for path in (base.source_path, base.snapshot_path)\n"
+    b"    ):\n"
+    b"        raise ModelsCaptureError(\"attested executable overlaps account HOME\")\n"
+)
+check(
+    "source authority rejects removal of the independent executable-account guard",
+    lambda: rejects(lambda: MODULE.validate_source_contract(repin_module_ast(mutate(guard, b"")))),
+)
+check(
+    "source authority rejects weakening account-contains-executable direction",
+    lambda: rejects(
+        lambda: MODULE.validate_source_contract(
+            repin_module_ast(
+                mutate(
+                    b"os.path.commonpath((path, profile.account_home)) in {path, profile.account_home}",
+                    b"os.path.commonpath((path, profile.account_home)) == path",
+                )
+            )
+        )
+    ),
+)
+check(
+    "source authority rejects weakening executable-contains-account direction",
+    lambda: rejects(
+        lambda: MODULE.validate_source_contract(
+            repin_module_ast(
+                mutate(
+                    b"os.path.commonpath((path, profile.account_home)) in {path, profile.account_home}",
+                    b"os.path.commonpath((path, profile.account_home)) == profile.account_home",
+                )
+            )
+        )
+    ),
+)
+
+
 def writable_component_rejects() -> bool:
     root, profile, _base = fixture("writable-component")
     root.chmod(0o720)

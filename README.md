@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The nineteen offline suites need no agy process, network access, API key, or GitHub login.
+The twenty offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -792,6 +792,44 @@ credentials or Python startup state. If `agy models` needs a logged-in account, 
 runner rejects and publishes no accepted completion marker; that expected rejection
 cannot advance the active `1.1.10` matrix.
 
+The separate repository-only `scripts/version_bootstrap_runner.py` consumes one
+strict retained accepted recovery record, makes descriptor-held source and snapshot
+copies in a new owner-private root, and performs one bounded snapshot-backed
+`--version` observation. Every root, directory, temporary file, and final artifact is
+bound to its creation-time identity. Rollback reopens without following symlinks and
+compare-deletes only that owned inode; replacement or shape drift is left as a bounded
+private residual. Hard-link publication records both names as the exact shared
+`nlink=2` inode, unlinks staging, and verifies the final `nlink=1` identity before a
+durability hook or signal checkpoint. After process-group closure, the unchanged mode-`0700` cwd, HOME,
+TMP, and XDG directories must be empty before evidence publication. The production
+CLI owns its process. Non-throwing handlers accumulate HUP/INT/TERM; each safe
+checkpoint selects by fixed priority HUP, then INT, then TERM, not chronological send
+order, and freezes that selection. Large retained hashes and copies poll between
+userspace chunks of at most 1 MiB, while capture and publication loops also poll;
+this does not bound the duration of one kernel syscall. Before completion the runner
+closes the group, rolls back on a selected signal, and returns `129`, `130`, or `143`.
+Signals remain unblocked through the copies, provisional marker, recovery and ledger
+validation, durability, and the complete bounded JSON write and flush. Only then does
+the runner block signals, merge one final pending snapshot, and call `os._exit(0)`
+without restoring handlers, unblocking, or releasing rollback descriptors in Python.
+Consumers require both exit `0` and the marker.
+A signal after that snapshot is post-completion. The explicit embedded test API is
+the only restoring path; a signal absent from its final snapshot is caller-owned and
+may be delivered while the entry mask is restored.
+Production and the test harness require the selected CPython 3.9 at
+`/usr/bin/python3 -I -S -B`. They reject an implementation, major/minor, or exact
+isolated/no-site/no-bytecode/environment flag mismatch before production source
+parsing, lifecycle acquisition, or filesystem mutation; the harness prints one
+canonical rerun command instead of importing the runner under a different AST ABI.
+
+The bootstrap result has its own `snapshot-version-bootstrap` claim and cannot be
+used directly as capture evidence. Its generated nested recovery input retains the
+unchanged `snapshot-version-only` claim and is accepted by the existing recovery
+validator. The source guard pins the exact reachable production graph and one fixed
+Popen site as reviewed-source drift detection. The reviewed source and interpreter,
+local owner and same-UID processes, and OS administrators remain the TCB; this is not
+coordinated hostile-source or same-UID tamper resistance.
+
 A separate `scripts/models_capture_runner.py` defines the future capture mechanism
 without invoking it. Its strict canonical stdin profile names one explicit owner-
 `0700` account HOME and its held directory identity. Production use is valid only
@@ -985,6 +1023,7 @@ compat/                       per-tool baselines, reviewed evidence, and active 
 scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
 scripts/version_attestation_runner.py fixed-profile snapshot version runner with bounded startup diagnostics; real use separately authorized
+scripts/version_bootstrap_runner.py repository-only retained-recovery bootstrap; never a recovery mode or live-account action
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
 scripts/models_attestation_runner.py auth-isolated snapshot models runner; not a live-account capture path
 scripts/models_capture_runner.py explicit-account capture-only models runner; never auto-invoked
@@ -1021,13 +1060,14 @@ tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harne
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
 tests/test-version-attestation-runner.py  157-case offline canonical fixed-profile runner suite
+tests/test-version-bootstrap-runner.py  139-case offline retained-recovery bootstrap suite
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
 tests/test-models-attestation-runner.py  113-case offline fixed-profile inventory attestation suite
-tests/test-models-capture-runner.py  73-case offline fake-account capture-only suite
+tests/test-models-capture-runner.py  82-case offline fake-account capture-only suite
 tests/test-models-capture-profile.py 118-case offline canonical capture-profile builder suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       349-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       350-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite

@@ -60,15 +60,16 @@ Keep these counts current when their suites change:
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
 - Canonical version-attestation runner: 157 offline fixed-profile/source-binding cases.
+- Repository-only version bootstrap runner: 139 offline retained-recovery/ownership/scratch/source/process/signal/runtime cases.
 - Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
 - Canonical models-inventory attestation runner: 113 offline
   fixed-profile/version-binding/environment/parser/process cases.
-- Explicit-account models capture runner: 73 offline
+- Explicit-account models capture runner: 82 offline
   profile/account-TCB/environment/capture/publication/process cases.
 - Explicit-account models capture profile builder: 118 offline canonical-profile,
   external-evidence, descriptor, publication, and mutation cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 349 offline
+- Codex package/skill distribution and CI policy: 350 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
 - Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
@@ -98,6 +99,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
+/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py # offline retained-recovery bootstrap
 /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py # offline fake-child mutation harness
 /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py # offline fake inventory attestation
 /usr/bin/python3 -I -S -B tests/test-models-capture-runner.py # offline fake-account capture only
@@ -232,6 +234,24 @@ only a passing test has not been shown to catch anything.
   environment overrides. Self-test mode may use only synthetic private fixtures and
   must have no path to production evidence. Green runner/harness tests authorize no
   agy, provider, or metadata call.
+- **Recovery bootstrap is a reviewed-source bridge, not hostile-source proof.** It
+  may consume one exact retained accepted recovery record and emit the unchanged
+  recovery profile shape only. Ledger every created inode at creation, compare-delete
+  only that identity, represent a transient same-inode hard-link pair at exact
+  `nlink=2`, and normalize it before any injected durability hook or signal poll.
+  Require unchanged empty private scratch after group closure, and leave drift as a
+  private residual. Production is a process-owning CLI: latch
+  lifecycle signals without raising, choose accumulated signals at checkpoints by
+  fixed HUP/INT/TERM priority, and poll between bounded userspace chunks. Keep
+  signals unblocked through copies, provisional publication, validation,
+  durability, and the flushed success line; only then take one blocked completion
+  snapshot and use `os._exit`. Never restore/unblock on that path.
+  Run production and its tests only with the selected CPython 3.9
+  `/usr/bin/python3 -I -S -B`; reject any implementation, major/minor, or exact flag
+  mismatch before source parsing, lifecycle acquisition, or filesystem mutation.
+  The embedded test API alone restores caller state, with post-snapshot signals owned
+  by the caller. Chunk polling does not bound a blocked kernel syscall. Its source graph guard detects reviewed-
+  byte drift under the local-owner/same-UID/interpreter/OS-admin TCB.
 - **The current models runner is deliberately auth-isolated.** Its one child receives
   only a fresh private empty HOME, TMPDIR, and XDG roots plus the exact fixed locale,
   terminal, color, and PATH values. Never inherit or copy the caller's HOME,
@@ -320,6 +340,11 @@ only a passing test has not been shown to catch anything.
   a slug by concatenating model and effort strings.
 - Do not auto-pull during a worker job, auto-submit an issue, install `gh`, or make
   GitHub CLI a runtime dependency.
+- Run every GitHub network operation through exact, scoped `gh` or `git` commands
+  outside the sandbox, where this project's authenticated CLI, keychain, and network
+  are trusted; read back the remote result. This grants no write authority: feature
+  pushes, PRs, releases, settings, and provider actions still require their applicable
+  user approval.
 - Do not overstate the project in README. It is one differentiated idea among several
   existing tools, and the prior-art section stays.
 - Ask before pushing to `main`, publishing a release, or enabling an external

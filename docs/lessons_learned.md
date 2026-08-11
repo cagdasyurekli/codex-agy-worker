@@ -480,6 +480,45 @@ canonical profile with no-overwrite, fsync, and signal rollback semantics. Prepa
 or validating that file never authorizes a provider call, inventory acceptance,
 metadata change, routing, or account-HOME inspection.
 
+Do not turn recovery bootstrap into an alternate recovery implementation. Bootstrap
+must consume one exact retained accepted binding, copy held executable bytes into a
+new disjoint owner-private root, and emit only the unchanged recovery runner input
+shape. Keep its one version observation bounded and separate from models, login,
+routing, metadata, provider, or network authority. Record each root, directory,
+temporary file, and final artifact at creation; never replace that owned identity
+with a later pathname observation. Roll back through no-follow, descriptor-relative
+reopens and compare-delete only the exact owned inode. Revalidate unchanged empty
+mode-`0700` scratch after process-group closure and before publication. A replacement,
+identity/mode/shape drift, interruption, or power-loss residual is bounded manual
+recovery evidence, never a reason to scan or chase paths. Pinning the exact production
+graph and sole Popen site is useful reviewed-source drift detection under the
+reviewed-source/interpreter/local-owner/same-UID/OS-admin TCB; it is not a proof
+against coordinated hostile-source changes.
+
+Hard-link publication has a real two-name lifecycle. Record staging and final as the
+same owned inode with derived `nlink=2`, unlink staging without a signal checkpoint or
+injected durability hook, then record and reopen-verify final `nlink=1` before polling.
+Rollback must decrement the remaining exact shared-link expectation after unlink;
+foreign replacement paths remain reserved residual shape, never deletion authority.
+
+A CLI that must make signal handling and durable acceptance agree should own its
+process through the boundary. A Python handler should only accumulate signals; safe
+checkpoints choose from the accumulated set by a documented fixed priority and freeze
+that choice. Keep signals unblocked and poll through large copies and hashes,
+provisional publication, validation, durability, and the complete success flush while
+rollback descriptors remain open. Then block signals, take one completion snapshot,
+and call `os._exit(0)` without restoring handlers or unblocking. An embedded API
+cannot make the final restore-mask handoff atomic: signals absent from its snapshot
+become caller-owned. Polling between
+1 MiB userspace chunks bounds observation opportunities, not a single kernel syscall.
+An `ast.dump` pin is interpreter-ABI-specific. Do not normalize away or drop AST
+fields to make another interpreter repin it: select the reviewed CPython major/minor
+and exact isolation flags, then reject before parsing production source or acquiring
+mutation authority. A test harness should perform the same check before importing
+the pinned module and print one canonical rerun command on mismatch.
+Apply this lesson only to the bootstrap runner here; the adjacent version/models/
+capture/profile/harness signal-handoff family still needs its own P1 audit.
+
 Do not turn historical persona anecdotes into a trust label. A useful prompt can
 produce an honest escalation, and a test-writing prompt can still be rejected by the
 gate. Registry state must bind the exact persona source and mode contract plus public
