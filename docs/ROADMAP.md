@@ -191,6 +191,18 @@ Its production and test entrypoints require the selected CPython 3.9
 `/usr/bin/python3 -I -S -B`; exact implementation, major/minor, and flag preflight
 rejects before production AST parsing, lifecycle acquisition, or mutation.
 
+The current-source initial-bootstrap prerequisite is now implemented as a separate
+repository-only bridge, rather than changing retained-recovery bootstrap semantics.
+It accepts a closed canonical profile with a fresh owner-private root, exact current
+source path/full identity, and fixed `1.1.11` / source-SHA expectations; it has no
+account-HOME input or inspection. It holds the source twice, makes independent source
+and snapshot copies, performs one bounded snapshot-backed `--version` observation,
+and emits only the existing recovery validator's `snapshot-version-only` prior/profile.
+It never reads historical recovery evidence or performs model/login/provider/network/
+Git/routing/retry/metadata work. Offline tests cover source/path/identity rejection,
+two-copy production, process/scratch rollback, signals, source-pin mutation, and
+recovery compatibility. A real observation remains separately authorized.
+
 The adjacent signal-handoff slice is now implemented without expanding provider or
 metadata authority. Version, models, capture, and profile production entrypoints own
 their process through flushed success output and one final blocked completion
