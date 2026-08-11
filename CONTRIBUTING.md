@@ -33,6 +33,7 @@ Run the offline suites and static checks before requesting review:
 ./tests/test-update.sh
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py
 /usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py
+/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py
 /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py
 /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-runner.py

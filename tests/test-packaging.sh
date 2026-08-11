@@ -33,6 +33,8 @@ paths.update((
     "tests/test-models-capture-runner.py",
     "scripts/version_bootstrap_runner.py",
     "tests/test-version-bootstrap-runner.py",
+    "scripts/version_initial_bootstrap_runner.py",
+    "tests/test-version-initial-bootstrap-runner.py",
     "scripts/models_capture_profile.py",
     "tests/test-models-capture-profile.py",
 ))
@@ -1693,6 +1695,16 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py'
         || [[ ! -f "$ROOT/tests/test-version-bootstrap-runner.py" ]]; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-version-initial-bootstrap-runner.py' \
+            "$ROOT/.github/workflows/test.yml" \
+        || [[ ! -f "$ROOT/scripts/version_initial_bootstrap_runner.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-version-initial-bootstrap-runner.py" ]]; then
+    governance_lists_all_suites=0
+fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
         "$ROOT/CONTRIBUTING.md" \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
@@ -1768,9 +1780,9 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all twenty suites and disclose public policy boundaries"
+    ok "governance docs require all twenty-one suites and disclose public policy boundaries"
 else
-    bad "governance docs require all twenty suites and disclose public policy boundaries"
+    bad "governance docs require all twenty-one suites and disclose public policy boundaries"
 fi
 
 bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
@@ -1797,6 +1809,10 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'tests/test-version-bootstrap-runner.py  139-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-bootstrap-runner.py` (139 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Repository-only version initial-bootstrap runner: 38 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-version-initial-bootstrap-runner.py  38-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-version-initial-bootstrap-runner.py` (38 synthetic cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Explicit-account models capture profile builder: 121 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-capture-profile.py 121-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-profile.py` (121 synthetic cases)' \
@@ -1813,9 +1829,9 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'sys.flags.ignore_environment == 1' "$ROOT/.github/workflows/test.yml" \
         && grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
             "$ROOT/.github/workflows/test.yml"; then
-    ok "bootstrap and adjacent signal-owner measured counts stay synchronized"
+    ok "bootstrap, initial bridge, and adjacent signal-owner measured counts stay synchronized"
 else
-    bad "bootstrap and adjacent signal-owner measured counts stay synchronized"
+    bad "bootstrap, initial bridge, and adjacent signal-owner measured counts stay synchronized"
 fi
 
 if [[ -x "$ROOT/scripts/version_bootstrap_runner.py" ]] \
@@ -1824,6 +1840,15 @@ if [[ -x "$ROOT/scripts/version_bootstrap_runner.py" ]] \
     ok "bootstrap remains an executable repository-only surface"
 else
     bad "bootstrap remains an executable repository-only surface"
+fi
+
+if [[ -x "$ROOT/scripts/version_initial_bootstrap_runner.py" ]] \
+        && [[ -x "$ROOT/tests/test-version-initial-bootstrap-runner.py" ]] \
+        && ! grep -Fq 'account_home' "$ROOT/scripts/version_initial_bootstrap_runner.py" \
+        && ! grep -Fq 'version_initial_bootstrap_runner.py' "$ROOT/skills/agy-worker/runtime" -r; then
+    ok "initial bootstrap remains a separate HOME-inert repository-only surface"
+else
+    bad "initial bootstrap remains a separate HOME-inert repository-only surface"
 fi
 
 profile_builder_identity="$(/usr/bin/python3 -I -S -B - "$ROOT/scripts/models_capture_profile.py" <<'PY'
