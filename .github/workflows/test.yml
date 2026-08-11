@@ -60,6 +60,24 @@ jobs:
       - name: canonical version attestation runner
         run: /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py
 
+      - name: repository-only version bootstrap runtime preflight
+        run: |
+          /usr/bin/python3 -I -S -B - <<'PY'
+          import sys
+          if not (
+              sys.implementation.name == "cpython"
+              and sys.version_info[:2] == (3, 9)
+              and sys.flags.isolated == 1
+              and sys.flags.no_site == 1
+              and sys.flags.dont_write_bytecode == 1
+              and sys.flags.ignore_environment == 1
+          ):
+              raise SystemExit("repository-only version bootstrap requires CPython 3.9 with -I -S -B")
+          PY
+
+      - name: repository-only version bootstrap runner
+        run: /usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py
+
       - name: version attestation mutation harness
         run: /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py
 

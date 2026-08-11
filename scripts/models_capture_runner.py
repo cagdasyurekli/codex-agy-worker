@@ -36,7 +36,8 @@ EXPECTED_SNAPSHOT_SIZE = 169_718_336
 PROFILE_LIMIT = 16_384
 STREAM_LIMIT = 64 * 1024
 WALL_SECONDS = 25.0
-MODULE_AST_SHA256 = "5da907141da945b86d25e74825cddba842a5399b84db7f879abb472791e4902b"
+MODULE_AST_SHA256 = "e571459fe697b048f676b9b6c99ac5ef5e770af180d4f1f5424e3d7ca8cb4427"
+ACCOUNT_POLICY_AST_SHA256 = "c399d657d771773ccfe765be5d7fb8bf8040cae53cc2755e037b7a65faae613d"
 PRIVATE_DIRECTORY_NAMES = ("cwd", "tmp", "xdg-config", "xdg-cache", "xdg-state")
 ACCOUNT_IDENTITY_KEYS = frozenset({"dev", "gid", "ino", "mode", "nlink", "uid"})
 PROFILE_KEYS = frozenset(
@@ -324,6 +325,14 @@ def _validate_account_policy(profile: CaptureProfile) -> None:
         )
     ):
         raise ModelsCaptureError("account HOME overlaps protected paths")
+    # The profile builder already rejects this.  Keep the production consumer
+    # independently fail-closed: a hand-authored canonical profile must not turn
+    # an account-owned executable into capture authority.
+    if any(
+        os.path.commonpath((path, profile.account_home)) in {path, profile.account_home}
+        for path in (base.source_path, base.snapshot_path)
+    ):
+        raise ModelsCaptureError("attested executable overlaps account HOME")
     if (
         profile.account_home_identity.uid != os.getuid()
         or profile.account_home_identity.mode != 0o700
@@ -374,8 +383,16 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
     }
     run_node = functions.get("run_capture")
     main_node = functions.get("main")
-    if run_node is None or main_node is None:
+    account_policy_node = functions.get("_validate_account_policy")
+    if run_node is None or main_node is None or account_policy_node is None:
         raise ModelsCaptureError("models capture authority is incomplete")
+    if (
+        hashlib.sha256(
+            ast.dump(account_policy_node, include_attributes=False).encode("utf-8")
+        ).hexdigest()
+        != ACCOUNT_POLICY_AST_SHA256
+    ):
+        raise ModelsCaptureError("models capture account policy changed")
     if any(
         isinstance(node, ast.Attribute) and node.attr in {"__dict__", "__getattribute__"}
         for node in ast.walk(tree)

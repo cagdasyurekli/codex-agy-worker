@@ -171,6 +171,30 @@ durable publication, atomic lifecycle completion, and paired weakened controls. 
 invoke no agy, provider, network, or private production evidence. This closes the
 offline version provenance prerequisite only.
 
+The implemented bootstrap slice is a separate repository-only closed-profile runner,
+not a new recovery mode. It validates one retained accepted recovery binding, builds
+one fresh disjoint recovery input from held bytes, binds every created inode before
+publication or rollback, revalidates empty unchanged private scratch after group
+closure, and has 139 synthetic offline cases. Transient staging/final hard links are
+recorded as one exact `nlink=2` inode and normalized before durability hooks or signal
+polls. The production CLI now owns the process:
+checkpointed signal choice uses fixed HUP/INT/TERM priority; signals stay unblocked
+through copies, provisional publication, validation, durability, and the flushed
+success line. One blocked completion snapshot then precedes the committed
+`os._exit(0)` path without Python restoration. The restoring API is
+test-only and hands post-snapshot signals to its caller. Userspace hash/copy chunks are
+bounded to 1 MiB, not the duration of a kernel syscall. Its exact production graph guard is
+reviewed-source drift detection under the reviewed-source/interpreter/local-owner/
+same-UID/OS-admin TCB, not hostile-source proof. It performs no live-account,
+provider, network, Git, or metadata action.
+Its production and test entrypoints require the selected CPython 3.9
+`/usr/bin/python3 -I -S -B`; exact implementation, major/minor, and flag preflight
+rejects before production AST parsing, lifecycle acquisition, or mutation.
+
+A separate P1 signal-handoff audit remains deferred for the adjacent canonical
+version, models, capture, profile, and mutation-harness runners. This bootstrap slice
+does not claim to repair or certify those lifecycle boundaries.
+
 A separate canonical models-inventory runner now binds one exact `models` Popen to
 an accepted version binding and the same attested snapshot. Its 113-case offline suite
 uses synthetic executables only, pins the exact 11-line semantic parser and corrected
@@ -688,7 +712,7 @@ remains intentionally outside the Doctor contract.
 - **Implemented boundary:** The canonical portable runtime owns the v1 state machine,
   shared candidate-state digest, Receipt validation, progress reconciliation, and
   compare-and-delete cleanup. The root command is only a compatibility wrapper.
-  Ninety-five offline cases cover accepted and rejected lifecycle paths, canonical
+  One hundred offline cases cover accepted and rejected lifecycle paths, canonical
   branch authority, hook/filter-free fixed Git execution, durability, stale approval,
   ref-error separation, deletion-domain, signal, and weakened-authority mutations.
   Cleanup never follows symlinks, never deletes a commit, and retains the cleaned
