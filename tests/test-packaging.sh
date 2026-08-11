@@ -1809,9 +1809,9 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'tests/test-version-bootstrap-runner.py  139-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-bootstrap-runner.py` (139 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Repository-only version initial-bootstrap runner: 38 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-version-initial-bootstrap-runner.py  38-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-version-initial-bootstrap-runner.py` (38 synthetic cases)' \
+        && grep -Fq 'Repository-only version initial-bootstrap runner: 43 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-version-initial-bootstrap-runner.py  43-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-version-initial-bootstrap-runner.py` (43 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Explicit-account models capture profile builder: 121 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-capture-profile.py 121-case' "$ROOT/README.md" \
