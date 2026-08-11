@@ -154,6 +154,13 @@ back, dispatches a task, selects or routes a model, changes metadata, or uploads
 artifacts. The user controls retention and must not commit the private profile or raw
 evidence.
 
+`scripts/models_capture_profile.py` is the separate, process-inert preparation
+step for that future action. It accepts only explicit stdin paths, does not inspect
+HOME contents or ambient configuration, and validates no-follow external source,
+snapshot, and version evidence before atomically creating one owner-private canonical
+profile. It never invokes agy, a provider, a network client, a shell, or a Git
+command; preparing a profile does not authorize a capture.
+
 ## Support and changes
 
 Questions about this disclosure can be opened through the route in

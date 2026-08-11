@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The eighteen offline suites need no agy process, network access, API key, or GitHub login.
+The nineteen offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -806,6 +806,14 @@ remain even when capture fails. The selected account HOME, local owner
 and same-UID processes, reviewed interpreter and source, and OS administrators remain
 its trusted computing base; it makes no same-user tamper-resistance claim.
 
+The profile itself is prepared or revalidated only by the separate process-inert
+`scripts/models_capture_profile.py` command with exact `--prepare` or `--validate`
+and bounded JSON on stdin. It accepts no ambient paths, configuration, or account
+discovery; it reopens the explicit account, source, retained external snapshot, and
+version evidence with no-follow descriptors before atomically creating a fixed-name
+mode-`0600` canonical file. That preparation never launches agy, a shell, Git, a
+network client, or a provider call, and it neither authorizes nor performs capture.
+
 After process-group closure, every capture-owned TMP/XDG/cwd directory must again be
 the same empty directory or publication fails closed. Successful bounded exit-zero
 execution publishes otherwise uninterpreted private mode-`0600` stdout/stderr, exact
@@ -980,6 +988,7 @@ scripts/version_attestation_runner.py fixed-profile snapshot version runner with
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
 scripts/models_attestation_runner.py auth-isolated snapshot models runner; not a live-account capture path
 scripts/models_capture_runner.py explicit-account capture-only models runner; never auto-invoked
+scripts/models_capture_profile.py process-inert canonical profile builder; never reads ambient account state
 scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
 scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
@@ -1014,10 +1023,11 @@ tests/test-compatibility-probe.py test-only timeout/output/signal/version advers
 tests/test-version-attestation-runner.py  157-case offline canonical fixed-profile runner suite
 tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
 tests/test-models-attestation-runner.py  113-case offline fixed-profile inventory attestation suite
-tests/test-models-capture-runner.py  69-case offline fake-account capture-only suite
+tests/test-models-capture-runner.py  73-case offline fake-account capture-only suite
+tests/test-models-capture-profile.py 118-case offline canonical capture-profile builder suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       347-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       349-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite

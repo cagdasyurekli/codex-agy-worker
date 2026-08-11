@@ -36,7 +36,7 @@ EXPECTED_SNAPSHOT_SIZE = 169_718_336
 PROFILE_LIMIT = 16_384
 STREAM_LIMIT = 64 * 1024
 WALL_SECONDS = 25.0
-MODULE_AST_SHA256 = "c9cc27512813c0da1e91e27ce0e803d20415af02d4dedca27c178893c09c847f"
+MODULE_AST_SHA256 = "5da907141da945b86d25e74825cddba842a5399b84db7f879abb472791e4902b"
 PRIVATE_DIRECTORY_NAMES = ("cwd", "tmp", "xdg-config", "xdg-cache", "xdg-state")
 ACCOUNT_IDENTITY_KEYS = frozenset({"dev", "gid", "ino", "mode", "nlink", "uid"})
 PROFILE_KEYS = frozenset(
@@ -170,7 +170,7 @@ class CaptureProfile:
         for key in ("source_sha256", "version_binding_sha256"):
             if not isinstance(value[key], str) or not version._is_sha256(value[key]):
                 raise ModelsCaptureError("invalid models capture profile")
-        return cls(
+        profile = cls(
             account_home=value["account_home"],
             account_home_identity=DirectoryIdentity.from_mapping(value["account_home_identity"]),
             snapshot_identity=version.FileIdentity.from_mapping(value["snapshot_identity"]),
@@ -182,6 +182,9 @@ class CaptureProfile:
             version_binding_sha256=value["version_binding_sha256"],
             version_root=value["version_root"],
         )
+        if _canonical_json(profile.as_mapping()) != data:
+            raise ModelsCaptureError("models capture profile is not canonical")
+        return profile
 
     def as_mapping(self) -> dict[str, object]:
         return dataclasses.asdict(self)
@@ -335,7 +338,6 @@ def _validate_production_profile(profile: CaptureProfile) -> None:
     if (
         base.version_binding_sha256 != EXPECTED_VERSION_BINDING_SHA256
         or base.source_sha256 != EXPECTED_SOURCE_SHA256
-        or base.snapshot_path != base.version_root + "/agy.snapshot"
         or base.snapshot_identity.ino != EXPECTED_SNAPSHOT_INODE
         or base.snapshot_identity.size != EXPECTED_SNAPSHOT_SIZE
         or base.snapshot_identity.mode != 0o500

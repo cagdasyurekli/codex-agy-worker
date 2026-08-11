@@ -28,7 +28,12 @@ listed = subprocess.run(
     stdout=subprocess.PIPE,
 ).stdout.split(b"\0")
 paths = {item.decode("utf-8") for item in listed if item}
-paths.update(("scripts/models_capture_runner.py", "tests/test-models-capture-runner.py"))
+paths.update((
+    "scripts/models_capture_runner.py",
+    "tests/test-models-capture-runner.py",
+    "scripts/models_capture_profile.py",
+    "tests/test-models-capture-profile.py",
+))
 for relative in sorted(paths):
     path = root / relative
     try:
@@ -1695,6 +1700,16 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py' \
         || [[ ! -f "$ROOT/tests/test-models-capture-runner.py" ]]; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-models-capture-profile.py' \
+            "$ROOT/.github/workflows/test.yml" \
+        || [[ ! -f "$ROOT/scripts/models_capture_profile.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-models-capture-profile.py" ]]; then
+    governance_lists_all_suites=0
+fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
         "$ROOT/CONTRIBUTING.md" \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
@@ -1741,9 +1756,54 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all eighteen suites and disclose public policy boundaries"
+    ok "governance docs require all nineteen suites and disclose public policy boundaries"
 else
-    bad "governance docs require all eighteen suites and disclose public policy boundaries"
+    bad "governance docs require all nineteen suites and disclose public policy boundaries"
+fi
+
+if grep -Fq 'Explicit-account models capture runner: 73 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-runner.py  73-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-runner.py` (73 fake-account cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-models-capture-profile.py 118-case' "$ROOT/README.md"; then
+    ok "capture-runner and profile-suite measured counts stay synchronized"
+else
+    bad "capture-runner and profile-suite measured counts stay synchronized"
+fi
+
+profile_builder_identity="$(/usr/bin/python3 -I -S -B - "$ROOT/scripts/models_capture_profile.py" <<'PY'
+import ast
+import hashlib
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+data = open(path, "rb").read()
+tree = ast.parse(data.decode("utf-8"))
+for node in tree.body:
+    if (
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "MODULE_AST_SHA256"
+    ):
+        node.value = ast.Constant(value="PINNED-MODULE-AST")
+        break
+print(
+    "%o|%s|%s|%s" % (
+        stat.S_IMODE(os.stat(path).st_mode),
+        len(data),
+        hashlib.sha256(data).hexdigest(),
+        hashlib.sha256(ast.dump(tree, include_attributes=False).encode("utf-8")).hexdigest(),
+    )
+)
+PY
+)"
+if [[ "$profile_builder_identity" == "755|41149|8da7d669d9d7b8bde3feac18e1a42ec576f4d5ef72424c00a4f7b8564da6c883|08fb914a7d33cc46979e23a7741b7686345f719046d6a1325decde730ca289b0" ]]; then
+    ok "capture-profile builder reviewed identity is independently pinned"
+else
+    bad "capture-profile builder reviewed identity changed"
 fi
 
 if grep -Fq 'same-UID processes' "$ROOT/README.md" \
