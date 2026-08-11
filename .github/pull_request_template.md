@@ -26,6 +26,7 @@
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py`
 - [ ] `./tests/test-reporting.sh`
 - [ ] `./tests/test-packaging.sh`
 - [ ] `./tests/test-doctor.sh`

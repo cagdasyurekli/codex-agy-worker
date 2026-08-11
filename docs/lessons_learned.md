@@ -100,6 +100,11 @@ behavior or guarantee no residual after rejection. Fake-account tests can prove 
 wiring; they do not authorize a real account or remove the local-owner, same-UID,
 interpreter, and OS-administrator TCB.
 
+The companion process-inert profile builder may fail closed on a reviewed source-byte
+or normalized-AST mismatch before stdin or authority traversal. That is a selected
+reviewed-source drift control under the local-owner, same-UID, interpreter, and OS-
+administrator TCB, not resistance to coordinated hostile-source edits.
+
 An official installer channel can move before a public release/source repository.
 Observe that difference through one fixed, bounded manifest canary, but do not turn a
 distribution version or checksum into source or behavior evidence. Disable proxies,
@@ -465,6 +470,15 @@ Receipt bytes; the benchmark result is only an unsigned serialization of those f
 A deterministic report should expose completeness in manifest order, not invent a
 score, winner, retry, fallback, route, recommendation, usage estimate, or persona
 quality claim. Keep provider-backed benchmarking as a separate reviewed boundary.
+
+Do not let an explicit-account capture profile become a hidden execution path. Keep
+profile preparation process-inert, accept only a closed canonical stdin request, and
+reopen every supplied authority through no-follow descriptors. A retained snapshot
+may be external to the version-evidence directory; bind its exact identity and bytes
+instead of inventing a co-location rule. Publish only a new owner-private mode-0600
+canonical profile with no-overwrite, fsync, and signal rollback semantics. Preparing
+or validating that file never authorizes a provider call, inventory acceptance,
+metadata change, routing, or account-HOME inspection.
 
 Do not turn historical persona anecdotes into a trust label. A useful prompt can
 produce an honest escalation, and a test-writing prompt can still be rejected by the

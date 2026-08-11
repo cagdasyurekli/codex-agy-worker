@@ -214,6 +214,8 @@ mutation_cases = (
     (b"        account_post = _verify_account_descriptor(profile, account_fd)\n", b"        account_post = profile.account_home_identity\n"),
     (b"        _revalidate_private_directories(root, private_identities)\n        account_post", b"        account_post"),
     (b"            version._require_canonical_absolute(value[key])", b"            pass"),
+    (b"        if _canonical_json(profile.as_mapping()) != data:\n            raise ModelsCaptureError(\"models capture profile is not canonical\")\n", b""),
+    (b"        or base.source_sha256 != EXPECTED_SOURCE_SHA256\n", b"        or base.source_sha256 != EXPECTED_SOURCE_SHA256\n        or base.snapshot_path != base.version_root + \"/agy.snapshot\"\n"),
 )
 for index, (old, new) in enumerate(mutation_cases, 1):
     check(
@@ -246,6 +248,28 @@ def profile_round_trip() -> bool:
 
 
 check("strict canonical profile round trips", profile_round_trip)
+
+
+def noncanonical_profile_rejects_before_capture() -> bool:
+    root, profile, _base = fixture("noncanonical-profile")
+    value = profile.as_mapping()
+    reordered = json.dumps(
+        {key: value[key] for key in reversed(tuple(value))},
+        sort_keys=False,
+        separators=(",", ":"),
+    ).encode("ascii") + b"\n"
+    spaced = json.dumps(value, sort_keys=True, indent=1).encode("ascii") + b"\n"
+    doubled = MODULE._canonical_json(value) + b"\n"
+    try:
+        return all(
+            rejects(lambda raw=raw: MODULE.CaptureProfile.from_bytes(raw))
+            for raw in (reordered, spaced, doubled, MODULE._canonical_json(value).rstrip(b"\n"))
+        )
+    finally:
+        cleanup(root)
+
+
+check("noncanonical profile encodings reject before capture authority", noncanonical_profile_rejects_before_capture)
 
 
 def profile_reject(change: str) -> bool:
@@ -337,6 +361,19 @@ def positive_capture() -> bool:
 
 
 check("one synthetic account call captures exact private evidence", positive_capture)
+
+
+def version_root_snapshot_extra_rejects() -> bool:
+    root, profile, _base = fixture("version-root-snapshot-extra")
+    extra = Path(profile.version_root) / "agy.snapshot"
+    try:
+        extra.write_bytes(b"unexpected\n")
+        return rejects(lambda: MODULE.models._validate_version_evidence(profile.models_profile))
+    finally:
+        cleanup(root)
+
+
+check("version evidence rejects a co-located snapshot extra while external snapshot remains valid", version_root_snapshot_extra_rejects)
 
 
 def credential_dependent_capture() -> bool:
