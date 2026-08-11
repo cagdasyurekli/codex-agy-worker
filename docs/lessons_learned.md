@@ -495,6 +495,16 @@ graph and sole Popen site is useful reviewed-source drift detection under the
 reviewed-source/interpreter/local-owner/same-UID/OS-admin TCB; it is not a proof
 against coordinated hostile-source changes.
 
+Do not make the first current-source bridge depend on a historical recovery record or
+an account-HOME scan. Its profile must bind only the exact source path/full identity,
+fixed reviewed SHA/version, and a new owner-private root. Hold that one source twice
+before creating independent source/snapshot copies, then emit the existing
+`snapshot-version-only` recovery input rather than a second recovery protocol. For
+directory-ledger comparisons retain dev/gid/ino/uid/mode/type but permit only the
+directory link-count change caused by owned children; regular-file link counts remain
+exact. A scratch mutation is evidence of drift: reject and leave the bounded private
+residual rather than recursively discovering or deleting it.
+
 Hard-link publication has a real two-name lifecycle. Record staging and final as the
 same owned inode with derived `nlink=2`, unlink staging without a signal checkpoint or
 injected durability hook, then record and reopen-verify final `nlink=1` before polling.
