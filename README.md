@@ -830,6 +830,22 @@ Popen site as reviewed-source drift detection. The reviewed source and interpret
 local owner and same-UID processes, and OS administrators remain the TCB; this is not
 coordinated hostile-source or same-UID tamper resistance.
 
+The adjacent version, models, capture, and process-inert profile commands now use the
+same process-owning production handoff. They preserve inherited ignored handlers and
+caller-blocked signals outside their owned set, latch owned HUP/INT/TERM without
+raising, and choose accumulated signals by fixed HUP/INT/TERM priority rather than
+claiming chronological delivery. Bounded reads, hashes, stream capture, publication,
+and cleanup poll while rollback authority remains live. A marker or profile is
+provisional until validation, durability, and the bounded success bytes have been
+written and flushed. Production then takes one blocked completion snapshot and calls
+`os._exit` without a Python return, handler restore, or unblock race. Embedded APIs
+alone restore with an explicit caller handoff; the mutation harness returns only via
+its explicit test handoff. Exact byte pins propagate in order from the version runner
+to the models runner and then the capture runner; the harness independently pins the
+version runner, while the profile builder remains process-inert and independently
+AST-pinned. These offline controls add no provider, live-account, routing, retry, or
+metadata authority.
+
 A separate `scripts/models_capture_runner.py` defines the future capture mechanism
 without invoking it. Its strict canonical stdin profile names one explicit owner-
 `0700` account HOME and its held directory identity. Production use is valid only
@@ -1059,12 +1075,12 @@ tests/test-update.sh          310-case offline transport/process/inventory/local
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
-tests/test-version-attestation-runner.py  157-case offline canonical fixed-profile runner suite
+tests/test-version-attestation-runner.py  165-case offline canonical fixed-profile runner suite
 tests/test-version-bootstrap-runner.py  139-case offline retained-recovery bootstrap suite
-tests/test-version-attestation-harness.py  55-case offline version-attestation mutation suite
-tests/test-models-attestation-runner.py  113-case offline fixed-profile inventory attestation suite
-tests/test-models-capture-runner.py  82-case offline fake-account capture-only suite
-tests/test-models-capture-profile.py 118-case offline canonical capture-profile builder suite
+tests/test-version-attestation-harness.py  60-case offline version-attestation mutation suite
+tests/test-models-attestation-runner.py  116-case offline fixed-profile inventory attestation suite
+tests/test-models-capture-runner.py  84-case offline fake-account capture-only suite
+tests/test-models-capture-profile.py 121-case offline canonical capture-profile builder suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       350-case offline Codex package/CI-policy/relocation/landing suite

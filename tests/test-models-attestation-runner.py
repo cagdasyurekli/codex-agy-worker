@@ -88,6 +88,43 @@ def cleanup_profile(root: Path, profile: object | None = None, result: object | 
         shutil.rmtree(root)
 
 
+def models_cli_command(
+    profile: object,
+    *,
+    delivered: tuple[int, ...] = (),
+    late_path: Path | None = None,
+) -> tuple[list[str], bytes]:
+    delivered_values = tuple(int(item) for item in delivered)
+    child = (
+        "import hashlib,importlib.util,os,pathlib,signal,subprocess,sys,types;"
+        f"p={str(MODULE_PATH)!r};"
+        "s=importlib.util.spec_from_file_location('models_cli_test',p);"
+        "m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);"
+        "m.version._production_startup_evaluation=lambda:types.SimpleNamespace(accepted=True);"
+        "m._validate_production_profile=lambda _profile:None;real=m.run_attestation;"
+        f"delivered={delivered_values!r};"
+        "exec(\"def cleaning(*args,**kwargs):\\n"
+        " process=subprocess.Popen(*args,**kwargs)\\n"
+        " for item in delivered: os.kill(os.getpid(),item)\\n"
+        " wait=process.wait\\n"
+        " def cleaned_wait(*a,**k):\\n"
+        "  result=wait(*a,**k)\\n"
+        "  cache=pathlib.Path(kwargs['env']['TMPDIR'])/'xcrun_db'\\n"
+        "  if cache.is_file() and not cache.is_symlink(): cache.unlink()\\n"
+        "  return result\\n"
+        " process.wait=cleaned_wait\\n"
+        " return process\\n"
+        "def wrapped(*args,**kwargs):\\n"
+        " kwargs['calls']=m.version.RunnerCalls(popen=cleaning)\\n"
+        " kwargs['stderr_contract']=(0,hashlib.sha256(b'').hexdigest())\\n"
+        " return real(*args,**kwargs)\");"
+        "m.run_attestation=wrapped;m.main(['--attest-models']);"
+    )
+    if late_path is not None:
+        child += f"pathlib.Path({str(late_path)!r}).write_bytes(b'returned\\n')"
+    return ["/usr/bin/python3", "-I", "-S", "-B", "-c", child], profile_bytes(profile)
+
+
 source = MODULE_PATH.read_bytes()
 version_source = (ROOT / "scripts" / "version_attestation_runner.py").read_bytes()
 inventory_source = (ROOT / "scripts" / "agy_inventory.py").read_bytes()
@@ -237,15 +274,15 @@ mutated = source.replace(b"        _validate_production_profile(profile)\n", b""
 check("mutation bypassing production profile validation is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = replace_last(source, b'if list(argv) != ["--attest-models"]:', b"if False:")
 check("mutation bypassing exact production CLI is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"    if not startup.accepted:", b"    if False:", 1)
+mutated = replace_last(source, b"    if not startup.accepted:", b"    if False:")
 check("mutation bypassing startup rejection is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"        return 64\n    data = sys.stdin.buffer.read", b"        pass\n    data = sys.stdin.buffer.read", 1)
+mutated = replace_last(source, b'            raise ModelsAttestationError("production startup rejected")\n', b"            pass\n")
 check("mutation removing immediate startup exit is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)", b"    ignored = sys.stdin.buffer.read(1)\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)", 1)
+mutated = replace_last(source, b"        data = version._read_stdin(lifecycle.controller)\n", b"        ignored = sys.stdin.buffer.read(1)\n        data = version._read_stdin(lifecycle.controller)\n")
 check("mutation adding a prevalidation stdin read is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = replace_last(source, b"sys.stdin.buffer.read(PROFILE_LIMIT + 1)", b"sys.stdin.buffer.read(PROFILE_LIMIT + 2)")
+mutated = replace_last(source, b"version._read_stdin(lifecycle.controller)", b"version._read_stdin(None)")
 check("mutation changing profile read cap is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = replace_last(source, b"result = run_attestation(profile, profile_source=data)", b"result = run_attestation(profile)")
+mutated = replace_last(source, b"        profile_source=data,\n", b"")
 check("mutation dropping exact profile source is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = replace_last(source, b'profile_sha = publisher.publish("models.profile.json", exact_profile)', b"profile_sha = hashlib.sha256(exact_profile).hexdigest()")
 check("mutation dropping private profile publication is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
@@ -259,7 +296,7 @@ mutated = source.replace(b"                    or os.listdir(child)\n", b"", 1)
 check("mutation permitting nonempty version directories is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b'            "HOME": str(root / "home"),', b'            "HOME": os.environ["HOME"],', 1)
 check("mutation inheriting caller HOME is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)\n", b"        environment.update(os.environ)\n        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)\n", 1)
+mutated = source.replace(b"        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)\n", b"        environment.update(os.environ)\n        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)\n", 1)
 check("mutation merging caller environment is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b'            "TMPDIR": str(root / "tmp"),\n', b"", 1)
 check("mutation omitting private TMPDIR is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
@@ -327,10 +364,10 @@ mutated = source.replace(
     1,
 )
 check("mutation recursively launching through capture is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(
-    b"        result = run_attestation(profile, profile_source=data)\n",
-    b"        result = run_attestation(profile, profile_source=data)\n        run_offline_self_test()\n",
-    1,
+mutated = replace_last(
+    source,
+    b"        process_owned=True,\n    )\n",
+    b"        process_owned=True,\n    )\n    run_offline_self_test()\n",
 )
 check("mutation recursively launching through production main is killed", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = replace_last(
@@ -723,6 +760,100 @@ check("dependency digest mutation is rejected", dependency_pin_mutation)
 check("offline self-test uses only synthetic evidence", lambda: MODULE.run_offline_self_test()["accepted"] == 1)
 check("invalid CLI invocation is rejected", lambda: MODULE.main(["models"]) == 64)
 check("version mode is not exposed", lambda: MODULE.main(["--attest-version"]) == 64)
+
+
+def production_models_cli_success() -> bool:
+    root = TMP / "production-cli-success"
+    root.mkdir(mode=0o700)
+    profile = MODULE._synthetic_profile(root)
+    late = root / "late.return"
+    command, encoded = models_cli_command(profile, late_path=late)
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        value = json.loads(completed.stdout)
+        artifact = Path(value["artifact_root"])
+        return (
+            completed.returncode == 0
+            and completed.stderr == b""
+            and completed.stdout == MODULE._canonical_json(value)
+            and value["status"] == "accepted"
+            and value["call_count"] == 1
+            and (artifact / "models.binding.sha256").is_file()
+            and not late.exists()
+        )
+    finally:
+        cleanup_profile(root, profile)
+
+
+check("process-owned models CLI flushes one result without Python return", production_models_cli_success)
+
+
+def production_models_reverse_pending_priority() -> bool:
+    root = TMP / "production-reverse-pending"
+    root.mkdir(mode=0o700)
+    profile = MODULE._synthetic_profile(root)
+    command, encoded = models_cli_command(
+        profile, delivered=(signal.SIGTERM, signal.SIGHUP)
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if completed.returncode != 128 + signal.SIGHUP:
+            raise AssertionError(
+                (completed.returncode, completed.stdout, completed.stderr)
+            )
+        return (
+            completed.returncode == 128 + signal.SIGHUP
+            and completed.stdout == b""
+            and completed.stderr == b"models attestation runner: interrupted\n"
+            and not any(root.glob("agy-models-attestation.*/models.binding.sha256"))
+        )
+    finally:
+        cleanup_profile(root, profile)
+
+
+check("models CLI reverse pending delivery selects fixed HUP priority", production_models_reverse_pending_priority)
+
+
+def production_models_broken_stdout_rolls_back() -> bool:
+    root = TMP / "production-broken-stdout"
+    root.mkdir(mode=0o700)
+    profile = MODULE._synthetic_profile(root)
+    command, encoded = models_cli_command(profile)
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+    process.stdin.write(encoded)
+    process.stdin.close()
+    process.stdout.close()
+    stderr = process.stderr.read()
+    returncode = process.wait(timeout=15)
+    try:
+        return (
+            returncode == 2
+            and stderr == b"models attestation runner: rejected\n"
+            and not any(root.glob("agy-models-attestation.*/models.binding.sha256"))
+        )
+    finally:
+        cleanup_profile(root, profile)
+
+
+check("models CLI broken stdout rolls back its provisional marker", production_models_broken_stdout_rolls_back)
 
 shutil.rmtree(TMP)
 print(f"models attestation runner offline tests: {passed} passed, {failed} failed")

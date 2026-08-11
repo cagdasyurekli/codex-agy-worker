@@ -27,8 +27,8 @@ from typing import Callable, Optional, Sequence
 
 sys.dont_write_bytecode = True
 
-MODELS_RUNNER_BYTES = 60_173
-MODELS_RUNNER_SHA256 = "70e93c1c32af1d2b65667b75ed240e81ea47548cbe301b7cc7f6e37a1b099b24"
+MODELS_RUNNER_BYTES = 61_622
+MODELS_RUNNER_SHA256 = "a8846de4af9b17f32b1fb3ea64b5c0b157210bb1c7b1de02db40690496e1cb32"
 EXPECTED_SOURCE_SHA256 = "198ff7c3f6d173daa510b0814aa70c6ce14c94035bcd4707a3c0e79fa38a7bc3"
 EXPECTED_VERSION_BINDING_SHA256 = "72d0bba6040b46109f6968528697579dd1dbe7fdae949e68fb22e6f058452ea2"
 EXPECTED_SNAPSHOT_INODE = 26_545_304
@@ -36,7 +36,7 @@ EXPECTED_SNAPSHOT_SIZE = 169_718_336
 PROFILE_LIMIT = 16_384
 STREAM_LIMIT = 64 * 1024
 WALL_SECONDS = 25.0
-MODULE_AST_SHA256 = "e571459fe697b048f676b9b6c99ac5ef5e770af180d4f1f5424e3d7ca8cb4427"
+MODULE_AST_SHA256 = "b8297bc8e183b9935121c311b59d52ae75d02e1f66e8ac568542ab68724cdb3b"
 ACCOUNT_POLICY_AST_SHA256 = "c399d657d771773ccfe765be5d7fb8bf8040cae53cc2755e037b7a65faae613d"
 PRIVATE_DIRECTORY_NAMES = ("cwd", "tmp", "xdg-config", "xdg-cache", "xdg-state")
 ACCOUNT_IDENTITY_KEYS = frozenset({"dev", "gid", "ino", "mode", "nlink", "uid"})
@@ -459,7 +459,9 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         and "version._close_reserved_group(process, calls)" in run_text
         and 'publisher.publish("models.capture.sha256"' in run_text
         and 'list(argv) != ["--capture-models"]' in main_text
-        and "data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)" in main_text
+        and "data = version._read_stdin(lifecycle.controller)" in main_text
+        and "lifecycle = version._acquire_lifecycle()" in main_text
+        and "process_owned=True" in main_text
     ):
         raise ModelsCaptureError("models capture source authority changed")
     assignments = {
@@ -489,40 +491,61 @@ def run_capture(
     module_source: Optional[bytes] = None,
     profile_source: Optional[bytes] = None,
     profile_validator: Callable[[CaptureProfile], None] = _validate_production_profile,
+    lifecycle: Optional[version.LifecycleState] = None,
+    process_owned: bool = False,
 ) -> dict[str, object]:
     """Capture one exact snapshot-backed models observation without accepting it."""
 
-    if not all(hasattr(signal, name) for name in ("pthread_sigmask", "sigpending", "sigwait")):
-        raise ModelsCaptureError("required signal primitives are unavailable")
-    entry_mask = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
-    old_handlers = {item: signal.getsignal(item) for item in version.LIFECYCLE_SIGNALS}
+    if lifecycle is None:
+        lifecycle = version._acquire_lifecycle()
+        try:
+            version._activate_lifecycle(lifecycle)
+        except BaseException:
+            signal.pthread_sigmask(signal.SIG_BLOCK, lifecycle.controller.owned)
+            lifecycle.controller.merge_pending()
+            for item in reversed(lifecycle.installed_handlers):
+                signal.signal(item, lifecycle.old_handlers[item])
+            lifecycle.controller.merge_pending()
+            signal.pthread_sigmask(signal.SIG_SETMASK, lifecycle.entry_mask)
+            raise
+    controller = lifecycle.controller
     root: Optional[Path] = None
     publisher = None
     account_fd = source_parent = source_fd = snapshot_parent = snapshot_fd = None
     process: Optional[subprocess.Popen[bytes]] = None
     process_active = False
-
-    def interrupted(signum: int, _frame: object) -> None:
-        raise ModelsCaptureInterrupted(signum)
-
-    for item in version.LIFECYCLE_SIGNALS:
-        signal.signal(item, interrupted)
-    signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
+    completion_linearized = False
+    original_error: Optional[BaseException] = None
+    result: Optional[dict[str, object]] = None
     try:
+        controller.poll()
         source = Path(__file__).resolve(strict=True).read_bytes() if module_source is None else module_source
+        controller.poll()
         contract = validate_source_contract(source)
         exact_profile = _canonical_json(profile.as_mapping()) if profile_source is None else profile_source
         if CaptureProfile.from_bytes(exact_profile) != profile:
             raise ModelsCaptureError("exact capture profile changed")
         profile_validator(profile)
+        controller.poll()
         base = profile.models_profile
         models._validate_version_evidence(base)
+        controller.poll()
         account_fd = _account_descriptor(profile)
-        root = Path(tempfile.mkdtemp(prefix="agy-models-account-capture.", dir=base.temp_parent))
+        controller.poll()
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
+        try:
+            controller.merge_pending()
+            controller.poll()
+            root = Path(tempfile.mkdtemp(prefix="agy-models-account-capture.", dir=base.temp_parent))
+        finally:
+            controller.merge_pending()
+            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        controller.poll()
         os.chmod(root, 0o700)
-        publisher = version.Publisher(root, calls)
+        publisher = version.Publisher(root, calls, controller)
         private_identities = {}
         for name in PRIVATE_DIRECTORY_NAMES:
+            controller.poll()
             child = root / name
             child.mkdir(mode=0o700)
             private_identities[name] = _private_directory_identity(child)
@@ -532,10 +555,10 @@ def run_capture(
         if runner_sha != contract["sha256"]:
             raise ModelsCaptureError("persisted capture source changed")
         source_parent, source_fd = version._open_attested(
-            base.source_path, base.source_identity, base.source_sha256, 0o755
+            base.source_path, base.source_identity, base.source_sha256, 0o755, controller
         )
         snapshot_parent, snapshot_fd = version._open_attested(
-            base.snapshot_path, base.snapshot_identity, base.source_sha256, 0o500
+            base.snapshot_path, base.snapshot_identity, base.source_sha256, 0o500, controller
         )
         argv = [base.source_path, "models"]
         environment = {
@@ -550,8 +573,10 @@ def run_capture(
             "TERM": "dumb",
             "PATH": "/usr/bin:/bin",
         }
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
         try:
+            controller.merge_pending()
+            controller.poll()
             _revalidate_private_directories(root, private_identities)
             _verify_account_descriptor(profile, account_fd)
             process = calls.popen(
@@ -564,27 +589,34 @@ def run_capture(
                 env=environment,
                 start_new_session=True,
             )
+            if type(process.pid) is not int or process.pid <= 1 or process.pid == os.getpgrp():
+                raise ModelsCaptureError("models capture process group is unsafe")
             process_active = True
         finally:
+            controller.merge_pending()
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        controller.poll()
         started = time.monotonic()
         deadline = started + WALL_SECONDS
-        stdout, stderr = models._capture(process, deadline)
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
+        stdout, stderr = models._capture(process, deadline, controller)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
         try:
+            controller.merge_pending()
             exit_code = version._close_reserved_group(process, calls)
             process_active = False
         finally:
+            controller.merge_pending()
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        controller.poll()
         if exit_code != 0:
             raise ModelsCaptureError("models capture process failed")
         _revalidate_private_directories(root, private_identities)
         account_post = _verify_account_descriptor(profile, account_fd)
         source_post = version._verify_attested_path(
-            source_parent, base.source_path, source_fd, base.source_identity, base.source_sha256
+            source_parent, base.source_path, source_fd, base.source_identity, base.source_sha256, controller
         )
         snapshot_post = version._verify_attested_path(
-            snapshot_parent, base.snapshot_path, snapshot_fd, base.snapshot_identity, base.source_sha256
+            snapshot_parent, base.snapshot_path, snapshot_fd, base.snapshot_identity, base.source_sha256, controller
         )
         stdout_sha = publisher.publish("models.stdout", stdout)
         stderr_sha = publisher.publish("models.stderr", stderr)
@@ -645,67 +677,52 @@ def run_capture(
             "version": {"binding_sha256": base.version_binding_sha256},
         }
         capture_sha = publisher.publish("models.capture.json", _canonical_json(capture_record))
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
         publisher.publish("models.capture.sha256", (capture_sha + "\n").encode("ascii"))
-        pending = set(signal.sigpending()).intersection(version.LIFECYCLE_SIGNALS)
-        if pending:
-            first = signal.sigwait(pending)
-            publisher.rollback()
-            raise ModelsCaptureInterrupted(first)
-        for item in version.LIFECYCLE_SIGNALS:
-            signal.signal(item, signal.SIG_IGN)
-        pending = set(signal.sigpending()).intersection(version.LIFECYCLE_SIGNALS)
-        if pending:
-            first = signal.sigwait(pending)
-            publisher.rollback()
-            raise ModelsCaptureInterrupted(first)
-        return {
+        controller.poll()
+        result = {
             "artifact_root": str(root),
             "capture_sha256": capture_sha,
             "call_count": 1,
             "claim": "snapshot-models-account-capture",
             "status": "captured",
         }
-    except ModelsCaptureInterrupted as exc:
-        signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
-        cleanup_failure: Optional[BaseException] = None
-        if process is not None and process_active:
-            try:
-                version._terminate_group(process, calls)
-            except BaseException as cleanup_error:
-                cleanup_failure = cleanup_error
-        if publisher is not None:
-            try:
-                publisher.rollback()
-            except BaseException as cleanup_error:
-                if cleanup_failure is None:
-                    cleanup_failure = cleanup_error
-        for item in version.LIFECYCLE_SIGNALS:
-            signal.signal(item, signal.SIG_IGN)
-        if cleanup_failure is not None:
-            raise cleanup_failure
-        raise SystemExit(128 + exc.signum)
-    except BaseException:
-        signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
-        cleanup_failure = None
-        if process is not None and process_active:
-            try:
-                version._terminate_group(process, calls)
-            except BaseException as cleanup_error:
-                cleanup_failure = cleanup_error
-        if publisher is not None:
-            try:
-                publisher.rollback()
-            except BaseException as cleanup_error:
-                if cleanup_failure is None:
-                    cleanup_failure = cleanup_error
-        for item in version.LIFECYCLE_SIGNALS:
-            signal.signal(item, signal.SIG_IGN)
-        if cleanup_failure is not None:
-            raise cleanup_failure
-        raise
+        if process_owned:
+            output = {
+                "artifact_root": result["artifact_root"],
+                "capture_sha256": result["capture_sha256"],
+                "status": "captured",
+            }
+            sys.stdout.buffer.flush()
+            version._write_all(
+                sys.stdout.buffer.fileno(), _canonical_json(output), controller
+            )
+            sys.stdout.buffer.flush()
+        signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
+        controller.merge_pending()
+        controller.poll()
+        completion_linearized = True
+    except BaseException as exc:
+        original_error = exc
     finally:
-        signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
+        signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
+        if process_owned and completion_linearized:
+            os._exit(0)
+        cleanup_failure: Optional[BaseException] = None
+        if not completion_linearized:
+            controller.merge_pending()
+            if process is not None and process_active:
+                try:
+                    version._terminate_group(process, calls)
+                    process_active = False
+                except BaseException as cleanup_error:
+                    cleanup_failure = cleanup_error
+            if publisher is not None:
+                try:
+                    publisher.rollback()
+                except BaseException as cleanup_error:
+                    if cleanup_failure is None:
+                        cleanup_failure = cleanup_error
+            controller.merge_pending()
         for descriptor in (account_fd, snapshot_fd, snapshot_parent, source_fd, source_parent):
             if descriptor is not None:
                 try:
@@ -715,44 +732,86 @@ def run_capture(
         if publisher is not None:
             try:
                 publisher.close()
-            except OSError:
-                pass
-        for item, handler in old_handlers.items():
-            signal.signal(item, handler)
-        signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
+            except BaseException as cleanup_error:
+                if cleanup_failure is None:
+                    cleanup_failure = cleanup_error
+        if process_owned:
+            controller.merge_pending()
+            selected = controller.choose()
+            version._atomic_exit(
+                128 + selected if selected is not None else 2,
+                sys.stderr.buffer.fileno(),
+                b"models account capture: interrupted\n"
+                if selected is not None
+                else b"models account capture: rejected\n",
+            )
+        for item in reversed(lifecycle.installed_handlers):
+            try:
+                signal.signal(item, lifecycle.old_handlers[item])
+            except BaseException as cleanup_error:
+                if cleanup_failure is None:
+                    cleanup_failure = cleanup_error
+        if not completion_linearized:
+            controller.merge_pending()
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, lifecycle.entry_mask)
+        except BaseException as cleanup_error:
+            if cleanup_failure is None:
+                cleanup_failure = cleanup_error
+        if original_error is None and cleanup_failure is not None:
+            original_error = cleanup_failure
+    selected = controller.choose()
+    if selected is not None and not completion_linearized:
+        raise version.AttestationInterrupted(selected)
+    if original_error is not None:
+        raise original_error
+    if result is None:
+        raise ModelsCaptureError("models capture did not produce a result")
+    return result
 
 
 def main(argv: Sequence[str]) -> int:
     if list(argv) != ["--capture-models"]:
         print("models account capture: invalid invocation", file=sys.stderr)
         return 64
-    startup = version._production_startup_evaluation()
-    if not startup.accepted:
-        sys.stderr.buffer.write(version._startup_diagnostic(startup))
-        return 64
-    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)
     try:
+        lifecycle = version._acquire_lifecycle()
+    except BaseException:
+        version._atomic_exit(2, sys.stderr.buffer.fileno(), b"models account capture: rejected\n")
+    usage = False
+    diagnostic = b"models account capture: rejected\n"
+    try:
+        version._activate_lifecycle(lifecycle)
+        startup = version._production_startup_evaluation()
+        lifecycle.controller.poll()
+        if not startup.accepted:
+            diagnostic = version._startup_diagnostic(startup)
+            usage = True
+            raise ModelsCaptureError("production startup rejected")
+        data = version._read_stdin(lifecycle.controller)
         if len(data) > PROFILE_LIMIT:
             raise ModelsCaptureError("models capture profile is oversized")
         profile = CaptureProfile.from_bytes(data)
         _validate_production_profile(profile)
-        result = run_capture(profile, profile_source=data)
-    except SystemExit:
-        raise
+        lifecycle.controller.poll()
     except BaseException:
-        print("models account capture: rejected", file=sys.stderr)
-        return 2
-    print(json.dumps(
-        {
-            "artifact_root": result["artifact_root"],
-            "capture_sha256": result["capture_sha256"],
-            "status": "captured",
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ))
-    return 0
+        signal.pthread_sigmask(signal.SIG_BLOCK, lifecycle.controller.owned)
+        lifecycle.controller.merge_pending()
+        selected = lifecycle.controller.choose()
+        version._atomic_exit(
+            128 + selected if selected is not None else (64 if usage else 2),
+            sys.stderr.buffer.fileno(),
+            b"models account capture: interrupted\n"
+            if selected is not None
+            else diagnostic,
+        )
+    run_capture(
+        profile,
+        profile_source=data,
+        lifecycle=lifecycle,
+        process_owned=True,
+    )
+    version._atomic_exit(2, sys.stderr.buffer.fileno(), b"models account capture: rejected\n")
 
 
 if __name__ == "__main__":

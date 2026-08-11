@@ -504,7 +504,10 @@ foreign replacement paths remain reserved residual shape, never deletion authori
 A CLI that must make signal handling and durable acceptance agree should own its
 process through the boundary. A Python handler should only accumulate signals; safe
 checkpoints choose from the accumulated set by a documented fixed priority and freeze
-that choice. Keep signals unblocked and poll through large copies and hashes,
+that choice, which is not a claim about chronological delivery. Preserve inherited
+ignored handlers and leave caller-blocked signals outside the owned set; never consume
+their pending signals as lifecycle evidence. Keep owned signals unblocked and poll
+through large copies and hashes,
 provisional publication, validation, durability, and the complete success flush while
 rollback descriptors remain open. Then block signals, take one completion snapshot,
 and call `os._exit(0)` without restoring handlers or unblocking. An embedded API
@@ -516,8 +519,11 @@ fields to make another interpreter repin it: select the reviewed CPython major/m
 and exact isolation flags, then reject before parsing production source or acquiring
 mutation authority. A test harness should perform the same check before importing
 the pinned module and print one canonical rerun command on mismatch.
-Apply this lesson only to the bootstrap runner here; the adjacent version/models/
-capture/profile/harness signal-handoff family still needs its own P1 audit.
+Apply this boundary consistently to bootstrap, version, models, capture, and the
+process-inert profile CLI. Embedded library calls restore only with explicit caller
+handoff semantics; a harness should be process-owning by default and expose return
+only as a named test handoff. Keep exact dependency pins ordered from version to
+models to capture, with independent harness and profile pins.
 
 Do not turn historical persona anecdotes into a trust label. A useful prompt can
 produce an honest escalation, and a test-writing prompt can still be rejected by the

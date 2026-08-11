@@ -165,7 +165,7 @@ installed-version/executable evidence binding or advance any `1.1.11` record.
 The provider-independent version-attestation prerequisite now has one canonical
 fixed-profile runner plus its persistent mutation harness. The runner owns the exact
 snapshot-backed version-only Popen path and a synthetic-only self-test; the harness
-binds its exact source bytes and digest before import. Their 157- and 55-case suites
+binds its exact source bytes and digest before import. Their 165- and 60-case suites
 replace one-off inline runners with bounded process-group ownership, inode-bound
 durable publication, atomic lifecycle completion, and paired weakened controls. They
 invoke no agy, provider, network, or private production evidence. This closes the
@@ -191,12 +191,19 @@ Its production and test entrypoints require the selected CPython 3.9
 `/usr/bin/python3 -I -S -B`; exact implementation, major/minor, and flag preflight
 rejects before production AST parsing, lifecycle acquisition, or mutation.
 
-A separate P1 signal-handoff audit remains deferred for the adjacent canonical
-version, models, capture, profile, and mutation-harness runners. This bootstrap slice
-does not claim to repair or certify those lifecycle boundaries.
+The adjacent signal-handoff slice is now implemented without expanding provider or
+metadata authority. Version, models, capture, and profile production entrypoints own
+their process through flushed success output and one final blocked completion
+snapshot, then use `os._exit`; inherited ignored and caller-blocked signals remain
+outside their owned sets. Checkpoints select accumulated HUP/INT/TERM by fixed
+priority, not claimed chronology, while preboundary signals or output failures roll
+back provisional markers/profiles. Embedded APIs restore only through explicit
+caller handoff, and the mutation harness exposes that return path only to tests. The
+byte-pin chain is version to models to capture, with independent version-harness and
+profile pins. All coverage remains synthetic and offline.
 
 A separate canonical models-inventory runner now binds one exact `models` Popen to
-an accepted version binding and the same attested snapshot. Its 113-case offline suite
+an accepted version binding and the same attested snapshot. Its 116-case offline suite
 uses synthetic executables only, pins the exact 11-line semantic parser and corrected
 normalized hash, enforces 25-second/64-KiB bounds and private detached publication,
 and kills mutations of the executable override, logical argv, private cwd, stream
@@ -207,8 +214,9 @@ it never inherits or copies caller credentials or Python startup state. The acce
 auth-required inventory therefore rejects without an accepted marker and cannot
 advance the checked-in `1.1.10` metadata or fail-closed matrix.
 
-A separate capture-only runner/profile is now implemented and offline-tested with
-fake account roots. It binds an explicit account HOME identity, the accepted version
+A separate capture-only runner/profile is now implemented and offline-tested in 84
+runner and 121 builder cases with fake account roots. It binds an explicit account
+HOME identity, the accepted version
 binding, and retained snapshot. After group closure its private scratch/cache/cwd must
 be unchanged and empty; any bounded exit-zero stdout/stderr is otherwise captured
 without inventory or error interpretation. It can publish only a private `captured`
@@ -741,7 +749,7 @@ remains intentionally outside the Doctor contract.
   implementations rejected, and no “certified secure” language.
 - **Implemented boundary:** The repository-only v1 kit binds eleven exact synthetic
   gate cases, manifest/source hashes, fixed verifier kinds, private disposable Git
-  repositories, and per-process time/output limits. Seventy-nine offline adversarial
+  repositories, and per-process time/output limits. Eighty-one offline adversarial
   cases reject source drift and permissive gates while proving HUP/INT/TERM cleanup,
   FD-relative no-follow deletion, cleanup bounds, and fail-closed residual handling
   under an explicit gate/loaded-code/local-owner/same-UID/OS-admin TCB. The runner

@@ -171,6 +171,43 @@ def run_synthetic(profile: object, **kwargs: object) -> dict[str, object]:
     )
 
 
+def capture_cli_command(
+    profile: object,
+    *,
+    delivered: tuple[int, ...] = (),
+    late_path: Path | None = None,
+) -> tuple[list[str], bytes]:
+    delivered_values = tuple(int(item) for item in delivered)
+    child = (
+        "import importlib.util,os,pathlib,signal,subprocess,sys,types;"
+        f"p={str(MODULE_PATH)!r};"
+        "s=importlib.util.spec_from_file_location('capture_cli_test',p);"
+        "m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);"
+        "m.version._production_startup_evaluation=lambda:types.SimpleNamespace(accepted=True);"
+        "m._validate_production_profile=lambda _profile:None;real=m.run_capture;"
+        f"delivered={delivered_values!r};"
+        "exec(\"def cleaning(*args,**kwargs):\\n"
+        " process=subprocess.Popen(*args,**kwargs)\\n"
+        " for item in delivered: os.kill(os.getpid(),item)\\n"
+        " wait=process.wait\\n"
+        " def cleaned_wait(*a,**k):\\n"
+        "  result=wait(*a,**k)\\n"
+        "  cache=pathlib.Path(kwargs['env']['TMPDIR'])/'xcrun_db'\\n"
+        "  if cache.is_file() and not cache.is_symlink(): cache.unlink()\\n"
+        "  return result\\n"
+        " process.wait=cleaned_wait\\n"
+        " return process\\n"
+        "def wrapped(*args,**kwargs):\\n"
+        " kwargs['calls']=m.version.RunnerCalls(popen=cleaning)\\n"
+        " kwargs['profile_validator']=lambda _profile:None\\n"
+        " return real(*args,**kwargs)\");"
+        "m.run_capture=wrapped;m.main(['--capture-models']);"
+    )
+    if late_path is not None:
+        child += f"pathlib.Path({str(late_path)!r}).write_bytes(b'returned\\n')"
+    return ["/usr/bin/python3", "-I", "-S", "-B", "-c", child], MODULE._canonical_json(profile.as_mapping())
+
+
 contract = MODULE.validate_source_contract(SOURCE)
 check("module imports with bytecode disabled", lambda: sys.dont_write_bytecode)
 check("capture wall is exactly 25 seconds", lambda: MODULE.WALL_SECONDS == 25.0)
@@ -773,11 +810,15 @@ def success_restores_signal_state() -> bool:
 check("successful capture restores caller lifecycle handlers and mask", success_restores_signal_state)
 
 handler_restore_mutation = (
-    b"        for item, handler in old_handlers.items():\n"
-    b"            signal.signal(item, handler)\n"
+    b"        for item in reversed(lifecycle.installed_handlers):\n"
+    b"            try:\n"
+    b"                signal.signal(item, lifecycle.old_handlers[item])\n"
+    b"            except BaseException as cleanup_error:\n"
+    b"                if cleanup_failure is None:\n"
+    b"                    cleanup_failure = cleanup_error\n"
 )
 check(
-    "source authority kills successful handler-restoration removal",
+    "source authority kills embedded handler-restoration removal",
     lambda: rejects(
         lambda: MODULE.validate_source_contract(mutate(handler_restore_mutation, b""))
     ),
@@ -802,44 +843,90 @@ check("rejected CLI emits one sanitized category without raw profile", no_raw_co
 
 def success_console_locates_capture_without_account_leak() -> bool:
     root, profile, _base = fixture("success-console")
-    encoded = MODULE._canonical_json(profile.as_mapping())
-    capture_root = str(root / "work" / "agy-models-account-capture.fixed")
-    fake_stdin = types.SimpleNamespace(buffer=io.BytesIO(encoded))
-    output = io.StringIO()
-    old_stdin = MODULE.sys.stdin
-    old_startup = MODULE.version._production_startup_evaluation
-    old_validate = MODULE._validate_production_profile
-    old_run = MODULE.run_capture
-    MODULE.sys.stdin = fake_stdin
-    MODULE.version._production_startup_evaluation = lambda: types.SimpleNamespace(accepted=True)
-    MODULE._validate_production_profile = lambda _profile: None
-    MODULE.run_capture = lambda _profile, profile_source: {
-        "artifact_root": capture_root,
-        "capture_sha256": "a" * 64,
-        "status": "captured",
-    }
+    late = root / "late.return"
+    command, encoded = capture_cli_command(profile, late_path=late)
     try:
-        with contextlib.redirect_stdout(output):
-            result = MODULE.main(["--capture-models"])
-        value = json.loads(output.getvalue())
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if not completed.stdout:
+            raise AssertionError(
+                f"production child exited {completed.returncode}: "
+                f"{completed.stderr.decode('utf-8', errors='replace')}"
+            )
+        value = json.loads(completed.stdout)
+        artifact = Path(value["artifact_root"])
         return (
-            result == 0
-            and value == {
-                "artifact_root": capture_root,
-                "capture_sha256": "a" * 64,
-                "status": "captured",
-            }
-            and profile.account_home not in output.getvalue()
+            completed.returncode == 0
+            and value["status"] == "captured"
+            and len(value["capture_sha256"]) == 64
+            and profile.account_home.encode() not in completed.stdout
+            and (artifact / "models.capture.sha256").is_file()
+            and not late.exists()
         )
     finally:
-        MODULE.sys.stdin = old_stdin
-        MODULE.version._production_startup_evaluation = old_startup
-        MODULE._validate_production_profile = old_validate
-        MODULE.run_capture = old_run
         cleanup(root)
 
 
 check("success console locates capture without exposing account HOME", success_console_locates_capture_without_account_leak)
+
+
+def production_capture_reverse_pending_priority() -> bool:
+    root, profile, _base = fixture("production-reverse-pending")
+    command, encoded = capture_cli_command(
+        profile, delivered=(signal.SIGTERM, signal.SIGHUP)
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return (
+            completed.returncode == 128 + signal.SIGHUP
+            and completed.stdout == b""
+            and completed.stderr == b"models account capture: interrupted\n"
+            and not any(root.glob("work/agy-models-account-capture.*/models.capture.sha256"))
+        )
+    finally:
+        cleanup(root)
+
+
+check("capture CLI reverse pending delivery selects fixed HUP priority", production_capture_reverse_pending_priority)
+
+
+def production_capture_broken_stdout_rolls_back() -> bool:
+    root, profile, _base = fixture("production-broken-stdout")
+    command, encoded = capture_cli_command(profile)
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+    process.stdin.write(encoded)
+    process.stdin.close()
+    process.stdout.close()
+    stderr = process.stderr.read()
+    returncode = process.wait(timeout=15)
+    try:
+        return (
+            returncode == 2
+            and stderr == b"models account capture: rejected\n"
+            and not any(root.glob("work/agy-models-account-capture.*/models.capture.sha256"))
+        )
+    finally:
+        cleanup(root)
+
+
+check("capture CLI broken stdout rolls back its provisional marker", production_capture_broken_stdout_rolls_back)
 check("invalid CLI is usage failure", lambda: MODULE.main(["models"]) == 64)
 check("auth-isolated runner is not modified by capture tests", lambda: hashlib.sha256(ISOLATED_PATH.read_bytes()).hexdigest() == MODULE.MODELS_RUNNER_SHA256)
 

@@ -48,6 +48,21 @@ def load_module():
 
 
 MODULE = load_module()
+ACCEPTED_RUNNER_FIXTURE = (
+    ROOT
+    / "tests"
+    / "fixtures"
+    / "persona-evidence"
+    / "version_attestation_runner.accepted-source"
+)
+ACCEPTED_RUNNER_SOURCE = ACCEPTED_RUNNER_FIXTURE.read_bytes()
+if (
+    stat.S_IMODE(ACCEPTED_RUNNER_FIXTURE.stat().st_mode) != 0o644
+    or len(ACCEPTED_RUNNER_SOURCE) != 62_988
+    or hashlib.sha256(ACCEPTED_RUNNER_SOURCE).hexdigest()
+    != MODULE.ACCEPTED_VERSION_FACTS["runner_sha256"]
+):
+    raise AssertionError("historical accepted version-runner fixture drifted")
 
 
 def run_cli(*args: str, root: Path = ROOT) -> subprocess.CompletedProcess[bytes]:
@@ -197,7 +212,7 @@ def build_history(status: str, fault: str | None = None, persona_name: str = "bu
         shutil.copy2(ROOT / "skills/agy-worker/runtime" / source, target); target.chmod(0o755)
     runner_target = repo / "scripts/version_attestation_runner.py"
     runner_target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "scripts/version_attestation_runner.py", runner_target); runner_target.chmod(0o755)
+    runner_target.write_bytes(ACCEPTED_RUNNER_SOURCE); runner_target.chmod(0o755)
     persona_target = repo / "skills/agy-worker/runtime/agents" / f"{persona_name}.md"
     persona_target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "skills/agy-worker/runtime/agents" / f"{persona_name}.md", persona_target); persona_target.chmod(0o644)
@@ -224,7 +239,7 @@ def build_history(status: str, fault: str | None = None, persona_name: str = "bu
                 shutil.copy2(ROOT / "skills/agy-worker/runtime" / source, target); target.chmod(0o755)
             target = repo / "scripts/version_attestation_runner.py"
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / "scripts/version_attestation_runner.py", target); target.chmod(0o755)
+            target.write_bytes(ACCEPTED_RUNNER_SOURCE); target.chmod(0o755)
             target = repo / "skills/agy-worker/runtime/agents" / f"{persona_name}.md"
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / "skills/agy-worker/runtime/agents" / f"{persona_name}.md", target); target.chmod(0o644)
