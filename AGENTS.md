@@ -59,14 +59,14 @@ Keep these counts current when their suites change:
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
   fake-agy/routing cases.
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
-- Canonical version-attestation runner: 157 offline fixed-profile/source-binding cases.
+- Canonical version-attestation runner: 165 offline fixed-profile/source-binding cases.
 - Repository-only version bootstrap runner: 139 offline retained-recovery/ownership/scratch/source/process/signal/runtime cases.
-- Version-attestation mutation harness: 55 offline publication/process-group/signal cases.
-- Canonical models-inventory attestation runner: 113 offline
+- Version-attestation mutation harness: 60 offline publication/process-group/signal cases.
+- Canonical models-inventory attestation runner: 116 offline
   fixed-profile/version-binding/environment/parser/process cases.
-- Explicit-account models capture runner: 82 offline
+- Explicit-account models capture runner: 84 offline
   profile/account-TCB/environment/capture/publication/process cases.
-- Explicit-account models capture profile builder: 118 offline canonical-profile,
+- Explicit-account models capture profile builder: 121 offline canonical-profile,
   external-evidence, descriptor, publication, and mutation cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution and CI policy: 350 offline
@@ -252,6 +252,15 @@ only a passing test has not been shown to catch anything.
   The embedded test API alone restores caller state, with post-snapshot signals owned
   by the caller. Chunk polling does not bound a blocked kernel syscall. Its source graph guard detects reviewed-
   byte drift under the local-owner/same-UID/interpreter/OS-admin TCB.
+- **Adjacent signal owners use the same process boundary.** The version, models,
+  capture, and profile production CLIs exclude inherited `SIG_IGN` and caller-blocked
+  signals from ownership, latch without raising, poll bounded userspace work, and
+  select accumulated HUP/INT/TERM by fixed priority rather than claiming send
+  chronology. Success bytes are written and flushed before one blocked completion
+  snapshot; until then the marker/profile remains rollback-authorizing. After that
+  snapshot production calls `os._exit` without restoring or unblocking. Embedded APIs
+  may restore only with explicit caller-handoff semantics; the mutation harness may
+  return only through its explicit test handoff.
 - **The current models runner is deliberately auth-isolated.** Its one child receives
   only a fresh private empty HOME, TMPDIR, and XDG roots plus the exact fixed locale,
   terminal, color, and PATH values. Never inherit or copy the caller's HOME,

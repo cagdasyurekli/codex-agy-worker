@@ -66,6 +66,13 @@ def profile_bytes(profile: object) -> bytes:
     return MODULE._canonical_json(dataclasses.asdict(profile))
 
 
+def replace_last(data: bytes, old: bytes, new: bytes) -> bytes:
+    head, separator, tail = data.rpartition(old)
+    if not separator:
+        raise AssertionError(f"mutation target missing: {old!r}")
+    return head + new + tail
+
+
 def fresh_profile(label: str, executable: bytes = MODULE.FAKE_EXECUTABLE):
     root = TMP / label
     root.mkdir(mode=0o700)
@@ -79,6 +86,26 @@ def cleanup_result(root: Path, result: dict[str, object] | None) -> None:
             shutil.rmtree(artifact)
     if root.exists():
         shutil.rmtree(root)
+
+
+def version_cli_command(
+    profile: object,
+    *,
+    setup: str = "",
+    late_path: Path | None = None,
+) -> tuple[list[str], bytes]:
+    child = (
+        "import importlib.util,os,pathlib,signal,subprocess,sys,types;"
+        f"p={str(MODULE_PATH)!r};"
+        "s=importlib.util.spec_from_file_location('version_cli_test',p);"
+        "m=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);"
+        "m._production_startup_evaluation=lambda:types.SimpleNamespace(accepted=True);"
+        + setup
+        + "m.main(['--attest-version']);"
+    )
+    if late_path is not None:
+        child += f"pathlib.Path({str(late_path)!r}).write_bytes(b'returned\\n')"
+    return ["/usr/bin/python3", "-I", "-S", "-B", "-c", child], profile_bytes(profile)
 
 
 source = MODULE_PATH.read_bytes()
@@ -100,8 +127,8 @@ mutated = source.replace(b"            process = calls.popen(\n", b"            
 check("source validator rejects an extra Popen", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b'argv = [profile.source_path, "--version"]', b'argv = [profile.source_path, "--help"]', 1)
 check("source validator rejects logical argv drift", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(b"            signal.signal(item, signal.SIG_IGN)\n", b"", 1)
-check("source validator rejects terminal signal disarm removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+mutated = source.replace(b"        if item not in entry_mask and old_handlers[item] is not signal.SIG_IGN\n", b"        if item not in entry_mask\n", 1)
+check("source validator rejects inherited ignore ownership", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(
     b"    entry_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)\n",
     b"    entry_mask = signal.pthread_sigmask(signal.SIG_BLOCK, [])\n",
@@ -109,11 +136,11 @@ mutated = source.replace(
 )
 check("source validator rejects early lifecycle masking removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(
-    b"        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)\n",
+    b"        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)\n",
     b"        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])\n",
     1,
 )
-check("source validator rejects publication signal masking removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
+check("source validator rejects owned-signal completion masking removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(b"            exit_code = _close_reserved_group(process, calls)\n", b"            exit_code = process.wait()\n", 1)
 check("source validator rejects pre-reap group closure removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(
@@ -222,45 +249,45 @@ mutated = source.replace(
     1,
 )
 check("source validator rejects diagnostic failure cap removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(
+mutated = replace_last(
+    source,
     b"    if not startup.accepted:\n",
     b"    if False:\n",
-    1,
 )
 check("source validator rejects live startup condition bypass", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(
-    b"        sys.stderr.buffer.write(_startup_diagnostic(startup))\n        return 64\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
-    b"        sys.stderr.buffer.write(_startup_diagnostic(startup))\n        pass\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
+    b"            raise AttestationError(\"production startup rejected\")\n",
+    b"            pass\n",
     1,
 )
 check("source validator rejects live startup fallthrough", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(
-    b"    startup = _production_startup_evaluation()\n    if not startup.accepted:\n        sys.stderr.buffer.write(_startup_diagnostic(startup))\n        return 64\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
-    b"    startup = _production_startup_evaluation()\n    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n    if not startup.accepted:\n        sys.stderr.buffer.write(_startup_diagnostic(startup))\n        return 64\n",
+    b"        startup = _production_startup_evaluation()\n        lifecycle.controller.poll()\n        if not startup.accepted:\n",
+    b"        data = _read_stdin(lifecycle.controller)\n        startup = _production_startup_evaluation()\n        lifecycle.controller.poll()\n        if not startup.accepted:\n",
     1,
 )
 check("source validator rejects profile read before startup guard", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(
-    b"    startup = _production_startup_evaluation()\n",
-    b"    ignored = sys.stdin.buffer.read(1)\n    startup = _production_startup_evaluation()\n",
+    b"        startup = _production_startup_evaluation()\n",
+    b"        ignored = sys.stdin.buffer.read(1)\n        startup = _production_startup_evaluation()\n",
     1,
 )
 check("source validator rejects an extra hidden profile read", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(
-    b"    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
-    b"    data = sys.stdout.buffer.read(PROFILE_LIMIT + 1)\n",
-    1,
+mutated = replace_last(
+    source,
+    b"    descriptor = sys.stdin.buffer.fileno()\n",
+    b"    descriptor = sys.stdout.buffer.fileno()\n",
 )
 check("source validator rejects profile read receiver drift", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
-mutated = source.replace(
-    b"    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)\n",
-    b"    data = sys.stdin.buffer.read(PROFILE_LIMIT)\n",
-    1,
+mutated = replace_last(
+    source,
+    b"min(64 * 1024, PROFILE_LIMIT + 1 - len(data))",
+    b"min(64 * 1024, PROFILE_LIMIT - len(data))",
 )
 check("source validator rejects profile read cap drift", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
 mutated = source.replace(
-    b"        sys.stderr.buffer.write(_startup_diagnostic(startup))\n",
-    b"        pass\n",
+    b"            diagnostic = _startup_diagnostic(startup)\n",
+    b"            diagnostic = b\"rejected\\n\"\n",
     1,
 )
 check("source validator rejects startup diagnostic removal", lambda: rejects(lambda: MODULE.validate_source_contract(mutated)))
@@ -1488,9 +1515,9 @@ for lifecycle_signal in MODULE.LIFECYCLE_SIGNALS:
     )
 
 
-def double_signal_during_intermediate_publication(first: int) -> bool:
-    second = signal.SIGTERM if first != signal.SIGTERM else signal.SIGHUP
-    root, candidate = fresh_profile(f"publication-signal-{first}-{second}")
+def signal_during_intermediate_publication(signum: int) -> bool:
+    cleanup_signal = signal.SIGTERM if signum != signal.SIGTERM else signal.SIGHUP
+    root, candidate = fresh_profile(f"publication-signal-{signum}-{cleanup_signal}")
     real = os.fsync
     file_calls = 0
     directory_calls = 0
@@ -1500,11 +1527,11 @@ def double_signal_during_intermediate_publication(first: int) -> bool:
         if stat.S_ISDIR(os.fstat(descriptor).st_mode):
             directory_calls += 1
             if directory_calls == 3:
-                os.kill(os.getpid(), second)
+                os.kill(os.getpid(), cleanup_signal)
         else:
             file_calls += 1
             if file_calls == 1:
-                os.kill(os.getpid(), first)
+                os.kill(os.getpid(), signum)
         real(descriptor)
 
     try:
@@ -1518,9 +1545,8 @@ def double_signal_during_intermediate_publication(first: int) -> bool:
             artifact_roots = list(root.glob("agy-version-recovery.*"))
             expected_dirs = {"cwd", "home", "tmp", "xdg-config", "xdg-cache", "xdg-state"}
             return (
-                exc.code == 128 + first
+                exc.code == 128 + signum
                 and file_calls >= 1
-                and directory_calls >= 3
                 and len(artifact_roots) == 1
                 and {item.name for item in artifact_roots[0].iterdir()} == expected_dirs
                 and all(not any((artifact_roots[0] / name).iterdir()) for name in expected_dirs)
@@ -1532,8 +1558,8 @@ def double_signal_during_intermediate_publication(first: int) -> bool:
 
 for lifecycle_signal in MODULE.LIFECYCLE_SIGNALS:
     check(
-        f"distinct double signal beginning {lifecycle_signal} preserves the first during publication cleanup",
-        lambda lifecycle_signal=lifecycle_signal: double_signal_during_intermediate_publication(
+        f"publication checkpoint freezes selected signal {lifecycle_signal} through cleanup",
+        lambda lifecycle_signal=lifecycle_signal: signal_during_intermediate_publication(
             lifecycle_signal
         ),
     )
@@ -1600,6 +1626,272 @@ for lifecycle_signal in MODULE.LIFECYCLE_SIGNALS:
         f"double signal {lifecycle_signal} during marker rollback preserves exact exit",
         lambda lifecycle_signal=lifecycle_signal: double_signal_during_completion(lifecycle_signal),
     )
+
+
+def production_cli_success() -> bool:
+    root, candidate = fresh_profile("production-cli-success")
+    late = root / "late.return"
+    command, encoded = version_cli_command(candidate, late_path=late)
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        value = json.loads(completed.stdout)
+        artifact = Path(value["artifact_root"])
+        return (
+            completed.returncode == 0
+            and completed.stderr == b""
+            and completed.stdout == MODULE._canonical_json(value)
+            and value["status"] == "accepted"
+            and value["call_count"] == 1
+            and (artifact / "version.binding.sha256").is_file()
+            and not late.exists()
+        )
+    finally:
+        cleanup_result(root, None)
+
+
+check("process-owned CLI flushes one result then exits without Python return", production_cli_success)
+
+
+def inherited_ignored_signal_is_preserved() -> bool:
+    root, candidate = fresh_profile("production-inherited-ignore")
+    setup = (
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN);real_run=m.run_attestation;"
+        "exec(\"def signaling_popen(*args,**kwargs):\\n"
+        " process=subprocess.Popen(*args,**kwargs)\\n"
+        " os.kill(os.getpid(),signal.SIGTERM)\\n"
+        " return process\\n"
+        "def wrapped(*args,**kwargs):\\n"
+        " kwargs['calls']=m.RunnerCalls(popen=signaling_popen)\\n"
+        " return real_run(*args,**kwargs)\");"
+        "m.run_attestation=wrapped;"
+    )
+    command, encoded = version_cli_command(candidate, setup=setup)
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        value = json.loads(completed.stdout)
+        return (
+            completed.returncode == 0
+            and completed.stderr == b""
+            and value["status"] == "accepted"
+            and Path(value["artifact_root"]).joinpath("version.binding.sha256").is_file()
+        )
+    finally:
+        cleanup_result(root, None)
+
+
+check("production CLI preserves inherited SIG_IGN without consuming the signal", inherited_ignored_signal_is_preserved)
+
+
+def caller_blocked_pending_signal_is_preserved() -> bool:
+    root, candidate = fresh_profile("production-caller-pending")
+    setup = (
+        "signal.pthread_sigmask(signal.SIG_BLOCK,(signal.SIGTERM,));"
+        "os.kill(os.getpid(),signal.SIGTERM);"
+    )
+    command, encoded = version_cli_command(candidate, setup=setup)
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        value = json.loads(completed.stdout)
+        return (
+            completed.returncode == 0
+            and completed.stderr == b""
+            and value["status"] == "accepted"
+            and Path(value["artifact_root"]).joinpath("version.binding.sha256").is_file()
+        )
+    finally:
+        cleanup_result(root, None)
+
+
+check("production CLI excludes a caller-blocked pending signal from ownership", caller_blocked_pending_signal_is_preserved)
+
+
+def reverse_pending_priority_is_deterministic() -> bool:
+    root, candidate = fresh_profile("production-reverse-pending")
+    setup = (
+        "real_run=m.run_attestation;"
+        "exec(\"def signaling_popen(*args,**kwargs):\\n"
+        " process=subprocess.Popen(*args,**kwargs)\\n"
+        " os.kill(os.getpid(),signal.SIGTERM)\\n"
+        " os.kill(os.getpid(),signal.SIGHUP)\\n"
+        " return process\\n"
+        "def wrapped(*args,**kwargs):\\n"
+        " kwargs['calls']=m.RunnerCalls(popen=signaling_popen)\\n"
+        " return real_run(*args,**kwargs)\");"
+        "m.run_attestation=wrapped;"
+    )
+    command, encoded = version_cli_command(candidate, setup=setup)
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return (
+            completed.returncode == 128 + signal.SIGHUP
+            and completed.stdout == b""
+            and completed.stderr == b"version attestation runner: interrupted\n"
+            and not any(root.glob("agy-version-recovery.*/version.binding.sha256"))
+        )
+    finally:
+        cleanup_result(root, None)
+
+
+check("reverse pending delivery selects fixed HUP priority rather than chronology", reverse_pending_priority_is_deterministic)
+
+
+def signal_after_output_before_snapshot_rolls_back() -> bool:
+    root, candidate = fresh_profile("production-preboundary-signal")
+    setup = (
+        "real_write=m._write_all;"
+        "exec(\"def signaling_write(descriptor,data,controller=None):\\n"
+        " real_write(descriptor,data,controller)\\n"
+        " if descriptor==sys.stdout.buffer.fileno(): os.kill(os.getpid(),signal.SIGHUP)\");"
+        "m._write_all=signaling_write;"
+    )
+    command, encoded = version_cli_command(candidate, setup=setup)
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        value = json.loads(completed.stdout)
+        return (
+            completed.returncode == 128 + signal.SIGHUP
+            and completed.stderr == b"version attestation runner: interrupted\n"
+            and value["status"] == "accepted"
+            and not Path(value["artifact_root"]).joinpath("version.binding.sha256").exists()
+        )
+    finally:
+        cleanup_result(root, None)
+
+
+check("signal after full output but before completion snapshot rolls back marker", signal_after_output_before_snapshot_rolls_back)
+
+
+def postboundary_signal_cannot_reenter_python() -> bool:
+    root, candidate = fresh_profile("production-postboundary-signal")
+    setup = (
+        "real_exit=os._exit;"
+        "exec(\"def boundary_exit(code):\\n"
+        " if code==0: os.kill(os.getpid(),signal.SIGHUP)\\n"
+        " real_exit(code)\");"
+        "m.os._exit=boundary_exit;"
+    )
+    command, encoded = version_cli_command(candidate, setup=setup)
+    try:
+        completed = subprocess.run(
+            command,
+            input=encoded,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        value = json.loads(completed.stdout)
+        return (
+            completed.returncode == 0
+            and completed.stderr == b""
+            and value["status"] == "accepted"
+            and Path(value["artifact_root"]).joinpath("version.binding.sha256").is_file()
+        )
+    finally:
+        cleanup_result(root, None)
+
+
+check("postboundary signal stays blocked through immediate os._exit", postboundary_signal_cannot_reenter_python)
+
+
+def broken_stdout_rolls_back_completion() -> bool:
+    root, candidate = fresh_profile("production-broken-stdout")
+    command, encoded = version_cli_command(candidate)
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+    process.stdin.write(encoded)
+    process.stdin.close()
+    process.stdout.close()
+    stderr = process.stderr.read()
+    returncode = process.wait(timeout=10)
+    try:
+        return (
+            returncode == 2
+            and stderr == b"version attestation runner: rejected\n"
+            and not any(root.glob("agy-version-recovery.*/version.binding.sha256"))
+        )
+    finally:
+        cleanup_result(root, None)
+
+
+check("broken stdout rejects and rolls back the provisional marker", broken_stdout_rolls_back_completion)
+
+
+def group_cleanup_failure_still_rolls_back_publisher() -> bool:
+    root, candidate = fresh_profile("group-cleanup-failure")
+    real_killpg = os.killpg
+    attempts = 0
+    processes: list[subprocess.Popen[bytes]] = []
+
+    def observed_popen(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = subprocess.Popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    def fail_once(group: int, signum: int) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("synthetic group cleanup failure")
+        real_killpg(group, signum)
+
+    try:
+        rejected = rejects(
+            lambda: MODULE.run_attestation(
+                candidate,
+                calls=MODULE.RunnerCalls(popen=observed_popen, killpg=fail_once),
+                module_source=source,
+            )
+        )
+        artifacts = list(root.glob("agy-version-recovery.*"))
+        return (
+            rejected
+            and attempts >= 2
+            and len(processes) == 1
+            and processes[0].returncode is not None
+            and len(artifacts) == 1
+            and not any(path.is_file() for path in artifacts[0].iterdir())
+            and not (artifacts[0] / "version.binding.sha256").exists()
+        )
+    finally:
+        cleanup_result(root, None)
+
+
+check("group-cleanup failure cannot skip publisher rollback", group_cleanup_failure_still_rolls_back_publisher)
 
 shutil.rmtree(TMP)
 print(f"version attestation runner offline tests: {passed} passed, {failed} failed")

@@ -30,8 +30,8 @@ from typing import Optional, Sequence
 
 sys.dont_write_bytecode = True
 
-VERSION_RUNNER_BYTES = 62_988
-VERSION_RUNNER_SHA256 = "e6bd55d2d0ab6c542745fd1bb1af4f6f4b7f163abb6f8c78597a24475d501d28"
+VERSION_RUNNER_BYTES = 69_242
+VERSION_RUNNER_SHA256 = "0e2632c2de1dc2651693dce942429b3219d551eb5a979aa2d8d273ee0aa95d6b"
 INVENTORY_PARSER_BYTES = 3_652
 INVENTORY_PARSER_SHA256 = "824fc35b7c87df61a437b5c93e508b6caf5759626b004e0f82acd8f903eadd18"
 EXPECTED_NORMALIZED_SHA256 = "8d46bcac6b8f27995635d91dc6f5a0e549d351e707efe11a82d8b6593fe12daf"
@@ -56,12 +56,12 @@ PRODUCTION_AST_SHA256 = {
     "_canonical_sources": "23327104eef19d6ba010b62a144fa6336d5fcce65a8c25877bf6bc1c2bf2f792",
     "_validate_production_profile": "d604722e6d0c518b46a47c49af9c9008c75bb27096447ba1d7aab4ddfba6c268",
     "_validate_version_evidence": "cc1a4f0d89d28badbdfed02e88f47592af0938f2ca8e06611697d56d36984fef",
-    "_capture": "4407c26e7ae4be1754d9ccefd48c9d1ba367da93d39aa1cb619a312de343c952",
+    "_capture": "49719973bcd0647fa8ec6ebb90a9934827b99ec4464fbbe9a1aabc71ecf0e657",
     "_validate_stderr": "0abacd437c8dc19669339c2c3273342fd0e9a2d0b20fd7a0817e69d971d64eff",
     "_private_directory_identity": "4a19c9e4b92eabdced7ca4d79fad544cc2c532964d8ad28ba19d87927fadb31d",
     "_revalidate_private_directories": "d50498ba403904036956f13335864ec1a38b0ca5a0b0eb0a4881c487edefa20a",
-    "run_attestation": "e1eac1e41ab4e739da32c8f57cabef376fd77fc66c916d263d4e22f72daaa95c",
-    "main": "7a148f4079cb229639f4c0fe53fd18e14117514bbc3e734700939ccd64fd0c0b",
+    "run_attestation": "7dadb4f0d3c5472e14c9b5e153b7c292eb1afd6594afab5cc4e6da3cdea4317e",
+    "main": "0057f238185514dd4fb7238d0348031109f54da61ddbbed2297e3a073723ced4",
 }
 PROFILE_KEYS = frozenset(
     {
@@ -483,7 +483,7 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         and isinstance(node.ctx, ast.Load)
         and node.id == "calls"
     ]
-    if len(calls_loads) != 5:
+    if len(calls_loads) != 4:
         raise ModelsAttestationError("models injected call authority changed")
     filesystem_mutation_attributes = {
         "chmod",
@@ -569,16 +569,14 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         "Name(id='private_directory_identities', ctx=Load())], keywords=[])"
     )
     if (
-        len(launch_body) != 3
-        or launch_indexes != [1]
-        or not isinstance(launch_body[0], ast.Expr)
-        or ast.dump(launch_body[0].value) != expected_revalidation
-        or not isinstance(launch_body[2], ast.Assign)
-        or len(launch_body[2].targets) != 1
-        or not isinstance(launch_body[2].targets[0], ast.Name)
-        or launch_body[2].targets[0].id != "process_active"
-        or not isinstance(launch_body[2].value, ast.Constant)
-        or launch_body[2].value.value is not True
+        len(launch_indexes) != 1
+        or not any(
+            isinstance(statement, ast.Expr)
+            and ast.dump(statement.value) == expected_revalidation
+            and index < launch_indexes[0]
+            for index, statement in enumerate(launch_body)
+        )
+        or "process_active = True" not in (ast.get_source_segment(text, launch_owners[0]) or "")
     ):
         raise ModelsAttestationError("models private directory revalidation moved")
     keywords = {item.arg: item.value for item in call.keywords if item.arg is not None}
@@ -731,30 +729,16 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         in main_text
     ):
         raise ModelsAttestationError("models source authority changed")
-    main_reads = [
-        node
-        for node in ast.walk(main_node)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "read"
-        and isinstance(node.func.value, ast.Attribute)
-        and node.func.value.attr == "buffer"
-        and isinstance(node.func.value.value, ast.Attribute)
-        and isinstance(node.func.value.value.value, ast.Name)
-        and node.func.value.value.value.id == "sys"
-        and node.func.value.value.attr == "stdin"
-    ]
-    if len(main_reads) != 1:
-        raise ModelsAttestationError("models profile read authority changed")
-    expected_read = "BinOp(left=Name(id='PROFILE_LIMIT', ctx=Load()), op=Add(), right=Constant(value=1))"
-    if len(main_reads[0].args) != 1 or ast.dump(main_reads[0].args[0]) != expected_read:
-        raise ModelsAttestationError("models profile read bound changed")
     required_main = (
         'if list(argv) != ["--attest-models"]:',
+        "lifecycle = version._acquire_lifecycle()",
+        "version._activate_lifecycle(lifecycle)",
         "startup = version._production_startup_evaluation()",
-        "if not startup.accepted:\n        sys.stderr.buffer.write(version._startup_diagnostic(startup))\n        return 64",
-        "data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)",
-        "profile = ModelsProfile.from_bytes(data)\n        _validate_production_profile(profile)\n        result = run_attestation(profile, profile_source=data)",
+        "diagnostic = version._startup_diagnostic(startup)",
+        "data = version._read_stdin(lifecycle.controller)",
+        "profile = ModelsProfile.from_bytes(data)",
+        "_validate_production_profile(profile)",
+        "process_owned=True",
     )
     if any(marker not in main_text for marker in required_main):
         raise ModelsAttestationError("models production main authority changed")
@@ -777,9 +761,9 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         raise ModelsAttestationError("models fixed evidence constants changed")
     if not (
         main_text.index("if not startup.accepted:")
-        < main_text.index("data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)")
+        < main_text.index("data = version._read_stdin(lifecycle.controller)")
         < main_text.index("profile = ModelsProfile.from_bytes(data)")
-        < main_text.index("result = run_attestation(profile, profile_source=data)")
+        < main_text.index("run_attestation(")
     ):
         raise ModelsAttestationError("models production main ordering changed")
     return {"byte_count": len(data), "sha256": hashlib.sha256(data).hexdigest()}
@@ -903,7 +887,9 @@ def _validate_version_evidence(profile: ModelsProfile) -> None:
 
 
 def _capture(
-    process: subprocess.Popen[bytes], deadline: float
+    process: subprocess.Popen[bytes],
+    deadline: float,
+    controller: Optional[version.SignalController] = None,
 ) -> tuple[bytes, bytes]:
     if process.stdout is None or process.stderr is None:
         raise ModelsAttestationError("models process did not expose bounded streams")
@@ -919,12 +905,18 @@ def _capture(
         for descriptor in buffers:
             selector.register(descriptor, selectors.EVENT_READ)
         while selector.get_map():
+            if controller is not None:
+                controller.poll()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ModelsAttestationError("models process timed out")
             for key, _mask in selector.select(min(remaining, 0.05)):
+                if controller is not None:
+                    controller.poll()
                 stream, captured = buffers[key.fd]
                 block = os.read(key.fd, min(8192, STREAM_LIMIT + 1 - len(captured)))
+                if controller is not None:
+                    controller.poll()
                 if not block:
                     selector.unregister(key.fd)
                     stream.close()
@@ -932,6 +924,8 @@ def _capture(
                 captured.extend(block)
                 if len(captured) > STREAM_LIMIT:
                     raise ModelsAttestationError("models output exceeded its bound")
+    if controller is not None:
+        controller.poll()
     return bytes(buffers[stdout_descriptor][1]), bytes(buffers[stderr_descriptor][1])
 
 
@@ -989,29 +983,36 @@ def run_attestation(
     module_source: Optional[bytes] = None,
     profile_source: Optional[bytes] = None,
     stderr_contract: tuple[int, str] = (EXPECTED_STDERR_BYTES, EXPECTED_STDERR_SHA256),
+    lifecycle: Optional[version.LifecycleState] = None,
+    process_owned: bool = False,
 ) -> dict[str, object]:
     """Run exactly one snapshot-backed models inventory observation."""
 
-    if not all(hasattr(signal, name) for name in ("pthread_sigmask", "sigpending", "sigwait")):
-        raise ModelsAttestationError("required signal primitives are unavailable")
-    entry_mask = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
-    old_handlers = {item: signal.getsignal(item) for item in version.LIFECYCLE_SIGNALS}
+    if lifecycle is None:
+        lifecycle = version._acquire_lifecycle()
+        try:
+            version._activate_lifecycle(lifecycle)
+        except BaseException:
+            signal.pthread_sigmask(signal.SIG_BLOCK, lifecycle.controller.owned)
+            lifecycle.controller.merge_pending()
+            for item in reversed(lifecycle.installed_handlers):
+                signal.signal(item, lifecycle.old_handlers[item])
+            lifecycle.controller.merge_pending()
+            signal.pthread_sigmask(signal.SIG_SETMASK, lifecycle.entry_mask)
+            raise
+    controller = lifecycle.controller
     root: Optional[Path] = None
     publisher: Optional[version.Publisher] = None
     source_parent = source_fd = snapshot_parent = snapshot_fd = None
     process: Optional[subprocess.Popen[bytes]] = None
     process_active = False
-    disarmed = False
-    ignore_until_unblocked = False
-
-    def interrupted(signum: int, _frame: object) -> None:
-        raise ModelsAttestationInterrupted(signum)
-
-    for item in version.LIFECYCLE_SIGNALS:
-        signal.signal(item, interrupted)
-    signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
+    completion_linearized = False
+    original_error: Optional[BaseException] = None
+    result: Optional[dict[str, object]] = None
     try:
+        controller.poll()
         runner_source, _version_source, inventory_source = _canonical_sources(module_source)
+        controller.poll()
         source_contract = validate_source_contract(runner_source)
         exact_profile = (
             _canonical_json(dataclasses.asdict(profile))
@@ -1020,12 +1021,23 @@ def run_attestation(
         )
         if ModelsProfile.from_bytes(exact_profile) != profile:
             raise ModelsAttestationError("exact profile bytes do not match the parsed profile")
+        controller.poll()
         _validate_version_evidence(profile)
-        root = Path(tempfile.mkdtemp(prefix="agy-models-attestation.", dir=profile.temp_parent))
+        controller.poll()
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
+        try:
+            controller.merge_pending()
+            controller.poll()
+            root = Path(tempfile.mkdtemp(prefix="agy-models-attestation.", dir=profile.temp_parent))
+        finally:
+            controller.merge_pending()
+            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        controller.poll()
         os.chmod(root, 0o700)
-        publisher = version.Publisher(root, calls)
+        publisher = version.Publisher(root, calls, controller)
         private_directory_identities: dict[str, version.FileIdentity] = {}
         for name in PRIVATE_DIRECTORY_NAMES:
+            controller.poll()
             child = root / name
             child.mkdir(mode=0o700)
             private_directory_identities[name] = _private_directory_identity(child)
@@ -1037,10 +1049,10 @@ def run_attestation(
         if runner_sha != source_contract["sha256"] or parser_sha != INVENTORY_PARSER_SHA256:
             raise ModelsAttestationError("persisted canonical source changed")
         source_parent, source_fd = version._open_attested(
-            profile.source_path, profile.source_identity, profile.source_sha256, 0o755
+            profile.source_path, profile.source_identity, profile.source_sha256, 0o755, controller
         )
         snapshot_parent, snapshot_fd = version._open_attested(
-            profile.snapshot_path, profile.snapshot_identity, profile.source_sha256, 0o500
+            profile.snapshot_path, profile.snapshot_identity, profile.source_sha256, 0o500, controller
         )
         argv = [profile.source_path, "models"]
         environment = {
@@ -1055,8 +1067,10 @@ def run_attestation(
             "TERM": "dumb",
             "PATH": "/usr/bin:/bin",
         }
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
         try:
+            controller.merge_pending()
+            controller.poll()
             _revalidate_private_directories(root, private_directory_identities)
             process = calls.popen(
                 argv,
@@ -1068,18 +1082,25 @@ def run_attestation(
                 env=environment,
                 start_new_session=True,
             )
+            if type(process.pid) is not int or process.pid <= 1 or process.pid == os.getpgrp():
+                raise ModelsAttestationError("models process group is unsafe")
             process_active = True
         finally:
+            controller.merge_pending()
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        controller.poll()
         started = time.monotonic()
         deadline = started + WALL_SECONDS
-        stdout, stderr = _capture(process, deadline)
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
+        stdout, stderr = _capture(process, deadline, controller)
+        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
         try:
+            controller.merge_pending()
             exit_code = version._close_reserved_group(process, calls)
             process_active = False
         finally:
+            controller.merge_pending()
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
+        controller.poll()
         if exit_code != 0:
             raise ModelsAttestationError("models process failed")
         evidence = inventory.parse_inventory_bytes(stdout)
@@ -1091,10 +1112,10 @@ def run_attestation(
             raise ModelsAttestationError("models inventory changed")
         stderr_sha = _validate_stderr(stderr, stderr_contract)
         source_post = version._verify_attested_path(
-            source_parent, profile.source_path, source_fd, profile.source_identity, profile.source_sha256
+            source_parent, profile.source_path, source_fd, profile.source_identity, profile.source_sha256, controller
         )
         snapshot_post = version._verify_attested_path(
-            snapshot_parent, profile.snapshot_path, snapshot_fd, profile.snapshot_identity, profile.source_sha256
+            snapshot_parent, profile.snapshot_path, snapshot_fd, profile.snapshot_identity, profile.source_sha256, controller
         )
         stdout_sha = publisher.publish("models.stdout", stdout)
         published_stderr_sha = publisher.publish("models.stderr", stderr)
@@ -1167,23 +1188,9 @@ def run_attestation(
             "version": {"binding_sha256": profile.version_binding_sha256},
         }
         binding_sha = publisher.publish("models.binding.json", _canonical_json(binding))
-        blocked = signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
         publisher.publish("models.binding.sha256", (binding_sha + "\n").encode("ascii"))
-        pending = set(signal.sigpending()).intersection(version.LIFECYCLE_SIGNALS)
-        if pending:
-            first = signal.sigwait(pending)
-            publisher.rollback()
-            raise ModelsAttestationInterrupted(first)
-        for item in version.LIFECYCLE_SIGNALS:
-            signal.signal(item, signal.SIG_IGN)
-        pending = set(signal.sigpending()).intersection(version.LIFECYCLE_SIGNALS)
-        if pending:
-            first = signal.sigwait(pending)
-            publisher.rollback()
-            raise ModelsAttestationInterrupted(first)
-        disarmed = True
-        ignore_until_unblocked = True
-        return {
+        controller.poll()
+        result = {
             "artifact_root": str(root),
             "binding_sha256": binding_sha,
             "call_count": 1,
@@ -1196,57 +1203,83 @@ def run_attestation(
             "stderr_sha256": published_stderr_sha,
             "stdout_sha256": stdout_sha,
         }
-    except ModelsAttestationInterrupted as exc:
-        signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
-        if process is not None and process_active:
-            version._terminate_group(process, calls)
-        if publisher is not None:
-            publisher.rollback()
-        for item in version.LIFECYCLE_SIGNALS:
-            signal.signal(item, signal.SIG_IGN)
-        ignore_until_unblocked = True
-        raise SystemExit(128 + exc.signum)
-    except BaseException:
-        signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
+        if process_owned:
+            sys.stdout.buffer.flush()
+            version._write_all(
+                sys.stdout.buffer.fileno(), _canonical_json(result), controller
+            )
+            sys.stdout.buffer.flush()
+        signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
+        controller.merge_pending()
+        controller.poll()
+        completion_linearized = True
+    except BaseException as exc:
+        original_error = exc
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, controller.owned)
+        if process_owned and completion_linearized:
+            os._exit(0)
         cleanup_failure: Optional[BaseException] = None
-        if process is not None and process_active:
-            try:
-                version._terminate_group(process, calls)
-            except BaseException as exc:
-                cleanup_failure = exc
+        if not completion_linearized:
+            controller.merge_pending()
+            if process is not None and process_active:
+                try:
+                    version._terminate_group(process, calls)
+                    process_active = False
+                except BaseException as exc:
+                    cleanup_failure = exc
+            if publisher is not None:
+                try:
+                    publisher.rollback()
+                except BaseException as exc:
+                    if cleanup_failure is None:
+                        cleanup_failure = exc
+            controller.merge_pending()
+        for descriptor in (snapshot_fd, snapshot_parent, source_fd, source_parent):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
         if publisher is not None:
             try:
-                publisher.rollback()
+                publisher.close()
             except BaseException as exc:
                 if cleanup_failure is None:
                     cleanup_failure = exc
-        for item in version.LIFECYCLE_SIGNALS:
-            signal.signal(item, signal.SIG_IGN)
-        ignore_until_unblocked = True
-        if cleanup_failure is not None:
-            raise cleanup_failure
-        raise
-    finally:
-        signal.pthread_sigmask(signal.SIG_BLOCK, version.LIFECYCLE_SIGNALS)
-        for descriptor in (snapshot_fd, snapshot_parent, source_fd, source_parent):
-            if descriptor is not None:
-                os.close(descriptor)
-        if publisher is not None:
-            publisher.close()
-        if ignore_until_unblocked:
-            signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
-            for item, handler in old_handlers.items():
-                try:
-                    signal.signal(item, handler)
-                except BaseException:
-                    pass
-        elif not disarmed:
-            for item, handler in old_handlers.items():
-                try:
-                    signal.signal(item, handler)
-                except BaseException:
-                    pass
-            signal.pthread_sigmask(signal.SIG_SETMASK, entry_mask)
+        if process_owned:
+            controller.merge_pending()
+            selected = controller.choose()
+            version._atomic_exit(
+                128 + selected if selected is not None else 2,
+                sys.stderr.buffer.fileno(),
+                b"models attestation runner: interrupted\n"
+                if selected is not None
+                else b"models attestation runner: rejected\n",
+            )
+        for item in reversed(lifecycle.installed_handlers):
+            try:
+                signal.signal(item, lifecycle.old_handlers[item])
+            except BaseException as exc:
+                if cleanup_failure is None:
+                    cleanup_failure = exc
+        if not completion_linearized:
+            controller.merge_pending()
+        try:
+            signal.pthread_sigmask(signal.SIG_SETMASK, lifecycle.entry_mask)
+        except BaseException as exc:
+            if cleanup_failure is None:
+                cleanup_failure = exc
+        if original_error is None and cleanup_failure is not None:
+            original_error = cleanup_failure
+    selected = controller.choose()
+    if selected is not None and not completion_linearized:
+        raise version.AttestationInterrupted(selected)
+    if original_error is not None:
+        raise original_error
+    if result is None:
+        raise ModelsAttestationError("models attestation did not produce a result")
+    return result
 
 
 def _inventory_bytes() -> bytes:
@@ -1406,26 +1439,42 @@ def main(argv: Sequence[str]) -> int:
     if list(argv) != ["--attest-models"]:
         print("models attestation runner: invalid invocation", file=sys.stderr)
         return 64
-    startup = version._production_startup_evaluation()
-    if not startup.accepted:
-        sys.stderr.buffer.write(version._startup_diagnostic(startup))
-        return 64
-    data = sys.stdin.buffer.read(PROFILE_LIMIT + 1)
     try:
+        lifecycle = version._acquire_lifecycle()
+    except BaseException:
+        version._atomic_exit(2, sys.stderr.buffer.fileno(), b"models attestation runner: rejected\n")
+    usage = False
+    diagnostic = b"models attestation runner: rejected\n"
+    try:
+        version._activate_lifecycle(lifecycle)
+        startup = version._production_startup_evaluation()
+        lifecycle.controller.poll()
+        if not startup.accepted:
+            diagnostic = version._startup_diagnostic(startup)
+            usage = True
+            raise ModelsAttestationError("production startup rejected")
+        data = version._read_stdin(lifecycle.controller)
         profile = ModelsProfile.from_bytes(data)
         _validate_production_profile(profile)
-        result = run_attestation(profile, profile_source=data)
-    except (
-        ModelsAttestationError,
-        inventory.InventoryEvidenceError,
-        version.AttestationError,
-        OSError,
-        subprocess.SubprocessError,
-    ):
-        print("models attestation runner: rejected", file=sys.stderr)
-        return 2
-    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
-    return 0
+        lifecycle.controller.poll()
+    except BaseException:
+        signal.pthread_sigmask(signal.SIG_BLOCK, lifecycle.controller.owned)
+        lifecycle.controller.merge_pending()
+        selected = lifecycle.controller.choose()
+        version._atomic_exit(
+            128 + selected if selected is not None else (64 if usage else 2),
+            sys.stderr.buffer.fileno(),
+            b"models attestation runner: interrupted\n"
+            if selected is not None
+            else diagnostic,
+        )
+    run_attestation(
+        profile,
+        profile_source=data,
+        lifecycle=lifecycle,
+        process_owned=True,
+    )
+    version._atomic_exit(2, sys.stderr.buffer.fileno(), b"models attestation runner: rejected\n")
 
 
 if __name__ == "__main__":

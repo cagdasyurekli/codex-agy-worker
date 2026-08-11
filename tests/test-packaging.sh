@@ -1777,15 +1777,30 @@ bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime 
     "$ROOT/.github/workflows/test.yml" | cut -d: -f1)"
 bootstrap_suite_line="$(grep -nF 'repository-only version bootstrap runner' \
     "$ROOT/.github/workflows/test.yml" | cut -d: -f1)"
-if grep -Fq 'Explicit-account models capture runner: 82 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-runner.py  82-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-models-capture-runner.py` (82 fake-account cases)' \
+if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-version-attestation-runner.py  165-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Version-attestation mutation harness: 60 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-version-attestation-harness.py  60-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-version-attestation-harness.py` (60 cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Canonical models-inventory attestation runner: 116 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-attestation-runner.py  116-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-attestation-runner.py` (116 cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Explicit-account models capture runner: 84 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-runner.py  84-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-runner.py` (84 fake-account cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Repository-only version bootstrap runner: 139 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-version-bootstrap-runner.py  139-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-bootstrap-runner.py` (139 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-profile.py 118-case' "$ROOT/README.md" \
+        && grep -Fq 'Explicit-account models capture profile builder: 121 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-profile.py 121-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-profile.py` (121 synthetic cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \
         && (( bootstrap_preflight_line < bootstrap_suite_line )) \
@@ -1798,9 +1813,9 @@ if grep -Fq 'Explicit-account models capture runner: 82 offline' "$ROOT/AGENTS.m
         && grep -Fq 'sys.flags.ignore_environment == 1' "$ROOT/.github/workflows/test.yml" \
         && grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
             "$ROOT/.github/workflows/test.yml"; then
-    ok "bootstrap, capture-runner, and profile-suite measured counts stay synchronized"
+    ok "bootstrap and adjacent signal-owner measured counts stay synchronized"
 else
-    bad "bootstrap, capture-runner, and profile-suite measured counts stay synchronized"
+    bad "bootstrap and adjacent signal-owner measured counts stay synchronized"
 fi
 
 if [[ -x "$ROOT/scripts/version_bootstrap_runner.py" ]] \
@@ -1840,7 +1855,7 @@ print(
 )
 PY
 )"
-if [[ "$profile_builder_identity" == "755|41149|8da7d669d9d7b8bde3feac18e1a42ec576f4d5ef72424c00a4f7b8564da6c883|08fb914a7d33cc46979e23a7741b7686345f719046d6a1325decde730ca289b0" ]]; then
+if [[ "$profile_builder_identity" == "755|44660|f934c48857c286665a1cad91450a87419bdb3286fb66e1b0c4a6b5b87aa180cb|798fd1b42d4b45e0e0687f25e8fbaaa19f412e4975e50f4ae7ecfe22e9e58d1b" ]]; then
     ok "capture-profile builder reviewed identity is independently pinned"
 else
     bad "capture-profile builder reviewed identity changed"
