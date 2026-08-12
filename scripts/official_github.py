@@ -17,6 +17,7 @@ from typing import Any, Iterable, Optional
 API_ORIGIN = "https://api.github.com"
 API_HOST = "api.github.com"
 MAX_RESPONSE_BYTES = 256 * 1024
+MAX_RELEASE_RESPONSE_BYTES = 512 * 1024
 FETCH_TIMEOUT_SECONDS = 6.0
 SEMVER_PATTERN = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 SEMVER_RE = re.compile(SEMVER_PATTERN)
@@ -24,7 +25,7 @@ REVISION_RE = re.compile(r"[0-9a-f]{40}")
 FIXED_PATH_RE = re.compile(
     rf"(?:"
     rf"/repos/cagdasyurekli/codex-agy-worker/"
-    rf"(?:releases/latest|commits/v{SEMVER_PATTERN})"
+    rf"(?:releases/latest|git/ref/tags/v{SEMVER_PATTERN})"
     rf"|/repos/google-antigravity/antigravity-cli/"
     rf"(?:releases/latest|git/ref/heads/main)"
     rf"|/repos/openai/codex/(?:releases/latest|git/ref/heads/main)"
@@ -283,11 +284,17 @@ def _source_ref(value: Any, branch: str) -> str:
     return revision
 
 
-def _commit(value: Any) -> str:
-    document = _object(value, "release commit")
-    revision = document.get("sha")
-    if not isinstance(revision, str) or REVISION_RE.fullmatch(revision) is None:
-        raise OfficialEvidenceError("invalid release commit evidence")
+def _tag_ref(value: Any, tag: str) -> str:
+    document = _object(value, "release tag")
+    target = _object(document.get("object"), "release tag")
+    revision = target.get("sha")
+    if (
+        document.get("ref") != f"refs/tags/{tag}"
+        or target.get("type") != "commit"
+        or not isinstance(revision, str)
+        or REVISION_RE.fullmatch(revision) is None
+    ):
+        raise OfficialEvidenceError("invalid release tag evidence")
     return revision
 
 
@@ -303,12 +310,17 @@ def latest_evidence(tool: str, *, opener: Optional[Any] = None) -> tuple[str, st
         raise OfficialEvidenceError("invalid tool policy")
     fixed_opener = opener if opener is not None else build_fixed_opener()
     tag, version = _release(
-        fetch_json(fixed_opener, _repository_url(policy, "releases/latest")),
+        fetch_json(
+            fixed_opener,
+            _repository_url(policy, "releases/latest"),
+            limit=MAX_RELEASE_RESPONSE_BYTES,
+        ),
         policy,
     )
     if policy.main_branch is None:
-        revision = _commit(
-            fetch_json(fixed_opener, _repository_url(policy, f"commits/{tag}"))
+        revision = _tag_ref(
+            fetch_json(fixed_opener, _repository_url(policy, f"git/ref/tags/{tag}")),
+            tag,
         )
         return tool, tag, revision
     revision = _source_ref(
@@ -328,8 +340,9 @@ def project_release_evidence(tag: str, *, opener: Optional[Any] = None) -> tuple
     if policy.tag_pattern.fullmatch(tag) is None:
         raise OfficialEvidenceError("invalid project release tag")
     fixed_opener = opener if opener is not None else build_fixed_opener()
-    revision = _commit(
-        fetch_json(fixed_opener, _repository_url(policy, f"commits/{tag}"))
+    revision = _tag_ref(
+        fetch_json(fixed_opener, _repository_url(policy, f"git/ref/tags/{tag}")),
+        tag,
     )
     return "project", tag, revision
 

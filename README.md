@@ -96,10 +96,12 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or deferred status. Version 0.2.1 is the current published
-release and includes the completed provider-independent roadmap through P2-A plus its
-accepted evidence hardening. P2-B and P2-C remain deferred because their required live
-terminal-event and recurring-accumulation evidence does not exist.
+their explicit implemented or deferred status. Version 0.3.1 is the release represented
+by this source and adds daily compatibility observation, private 30/60/90 measurement,
+the optional local notifier, version-drift-safe default/literal routing, and the
+bounded updater hotfix to the completed provider-independent roadmap through P2-A.
+P2-B and P2-C remain deferred because their required live terminal-event and
+recurring-accumulation evidence does not exist.
 Source, tests, and this README remain
 the authority for current CLI behavior; every new slice still requires its own
 approval, tests, review, and pull request.
@@ -755,7 +757,10 @@ reported before those results are aggregated, with `2` taking precedence over `3
 Project, agy, and Codex release/source evidence comes from exact fixed
 `https://api.github.com/repos/...` REST paths. The stdlib-only client disables ambient
 HTTP proxies, refuses redirects, validates strict JSON and response metadata, and
-captures responses under time and byte limits. The supervisor also bounds installed
+captures responses under time and byte limits. Stable project tags resolve through
+the compact exact `git/ref/tags/<tag>` document rather than the potentially large
+commit document. Release documents have a separate 512-KiB ceiling; ref/source
+documents retain the 256-KiB ceiling. The supervisor also bounds installed
 `agy --version` and `codex --version` probes, discards their raw stderr, and terminates
 the complete child process group on timeout, output overflow, or HUP/INT/TERM. Neither
 `check` nor `check --watch` makes a Git network request, so repository or global
@@ -1208,8 +1213,10 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
 - Persona registry status is currently `offline-only` for every shipped persona.
   Historical exercises are not promoted without public Receipt/base/verifier/tool and
   maintainer-approval bindings.
-- No stable updater release tag has been exercised against the public repository yet;
-  update behavior is proven with local offline release remotes.
+- The public v0.3.0 updater exercise failed closed when full commit/release evidence
+  exceeded its original bound. Version 0.3.1 uses compact exact tag-ref evidence and
+  a separate bounded release-document ceiling; successful public apply evidence is
+  established only by post-release verification, not by offline tests alone.
 - GitHub submission is tested with a fake `gh`; no live issue was created.
 - Headless skill expansion (`agy -p "/skill-name ..."`) is untested.
 - Direct model/effort selection has exhaustive offline fake-agy coverage but no new
