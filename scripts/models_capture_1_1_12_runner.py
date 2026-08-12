@@ -47,7 +47,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "b6ca33f445ac81c0e4a6086a916b3558ba654d526ec0b87a5603b7930d883a54"
+MODULE_AST_SHA256 = "69fcbf54d7bfe1f4354d2711e43a9ed35a630f546d2952ab57cf00070ea80119"
 ACTIVE_MARKER_ROOT: Optional[str] = None
 ACTIVE_MARKER_ROOT_IDENTITY: Optional[tuple[int, int]] = None
 ACTIVE_MARKER_DIGEST: Optional[str] = None
@@ -271,6 +271,13 @@ def _disjoint(first: str, second: str) -> bool:
     return os.path.commonpath((first, second)) not in (first, second)
 
 
+def _same_capture_parent(observed: DirectoryIdentity, expected: DirectoryIdentity) -> bool:
+    """Bind stable parent identity; nlink is diagnostic, not parent authority."""
+    return (observed.dev == expected.dev and observed.gid == expected.gid
+            and observed.ino == expected.ino and observed.mode == expected.mode
+            and observed.uid == expected.uid and observed.nlink >= 1 and expected.nlink >= 1)
+
+
 def _validate_profile(profile: Profile, signals: Signals) -> tuple[int, int, int, int]:
     if (profile.source_sha256 != EXPECTED_SOURCE_SHA256 or profile.version_binding_sha256 != EXPECTED_RECOVERY_BINDING_SHA256
             or os.path.basename(profile.source_path) != "agy.source" or os.path.dirname(profile.source_path) != profile.capture_parent
@@ -280,7 +287,7 @@ def _validate_profile(profile: Profile, signals: Signals) -> tuple[int, int, int
         raise CaptureError("profile topology changed")
     account_fd, account = _open_dir(profile.account_home, True)
     capture_fd, capture = _open_dir(profile.capture_parent, True)
-    if account != profile.account_home_identity or capture.dev != profile.capture_parent_identity.dev or capture.ino != profile.capture_parent_identity.ino or capture.uid != profile.capture_parent_identity.uid or capture.gid != profile.capture_parent_identity.gid or capture.mode != profile.capture_parent_identity.mode:
+    if account != profile.account_home_identity or not _same_capture_parent(capture, profile.capture_parent_identity):
         os.close(account_fd); os.close(capture_fd); raise CaptureError("profile directory identity changed")
     source_fd, source = _open_file(profile.source_path, 0o755); snapshot_fd, snapshot = _open_file(profile.snapshot_path, 0o500)
     if source != profile.source_identity or snapshot != profile.snapshot_identity:
@@ -300,8 +307,8 @@ def _revalidate_authority(profile: Profile, source_fd: int, snapshot_fd: int, ac
         if (account.dev != profile.account_home_identity.dev or account.ino != profile.account_home_identity.ino or account.uid != profile.account_home_identity.uid or account.gid != profile.account_home_identity.gid or account.mode != profile.account_home_identity.mode
             or account_path.dev != account.dev or account_path.ino != account.ino or account_path.uid != account.uid or account_path.gid != account.gid or account_path.mode != account.mode
             or source != profile.source_identity or snapshot != profile.snapshot_identity or source_path != source or snapshot_path != snapshot
-            or capture.dev != profile.capture_parent_identity.dev or capture.ino != profile.capture_parent_identity.ino or capture.uid != profile.capture_parent_identity.uid or capture.gid != profile.capture_parent_identity.gid or capture.mode != profile.capture_parent_identity.mode
-            or capture_path.dev != capture.dev or capture_path.ino != capture.ino or capture_path.uid != capture.uid or capture_path.mode != capture.mode
+            or not _same_capture_parent(capture, profile.capture_parent_identity)
+            or not _same_capture_parent(capture_path, capture)
             or _hash(source_fd, source.size, signals) != EXPECTED_SOURCE_SHA256 or _hash(snapshot_fd, snapshot.size, signals) != EXPECTED_SOURCE_SHA256):
             raise CaptureError("capture authority changed")
         _validate_recovery(profile)
@@ -309,19 +316,22 @@ def _revalidate_authority(profile: Profile, source_fd: int, snapshot_fd: int, ac
         os.close(account_path_fd); os.close(capture_path_fd); os.close(source_path_fd); os.close(snapshot_path_fd)
 
 
-def _new_root(parent: str) -> tuple[str, int]:
-    parent_fd, _ = _open_dir(parent, True)
-    try:
-        for _ in range(32):
-            name = "agy-models-capture-1-1-12." + os.urandom(12).hex()
-            try:
-                os.mkdir(name, 0o700, dir_fd=parent_fd)
-                fd = os.open(name, os.O_RDONLY | DIRECTORY | CLOEXEC | NOFOLLOW, dir_fd=parent_fd)
-                if stat.S_IMODE(os.fstat(fd).st_mode) != 0o700: os.close(fd); raise CaptureError("capture root mode changed")
-                return os.path.join(parent, name), fd
-            except FileExistsError: continue
-        raise CaptureError("capture root allocation failed")
-    finally: os.close(parent_fd)
+def _new_root(parent: str, parent_fd: int, expected_parent: DirectoryIdentity) -> tuple[str, str, int, DirectoryIdentity]:
+    """Create and pin the one owned capture-root child through the held parent."""
+    if not _same_capture_parent(DirectoryIdentity.from_stat(os.fstat(parent_fd)), expected_parent):
+        raise CaptureError("capture parent changed")
+    for _ in range(32):
+        name = "agy-models-capture-1-1-12." + os.urandom(12).hex()
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent_fd)
+            fd = os.open(name, os.O_RDONLY | DIRECTORY | CLOEXEC | NOFOLLOW, dir_fd=parent_fd)
+            identity = DirectoryIdentity.from_stat(os.fstat(fd))
+            path_identity = DirectoryIdentity.from_stat(os.stat(name, dir_fd=parent_fd, follow_symlinks=False))
+            if (identity != path_identity or identity.uid != os.getuid() or identity.mode != 0o700):
+                os.close(fd); raise CaptureError("capture root mode changed")
+            return os.path.join(parent, name), name, fd, identity
+        except FileExistsError: continue
+    raise CaptureError("capture root allocation failed")
 
 
 def _write(root: int, name: str, data: bytes, signals: Optional[Signals] = None, ledger: Optional[dict[str, tuple[str, FileIdentity]]] = None) -> str:
@@ -580,13 +590,38 @@ def _empty_scratch(root: int) -> None:
         finally: os.close(fd)
 
 
-def _verify_final_root(root_path: str, root_fd: int, profile: Profile, artifacts: dict[str, tuple[str, FileIdentity]], scratch_ledger: dict[str, FileIdentity], marker: bool = False) -> None:
+def _verify_pre_child_root(root_path: str, root_name: str, root_fd: int, root_identity: DirectoryIdentity, profile: Profile, capture_fd: int) -> None:
+    """Bind the one owned root by descriptor before its pathname becomes cwd."""
+    held_root = DirectoryIdentity.from_stat(os.fstat(root_fd))
+    named_root = DirectoryIdentity.from_stat(os.stat(root_name, dir_fd=capture_fd, follow_symlinks=False))
+    path_root = DirectoryIdentity.from_stat(os.stat(root_path, follow_symlinks=False))
+    reopened_parent_fd, reopened_parent = _open_dir(profile.capture_parent, True)
+    try:
+        if (not _same_capture_parent(DirectoryIdentity.from_stat(os.fstat(capture_fd)), profile.capture_parent_identity)
+                or not _same_capture_parent(reopened_parent, profile.capture_parent_identity)
+                or not _same_capture_parent(held_root, root_identity)
+                or not _same_capture_parent(named_root, held_root)
+                or not _same_capture_parent(path_root, held_root)
+                or set(os.listdir(root_fd)) != set(SCRATCH_NAMES)):
+            raise CaptureError("capture root authority changed")
+        _empty_scratch(root_fd)
+    finally:
+        os.close(reopened_parent_fd)
+
+
+def _verify_final_root(root_path: str, root_name: str, root_fd: int, root_identity: DirectoryIdentity, profile: Profile, capture_fd: int, artifacts: dict[str, tuple[str, FileIdentity]], scratch_ledger: dict[str, FileIdentity], marker: bool = False) -> None:
     expected = set(SCRATCH_NAMES) | {"models_capture_1_1_12_runner.py", "models_capture_1_1_12_runner.py.sha256", OUTPUT_PROFILE_NAME, "models.stdout", "models.stderr", "models.capture.summary.json", "models.capture.json"}
     if marker: expected.add("models.capture.sha256")
     item = os.fstat(root_fd)
     path_item = os.stat(root_path, follow_symlinks=False)
+    current_root = DirectoryIdentity.from_stat(item)
+    path_root = DirectoryIdentity.from_stat(path_item)
+    owned_child = DirectoryIdentity.from_stat(os.stat(root_name, dir_fd=capture_fd, follow_symlinks=False))
     if (not stat.S_ISDIR(item.st_mode) or item.st_uid != os.getuid() or stat.S_IMODE(item.st_mode) != 0o700
-            or (item.st_dev, item.st_ino) != (path_item.st_dev, path_item.st_ino) or set(os.listdir(root_fd)) != expected):
+            or not _same_capture_parent(current_root, root_identity)
+            or not _same_capture_parent(path_root, current_root)
+            or not _same_capture_parent(owned_child, current_root)
+            or set(os.listdir(root_fd)) != expected):
         raise CaptureError("capture root inventory changed")
     _empty_scratch(root_fd)
     for name, identity in scratch_ledger.items():
@@ -603,8 +638,8 @@ def _verify_final_root(root_path: str, root_fd: int, profile: Profile, artifacts
             os.close(fd)
     parent_fd, parent = _open_dir(profile.capture_parent, True)
     try:
-        if (parent.dev != profile.capture_parent_identity.dev or parent.ino != profile.capture_parent_identity.ino
-                or parent.uid != profile.capture_parent_identity.uid or parent.gid != profile.capture_parent_identity.gid or parent.mode != profile.capture_parent_identity.mode):
+        if (not _same_capture_parent(DirectoryIdentity.from_stat(os.fstat(capture_fd)), profile.capture_parent_identity)
+                or not _same_capture_parent(parent, profile.capture_parent_identity)):
             raise CaptureError("capture parent changed")
         os.fsync(parent_fd)
     finally:
@@ -614,13 +649,14 @@ def _verify_final_root(root_path: str, root_fd: int, profile: Profile, artifacts
 def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner_source: bytes) -> dict[str, object]:
     global ACTIVE_MARKER_ROOT, ACTIVE_MARKER_ROOT_IDENTITY, ACTIVE_MARKER_DIGEST, ACTIVE_MARKER_IDENTITY
     source_fd, snapshot_fd, account_fd, capture_fd = _validate_profile(profile, signals)
-    root_path = None; root_fd = None; process = None; record_sha: Optional[str] = None; marker_identity: Optional[FileIdentity] = None; completed = False; ledger: dict[str, tuple[str, FileIdentity]] = {}; scratch_ledger: dict[str, FileIdentity] = {}
+    root_path = root_name = None; root_fd = None; root_identity = None; process = None; record_sha: Optional[str] = None; marker_identity: Optional[FileIdentity] = None; completed = False; ledger: dict[str, tuple[str, FileIdentity]] = {}; scratch_ledger: dict[str, FileIdentity] = {}
     try:
-        root_path, root_fd = _new_root(profile.capture_parent)
+        root_path, root_name, root_fd, root_identity = _new_root(profile.capture_parent, capture_fd, profile.capture_parent_identity)
         for name in SCRATCH_NAMES:
             os.mkdir(name, 0o700, dir_fd=root_fd)
             scratch_ledger[name] = FileIdentity.from_stat(os.stat(name, dir_fd=root_fd, follow_symlinks=False))
         _empty_scratch(root_fd)
+        _verify_pre_child_root(root_path, root_name, root_fd, root_identity, profile, capture_fd)
         process = _start_capture(profile, root_path)
         closed = False
         try:
@@ -652,9 +688,9 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
         artifacts = {OUTPUT_PROFILE_NAME: profile_sha, "models.capture.summary.json": summary_sha, "models.stderr": stderr_sha, "models.stdout": stdout_sha, "models_capture_1_1_12_runner.py": runner_sha, "models_capture_1_1_12_runner.py.sha256": hashlib.sha256((runner_sha + "\n").encode("ascii")).hexdigest()}
         record = {"account": {"post": dataclasses.asdict(account_post), "pre": dataclasses.asdict(profile.account_home_identity)}, "artifacts": artifacts, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": summary["limitations"], "observation": {"argv": [profile.source_path, "models"], "executable_sha256": EXPECTED_SOURCE_SHA256, "exit": rc, "popen_count": 1}, "runner_sha256": hashlib.sha256(runner_source).hexdigest(), "scratch": scratch, "snapshot": {"post": dataclasses.asdict(snapshot_post), "pre": dataclasses.asdict(profile.snapshot_identity), "sha256": EXPECTED_SOURCE_SHA256}, "source": {"post": dataclasses.asdict(source_post), "pre": dataclasses.asdict(profile.source_identity), "sha256": EXPECTED_SOURCE_SHA256}, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
         record_sha = _write(root_fd, "models.capture.json", _canonical(record), ledger=ledger)
-        _verify_final_root(root_path, root_fd, profile, ledger, scratch_ledger)
+        _verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger)
         marker_identity = _marker(root_fd, record_sha, signals, ledger)
-        _verify_final_root(root_path, root_fd, profile, ledger, scratch_ledger, True)
+        _verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger, True)
         root_item = os.fstat(root_fd)
         ACTIVE_MARKER_ROOT, ACTIVE_MARKER_ROOT_IDENTITY, ACTIVE_MARKER_DIGEST, ACTIVE_MARKER_IDENTITY = root_path, (root_item.st_dev, root_item.st_ino), record_sha, marker_identity
         signals.poll()
