@@ -70,8 +70,8 @@ Keep these counts current when their suites change:
   profile/account-TCB/environment/capture/publication/process cases.
 - Explicit-account models capture profile builder: 121 offline canonical-profile,
   external-evidence, descriptor, publication, and mutation cases.
-- Fixed 1.1.12 models capture profile builder: 24 offline authority/profile cases.
-- Fixed 1.1.12 models capture runner: 44 offline capture/process/publication cases.
+- Fixed 1.1.12 models capture profile builder: 28 offline authority/profile cases.
+- Fixed 1.1.12 models capture runner: 48 offline capture/process/publication cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution and CI policy: 353 offline
   manifest/runtime-copy/relocation/landing/range cases.

@@ -1111,8 +1111,8 @@ tests/test-version-attestation-harness.py  60-case offline version-attestation m
 tests/test-models-attestation-runner.py  116-case offline fixed-profile inventory attestation suite
 tests/test-models-capture-runner.py  84-case offline fake-account capture-only suite
 tests/test-models-capture-profile.py 121-case offline canonical capture-profile builder suite
-tests/test-models-capture-1-1-12-profile.py 24-case offline fixed 1.1.12 capture-profile suite
-tests/test-models-capture-1-1-12-runner.py 44-case offline fixed 1.1.12 capture-runner suite
+tests/test-models-capture-1-1-12-profile.py 28-case offline fixed 1.1.12 capture-profile suite
+tests/test-models-capture-1-1-12-runner.py 48-case offline fixed 1.1.12 capture-runner suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       353-case offline Codex package/CI-policy/relocation/landing suite

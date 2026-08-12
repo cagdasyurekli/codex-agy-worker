@@ -27,6 +27,10 @@ PROFILE_TESTS = frozenset({
     "test_62_profile_completion_primitive_failure_rolls_back_and_restores_mask",
     "test_63_profile_completion_drift_preserves_residual",
     "test_67_profile_completion_short_write_rolls_back_profile",
+    "test_69_profile_completion_pending_signal_exits_after_cleanup",
+    "test_71_profile_completion_signal_during_rollback_exits_after_cleanup",
+    "test_73_profile_completion_mask_failure_still_rolls_back",
+    "test_75_profile_selected_pending_signal_survives_rollback_failure",
 })
 
 

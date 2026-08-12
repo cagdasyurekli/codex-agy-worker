@@ -34,7 +34,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "9b2e0c45ad3bf6ee85d6401edbf44fdc7335429230ecd05f2ccc90176276a858"
+MODULE_AST_SHA256 = "9acd55990640b95454193990bdecccd299d43c7e838d89ef5f98303b9f2a7e65"
 ACTIVE_PROFILE_PATH: Optional[str] = None
 ACTIVE_PROFILE_IDENTITY: Optional[FileIdentity] = None
 ACTIVE_PROFILE_DIGEST: Optional[str] = None
@@ -574,26 +574,48 @@ def _rollback_active_profile() -> None:
 
 
 def _finish_success(state: Lifecycle, result: dict[str, str]) -> None:
-    previous_mask: Optional[set[signal.Signals]] = None
     try:
         payload = _canonical(result)
         if sys.stdout.buffer.write(payload) != len(payload): raise OSError("completion output write failed")
         sys.stdout.buffer.flush()
-        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, state.signals.owned)
+        signal.pthread_sigmask(signal.SIG_BLOCK, state.signals.owned)
         pending = set(signal.sigpending()).intersection(state.signals.owned)
         for item in state.signals.owned:
             if item in pending:
                 state.signals.latch(signal.sigwait({item}))
         state.signals.poll()
     except Interrupted as exc:
-        _rollback_active_profile(); os._exit(exc.code)
-    except BaseException:
         try:
             _rollback_active_profile()
-        finally:
-            if previous_mask is not None:
-                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
-        raise
+        except BaseException:
+            pass
+        os._exit(exc.code)
+    except BaseException:
+        try:
+            signal.pthread_sigmask(signal.SIG_BLOCK, state.signals.owned)
+        except BaseException:
+            pass
+        try:
+            pending = set(signal.sigpending()).intersection(state.signals.owned)
+            for item in state.signals.owned:
+                if item in pending: state.signals.latch(signal.sigwait({item}))
+        except BaseException:
+            pass
+        try:
+            _rollback_active_profile()
+        except BaseException:
+            pass
+        try:
+            pending = set(signal.sigpending()).intersection(state.signals.owned)
+            for item in state.signals.owned:
+                if item in pending: state.signals.latch(signal.sigwait({item}))
+        except BaseException:
+            pass
+        try:
+            state.signals.poll()
+        except Interrupted as exc:
+            os._exit(exc.code)
+        os._exit(1)
     os._exit(0)
 
 

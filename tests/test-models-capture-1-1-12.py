@@ -651,6 +651,17 @@ class ModelsCapture112Tests(unittest.TestCase):
             os.close(root)
         return os.path.join(directory, "models.capture.sha256")
 
+    def _completion_exit_code(self, module: dict[str, object], invoke: object, expected: int) -> None:
+        class ExitCalled(BaseException):
+            def __init__(self, code: int): self.code = code
+        globals_ = module["_finish_success"].__globals__; original_exit = globals_["os"]._exit
+        globals_["os"]._exit = lambda code: (_ for _ in ()).throw(ExitCalled(code))
+        try:
+            with self.assertRaises(ExitCalled) as raised: invoke()
+        finally:
+            globals_["os"]._exit = original_exit
+        self.assertEqual(raised.exception.code, expected)
+
     def test_60_profile_completion_write_failure_rolls_back_profile(self) -> None:
         class Broken:
             def write(self, _data: bytes) -> int: raise OSError("write failure")
@@ -660,7 +671,7 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_ = profile["_finish_success"].__globals__; original_sys = globals_["sys"]
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
             try:
-                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state(), {"status": "prepared"})
+                self._completion_exit_code(profile, lambda: profile["_finish_success"](self._completion_state(), {"status": "prepared"}), 1)
             finally:
                 globals_["sys"] = original_sys
             self.assertFalse(os.path.exists(output))
@@ -674,7 +685,7 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_ = profile["_finish_success"].__globals__; original_sys = globals_["sys"]
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
             try:
-                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state(), {"status": "prepared"})
+                self._completion_exit_code(profile, lambda: profile["_finish_success"](self._completion_state(), {"status": "prepared"}), 1)
             finally:
                 globals_["sys"] = original_sys
             self.assertFalse(os.path.exists(output))
@@ -688,11 +699,11 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_["signal"].pthread_sigmask = lambda how, value: (masks.append((how, value)) or {profile["signal"].SIGTERM})
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=io.BytesIO()))
             try:
-                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state((profile["signal"].SIGINT,)), {"status": "prepared"})
+                self._completion_exit_code(profile, lambda: profile["_finish_success"](self._completion_state((profile["signal"].SIGINT,)), {"status": "prepared"}), 1)
             finally:
                 globals_["signal"].sigpending, globals_["signal"].pthread_sigmask, globals_["sys"] = original_pending, original_mask, original_sys
             self.assertFalse(os.path.exists(output))
-            self.assertEqual(masks[-1][0], profile["signal"].SIG_SETMASK)
+            self.assertFalse(any(how == profile["signal"].SIG_SETMASK for how, _value in masks))
 
     def test_63_profile_completion_drift_preserves_residual(self) -> None:
         class Broken:
@@ -705,7 +716,7 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_ = profile["_finish_success"].__globals__; original_sys = globals_["sys"]
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
             try:
-                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state(), {"status": "prepared"})
+                self._completion_exit_code(profile, lambda: profile["_finish_success"](self._completion_state(), {"status": "prepared"}), 1)
             finally:
                 globals_["sys"] = original_sys
             self.assertTrue(os.path.exists(output))
@@ -721,7 +732,7 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_ = runner["_finish_success"].__globals__; original_sys = globals_["sys"]
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
             try:
-                with self.assertRaises(OSError): runner["_finish_success"](self._completion_state(), {"status": "captured"})
+                self._completion_exit_code(runner, lambda: runner["_finish_success"](self._completion_state(), {"status": "captured"}), 1)
             finally:
                 globals_["sys"] = original_sys
             self.assertFalse(os.path.exists(marker))
@@ -735,7 +746,7 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_ = runner["_finish_success"].__globals__; original_sys = globals_["sys"]
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
             try:
-                with self.assertRaises(OSError): runner["_finish_success"](self._completion_state(), {"status": "captured"})
+                self._completion_exit_code(runner, lambda: runner["_finish_success"](self._completion_state(), {"status": "captured"}), 1)
             finally:
                 globals_["sys"] = original_sys
             self.assertFalse(os.path.exists(marker))
@@ -749,11 +760,11 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_["signal"].pthread_sigmask = lambda how, value: (masks.append((how, value)) or {runner["signal"].SIGTERM})
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=io.BytesIO()))
             try:
-                with self.assertRaises(OSError): runner["_finish_success"](self._completion_state((runner["signal"].SIGINT,)), {"status": "captured"})
+                self._completion_exit_code(runner, lambda: runner["_finish_success"](self._completion_state((runner["signal"].SIGINT,)), {"status": "captured"}), 1)
             finally:
                 globals_["signal"].sigpending, globals_["signal"].pthread_sigmask, globals_["sys"] = original_pending, original_mask, original_sys
             self.assertFalse(os.path.exists(marker))
-            self.assertEqual(masks[-1][0], runner["signal"].SIG_SETMASK)
+            self.assertFalse(any(how == runner["signal"].SIG_SETMASK for how, _value in masks))
 
     def test_67_profile_completion_short_write_rolls_back_profile(self) -> None:
         class Short:
@@ -764,7 +775,7 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_ = profile["_finish_success"].__globals__; original_sys = globals_["sys"]
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Short()))
             try:
-                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state(), {"status": "prepared"})
+                self._completion_exit_code(profile, lambda: profile["_finish_success"](self._completion_state(), {"status": "prepared"}), 1)
             finally:
                 globals_["sys"] = original_sys
             self.assertFalse(os.path.exists(output))
@@ -778,10 +789,116 @@ class ModelsCapture112Tests(unittest.TestCase):
             globals_ = runner["_finish_success"].__globals__; original_sys = globals_["sys"]
             globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Short()))
             try:
-                with self.assertRaises(OSError): runner["_finish_success"](self._completion_state(), {"status": "captured"})
+                self._completion_exit_code(runner, lambda: runner["_finish_success"](self._completion_state(), {"status": "captured"}), 1)
             finally:
                 globals_["sys"] = original_sys
             self.assertFalse(os.path.exists(marker))
+
+    def _completion_failure_exits_for_latched_signal(self, module: dict[str, object], active_path: str, signum: object, inject_during_rollback: bool) -> None:
+        class ExitCalled(BaseException):
+            def __init__(self, code: int): self.code = code
+        class Broken:
+            def write(self, _data: bytes) -> int: raise OSError("write failure")
+            def flush(self) -> None: raise AssertionError("flush must not run")
+        globals_ = module["_finish_success"].__globals__
+        original_mask, original_pending, original_wait = globals_["signal"].pthread_sigmask, globals_["signal"].sigpending, globals_["signal"].sigwait
+        original_exit, original_rollback, original_sys = globals_["os"]._exit, globals_["_rollback_active_profile" if module is profile else "_rollback_active_marker"], globals_["sys"]
+        pending, masks = [not inject_during_rollback], []
+        def fake_mask(how: object, value: object) -> set[object]:
+            masks.append((how, value)); return set()
+        def wrapped_rollback() -> None:
+            original_rollback()
+            pending[0] = True
+        globals_["signal"].pthread_sigmask = fake_mask
+        globals_["signal"].sigpending = lambda: {signum} if pending[0] else set()
+        globals_["signal"].sigwait = lambda _items: signum
+        globals_["os"]._exit = lambda code: (_ for _ in ()).throw(ExitCalled(code))
+        globals_["_rollback_active_profile" if module is profile else "_rollback_active_marker"] = wrapped_rollback
+        globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
+        state = types.SimpleNamespace(signals=module["Signals"]((signum,)))
+        try:
+            with self.assertRaises(ExitCalled) as raised:
+                module["_finish_success"](state, {"status": "prepared" if module is profile else "captured"})
+        finally:
+            globals_["signal"].pthread_sigmask, globals_["signal"].sigpending, globals_["signal"].sigwait = original_mask, original_pending, original_wait
+            globals_["os"]._exit, globals_["_rollback_active_profile" if module is profile else "_rollback_active_marker"], globals_["sys"] = original_exit, original_rollback, original_sys
+        self.assertEqual(raised.exception.code, 128 + signum)
+        self.assertFalse(os.path.exists(active_path))
+        self.assertFalse(any(how == module["signal"].SIG_SETMASK for how, _value in masks))
+
+    def test_69_profile_completion_pending_signal_exits_after_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700)
+            self._completion_failure_exits_for_latched_signal(profile, self._active_profile(directory), profile["signal"].SIGHUP, False)
+
+    def test_70_runner_completion_pending_signal_exits_after_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700)
+            self._completion_failure_exits_for_latched_signal(runner, self._active_marker(directory), runner["signal"].SIGINT, False)
+
+    def test_71_profile_completion_signal_during_rollback_exits_after_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700)
+            self._completion_failure_exits_for_latched_signal(profile, self._active_profile(directory), profile["signal"].SIGTERM, True)
+
+    def test_72_runner_completion_signal_during_rollback_exits_after_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700)
+            self._completion_failure_exits_for_latched_signal(runner, self._active_marker(directory), runner["signal"].SIGHUP, True)
+
+    def _completion_mask_failure_still_rolls_back(self, module: dict[str, object], active_path: str) -> None:
+        class Broken:
+            def write(self, _data: bytes) -> int: raise OSError("write failure")
+            def flush(self) -> None: raise AssertionError("flush must not run")
+        globals_ = module["_finish_success"].__globals__; original_mask, original_sys = globals_["signal"].pthread_sigmask, globals_["sys"]
+        rollback_name = "_rollback_active_profile" if module is profile else "_rollback_active_marker"
+        original_rollback = globals_[rollback_name]; calls = [0]
+        def fail_mask(_how: object, _items: object) -> object: raise OSError("mask failure")
+        def wrapped_rollback() -> None: calls[0] += 1; original_rollback()
+        globals_["signal"].pthread_sigmask, globals_[rollback_name], globals_["sys"] = fail_mask, wrapped_rollback, types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
+        try:
+            self._completion_exit_code(module, lambda: module["_finish_success"](self._completion_state(), {"status": "prepared" if module is profile else "captured"}), 1)
+        finally:
+            globals_["signal"].pthread_sigmask, globals_[rollback_name], globals_["sys"] = original_mask, original_rollback, original_sys
+        self.assertEqual(calls, [1])
+        self.assertFalse(os.path.exists(active_path))
+
+    def test_73_profile_completion_mask_failure_still_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700)
+            self._completion_mask_failure_still_rolls_back(profile, self._active_profile(directory))
+
+    def test_74_runner_completion_mask_failure_still_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700)
+            self._completion_mask_failure_still_rolls_back(runner, self._active_marker(directory))
+
+    def _selected_signal_survives_rollback_failure(self, module: dict[str, object], signum: object) -> None:
+        class ExitCalled(BaseException):
+            def __init__(self, code: int): self.code = code
+        globals_ = module["_finish_success"].__globals__; rollback_name = "_rollback_active_profile" if module is profile else "_rollback_active_marker"
+        original_mask, original_pending, original_wait = globals_["signal"].pthread_sigmask, globals_["signal"].sigpending, globals_["signal"].sigwait
+        original_exit, original_rollback, original_sys = globals_["os"]._exit, globals_[rollback_name], globals_["sys"]
+        globals_["signal"].pthread_sigmask = lambda _how, _items: set()
+        globals_["signal"].sigpending = lambda: {signum}
+        globals_["signal"].sigwait = lambda _items: signum
+        globals_["os"]._exit = lambda code: (_ for _ in ()).throw(ExitCalled(code))
+        globals_[rollback_name] = lambda: (_ for _ in ()).throw(OSError("rollback residual"))
+        globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=io.BytesIO()))
+        state = types.SimpleNamespace(signals=module["Signals"]((signum,)))
+        try:
+            with self.assertRaises(ExitCalled) as raised:
+                module["_finish_success"](state, {"status": "prepared" if module is profile else "captured"})
+        finally:
+            globals_["signal"].pthread_sigmask, globals_["signal"].sigpending, globals_["signal"].sigwait = original_mask, original_pending, original_wait
+            globals_["os"]._exit, globals_[rollback_name], globals_["sys"] = original_exit, original_rollback, original_sys
+        self.assertEqual(raised.exception.code, 128 + signum)
+
+    def test_75_profile_selected_pending_signal_survives_rollback_failure(self) -> None:
+        self._selected_signal_survives_rollback_failure(profile, profile["signal"].SIGINT)
+
+    def test_76_runner_selected_pending_signal_survives_rollback_failure(self) -> None:
+        self._selected_signal_survives_rollback_failure(runner, runner["signal"].SIGTERM)
 
 
 if __name__ == "__main__":
