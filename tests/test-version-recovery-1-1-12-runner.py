@@ -81,7 +81,15 @@ check("runtime contract rejects wrong minor", lambda: not MODULE._runtime_contra
 check("runtime contract rejects missing isolation", lambda: not MODULE._runtime_contract("cpython", 3, 9, 0, 1, 1, 1))
 check("fixed version is 1.1.12", lambda: MODULE.EXPECTED_VERSION == "1.1.12")
 check("fixed stdout is exact", lambda: MODULE.EXPECTED_STDOUT == b"1.1.12\n")
-check("phase-one source hash is exact", lambda: MODULE.EXPECTED_SOURCE_SHA256 == "c8fd3c0016e101689f923f82da1c068b0e6dce3abcb0089e282742693ad4d344")
+check(
+    "phase-one authority pins are exact",
+    lambda: (
+        MODULE.EXPECTED_SOURCE_SHA256 == "c8fd3c0016e101689f923f82da1c068b0e6dce3abcb0089e282742693ad4d344"
+        and MODULE.EXPECTED_PRIOR_BINDING_SHA256 == "33825ec9f9c5b92384c504d3c814ac2af034ba3f1b87e7b3d2d5bfc15baf6702"
+        and MODULE.EXPECTED_PROFILE_SHA256 == "aa1108f43aa29e0c6de5e67d2369154704d173665316752968a909c56aff263b"
+        and MODULE.EXPECTED_PROFILE_BYTES == 990
+    ),
+)
 check("source contract accepts reviewed bytes", lambda: CONTRACT["status"] == "accepted")
 check("source digest is exact current bytes", lambda: CONTRACT["sha256"] == hashlib.sha256(SOURCE).hexdigest())
 check("one production Popen exists", lambda: SOURCE.count(b"calls.popen(") == 1)
@@ -260,7 +268,7 @@ def synthetic_validator(profile: object) -> tuple[object, object, bytes, bytes]:
     ).replace(
         MODULE.EXPECTED_PROFILE_SHA256.encode("ascii"), hashlib.sha256(profile_bytes).hexdigest().encode("ascii")
     ).replace(
-        b"EXPECTED_PROFILE_BYTES = 954", ("EXPECTED_PROFILE_BYTES = %d" % len(profile_bytes)).encode("ascii")
+        b"EXPECTED_PROFILE_BYTES = 990", ("EXPECTED_PROFILE_BYTES = %d" % len(profile_bytes)).encode("ascii")
     ).replace(
         MODULE.EXPECTED_SOURCE_SHA256.encode("ascii"), profile.source_sha256.encode("ascii")
     )

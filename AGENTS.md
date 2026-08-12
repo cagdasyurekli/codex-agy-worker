@@ -282,28 +282,19 @@ only a passing test has not been shown to catch anything.
   snapshot production calls `os._exit` without restoring or unblocking. Embedded APIs
   may restore only with explicit caller-handoff semantics; the mutation harness may
   return only through its explicit test handoff.
-- **The current models runner is deliberately auth-isolated.** Its one child receives
-  only a fresh private empty HOME, TMPDIR, and XDG roots plus the exact fixed locale,
-  terminal, color, and PATH values. Never inherit or copy the caller's HOME,
-  credentials, Python startup paths, or ambient environment into this runner. An
-  auth-required `agy models` result must reject without a completion marker and cannot
-  advance the `1.1.10` matrix. The accepted `1.1.11` version binding proves only the
-  version snapshot/source/argv observation. Production use of the separate capture-
-  only runner remains dormant until the user authorizes its exact account HOME,
-  profile, and one call. It publishes `captured`, never accepted, evidence and cannot
-  advance metadata. A bounded exit-zero stream is retained without inventory/error
-  interpretation. The fixed 1.1.12 JSON capture may descriptor/hash-bind and
-  compare-delete only its exact bounded owner-private language-server TMP cache leaf;
-  capture-owned scratch/cache/cwd must then be empty before publication. The authorized
-  external CLI may read, write, mutate, or cache in HOME;
-  the runner cannot detect or revert those changes, and residuals may remain after a
-  rejected capture. Treat
-  the reviewed runner sources, account HOME, local owner/same-UID processes,
-  interpreter, and OS admins as TCB: AST mutations detect selected drift and do not
+- **Inventory isolation and account capture are separate authorities.** Keep the
+  accepting inventory runner on a fresh empty HOME/TMP/XDG and closed environment;
+  auth-required results publish no completion marker. The separately authorized
+  account runner may publish only bounded `captured` evidence. It cannot itself
+  accept inventory or advance metadata: that requires a human reconciliation of the
+  exact official release/source, version-bound capture, semantic inventory, matrix,
+  and digest. The fixed JSON capture may descriptor/hash-bind and compare-delete only
+  its exact bounded owner-private language-server TMP cache leaf, fsync the parent,
+  then require empty capture scratch. Never enumerate HOME, attempt login, retry,
+  route, or write metadata in either runner. The external CLI may mutate HOME, and
+  ambiguous cleanup may leave residuals. Treat reviewed sources, account HOME, local
+  owner/same-UID processes, interpreter, and OS admins as TCB; source guards do not
   prove hostile-source or same-UID tamper resistance.
-  The process-inert profile builder has the same reviewed-source/local-owner/
-  same-UID/interpreter/OS-admin TCB; its self-check is a fail-closed reviewed-byte
-  guard, not resistance to coordinated hostile-source edits.
 - **CI diff hygiene audits committed bytes.** Keep checkout history sufficient for
   the GitHub event range and run `scripts/ci-diff-check.sh`; its stdlib scanner must
   inspect every changed regular head blob independently of Git attributes with a

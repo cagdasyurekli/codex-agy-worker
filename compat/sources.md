@@ -34,16 +34,16 @@ separately authorized mutation path.
 - Fixed `darwin_arm64` distribution manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
 - Installed interface evidence: `./ground-truth.sh`
 
-The verified baseline is agy `1.1.10` at reviewed source revision
-`bfab12dac5bd090015a89cf82e65093d13b567d9`. The official release, source, CLI
-documentation, one sandbox-correct 11-slug inventory, and two bounded
-single-selector jobs were human-reconciled in
-[`reviews/agy-1.1.10.md`](reviews/agy-1.1.10.md). The active matrix binds every
+The verified baseline is agy `1.1.12` at reviewed source revision
+`f7519c9084190ed421e89dd81c63970b5177c9ef`. The official release/tag/source,
+retained version binding, separately authorized JSON capture, strict unchanged
+11-slug inventory, and existing representative single-selector behavior were
+human-reconciled in [`reviews/agy-1.1.12.md`](reviews/agy-1.1.12.md). The active matrix binds every
 adjustable pair to one exact advertised compound slug and records fixed choices as
 non-adjustable. It neither forwards `--effort` nor attests the effective provider
 backend; silent fallback could not be independently excluded.
 
-`agy-distribution-manifest.json` records the observed `1.1.10` version, exact Google
+`agy-distribution-manifest.json` records the observed `1.1.12` version, exact Google
 Storage archive URL, and lowercase SHA-512 tuple. It is an observational snapshot,
 not an authoritative baseline, signature, or permission to download the archive.
 The checker fetches only the fixed small manifest, rejects redirects and malformed
@@ -64,7 +64,7 @@ The verified baseline is Codex CLI `0.147.0`. Its official stable tag
 `rust-v0.147.0` resolves to release commit
 `be6e8eac029b183056b7e4402879f15d2c85f61b`; the separately observed official
 `main` revision recorded by the drift watcher is
-`93beee910d39d31425d874a15fd56fc921ab2911`. The installed macOS arm64 CLI and
+`379cb68444057c721b6c8fa0bd610b7c6ecb9824`. The installed macOS arm64 CLI and
 the maintained `exec`, sandbox, and `--add-dir` surfaces were reconciled in
 [`reviews/codex-0.147.0.md`](reviews/codex-0.147.0.md). Codex compatibility
 metadata is observation-only and never gates agy dispatch, resolves an agy model,
@@ -81,17 +81,13 @@ baseline. For agy, a future version or source change disables reviewed pair
 resolution until another human reconciliation is accepted. Codex drift remains
 observation-only and never disables agy dispatch.
 
-agy `1.1.12` remains unreconciled in the checked-in metadata. The official release
-and source observation, retained version/source evidence, distribution-manifest
-observation, and one separately authorized capture attempt are recorded in
-[`reviews/agy-1.1.12-decision.md`](reviews/agy-1.1.12-decision.md). The attempt
-failed closed before publishing capture evidence, so it supplies zero inventory
-authority. The transport and process-boundary hardening needed to evaluate a newer
-version does not itself advance version, source, review date, manifest, or matrix
-records; `1.1.10` remains the active reviewed matrix baseline. Ordinary
-version-independent literal model pass-through and agy-owned default selection do
-not turn this metadata drift into a dispatch prohibition; only reviewed
-model/effort resolution depends on an exact accepted matrix binding.
+agy `1.1.12` is reconciled in the checked-in metadata. Its successful capture remains
+`captured` evidence rather than self-authorizing output: the active update follows
+from the separate human review of exact official release/source, retained
+version/executable binding, strict unchanged inventory, and canonical matrix bytes.
+Ordinary version-independent literal model pass-through and agy-owned default
+selection remain independent of that matrix; reviewed model/effort resolution still
+depends on an exact accepted version/source/digest binding.
 
 Owner-captured inventory bytes are interpreted offline by `scripts/agy_inventory.py`,
 which requires one exact reviewed canonical slug per line and complete one-time

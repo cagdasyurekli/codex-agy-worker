@@ -29,11 +29,11 @@ if SPEC is None or SPEC.loader is None:
 distribution = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(distribution)
 
-VERSION = "1.1.10"
+VERSION = "1.1.12"
 SHA512 = "a" * 128
 ARCHIVE_URL = (
     "https://storage.googleapis.com/antigravity-public/antigravity-cli/"
-    "1.1.10-6423386432339968/darwin-arm/cli_mac_arm64.tar.gz"
+    "1.1.12-5877618327814144/darwin-arm/cli_mac_arm64.tar.gz"
 )
 
 
@@ -526,7 +526,7 @@ def _() -> None:
 def _() -> None:
     expect_error(
         "invalid archive policy",
-        lambda: parse(url=replace_url("1.1.10-", "1.1.9-")),
+        lambda: parse(url=replace_url("1.1.12-", "1.1.9-")),
     )
 
 
@@ -534,7 +534,7 @@ def _() -> None:
 def _() -> None:
     expect_error(
         "invalid archive policy",
-        lambda: parse(url=replace_url("6423386432339968", "build-secret")),
+        lambda: parse(url=replace_url("5877618327814144", "build-secret")),
     )
 
 
@@ -564,13 +564,13 @@ def _() -> None:
 def _() -> None:
     value = parse()
     status, detail = distribution.evaluate_manifest(value, "1.1.9", value)
-    assert status == 3 and "1.1.10" in detail and "1.1.9" in detail
+    assert status == 3 and "1.1.12" in detail and "1.1.9" in detail
 
 
 @test("same-version archive build drift is drift-review")
 def _() -> None:
     observed = parse()
-    snapshot = parse(url=replace_url("6423386432339968", "6423386432339967"))
+    snapshot = parse(url=replace_url("5877618327814144", "5877618327814143"))
     assert distribution.evaluate_manifest(observed, VERSION, snapshot)[0] == 3
 
 

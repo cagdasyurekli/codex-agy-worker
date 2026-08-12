@@ -222,7 +222,7 @@ accept low/medium/high; Pro 3.1 accepts low/high and rejects medium. Fixed Sonne
 Opus thinking-labelled, GPT medium-labelled, and compound slugs reject effort. Custom
 labels remain available only through legacy `--tier CUSTOM`. Direct resolution needs
 the active exact-SHA/version/source-bound portable matrix and exact installed agy
-`1.1.10`; exit 7 needs human compatibility review and exit 8 means evidence is
+`1.1.12`; exit 7 needs human compatibility review and exit 8 means evidence is
 unavailable. The dispatcher sends one downstream `--model`, never downstream
 `--effort` or a thinking flag.
 

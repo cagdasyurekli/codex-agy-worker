@@ -32,8 +32,9 @@ There are already several Codex→agy delegators — [codex-agy-delegator](https
 [codex-antigravity-bridge](https://github.com/Common-ka/codex-antigravity-bridge),
 [agy-mcp](https://github.com/Boulea7/agy-mcp), [antigravity-cli-mcp](https://github.com/topics/agy),
 and [antigravity-for-claude-code](https://github.com/VKirill/antigravity-for-claude-code).
-Most are MCP servers; several are more featureful than this one. If you want async
-job polling, Windows support, or multiple worker backends, use one of those.
+Most are MCP servers; several are more featureful than this one. If you need async
+job polling, validated native-Windows support, or multiple worker backends, use one
+of those.
 
 **This one exists for a single reason: it does not accept the worker's self-report as
 evidence.** The worker's JSON report is treated as a *claim*. The gate independently
@@ -126,12 +127,18 @@ installation. For a released snapshot, check out the exact reviewed
 [GitHub Releases page](https://github.com/cagdasyurekli/codex-agy-worker/releases)
 before running `./install.sh`; do not substitute an unverified tag.
 
-Requires `agy` (Antigravity CLI) on `PATH`, `git`, `python3`, and bash.
-The active reviewed model/effort matrix remains bound to agy `1.1.10`. The
-version-independent agy-owned default and explicit literal pass-through are covered
-offline; the installed agy `1.1.12` version and reviewed source were observed
-separately, without an accepted live inventory or dispatch claim. Codex CLI `0.147.0`
-is the current observational baseline. Not tested on Windows.
+Requires `agy` (Antigravity CLI) on `PATH`, `git`, Python 3, and Bash. The core CLI
+has no Windows-specific denylist, but its maintained entrypoints require a
+POSIX-compatible Bash/Python/Git environment and some canonical evidence commands use
+fixed POSIX paths. Native Windows is untested; WSL or another compatible environment
+may work on a best-effort basis. The optional daily notifier is specifically a macOS
+LaunchAgent.
+The active reviewed model/effort matrix is bound to agy `1.1.12`. Its exact official
+release/source, retained snapshot, separately authorized 11-slug account capture,
+and unchanged pair-to-compound-slug mappings are reconciled in
+[`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md). The agy-owned default
+and explicit literal pass-through remain version-independent. Codex CLI `0.147.0` is
+the current observational baseline.
 
 Before spending provider quota, run the offline doctor against the repository you
 plan to delegate:
@@ -480,7 +487,7 @@ explicit empty values, tier plus any model/effort source, effort without a model
 unknown models, and unsupported pairs fail before the task is read or a worker is
 dispatched. Model and effort may come from different sources when each has exactly
 one source. Reviewed `--model` selectors run one bounded local `agy --version`
-preflight and require the reviewed `1.1.10`; tier/default and literal behavior perform
+preflight and require the reviewed `1.1.12`; tier/default and literal behavior perform
 no such probe.
 HUP, INT, or TERM during that preflight closes its exact process group and returns
 `129`, `130`, or `143` before the task is read or a selection record is published.
@@ -850,7 +857,7 @@ deliberately launches its one child with a fresh private empty `HOME`, `TMPDIR`,
 XDG directories plus a closed fixed environment. It never inherits or copies caller
 credentials or Python startup state. If `agy models` needs a logged-in account, this
 runner rejects and publishes no accepted completion marker; that expected rejection
-cannot advance the active `1.1.10` matrix.
+cannot advance the active matrix.
 
 The separate repository-only `scripts/version_bootstrap_runner.py` consumes one
 strict retained accepted recovery record, makes descriptor-held source and snapshot
@@ -976,20 +983,19 @@ mutations are selected drift checks under the reviewed-source/local-owner TCB, n
 proof against coordinated hostile source changes. Stronger assurance would require
 a separately trusted launcher.
 
-One separately authorized diagnostic-only `1.1.12` `models` attempt started its
-child, then the runner exited `1`: capture-owned TMPDIR was nonempty and retained a
-private TMP file, with no capture evidence artifacts or marker. The child’s own exit
-code, stdout, and stderr are unknown because nothing was published. There was no
-retry, inventory interpretation, or metadata advance; active `1.1.10` remains the
-baseline.
+One newly authorized no-retry `1.1.12` JSON `models` capture completed with exit `0`,
+one Popen, empty capture scratch, an exact completion marker, and a strict 11-model
+JSON shape. Offline normalization produced the same 11 slugs and the same
+pair-to-compound-slug mappings as the prior baseline. An earlier failed attempt
+remains non-authoritative; it was not retried or reconstructed. The sanitized hashes,
+official source binding, and claim limits are recorded in
+[`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md).
 
-The human-reviewed agy baseline is `1.1.10` at source revision
-`bfab12dac5bd090015a89cf82e65093d13b567d9`. The fixed official sources, one
-sandbox-correct 11-slug inventory, and two bounded single-selector jobs are recorded
-in [`compat/reviews/agy-1.1.10.md`](compat/reviews/agy-1.1.10.md). The checked-in
-manifest tuple remains an observational change detector rather than a trust root: a
-same-version archive build, URL, or SHA-512 change requires review and cannot itself
-activate or advance compatibility metadata.
+The human-reviewed agy baseline is `1.1.12` at source revision
+`f7519c9084190ed421e89dd81c63970b5177c9ef`. The checked-in distribution tuple
+remains an observational change detector rather than a trust root: a same-version
+archive build, URL, or SHA-512 change requires review and cannot itself activate or
+advance compatibility metadata.
 
 The G1 direct-selection surface consumes the checked-in active model/effort matrix as
 validated compatibility metadata, never as routing or gate authority. It maps eight explicit
@@ -1050,8 +1056,8 @@ acceptance or roadmap commitment.
 
 ## agy behaviour worth knowing
 
-Most facts below were measured on macOS with agy 1.1.9 on 2026-08-01. The narrower
-1.1.10 model reconciliation is recorded separately. Run `./ground-truth.sh` against
+Most facts below were measured on macOS with agy 1.1.9 on 2026-08-01. The current
+1.1.12 model reconciliation is recorded separately. Run `./ground-truth.sh` against
 your own install rather than treating historical observations as a current contract.
 
 - **`--print` must be built last.** The prompt is its argument value; agy ignores stdin
@@ -1204,7 +1210,10 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
 ## Limitations
 
 - No async/polling; jobs are synchronous and bounded by `--print-timeout`.
-- Not tested on Windows.
+- Native Windows is not tested or guaranteed. There is no Windows-specific denylist,
+  but the maintained entrypoints require a POSIX-compatible environment; WSL may work
+  on a best-effort basis. Fixed-POSIX-path evidence runners and the macOS-only
+  LaunchAgent notifier are outside that claim.
 - Single worker backend: agy; no alternative worker backend is implemented.
 - One audited worktree per job. User-supplied `--add-dir` roots outside `--workdir`
   are rejected; multi-repository mutation is intentionally unsupported.

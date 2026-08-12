@@ -1298,8 +1298,8 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
         "$ROOT/skills/agy-worker/runtime/compat/agy-upstream-head.txt" \
         && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
         "$ROOT/skills/agy-worker/runtime/compat/agy-last-reviewed.txt" \
-        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.10" ]] \
-        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-05" ]]; then
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.12" ]] \
+        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-12" ]]; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
@@ -1544,7 +1544,7 @@ fi
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     '[[ "$*" == "--version" ]] || exit 97' \
-    'printf "1.1.10\n"' > "$TMP/selector-bin/agy"
+    'printf "1.1.12\n"' > "$TMP/selector-bin/agy"
 chmod +x "$TMP/selector-bin/agy"
 PATH="$TMP/selector-bin:$PATH" NETWORK_MARKER="$TMP/network-called" \
     "$copied_pipeline/model-selection.sh" --model gemini-3.6-flash --effort high \
@@ -1553,7 +1553,7 @@ rc=$?
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "6ba67d662821b6c0888ea2a4665aadcb02b82084e2f607bc43d4f2ee334639d8"' \
+        && grep -Fq '"matrix_sha256": "a36ead9a39715bb2380b3c36cbd8ae8e6e570e4147a4a4c7dc92f78e82e691a0"' \
             "$TMP/copied-selection.json" \
         && [[ ! -e "$TMP/network-called" ]]; then
     ok "skill-folder-only copy resolves an exact direct selector offline"
@@ -1914,6 +1914,17 @@ fi
 
 if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_12_runner.py" ]] \
+        && [[ -f "$ROOT/compat/reviews/agy-1.1.12.md" ]] \
+        && ! [[ -e "$ROOT/compat/reviews/agy-1.1.12-decision.md" ]] \
+        && grep -Fq 'agy `1.1.12` baseline' "$ROOT/compat/reviews/agy-1.1.12.md" \
+        && grep -Fq 'f7519c9084190ed421e89dd81c63970b5177c9ef' \
+            "$ROOT/compat/reviews/agy-1.1.12.md" \
+        && grep -Fq 'df1cc77947e5562976d51f295b4f023c2c24ef25db6d0afe30976004311996bd' \
+            "$ROOT/compat/reviews/agy-1.1.12.md" \
+        && grep -Fq '8d46bcac6b8f27995635d91dc6f5a0e549d351e707efe11a82d8b6593fe12daf' \
+            "$ROOT/compat/reviews/agy-1.1.12.md" \
+        && grep -Fq 'a36ead9a39715bb2380b3c36cbd8ae8e6e570e4147a4a4c7dc92f78e82e691a0' \
+            "$ROOT/compat/reviews/agy-1.1.12.md" \
         && ! grep -Fqr 'models_capture_1_1_12' "$ROOT/skills/agy-worker/runtime"; then
     ok "fixed 1.1.12 capture bridge stays independent and outside the skill runtime"
 else

@@ -24,9 +24,9 @@ RUNTIME_MAJOR = 3
 RUNTIME_MINOR = 9
 PROFILE_LIMIT = 16_384
 EXPECTED_SOURCE_SHA256 = "c8fd3c0016e101689f923f82da1c068b0e6dce3abcb0089e282742693ad4d344"
-EXPECTED_RECOVERY_BINDING_SHA256 = "30a81274557a55ed53109f140f9cf479ea3a1cfd09e6dcb3cb508abf3c50d22f"
+EXPECTED_RECOVERY_BINDING_SHA256 = "b469298550a9d16921dc4f47ae72a5a00dfae414c11286097d2652e498f89da6"
 EXPECTED_RECOVERY_STDOUT = b"1.1.12\n"
-EXPECTED_RECOVERY_RUNNER_SHA256 = "d051c15536cca109101cfd101370038faa99274f1e44816e5551cee7a87da6e1"
+EXPECTED_RECOVERY_RUNNER_SHA256 = "f51dd9f9359b7bc2f46756b7b89838798f3837dfdcf9866414b269d2daf0bab4"
 EXPECTED_RECOVERY_RUNNER_BYTES = 96_663
 EXPECTED_RECOVERY_SUMMARY_BYTES = 263
 OUTPUT_NAME = "models.capture.1.1.12.profile.json"
@@ -34,7 +34,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "07444f494a6b927558f05da1154bdba04bbe07d42c70bfabf358fe1c33b05421"
+MODULE_AST_SHA256 = "314de1d91dea539a8823e952b5e5a36f087438d9aab4d9a2586f684456132567"
 ACTIVE_PROFILE_PATH: Optional[str] = None
 ACTIVE_PROFILE_IDENTITY: Optional[FileIdentity] = None
 ACTIVE_PROFILE_DIGEST: Optional[str] = None
@@ -282,10 +282,10 @@ def _validate_recovery(root: str, source_path: str, source: FileIdentity, snapsh
                 or hashlib.sha256(runner).hexdigest() != EXPECTED_RECOVERY_RUNNER_SHA256
                 or _read_at(fd, "runner.py.sha256", 128) != (EXPECTED_RECOVERY_RUNNER_SHA256 + "\n").encode("ascii")):
             raise ProfileError("recovery runner changed")
-        binding_bytes = _read_at(fd, "version.binding.json", 2_051)
+        binding_bytes = _read_at(fd, "version.binding.json", 2_060)
         if hashlib.sha256(binding_bytes).hexdigest() != EXPECTED_RECOVERY_BINDING_SHA256 or _read_at(fd, "version.binding.sha256", 128) != (EXPECTED_RECOVERY_BINDING_SHA256 + "\n").encode("ascii"):
             raise ProfileError("recovery binding changed")
-        if len(binding_bytes) != 2_051:
+        if len(binding_bytes) != 2_060:
             raise ProfileError("recovery binding changed")
         binding = _json(binding_bytes)
         if not isinstance(binding, dict):

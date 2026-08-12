@@ -99,14 +99,15 @@ Every roadmap slice must preserve all of these rules:
 
 ## Current agy inventory correction
 
-The accepted agy `1.1.10` reconciliation combines documented `--effort` and `models`
-surfaces with one sandbox-correct read-only model inventory. The exact 11-slug list,
-its SHA-256, reviewed source revision, and bounded behavior limits live in
-[`../compat/reviews/agy-1.1.10.md`](../compat/reviews/agy-1.1.10.md). Agent and plugin
+The accepted agy `1.1.12` reconciliation combines documented `--effort` and
+machine-readable `models` surfaces with one separately authorized, version-bound
+JSON model capture. The exact 11-slug list, its SHA-256, reviewed source revision,
+and bounded behavior limits live in
+[`../compat/reviews/agy-1.1.12.md`](../compat/reviews/agy-1.1.12.md). Agent and plugin
 catalogs were not part of that bounded review and remain outside this contract.
 
 This corrects the inventory without turning advertised flags or historical failure
-behavior into broader agy `1.1.10` promises:
+behavior into broader agy `1.1.12` promises:
 
 - Do not expose `--effort` before G0 reconciles official releases/source/docs with a
   sandbox-correct inventory and bounded behavior tests. G1 may then expose the same
@@ -117,8 +118,8 @@ behavior into broader agy `1.1.10` promises:
   documented commands and validate their expected semantic output; neither an unknown
   subcommand's exit code nor generic usage text is compatibility evidence.
 - Do not assume agy's separate `--model` and `--effort` flags compose safely.
-  Subsequent bounded `1.1.10` inventory evidence advertises compound slugs. Official
-  `1.1.10` source and documentation are now available for human reconciliation, but
+  The current bounded `1.1.12` JSON inventory advertises the same compound slugs.
+  Official `1.1.12` source and documentation were human-reconciled, but
   this repository has not yet completed evidence that establishes dual-selector
   composition or precedence. G1 therefore resolves a verified base/effort pair to
   one exact advertised slug and sends one `--model`.
@@ -137,7 +138,7 @@ Version 0.2.0 released the completed provider-independent roadmap through P2-A:
 G0/G1, P0-A through P0-D, P1-A through P1-E, and P2-A. P2-B and P2-C are not release
 blockers and are deferred rather than left as active implementation goals. Their
 sections retain the exact evidence and policy prerequisites required before either
-may be reconsidered. Deferral does not weaken the active agy `1.1.10` baseline,
+may be reconsidered. Deferral did not weaken the then-active agy `1.1.10` baseline,
 advance the unreconciled `1.1.11` evidence, or claim live provider or cleanup
 behavior.
 
@@ -145,17 +146,17 @@ behavior.
 
 **Current status:** Daily hosted observation, the optional local notifier, privacy-
 limited 30/60/90 measurement tooling, Codex `0.147.0` reconciliation, bounded GitHub
-transport hardening, and the agy `1.1.12` decision are implemented and offline-
-verified in the current v0.3.1 release scope. Read-only project/agy/Codex observations use
+transport hardening, and the agy `1.1.12` reconciliation are implemented and offline-
+verified in the current post-v0.3.1 candidate change set. Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
 ambient-Git transport path and is not claimed hardened by this slice. The agy
-`1.1.12` decision deliberately does not advance the active `1.1.10` matrix: the one
-authorized capture published no evidence or marker, so inventory authority is zero
-and P2-B/P2-C remain deferred. Ordinary agy-owned default dispatch and explicitly
-approved literal pass-through remain operational during version drift; reviewed
-model/effort resolution stays fail-closed.
+`1.1.12` reconciliation advances only the exact version/source/distribution and
+unchanged 11-slug matrix bindings after a successful separately authorized JSON
+capture and offline review. P2-B/P2-C remain deferred. Ordinary agy-owned default
+dispatch and explicitly approved literal pass-through remain operational during
+future version drift; reviewed model/effort resolution stays fail-closed.
 
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the
@@ -163,8 +164,9 @@ each line as one semantic inventory entry, requires complete one-time coverage o
 generic-regex aliases, or prefix matches. In
 particular, `gpt-oss` is accepted only as display text on the same line as
 `gpt-oss-120b-medium`. Synthetic tests pin the corrected canonical-slug hash without
-checking provider output into the repository. This does not close the missing
-installed-version/executable evidence binding or advance any `1.1.11` record.
+checking provider output into the repository. The parser alone cannot activate
+metadata; the accepted `1.1.12` version/source, capture, and human reconciliation
+provide that separate binding.
 
 The provider-independent version-attestation prerequisite now has one canonical
 fixed-profile runner plus its persistent mutation harness. The runner owns the exact
@@ -202,26 +204,28 @@ source path/full identity, fixed `1.1.12` / source-SHA expectations, and its own
 exact `1.1.12` stdout authority; it has no account-HOME input or inspection. It holds the source twice, makes independent source
 and snapshot copies, performs one bounded snapshot-backed `--version` observation,
 and emits only a structurally accepted `snapshot-version-only` prior/profile. Its
-durable `recovery_runner_version_reconciled:false` limitation means Phase 2 recovery
-execution is STOP/deferred: the unchanged canonical recovery runner remains pinned to
-`1.1.11` and must not execute this profile until a later separately reviewed
-reconciliation.
+durable `recovery_runner_version_reconciled:false` limitation made Phase 2 recovery
+execution STOP/deferred at publication time: the then-unchanged canonical recovery
+runner remained pinned to `1.1.11` and could not execute this profile before the
+later, separately reviewed reconciliation recorded below.
 It never reads historical recovery evidence or performs model/login/provider/network/
 Git/routing/retry/metadata work. Offline tests cover source/path/identity rejection,
 two-copy production, process/scratch rollback, signals, source-pin mutation, and
-recovery compatibility. A real observation remains separately authorized.
+recovery compatibility. Its real observation required separate authorization and is
+recorded below.
 
 The separate fixed `scripts/version_recovery_1_1_12_runner.py` is the next Phase 1
 recovery surface. Before lifecycle acquisition or source parsing, it accepts only
-the exact retained 954-byte profile and binding instance, then requires the reviewed
+the exact retained 990-byte profile and binding instance, then requires the reviewed
 1.1.12 source SHA, source/snapshot identities, exact stdout, one prior version call,
 and durable false reconciliation limitation. It revalidates the complete retained
 evidence after its one static snapshot-backed Popen, and validates a descriptor-held
 output root with empty scratch and exact durable artifacts before publishing only
 `snapshot-version-recovery`. The binding records the consumed profile digest. This evidence is
 non-authorizing: it cannot feed models, capture, inventory, metadata, selection, or
-routing. Phase 2 remains STOP/deferred until separate models reconciliation and
-explicit authorization of its one real call; this runner supplies neither.
+routing. Phase 2 remained STOP/deferred until the separate models reconciliation and
+explicit authorization of its one real call recorded below; this runner alone still
+supplies neither.
 
 The adjacent signal-handoff slice is now implemented without expanding provider or
 metadata authority. Version, models, capture, and profile production entrypoints own
@@ -244,7 +248,7 @@ completion marker. Its child always receives fresh private empty HOME/TMP/XDG ro
 it never inherits or copies caller credentials or Python startup state. The accepted
 `1.1.11` binding proves only the version snapshot/source/argv observation. An
 auth-required inventory therefore rejects without an accepted marker and cannot
-advance the checked-in `1.1.10` metadata or fail-closed matrix.
+advance checked-in metadata or the fail-closed matrix.
 
 A separate capture-only runner/profile is now implemented and offline-tested in 84
 runner and 121 builder cases with fake account roots. It binds an explicit account
@@ -274,12 +278,13 @@ its runner records one bounded, separately authorized call as `captured` evidenc
 It cannot accept inventory, update metadata, route, retry, or inspect account-HOME
 contents.
 
-One separately authorized diagnostic-only `1.1.12` `models` attempt started its
-child, then the runner exited `1`: capture-owned TMPDIR was nonempty and retained a
-private TMP file, with no capture evidence artifacts or marker. The child’s own exit
-code, stdout, and stderr are unknown because nothing was published. There was no
-retry, inventory interpretation, or metadata advance; active `1.1.10` remains the
-baseline and P2-B/P2-C stay deferred.
+One fresh, separately authorized, no-retry `1.1.12` JSON `models` capture completed
+with child exit `0`, one Popen, empty post-child scratch, and an exact marker/record
+digest chain. Strict offline parsing confirmed the unchanged 11-slug inventory and
+normalized hash. An earlier rejected capture remains non-authoritative and was not
+reconstructed or retried. The successful capture does not prove provider backend,
+pricing, or routing authority; it is accepted only through the separate human
+reconciliation record. P2-B/P2-C stay deferred.
 
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a
@@ -358,25 +363,26 @@ provenance, code-signing verification, or OS attestation.
   version/archive URL/SHA-512 tuple, and never requests the archive. Its checked-in
   tuple is an observational same-version change detector, not a verified release,
   source revision, signature, or baseline. Official release, source, documentation,
-  and distribution evidence expose `1.1.10`. They were inputs to the separately
-  accepted human reconciliation; the canary alone did not advance the now-reviewed
-  `1.1.10` baseline or activate G1.
+  and distribution evidence expose `1.1.12`. They were inputs to the separately
+  accepted human reconciliation; the canary alone did not advance the reviewed
+  `1.1.12` baseline or activate G1.
 - **Baseline advancement:** A maintainer may advance either verified baseline only
   after reconciling official docs, release notes, and source; regenerating the local
   `./ground-truth.sh` evidence for agy and equivalent documented Codex CLI inventory;
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. agy `1.1.10` was advanced only after
-  its official evidence, installed inventory, bounded jobs, and offline gates were
-  human-reviewed. Any later version or source movement returns the result to
+  The watch never performs this reconciliation. agy `1.1.12` was advanced only after
+  its official evidence, retained version binding, successful account capture,
+  strict unchanged inventory, and offline gates were human-reviewed. Any later
+  version or source movement returns the result to
   drift-review until another reconciliation is accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
   exact output slug from the verified `agy models` inventory, agy docs/source, and
   bounded CLI behavior—not from a provider API table or a model-name guess. The
   matrix records its agy version and source revision. Any agy version/source drift
   makes it stale and keeps effort resolution disabled until human reconciliation.
-  The verified `1.1.10` inventory exposes compound slugs: Gemini 3.6 Flash and Gemini
+  The verified `1.1.12` inventory exposes compound slugs: Gemini 3.6 Flash and Gemini
   3.5 Flash have low/medium/high; Gemini 3.1 Pro has low/high but **not medium**.
   Sonnet is no-level; the advertised Opus thinking slug and GPT medium-labelled slug
   are fixed model choices, not adjustable effort pairs. G0 binds those exact entries
@@ -385,7 +391,7 @@ provenance, code-signing verification, or OS attestation.
   to say that probes must validate documented commands and expected semantic content,
   never an unknown subcommand's exit or usage output. It also records that agy has a
   real `--effort`, while this wrapper exposes no effort control until G1. Official
-  `1.1.10` source was reviewed, but the reconciliation did not prove dual-selector
+  `1.1.12` source was reviewed, but the reconciliation did not prove dual-selector
   composition: production code sends one resolved model slug and cannot combine an
   effort-bearing slug with agy's separate effort flag without a later, separately
   approved evidence gate.
@@ -413,7 +419,7 @@ provenance, code-signing verification, or OS attestation.
 - **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
   versus verified differences and stale review dates are reported separately and
   return `3`; unavailable network returns `2` with an inconclusive label; absent
-  absent future-version evidence retains `1.1.10` and AMBER; version-bound resolution
+  absent future-version evidence retains `1.1.12` and AMBER; version-bound resolution
   fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,
@@ -458,7 +464,7 @@ approval-gated.
 - **User job:** Select an exact advertised agy model or a verified base-model/effort
   pair directly, without disguising the choice as a tier or allowing a recommendation
   to change it.
-- **Sequence gate:** Start only after G0 has reconciled the exact agy `1.1.10` (or
+- **Sequence gate:** Start only after G0 has reconciled the exact agy `1.1.12` (or
   later explicitly verified) CLI/source behavior. G1 precedes any `flash-high` alias,
   performance ranking, or default/recommendation remap and must be its own pull request.
 - **Intended surface:** Add wrapper CLI `--model MODEL` and
