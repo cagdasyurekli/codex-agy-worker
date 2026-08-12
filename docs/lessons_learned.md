@@ -512,6 +512,14 @@ directory link-count change caused by owned children; regular-file link counts r
 exact. A scratch mutation is evidence of drift: reject and leave the bounded private
 residual rather than recursively discovering or deleting it.
 
+Do not dynamically dual-version a recovery runner. A later fixed recovery contract
+must own immutable local version/stdout/source constants and a separately reviewable
+sole Popen graph; it may not mutate, alias, monkeypatch, or import the historical
+canonical runner's production globals or validators. Keep historical runners byte
+unchanged. Treat recovery output as non-authorizing evidence: no models, metadata,
+inventory, capture, routing, or Phase 2 call follows without its own reconciliation
+and explicit approval.
+
 Hard-link publication has a real two-name lifecycle. Record staging and final as the
 same owned inode with derived `nlink=2`, unlink staging without a signal checkpoint or
 injected durability hook, then record and reopen-verify final `nlink=1` before polling.

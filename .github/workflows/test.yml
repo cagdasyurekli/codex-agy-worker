@@ -81,6 +81,9 @@ jobs:
       - name: repository-only version initial bootstrap runner
         run: /usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py
 
+      - name: fixed 1.1.12 version recovery runner
+        run: /usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py
+
       - name: version attestation mutation harness
         run: /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py
 

@@ -25,6 +25,7 @@
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py`
