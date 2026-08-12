@@ -662,7 +662,7 @@ CODEX_DRIFT_HEAD="$(git -C "$CODEX_UPSTREAM_SOURCE" rev-parse HEAD)"
 PATH="$TMP/bin:$PATH" FAKE_CODEX_OFFICIAL_HEAD="$CODEX_DRIFT_HEAD" \
     "$CLIENT/update.sh" check > "$TMP/codex-source-drift.out" 2> "$TMP/codex-source-drift.err"
 rc=$?
-expect_exit "Codex source revision drift requires review" 3 "$rc"
+expect_exit "Codex stable-tag source revision drift requires review" 3 "$rc"
 
 printf 'not-a-version\n' > "$CLIENT/compat/agy-verified-version.txt"
 PATH="$TMP/bin:$PATH" \
@@ -1075,10 +1075,10 @@ official_github_rc=$?
 printf '%s\n' "$OFFICIAL_GITHUB_TEST_OUTPUT"
 OFFICIAL_GITHUB_RESULT="$(printf '%s\n' "$OFFICIAL_GITHUB_TEST_OUTPUT" | tail -1)"
 if [[ "$official_github_rc" == 0 \
-        && "$OFFICIAL_GITHUB_RESULT" == "OFFICIAL_GITHUB_TEST_RESULT passed=59 failed=0" ]]; then
-    pass=$((pass+59))
+        && "$OFFICIAL_GITHUB_RESULT" == "OFFICIAL_GITHUB_TEST_RESULT passed=60 failed=0" ]]; then
+    pass=$((pass+60))
 else
-    bad "fixed official GitHub transport tests (expected 59 controlled passes)"
+    bad "fixed official GitHub transport tests (expected 60 controlled passes)"
 fi
 
 COMPATIBILITY_PROBE_TEST_OUTPUT="$($REAL_PYTHON_REAL -B "$ROOT/tests/test-compatibility-probe.py" 2>&1)"

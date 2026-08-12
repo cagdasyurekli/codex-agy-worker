@@ -28,7 +28,8 @@ FIXED_PATH_RE = re.compile(
     rf"(?:releases/latest|git/ref/tags/v{SEMVER_PATTERN})"
     rf"|/repos/google-antigravity/antigravity-cli/"
     rf"(?:releases/latest|git/ref/heads/main)"
-    rf"|/repos/openai/codex/(?:releases/latest|git/ref/heads/main)"
+    rf"|/repos/openai/codex/"
+    rf"(?:releases/latest|git/ref/tags/rust-v{SEMVER_PATTERN}|git/tags/[0-9a-f]{{40}})"
     rf")"
 )
 
@@ -58,7 +59,7 @@ POLICIES = {
         owner="openai",
         repository="codex",
         tag_pattern=re.compile(rf"rust-v({SEMVER_PATTERN})"),
-        main_branch="main",
+        main_branch=None,
     ),
 }
 
@@ -298,6 +299,36 @@ def _tag_ref(value: Any, tag: str) -> str:
     return revision
 
 
+def _codex_tag_target(value: Any, tag: str) -> tuple[str, str]:
+    document = _object(value, "release tag")
+    target = _object(document.get("object"), "release tag")
+    revision = target.get("sha")
+    kind = target.get("type")
+    if (
+        document.get("ref") != f"refs/tags/{tag}"
+        or kind not in ("commit", "tag")
+        or not isinstance(revision, str)
+        or REVISION_RE.fullmatch(revision) is None
+    ):
+        raise OfficialEvidenceError("invalid release tag evidence")
+    return kind, revision
+
+
+def _annotated_tag_commit(value: Any, tag: str, tag_revision: str) -> str:
+    document = _object(value, "annotated tag")
+    target = _object(document.get("object"), "annotated tag")
+    revision = target.get("sha")
+    if (
+        document.get("tag") != tag
+        or document.get("sha") != tag_revision
+        or target.get("type") != "commit"
+        or not isinstance(revision, str)
+        or REVISION_RE.fullmatch(revision) is None
+    ):
+        raise OfficialEvidenceError("invalid annotated tag evidence")
+    return revision
+
+
 def _repository_url(policy: ToolPolicy, suffix: str) -> str:
     return f"{API_ORIGIN}/repos/{policy.owner}/{policy.repository}/{suffix}"
 
@@ -317,6 +348,21 @@ def latest_evidence(tool: str, *, opener: Optional[Any] = None) -> tuple[str, st
         ),
         policy,
     )
+    if tool == "codex":
+        kind, target_revision = _codex_tag_target(
+            fetch_json(fixed_opener, _repository_url(policy, f"git/ref/tags/{tag}")), tag
+        )
+        if kind == "commit":
+            revision = target_revision
+        else:
+            revision = _annotated_tag_commit(
+                fetch_json(
+                    fixed_opener, _repository_url(policy, f"git/tags/{target_revision}")
+                ),
+                tag,
+                target_revision,
+            )
+        return tool, version, revision
     if policy.main_branch is None:
         revision = _tag_ref(
             fetch_json(fixed_opener, _repository_url(policy, f"git/ref/tags/{tag}")),
