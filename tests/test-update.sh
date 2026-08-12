@@ -144,7 +144,7 @@ git -C "$CODEX_UPSTREAM_SOURCE" config user.name test
 printf 'reviewed Codex upstream\n' > "$CODEX_UPSTREAM_SOURCE/README.md"
 git -C "$CODEX_UPSTREAM_SOURCE" add README.md
 git -C "$CODEX_UPSTREAM_SOURCE" commit -qm 'reviewed Codex upstream fixture'
-git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.146.0
+git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.147.0
 CODEX_UPSTREAM_HEAD="$(git -C "$CODEX_UPSTREAM_SOURCE" rev-parse HEAD)"
 git init -q --bare "$CODEX_UPSTREAM_REMOTE"
 git -C "$CODEX_UPSTREAM_SOURCE" remote add publish "$CODEX_UPSTREAM_REMOTE"
@@ -176,7 +176,7 @@ case "${FAKE_CODEX_MODE:-version}" in
   usage) printf 'Usage: codex [OPTIONS]\n'; exit 0 ;;
   fail) exit 7 ;;
 esac
-printf '%s\n' "${FAKE_CODEX_OUTPUT:-codex-cli ${FAKE_CODEX_VERSION:-0.146.0}}"
+printf '%s\n' "${FAKE_CODEX_OUTPUT:-codex-cli ${FAKE_CODEX_VERSION:-0.147.0}}"
 STUB
 cat > "$TMP/bin/python3" <<'STUB'
 #!/usr/bin/env bash
@@ -220,8 +220,8 @@ case "${1:-}" in
         case "${FAKE_CODEX_OFFICIAL_MODE:-unchanged}" in
           unavailable) exit 2 ;;
           malformed) printf '%s\n' 'credential-bearing malformed official bytes'; exit 0 ;;
-          drift) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.147.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
-          *) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.146.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
+          drift) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.148.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
+          *) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.147.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
         esac
         ;;
       *) exit 2 ;;
@@ -631,13 +631,13 @@ expect_exit "future compatibility review date is inconclusive" 2 "$rc"
 if grep -Fq 'evidence-unavailable' "$TMP/future-review.out"; then ok "future review date is identified"; else bad "future review date is identified"; fi
 git -C "$CLIENT" checkout -q -- compat/agy-last-reviewed.txt
 
-git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.147.0
-git -C "$CODEX_UPSTREAM_SOURCE" push -q publish rust-v0.147.0
+git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.148.0
+git -C "$CODEX_UPSTREAM_SOURCE" push -q publish rust-v0.148.0
 PATH="$TMP/bin:$PATH" FAKE_CODEX_OFFICIAL_MODE=drift \
     "$CLIENT/update.sh" check > "$TMP/codex-stable-drift.out" 2> "$TMP/codex-stable-drift.err"
 rc=$?
 expect_exit "Codex stable release drift requires review" 3 "$rc"
-if grep -Fq 'official 0.147.0; verified 0.146.0' "$TMP/codex-stable-drift.out"; then
+if grep -Fq 'official 0.148.0; verified 0.147.0' "$TMP/codex-stable-drift.out"; then
     ok "Codex stable release drift is reported separately"
 else
     bad "Codex stable release drift is reported separately"
@@ -1075,10 +1075,10 @@ official_github_rc=$?
 printf '%s\n' "$OFFICIAL_GITHUB_TEST_OUTPUT"
 OFFICIAL_GITHUB_RESULT="$(printf '%s\n' "$OFFICIAL_GITHUB_TEST_OUTPUT" | tail -1)"
 if [[ "$official_github_rc" == 0 \
-        && "$OFFICIAL_GITHUB_RESULT" == "OFFICIAL_GITHUB_TEST_RESULT passed=56 failed=0" ]]; then
-    pass=$((pass+56))
+        && "$OFFICIAL_GITHUB_RESULT" == "OFFICIAL_GITHUB_TEST_RESULT passed=59 failed=0" ]]; then
+    pass=$((pass+59))
 else
-    bad "fixed official GitHub transport tests (expected 56 controlled passes)"
+    bad "fixed official GitHub transport tests (expected 59 controlled passes)"
 fi
 
 COMPATIBILITY_PROBE_TEST_OUTPUT="$($REAL_PYTHON_REAL -B "$ROOT/tests/test-compatibility-probe.py" 2>&1)"
@@ -1110,13 +1110,14 @@ else
 fi
 
 WORKFLOW="$ROOT/.github/workflows/compatibility-watch.yml"
-if grep -Fq 'schedule:' "$WORKFLOW" && grep -Fq 'workflow_dispatch:' "$WORKFLOW" \
+if grep -Fq 'schedule:' "$WORKFLOW" && grep -Fq 'cron: "17 7 * * *"' "$WORKFLOW" \
+        && grep -Fq 'workflow_dispatch:' "$WORKFLOW" \
         && grep -Fq 'runs-on: macos-latest' "$WORKFLOW" \
         && grep -Fq 'contents: read' "$WORKFLOW" \
         && grep -Fq 'persist-credentials: false' "$WORKFLOW"; then
-    ok "watch workflow has only the weekly/manual read-only platform contract"
+    ok "watch workflow has only the daily/manual read-only platform contract"
 else
-    bad "watch workflow has only the weekly/manual read-only platform contract"
+    bad "watch workflow has only the daily/manual read-only platform contract"
 fi
 if ! grep -Eq 'pull_request:|secrets\.|contents: write|issues: write|git (pull|commit|push)|gh |curl |wget |brew |npm |pip |update\.sh apply|agy-worker|model-recommendation|ground-truth|agy --|codex ' "$WORKFLOW"; then
     ok "watch workflow has no install, secret, mutation, or GitHub-write path"

@@ -58,24 +58,38 @@ evidence is inconclusive.
 - Official changelog: https://developers.openai.com/codex/changelog
 - Official CLI reference: https://developers.openai.com/codex/cli/reference
 
-The verified baseline is Codex CLI `0.146.0` at source revision
-`bb5054fe47abe73ecbbd454751066a28c89f4bb9`.
+The verified baseline is Codex CLI `0.147.0`. Its official stable tag
+`rust-v0.147.0` resolves to release commit
+`be6e8eac029b183056b7e4402879f15d2c85f61b`; the separately observed official
+`main` revision recorded by the drift watcher is
+`93beee910d39d31425d874a15fd56fc921ab2911`. The installed macOS arm64 CLI and
+the maintained `exec`, sandbox, and `--add-dir` surfaces were reconciled in
+[`reviews/codex-0.147.0.md`](reviews/codex-0.147.0.md). Codex compatibility
+metadata is observation-only and never gates agy dispatch, resolves an agy model,
+or changes a caller selection.
 
 ## Advancing a baseline
 
 Advance one tool only after a human reconciles its official docs, stable release,
 source revision, and installed command inventory, then completes every offline suite
 and the documented syntax/compile/diff checks. If dispatch behavior changed, a
-bounded real job requires separate approval. The weekly watcher only reports
+bounded real job requires separate approval. The daily watcher only reports
 `unchanged`, `drift-review`, or `evidence-unavailable`; it cannot approve or write a
-baseline. A future version or source change disables resolution until another human
-reconciliation is accepted.
+baseline. For agy, a future version or source change disables reviewed pair
+resolution until another human reconciliation is accepted. Codex drift remains
+observation-only and never disables agy dispatch.
 
-agy `1.1.11` remains unreconciled in the checked-in metadata. The transport and
-process-boundary hardening needed to evaluate it does not itself advance version,
-source, review date, manifest, or matrix records; `1.1.10` continues to fail closed
-on observed drift until the separate inventory/provider evidence is authorized and
-accepted.
+agy `1.1.12` remains unreconciled in the checked-in metadata. The official release
+and source observation, retained version/source evidence, distribution-manifest
+observation, and one separately authorized capture attempt are recorded in
+[`reviews/agy-1.1.12-decision.md`](reviews/agy-1.1.12-decision.md). The attempt
+failed closed before publishing capture evidence, so it supplies zero inventory
+authority. The transport and process-boundary hardening needed to evaluate a newer
+version does not itself advance version, source, review date, manifest, or matrix
+records; `1.1.10` remains the active reviewed matrix baseline. Ordinary
+version-independent literal model pass-through and agy-owned default selection do
+not turn this metadata drift into a dispatch prohibition; only reviewed
+model/effort resolution depends on an exact accepted matrix binding.
 
 Owner-captured inventory bytes are interpreted offline by `scripts/agy_inventory.py`,
 which requires one exact reviewed canonical slug per line and complete one-time

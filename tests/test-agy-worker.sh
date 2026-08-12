@@ -425,10 +425,44 @@ printf 'implicit default tier\n' | run_worker legacy-tier-implicit \
     > "$TMP/legacy-tier-implicit.out" 2> "$TMP/legacy-tier-implicit.err"
 rc=$?
 if [[ "$rc" == 0 ]]; then
-    assert_tier_selection "no selector preserves implicit bulk and provenance" \
-        legacy-tier-implicit bulk implicit-default gemini-3.6-flash-medium
+    assert_tier_selection "no selector uses the agy-owned default without a model" \
+        legacy-tier-implicit default implicit-default ''
 else
-    bad "no selector preserves implicit bulk and provenance (exit $rc)"
+    bad "no selector uses the agy-owned default without a model (exit $rc)"
+fi
+
+printf 'literal model under malformed version output\n' | FAKE_VERSION_MODE=malformed \
+    run_worker literal-version-independent --literal-model future-model-1.2 \
+    > "$TMP/literal-version-independent.out" 2> "$TMP/literal-version-independent.err"
+rc=$?
+if [[ "$rc" == 0 && "$(<"$TMP/literal-version-independent.model")" == "future-model-1.2" ]] \
+        && python3 - "$TMP/literal-version-independent.argv" \
+            "$TMP/logs/literal-version-independent/selection.json" \
+            "$TMP/literal-version-independent.calls" <<'PY'
+import json
+import sys
+
+argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
+record = json.load(open(sys.argv[2], encoding="utf-8"))
+calls = open(sys.argv[3], encoding="ascii").read().splitlines()
+assert calls == ["worker"]
+assert argv.count(b"--model") == 1
+assert argv[argv.index(b"--model") + 1] == b"future-model-1.2"
+assert b"--effort" not in argv and b"--thinking-level" not in argv
+assert record == {
+    "schema_version": 1,
+    "kind": "agy-worker-selection",
+    "selection_mode": "literal-model",
+    "user_model": "future-model-1.2",
+    "user_model_source": "cli",
+    "resolved_agy_model": "future-model-1.2",
+    "compatibility_status": "unreconciled-pass-through",
+}
+PY
+then
+    ok "literal model is version-independent, single-pass, and truthfully unreconciled"
+else
+    bad "literal model version-independent contract (exit $rc)"
 fi
 
 assert_direct_result() {
@@ -569,6 +603,20 @@ expect_selector_reject "repeated model is ambiguous" repeated-model \
 expect_selector_reject "repeated effort is ambiguous" repeated-effort \
     --model gemini-3.6-flash --effort high --effort high
 expect_selector_reject "repeated tier is ambiguous" repeated-tier --tier bulk --tier bulk
+expect_selector_reject "repeated literal model is ambiguous" repeated-literal \
+    --literal-model future-model-1.2 --literal-model future-model-1.2
+expect_selector_reject "literal model conflicts with reviewed model" literal-model-conflict \
+    --literal-model future-model-1.2 --model gemini-3.6-flash --effort high
+expect_selector_reject "literal model conflicts with effort" literal-effort-conflict \
+    --literal-model future-model-1.2 --effort high
+expect_selector_reject "uppercase literal model is rejected" literal-uppercase \
+    --literal-model Future-Model-1.2
+expect_selector_reject "slash literal model is rejected" literal-slash \
+    --literal-model vendor/model-v1
+literal_too_long="$(python3 -c 'print("a-" + "b" * 127)')"
+expect_selector_reject "overlong literal model is rejected" literal-too-long \
+    --literal-model "$literal_too_long"
+expect_selector_reject "empty literal model is rejected" empty-literal --literal-model ''
 expect_selector_reject "empty CLI model is rejected" empty-cli-model --model ''
 expect_selector_reject "empty CLI effort is rejected" empty-cli-effort \
     --model gemini-3.6-flash --effort ''

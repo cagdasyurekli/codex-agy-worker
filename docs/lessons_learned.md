@@ -64,7 +64,7 @@ tool or advance compatibility metadata.
 Reconcile each tool's official CLI documentation, stable release, exact source
 revision, and installed semantic command inventory before advancing its separate
 version/revision/review-date metadata. An unknown command that exits zero or prints
-usage is not semantic evidence. The weekly watcher observes the same fixed sources;
+usage is not semantic evidence. The daily watcher observes the same fixed sources;
 it never updates a baseline, installs a tool, dispatches a model, or takes a GitHub
 write action. A bounded real job remains separately approved when behavior changed.
 
@@ -570,3 +570,24 @@ human-review records, then read their exact `100644` blobs from immutable Git ob
 Require evidence, approval/review, and transition as strict ancestor stages. Be honest
 about the boundary: protected-main ancestry proves ordering under the maintainer and
 local-Git TCB, not human identity or a cryptographic signature.
+
+Fast upstream release cadence must not turn review drift into a total product
+lockout. Keep matrix-derived model/effort resolution exact-version/source bound, but
+let the no-selector path defer to agy's own default. If the caller explicitly accepts
+the risk, a separate CLI-only literal slug may pass through once without a version
+probe; its artifact must say unreconciled and carry no matrix, provider, cost,
+recommendation, fallback, or routing authority.
+
+A local notifier is a process supervisor, not a cron-shaped shell shortcut. Bind the
+complete transitive executable/data manifest, derive HOME from the account database,
+serialize lifecycle operations, reconcile launchd state after every ambiguous call,
+and retain authenticated uninstall authority through partial cleanup. Parent-death
+notification needs an acknowledgement that nested groups actually closed. A desktop
+notification is an irreversible final side effect; record only an attempt and never
+claim it can be rolled back.
+
+An accumulating measurement ledger must age records out per reporting horizon rather
+than become invalid when the first record expires. Store only closed aggregate
+metrics, opaque observation IDs, exact revisions, and explicitly public evidence.
+Missing and partial measurements are honest report states. Measurement remains
+after-the-fact evidence and can never activate metadata, routing, cleanup, or P2.

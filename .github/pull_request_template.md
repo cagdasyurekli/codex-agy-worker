@@ -22,6 +22,8 @@
 - [ ] `/usr/bin/python3 -I -S -B tests/test-workload-profiles.py`
 - [ ] `./tests/test-agy-worker.sh`
 - [ ] `./tests/test-update.sh`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-adoption-measurement.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-update-notifier.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py`

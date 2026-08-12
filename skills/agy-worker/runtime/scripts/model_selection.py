@@ -37,6 +37,7 @@ VERSION_OUTPUT_LIMIT = 128
 POLICY_FILE_LIMIT = 256 * 1024
 VERSION_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
+LITERAL_MODEL_RE = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)+")
 TIER_MODEL_BY_NAME = {
     "bulk": "gemini-3.6-flash-medium",
     "cheap": "gemini-3.6-flash-low",
@@ -59,6 +60,12 @@ DIRECT_RECORD_FIELDS = COMMON_RECORD_FIELDS | {
     "matrix_source_revision",
 }
 EFFORT_RECORD_FIELDS = DIRECT_RECORD_FIELDS | {"user_effort", "user_effort_source"}
+LITERAL_RECORD_FIELDS = COMMON_RECORD_FIELDS | {
+    "user_model",
+    "user_model_source",
+    "resolved_agy_model",
+    "compatibility_status",
+}
 
 
 class CallerError(ValueError):
@@ -370,6 +377,22 @@ def resolve_tier_selection(tier: str, source: str) -> dict[str, Any]:
     return record
 
 
+def resolve_literal_selection(model: str) -> dict[str, Any]:
+    """Record one caller-owned literal without consulting compatibility policy."""
+
+    if not isinstance(model, str) or len(model) > 128 or LITERAL_MODEL_RE.fullmatch(model) is None:
+        raise CallerError("--literal-model must be one exact lowercase model slug")
+    return {
+        "schema_version": 1,
+        "kind": "agy-worker-selection",
+        "selection_mode": "literal-model",
+        "user_model": model,
+        "user_model_source": "cli",
+        "resolved_agy_model": model,
+        "compatibility_status": "unreconciled-pass-through",
+    }
+
+
 def require_exact_fields(record: dict[str, Any], expected: set[str]) -> None:
     actual = set(record)
     if actual != expected:
@@ -406,11 +429,24 @@ def validate_selection_record_shape(record: dict[str, Any]) -> None:
         source = record.get("selected_tier_source")
         if source not in TIER_SOURCES:
             raise CallerError("selection record tier source is invalid")
-        if source == "implicit-default" and tier != "bulk":
-            raise CallerError("implicit-default provenance is reserved for bulk")
+        if source == "implicit-default" and tier != "default":
+            raise CallerError("implicit-default provenance is reserved for the agy-owned default")
         expected = None if tier == "default" else TIER_MODEL_BY_NAME.get(tier, tier)
         if record.get("resolved_agy_model") != expected:
             raise CallerError("selection record tier resolution is inconsistent")
+        return
+
+    if mode == "literal-model":
+        require_exact_fields(record, LITERAL_RECORD_FIELDS)
+        user_model = require_string(record, "user_model")
+        if len(user_model) > 128 or LITERAL_MODEL_RE.fullmatch(user_model) is None:
+            raise CallerError("selection record literal model is invalid")
+        if record.get("user_model_source") != "cli":
+            raise CallerError("selection record literal source is invalid")
+        if record.get("resolved_agy_model") != user_model:
+            raise CallerError("selection record literal resolution is inconsistent")
+        if record.get("compatibility_status") != "unreconciled-pass-through":
+            raise CallerError("selection record literal compatibility status is invalid")
         return
 
     if mode not in ("exact-model", "model-effort"):
@@ -451,7 +487,7 @@ def validate_selection_record(record: dict[str, Any]) -> None:
 
     validate_selection_record_shape(record)
     mode = record["selection_mode"]
-    if mode == "tier":
+    if mode in ("tier", "literal-model"):
         return
     user_model = record["user_model"]
     resolved_model = record["resolved_agy_model"]
@@ -516,6 +552,7 @@ def build_parser() -> UsageParser:
     parser.add_argument("--tier", action="append")
     parser.add_argument("--tier-source", action="append", choices=TIER_SOURCES)
     parser.add_argument("--model", action="append")
+    parser.add_argument("--literal-model", action="append")
     parser.add_argument("--effort", action="append")
     parser.add_argument("--model-source", action="append", choices=SOURCE_NAMES)
     parser.add_argument("--effort-source", action="append", choices=SOURCE_NAMES)
@@ -530,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
     tier = one(parser, args.tier, "--tier", False)
     tier_source = one(parser, args.tier_source, "--tier-source", False)
     model = one(parser, args.model, "--model", False)
+    literal_model = one(parser, args.literal_model, "--literal-model", False)
     effort = one(parser, args.effort, "--effort", False)
     model_source = one(parser, args.model_source, "--model-source", False) or "cli"
     effort_source = one(parser, args.effort_source, "--effort-source", False)
@@ -542,6 +580,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.tier,
                 args.tier_source,
                 args.model,
+                args.literal_model,
                 args.effort,
                 args.model_source,
                 args.effort_source,
@@ -561,12 +600,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"model-selection: evidence-unavailable - {exc}", file=sys.stderr)
             return 8
         return 0
-    if (tier is None) == (model is None):
-        parser.error("exactly one of --tier or --model is required")
+    if sum(value is not None for value in (tier, model, literal_model)) != 1:
+        parser.error("exactly one of --tier, --model, or --literal-model is required")
     if tier is not None and (
         effort is not None or args.model_source is not None or effort_source is not None
     ):
         parser.error("--tier is mutually exclusive with model and effort inputs")
+    if literal_model is not None and (
+        effort is not None
+        or args.model_source is not None
+        or effort_source is not None
+        or tier_source is not None
+    ):
+        parser.error("--literal-model is CLI-only and mutually exclusive with tier/model/effort provenance")
     if tier is None and tier_source is not None:
         parser.error("--tier-source requires --tier")
     if tier is not None and tier_source is None:
@@ -578,6 +624,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if tier is not None:
             record = resolve_tier_selection(tier, tier_source or "cli")
+        elif literal_model is not None:
+            record = resolve_literal_selection(literal_model)
         else:
             record = resolve_selection(
                 model or "", effort, model_source, effort_source, probe_version=True
