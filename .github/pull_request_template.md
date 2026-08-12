@@ -30,6 +30,8 @@
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py`
 - [ ] `./tests/test-reporting.sh`
 - [ ] `./tests/test-packaging.sh`
 - [ ] `./tests/test-doctor.sh`
