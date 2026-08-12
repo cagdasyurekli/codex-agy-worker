@@ -222,6 +222,14 @@ check(
     )
     == {"ok": True},
 )
+check(
+    "chunked bounded response without Content-Length is accepted",
+    lambda: MODULE.fetch_json(
+        Opener(response({"ok": True}, headers={"Content-Length": []})),
+        "https://api.github.com/repos/openai/codex/releases/latest",
+    )
+    == {"ok": True},
+)
 
 
 def opener_policy() -> bool:
@@ -327,12 +335,32 @@ check(
     lambda: fetch_reject("invalid response metadata", headers={"Content-Encoding": "gzip"}),
 )
 check(
-    "transfer encoding is rejected",
+    "bounded chunked transfer encoding is accepted",
+    lambda: MODULE.fetch_json(
+        Opener(Response(b"{}", headers={"Content-Length": [], "Transfer-Encoding": "chunked"})),
+        "https://api.github.com/repos/openai/codex/releases/latest",
+    )
+    == {},
+)
+check(
+    "chunked transfer-coding token is case-insensitive",
+    lambda: MODULE.fetch_json(
+        Opener(Response(b"{}", headers={"Content-Length": [], "Transfer-Encoding": "ChUnKeD"})),
+        "https://api.github.com/repos/openai/codex/releases/latest",
+    )
+    == {},
+)
+check(
+    "chunked and content length conflict is rejected",
     lambda: fetch_reject("invalid response metadata", headers={"Transfer-Encoding": "chunked"}),
 )
 check(
-    "missing content length is rejected",
-    lambda: fetch_reject("invalid response metadata", headers={"Content-Length": []}),
+    "missing content length is accepted under incremental bound",
+    lambda: MODULE.fetch_json(
+        Opener(Response(b"{}", headers={"Content-Length": []})),
+        "https://api.github.com/repos/openai/codex/releases/latest",
+    )
+    == {},
 )
 check(
     "duplicate content length is rejected",

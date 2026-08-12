@@ -2,7 +2,7 @@ name: compatibility-watch
 
 on:
   schedule:
-    - cron: "17 7 * * 1"
+    - cron: "17 7 * * *"
   workflow_dispatch:
 
 permissions:
@@ -38,5 +38,8 @@ jobs:
             echo '```'
             echo
             echo "Read-only result: exit $status. Metadata was not advanced."
+            echo "Ledger result: $label"
+            echo "Repository revision: $GITHUB_SHA"
+            echo "Public evidence: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"

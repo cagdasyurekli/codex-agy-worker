@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Explicit updater and compatibility checker for codex-agy-worker.
-# No background work, no automatic pull, and no update from a dirty checkout.
+# Optional background notification invokes check only; no automatic pull and no
+# update from a dirty checkout.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -129,6 +129,23 @@ The project does not delete these artifacts automatically. The person running th
 tool controls retention and should review and remove unneeded artifacts according to
 their own policy. Do not commit or paste raw logs into public reports.
 
+The optional local update notifier stores a canonical status, result fingerprint,
+source-manifest hashes, and resumable install/uninstall state under the account's
+owner-private Application Support directory. It does not store raw compatibility
+output, repository content, credentials, prompts, provider data, or personal paths in
+notifications. The notifier itself has no independent network or mutating Git
+authority; its hash-bound child invokes the existing read-only `update.sh check
+--watch`, which performs fixed bounded HTTPS requests and local Git inspection with
+global/system configuration disabled. It never applies an update or invokes agy,
+Codex work, or a provider. Uninstall preserves replacement or ambiguous recovery
+state rather than deleting it. A displayed macOS notification cannot be retracted.
+
+The optional adoption ledger is explicit local input, not telemetry. It stores only
+closed aggregate values, denominators/sample sizes, opaque observation IDs, UTC dates,
+exact public repository revisions, and allowlisted public GitHub evidence URLs in an
+owner `0600`, one-link file. It never discovers a ledger, reads HOME, calls a process
+or network, or stores prompts, logs, accounts, tokens, provider usage, or user IDs.
+
 The explicit-account models capture runner is a separate, never-automatic future
 action. Its checked-in tests use only disposable synthetic account roots and make no
 agy, provider, or network call. A production invocation would require separate user
@@ -140,7 +157,11 @@ prevent, or revert HOME changes; account residuals may remain even when capture
 rejects. The account HOME, local owner and same-UID processes, reviewed source and
 interpreter, and OS administrators are trusted.
 
-After group closure, capture-owned TMP/XDG/cwd must be unchanged and empty. On a
+After group closure, capture-owned TMP/XDG/cwd must be unchanged and empty. The fixed
+1.1.12 JSON capture bridge has one narrower reviewed exception: it may hash and
+compare-delete the exact owner-private bounded language-server schema cache leaf in
+its own TMP, fsync, and then prove scratch is empty. Every other cache shape rejects
+and remains a private residual. On a
 bounded exit-zero observation the runner retains otherwise uninterpreted raw
 stdout/stderr, exact profile and runner bytes, bounded summary, and capture record in
 a new owner-private directory; files are mode `0600` and raw bytes are never printed.

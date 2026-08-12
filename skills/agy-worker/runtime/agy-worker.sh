@@ -67,7 +67,8 @@ usage() {
     cat >&2 <<'EOF'
 usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
                      [--tier bulk|cheap|hard|hardest|default|MODEL]
-                     [--model EXACT_MODEL [--effort low|medium|high]]
+                     [--model REVIEWED_MODEL [--effort low|medium|high]]
+                     [--literal-model EXACT_SLUG]
                      [--add-dir DIR]... [--allow-slash-commands]
        ... task prompt on stdin ...
 
@@ -87,6 +88,7 @@ extra_dirs=()
 tier_cli_seen=0; tier_cli_value=""
 model_cli_seen=0; model_cli_value=""
 effort_cli_seen=0; effort_cli_value=""
+literal_cli_seen=0; literal_cli_value=""
 # Injection control (rec #8): worker prompts routinely embed repo content, and a
 # "/skill ..." string inside that content would otherwise expand as a real command.
 # Default OFF; only a caller who controls the whole prompt should re-enable it.
@@ -111,6 +113,10 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || usage
             (( model_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --model" >&2; exit 64; }
             model_cli_seen=1; model_cli_value="$2"; shift 2 ;;
+        --literal-model)
+            [[ $# -ge 2 ]] || usage
+            (( literal_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --literal-model" >&2; exit 64; }
+            literal_cli_seen=1; literal_cli_value="$2"; shift 2 ;;
         --effort)
             [[ $# -ge 2 ]] || usage
             (( effort_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --effort" >&2; exit 64; }
@@ -134,6 +140,10 @@ done
 tier_seen=$((tier_cli_seen + tier_env_seen))
 model_seen=$((model_cli_seen + model_env_seen))
 effort_seen=$((effort_cli_seen + effort_env_seen))
+if (( literal_cli_seen > 0 && (tier_seen > 0 || model_seen > 0 || effort_seen > 0) )); then
+    echo "agy-worker.sh: --literal-model conflicts with tier/model/effort selectors" >&2
+    exit 64
+fi
 if (( tier_seen > 0 && (model_seen > 0 || effort_seen > 0) )); then
     echo "agy-worker.sh: explicit tier and model/effort selectors are mutually exclusive" >&2
     exit 64
@@ -142,7 +152,10 @@ if (( effort_seen > 0 && model_seen == 0 )); then
     echo "agy-worker.sh: effort requires an explicit base model" >&2
     exit 64
 fi
-if (( tier_seen > 0 )); then
+if (( literal_cli_seen > 0 )); then
+    [[ -n "$literal_cli_value" ]] || { echo "agy-worker.sh: literal model must not be empty" >&2; exit 64; }
+    literal_model="$literal_cli_value"; selection_kind="literal"
+elif (( tier_seen > 0 )); then
     if (( tier_cli_seen )); then tier="$tier_cli_value"; tier_source="cli"
     else tier="$tier_env_value"; tier_source="environment"; fi
     [[ -n "$tier" ]] || { echo "agy-worker.sh: explicit tier must not be empty" >&2; exit 64; }
@@ -159,7 +172,7 @@ elif (( model_seen > 0 )); then
     fi
     selection_kind="model"
 else
-    tier="bulk"; tier_source="implicit-default"; selection_kind="tier"
+    tier="default"; tier_source="implicit-default"; selection_kind="tier"
 fi
 
 case "$persona" in
@@ -237,6 +250,8 @@ selection_file="$job_dir/selection.json"
 selection_args=(--output "$selection_file")
 if [[ "$selection_kind" == "tier" ]]; then
     selection_args+=(--tier "$tier" --tier-source "$tier_source")
+elif [[ "$selection_kind" == "literal" ]]; then
+    selection_args+=(--literal-model "$literal_model")
 else
     selection_args+=(--model "$user_model" --model-source "$model_source")
     if [[ -n "$user_effort" ]]; then

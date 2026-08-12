@@ -203,15 +203,24 @@ def fetch_json(
                 "identity",
             ):
                 raise OfficialEvidenceError("invalid response metadata")
-            if _single_header(response.headers, "Transfer-Encoding", required=False) is not None:
+            transfer_encoding = _single_header(response.headers, "Transfer-Encoding", required=False)
+            if transfer_encoding is not None:
+                transfer_encoding = transfer_encoding.strip().lower()
+            if transfer_encoding not in (None, "chunked"):
                 raise OfficialEvidenceError("invalid response metadata")
-            length_text = _single_header(response.headers, "Content-Length")
-            assert length_text is not None
-            if re.fullmatch(r"[1-9][0-9]*", length_text) is None:
-                raise OfficialEvidenceError("invalid response metadata")
-            expected_length = int(length_text)
-            if expected_length > limit:
-                raise OfficialEvidenceError("response too large")
+            # HTTP/1.1 chunked responses legitimately omit Content-Length.  The
+            # incremental byte ceiling below is the authority in that case; when a
+            # length is supplied it remains one unambiguous bounded declaration.
+            length_text = _single_header(response.headers, "Content-Length", required=False)
+            expected_length: Optional[int] = None
+            if length_text is not None:
+                if transfer_encoding is not None:
+                    raise OfficialEvidenceError("invalid response metadata")
+                if re.fullmatch(r"[1-9][0-9]*", length_text) is None:
+                    raise OfficialEvidenceError("invalid response metadata")
+                expected_length = int(length_text)
+                if expected_length > limit:
+                    raise OfficialEvidenceError("response too large")
 
             body = bytearray()
             while len(body) <= limit:
@@ -228,7 +237,7 @@ def fetch_json(
     except Exception:
         raise OfficialEvidenceError("network evidence unavailable") from None
 
-    if len(body) != expected_length:
+    if expected_length is not None and len(body) != expected_length:
         raise OfficialEvidenceError("invalid response metadata")
     try:
         return json.loads(

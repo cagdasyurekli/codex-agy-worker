@@ -131,9 +131,9 @@ behavior into broader agy `1.1.10` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
-### v0.2.0 release scope
+### Historical v0.2.0 release scope
 
-Version 0.2.0 releases the completed provider-independent roadmap through P2-A:
+Version 0.2.0 released the completed provider-independent roadmap through P2-A:
 G0/G1, P0-A through P0-D, P1-A through P1-E, and P2-A. P2-B and P2-C are not release
 blockers and are deferred rather than left as active implementation goals. Their
 sections retain the exact evidence and policy prerequisites required before either
@@ -143,15 +143,19 @@ behavior.
 
 ### G0 — Compatibility Reconciliation & Watch
 
-**G0-F2 status:** Provider-independent transport hardening is implemented, merged, and
-offline-verified. Read-only project/agy/Codex release and source observations now use
+**Current status:** Daily hosted observation, the optional local notifier, privacy-
+limited 30/60/90 measurement tooling, Codex `0.147.0` reconciliation, bounded GitHub
+transport hardening, and the agy `1.1.12` decision are implemented and offline-
+verified in the current release candidate. Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
-ambient-Git transport path and is not claimed hardened by this slice. No agy `1.1.11`
-version, revision, review date, manifest, or matrix record is advanced; `1.1.10`
-remains the active fail-closed baseline until separately authorized inventory and
-provider evidence is accepted.
+ambient-Git transport path and is not claimed hardened by this slice. The agy
+`1.1.12` decision deliberately does not advance the active `1.1.10` matrix: the one
+authorized capture published no evidence or marker, so inventory authority is zero
+and P2-B/P2-C remain deferred. Ordinary agy-owned default dispatch and explicitly
+approved literal pass-through remain operational during version drift; reviewed
+model/effort resolution stays fail-closed.
 
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the
@@ -298,7 +302,7 @@ provenance, code-signing verification, or OS attestation.
   to the exact verified agy version and source revision. Each adjustable input pair
   maps to one exact advertised compound slug; fixed/no-level entries are recorded as
   non-adjustable. Add
-  `.github/workflows/compatibility-watch.yml` as a separate weekly and
+  `.github/workflows/compatibility-watch.yml` as a separate daily and
   `workflow_dispatch` macOS workflow. It is observational and is not a required pull
   request check.
 - **Local check contract:** `./update.sh check` reports the installed version, the
@@ -324,6 +328,19 @@ provenance, code-signing verification, or OS attestation.
   same `0`/`3`/`2` meanings; the workflow may surface nonzero status for maintainers
   but cannot open or modify anything. Scheduling it does not add it to the protected
   branch's required `test` check.
+- **Local notifier contract:** An optional owner-private macOS LaunchAgent runs the
+  same watch daily from hash-bound snapshots. It derives HOME from the account
+  database, binds the complete transitive behavior source set, serializes lifecycle
+  commands, reconciles ambiguous launchctl results, supervises nested groups with a
+  parent-death acknowledgement, preserves fixed signal exits, and makes uninstall
+  resumable. It does not apply updates or gain independent network/Git/provider
+  authority. A changed sanitized result fingerprint triggers one notification attempt;
+  the same fingerprint is suppressed.
+- **Measurement contract:** The optional v2 ledger is explicit local input, not
+  telemetry. It accepts only closed 30/60/90 metrics, opaque observation IDs, exact
+  repository revisions, and allowlisted public GitHub evidence under a private
+  canonical `0600` one-link file. Stale records age out per window; missing and partial
+  metrics remain visible. Reports cannot gate, route, reconcile, or activate P2.
 - **Fixed primary sources:** agy reconciliation binds the official
   [Antigravity source](https://github.com/google-antigravity/antigravity-cli),
   [releases](https://github.com/google-antigravity/antigravity-cli/releases),
@@ -400,7 +417,7 @@ provenance, code-signing verification, or OS attestation.
   fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,
-  and non-escalating; workflow fixtures prove weekly/manual triggers, macOS, read-only
+  and non-escalating; workflow fixtures prove daily/manual triggers, macOS, read-only
   permission, bounded summary, and no mutation; fixed-manifest fixtures pair exact
   transport/schema/URL/hash acceptance with redirect, timeout, oversize,
   duplicate/extra/malformed field, archive-policy, and same-version build/hash
@@ -429,7 +446,7 @@ provenance, code-signing verification, or OS attestation.
   observable; all existing suites stay green; docs do not claim live compatibility
   beyond evidence; and an independent verifier confirms zero write/escalation path.
 - **Success measures:** Zero false-green results when official evidence is unavailable;
-  compatibility drift is classified by the next weekly run; each baseline advance
+  compatibility drift is classified by the next daily run; each baseline advance
   links exact primary evidence and completed gates; and no watcher run changes a file,
   opens an item, invokes a model, or changes required branch checks.
 
@@ -447,8 +464,9 @@ approval-gated.
 - **Intended surface:** Add wrapper CLI `--model MODEL` and
   `--effort low|medium|high`, using agy's real vocabulary but never inventing
   `--thinking-level`. These are wrapper inputs, not a promise to forward both agy
-  flags. Preserve `--tier` named values, raw-label pass-through, and the no-option
-  default exactly. Add
+  flags. Preserve explicit `--tier` named values and raw-label pass-through, make the
+  no-option path the agy-owned no-model default, and add a CLI-only `--literal-model`
+  unreconciled pass-through for explicit caller-owned future slugs. Add
   `AGY_WORKER_MODEL` and `AGY_WORKER_EFFORT` only with the strict conflict contract
   below. Canonical runtime, root compatibility wrapper, public skill copy, validators,
   recommendation schemas/renderers, and later receipt/report schemas carry the same
@@ -457,7 +475,8 @@ approval-gated.
   may be supplied by CLI or its matching environment variable, never both—even when
   the values match. Any explicit tier source (`--tier` or `AGY_WORKER_TIER`) is mutually
   exclusive with every explicit model/effort source. With no explicit selector, the
-  existing implicit `bulk` default remains. Direct mode uses one exact model source;
+  implicit selection uses `default` and sends no downstream model. Direct reviewed
+  mode uses one exact model source;
   effort always requires a base-model input. Duplicate CLI occurrences, empty values,
   unknown effort values, and cross-source conflicts fail before dispatch with usage
   exit `64`.
@@ -473,6 +492,11 @@ approval-gated.
   model/version, unsupported pair, stale matrix, missing mapping, or ambiguous form
   fails before dispatch with no fallback, slug surgery, normalization, or base-model
   guess.
+- **Version-independent literal boundary:** `--literal-model` accepts one exact
+  lowercase CLI slug, performs no version probe or matrix lookup, and sends that slug
+  exactly once with `compatibility_status: unreconciled-pass-through`. It has no
+  environment source and conflicts with tier/model/effort. It carries no compatibility,
+  provider, cost, routing, recommendation, or fallback authority.
 - **Dual-selector evidence gate:** G1 never forwards agy's `--effort`. Passing both
   `--model` and `--effort` to agy requires a later isolated slice with official source
   or a separately approved bounded test proving exact composition, precedence, failure
@@ -492,8 +516,9 @@ approval-gated.
 - **Dependencies:** Completed G0 baseline and resolution matrix, existing dispatcher
   parsing/model assembly, advisory recommender, and the schema/report surfaces present
   when G1 starts. No new dependency or provider lookup.
-- **Minimum accept tests:** Legacy named tiers, raw `--tier` labels, and implicit bulk
-  remain byte-compatible; each exact advertised slug reaches agy as one exact
+- **Minimum accept tests:** Legacy named tiers and raw `--tier` labels remain explicit;
+  implicit default emits no model; a literal slug remains exact without a version
+  probe; each reviewed advertised slug reaches agy as one exact
   `--model`; every matrix-admitted base/effort pair has its own test and reaches agy as
   one exact resolved compound `--model`; fixed Sonnet/Opus/GPT choices remain exact and
   non-adjustable; retries preserve the same matrix revision and resolved slug;
@@ -1032,7 +1057,7 @@ checks remain mandatory; age alone never authorizes deletion.
 Roadmap priority is not authorization. Apply these gates independently:
 
 1. **Feature implementation:** fresh explicit approval for one named slice.
-2. **Compatibility watch enablement:** merging or scheduling the weekly external
+2. **Compatibility watch enablement:** merging or scheduling the daily external
    watcher and changing a verified baseline each require explicit approval. A baseline
    change also requires the G0 reconciliation record; the watcher cannot approve it.
 3. **External data/live model:** name the repository and paths sent through agy and
@@ -1069,7 +1094,7 @@ reviews, or automated promotional submissions.
 
 ### 60 days — qualified external use
 
-- Measure compatibility-review lead time from first weekly drift signal to a recorded
+- Measure compatibility-review lead time from first daily drift signal to a recorded
   human disposition; do not count an automatic metadata change as resolution.
 - Count distinct public external repositories or opt-in users that demonstrate a
   valid receipt or starter proof. Verify each signal manually instead of inferring it
