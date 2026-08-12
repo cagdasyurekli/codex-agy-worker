@@ -38,6 +38,8 @@ EXPECTED_RECOVERY_RUNNER_BYTES = 96_663
 EXPECTED_RECOVERY_SUMMARY_BYTES = 263
 OUTPUT_PROFILE_NAME = "models.capture.1.1.12.profile.json"
 SCRATCH_NAMES = ("cwd", "tmp", "xdg-cache", "xdg-config", "xdg-state")
+TMP_CACHE_LEAF = "unleash-repo-schema-v1-codeium-language-server.json"
+TMP_CACHE_LIMIT = 1024 * 1024
 RECOVERY_SCRATCH = ("cwd", "home", "tmp", "xdg-cache", "xdg-config", "xdg-state")
 RECOVERY_FILES = frozenset(set(RECOVERY_SCRATCH) | {"runner.py", "runner.py.sha256", "version.binding.json", "version.binding.sha256", "version.stderr", "version.stdout", "version.summary.json"})
 PROFILE_KEYS = frozenset({"account_home", "account_home_identity", "capture_parent", "capture_parent_identity", "snapshot_identity", "snapshot_path", "source_identity", "source_path", "source_sha256", "version_binding_sha256", "version_root", "version_root_identity"})
@@ -47,7 +49,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "69fcbf54d7bfe1f4354d2711e43a9ed35a630f546d2952ab57cf00070ea80119"
+MODULE_AST_SHA256 = "5a449f59cc01e565a843743eb23626c2610727294ac29cf09ed9a026474c93a8"
 ACTIVE_MARKER_ROOT: Optional[str] = None
 ACTIVE_MARKER_ROOT_IDENTITY: Optional[tuple[int, int]] = None
 ACTIVE_MARKER_DIGEST: Optional[str] = None
@@ -567,7 +569,7 @@ def _start_capture(profile: Profile, root_path: str) -> subprocess.Popen[bytes]:
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
     try:
         environment = {"HOME": profile.account_home, "TMPDIR": os.path.join(root_path, "tmp"), "XDG_CACHE_HOME": os.path.join(root_path, "xdg-cache"), "XDG_CONFIG_HOME": os.path.join(root_path, "xdg-config"), "XDG_STATE_HOME": os.path.join(root_path, "xdg-state"), "PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TERM": "dumb", "NO_COLOR": "1"}
-        process = subprocess.Popen([profile.source_path, "models"], executable=profile.snapshot_path, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=os.path.join(root_path, "cwd"), env=environment, start_new_session=True, close_fds=True)
+        process = subprocess.Popen([profile.source_path, "--output-format", "json", "models"], executable=profile.snapshot_path, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=os.path.join(root_path, "cwd"), env=environment, start_new_session=True, close_fds=True)
         try:
             pgid = os.getpgid(process.pid)
         except ProcessLookupError:
@@ -581,13 +583,52 @@ def _start_capture(profile: Profile, root_path: str) -> subprocess.Popen[bytes]:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
-def _empty_scratch(root: int) -> None:
+def _consume_optional_tmp_cache(root: int) -> None:
+    """Accept and remove only the one known bounded cache file by descriptor."""
+    tmp = os.open("tmp", os.O_RDONLY | DIRECTORY | CLOEXEC | NOFOLLOW, dir_fd=root)
+    try:
+        if os.listdir(tmp) != [TMP_CACHE_LEAF]:
+            raise CaptureError("capture scratch changed")
+        cache = os.open(TMP_CACHE_LEAF, os.O_RDONLY | CLOEXEC | NOFOLLOW, dir_fd=tmp)
+        try:
+            item = os.fstat(cache)
+            identity = FileIdentity.from_stat(item)
+            if (not stat.S_ISREG(item.st_mode) or identity.uid != os.getuid()
+                    or identity.mode != 0o600 or identity.nlink != 1
+                    or identity.size > TMP_CACHE_LIMIT):
+                raise CaptureError("capture scratch changed")
+            digest = _hash(cache, identity.size)
+            named = FileIdentity.from_stat(os.stat(TMP_CACHE_LEAF, dir_fd=tmp, follow_symlinks=False))
+            if FileIdentity.from_stat(os.fstat(cache)) != identity or named != identity or not digest:
+                raise CaptureError("capture scratch changed")
+        finally:
+            os.close(cache)
+        os.unlink(TMP_CACHE_LEAF, dir_fd=tmp)
+        os.fsync(tmp)
+        if os.listdir(tmp):
+            raise CaptureError("capture scratch changed")
+    finally:
+        os.close(tmp)
+
+
+def _empty_scratch(root: int, allow_tmp_cache: bool = False) -> None:
     for name in SCRATCH_NAMES:
         fd = os.open(name, os.O_RDONLY | DIRECTORY | CLOEXEC | NOFOLLOW, dir_fd=root)
         try:
             item = os.fstat(fd)
-            if not stat.S_ISDIR(item.st_mode) or item.st_uid != os.getuid() or stat.S_IMODE(item.st_mode) != 0o700 or item.st_nlink != 2 or os.listdir(fd): raise CaptureError("capture scratch changed")
-        finally: os.close(fd)
+            entries = os.listdir(fd)
+            cache_window = name == "tmp" and allow_tmp_cache and entries
+            if (not stat.S_ISDIR(item.st_mode) or item.st_uid != os.getuid()
+                    or stat.S_IMODE(item.st_mode) != 0o700 or item.st_nlink < 2
+                    or (not cache_window and item.st_nlink != 2)):
+                raise CaptureError("capture scratch changed")
+            if cache_window:
+                os.close(fd)
+                fd = -1
+                _consume_optional_tmp_cache(root)
+            elif entries: raise CaptureError("capture scratch changed")
+        finally:
+            if fd >= 0: os.close(fd)
 
 
 def _verify_pre_child_root(root_path: str, root_name: str, root_fd: int, root_identity: DirectoryIdentity, profile: Profile, capture_fd: int) -> None:
@@ -668,7 +709,8 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
             raise
         if rc != 0: raise CaptureError("capture child failed")
         _revalidate_authority(profile, source_fd, snapshot_fd, account_fd, capture_fd, signals)
-        _empty_scratch(root_fd)
+        _empty_scratch(root_fd, allow_tmp_cache=True)
+        scratch_ledger["tmp"] = FileIdentity.from_stat(os.stat("tmp", dir_fd=root_fd, follow_symlinks=False))
         account_post = DirectoryIdentity.from_stat(os.fstat(account_fd))
         source_post = FileIdentity.from_stat(os.fstat(source_fd))
         snapshot_post = FileIdentity.from_stat(os.fstat(snapshot_fd))
@@ -682,11 +724,11 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
         _write(root_fd, "models_capture_1_1_12_runner.py.sha256", (hashlib.sha256(runner_source).hexdigest() + "\n").encode("ascii"), ledger=ledger)
         _write(root_fd, OUTPUT_PROFILE_NAME, profile_bytes, ledger=ledger)
         stdout_sha, stderr_sha = _write(root_fd, "models.stdout", stdout, ledger=ledger), _write(root_fd, "models.stderr", stderr, ledger=ledger)
-        summary = {"artifacts": {"models.stderr": stderr_sha, "models.stdout": stdout_sha}, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": {"accepted_inventory": False, "account_home_may_mutate": True, "metadata_updated": False, "provider_backend_proven": False, "routing_authority": False}, "observation": {"argv": [profile.source_path, "models"], "exit": rc, "popen_count": 1}, "snapshot_sha256": EXPECTED_SOURCE_SHA256, "source_sha256": EXPECTED_SOURCE_SHA256, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
+        summary = {"artifacts": {"models.stderr": stderr_sha, "models.stdout": stdout_sha}, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": {"accepted_inventory": False, "account_home_may_mutate": True, "metadata_updated": False, "provider_backend_proven": False, "routing_authority": False}, "observation": {"argv": [profile.source_path, "--output-format", "json", "models"], "exit": rc, "popen_count": 1}, "snapshot_sha256": EXPECTED_SOURCE_SHA256, "source_sha256": EXPECTED_SOURCE_SHA256, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
         summary_sha = _write(root_fd, "models.capture.summary.json", _canonical(summary), ledger=ledger)
         runner_sha = hashlib.sha256(runner_source).hexdigest()
         artifacts = {OUTPUT_PROFILE_NAME: profile_sha, "models.capture.summary.json": summary_sha, "models.stderr": stderr_sha, "models.stdout": stdout_sha, "models_capture_1_1_12_runner.py": runner_sha, "models_capture_1_1_12_runner.py.sha256": hashlib.sha256((runner_sha + "\n").encode("ascii")).hexdigest()}
-        record = {"account": {"post": dataclasses.asdict(account_post), "pre": dataclasses.asdict(profile.account_home_identity)}, "artifacts": artifacts, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": summary["limitations"], "observation": {"argv": [profile.source_path, "models"], "executable_sha256": EXPECTED_SOURCE_SHA256, "exit": rc, "popen_count": 1}, "runner_sha256": hashlib.sha256(runner_source).hexdigest(), "scratch": scratch, "snapshot": {"post": dataclasses.asdict(snapshot_post), "pre": dataclasses.asdict(profile.snapshot_identity), "sha256": EXPECTED_SOURCE_SHA256}, "source": {"post": dataclasses.asdict(source_post), "pre": dataclasses.asdict(profile.source_identity), "sha256": EXPECTED_SOURCE_SHA256}, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
+        record = {"account": {"post": dataclasses.asdict(account_post), "pre": dataclasses.asdict(profile.account_home_identity)}, "artifacts": artifacts, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": summary["limitations"], "observation": {"argv": [profile.source_path, "--output-format", "json", "models"], "executable_sha256": EXPECTED_SOURCE_SHA256, "exit": rc, "popen_count": 1}, "runner_sha256": hashlib.sha256(runner_source).hexdigest(), "scratch": scratch, "snapshot": {"post": dataclasses.asdict(snapshot_post), "pre": dataclasses.asdict(profile.snapshot_identity), "sha256": EXPECTED_SOURCE_SHA256}, "source": {"post": dataclasses.asdict(source_post), "pre": dataclasses.asdict(profile.source_identity), "sha256": EXPECTED_SOURCE_SHA256}, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
         record_sha = _write(root_fd, "models.capture.json", _canonical(record), ledger=ledger)
         _verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger)
         marker_identity = _marker(root_fd, record_sha, signals, ledger)
@@ -717,10 +759,10 @@ def validate_source_contract(data: bytes) -> dict[str, str]:
     if len(popens) != 1: raise CaptureError("runner must own exactly one Popen")
     if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"system", "popen", "run", "call", "check_call", "check_output"} for node in ast.walk(tree)): raise CaptureError("runner source gained execution authority")
     popen_text = ast.get_source_segment(data.decode("utf-8", "strict"), popens[0]) or ""
-    for required in ("[profile.source_path, \"models\"]", "executable=profile.snapshot_path", "env=environment", "cwd=os.path.join(root_path, \"cwd\")", "start_new_session=True", "close_fds=True"):
+    for required in ("[profile.source_path, \"--output-format\", \"json\", \"models\"]", "executable=profile.snapshot_path", "env=environment", "cwd=os.path.join(root_path, \"cwd\")", "start_new_session=True", "close_fds=True"):
         if required not in popen_text: raise CaptureError("runner Popen contract changed")
     source = data.decode("utf-8", "strict")
-    for required in ("_close_group(process)", "_marker(root_fd, record_sha, signals)", "\"routing_authority\": False", "\"metadata_updated\": False", "_finish_success(state, result)"):
+    for required in ("_close_group(process)", "_marker(root_fd, record_sha, signals)", "_consume_optional_tmp_cache", "TMP_CACHE_LEAF", "allow_tmp_cache=True", "\"routing_authority\": False", "\"metadata_updated\": False", "_finish_success(state, result)"):
         if required not in source: raise CaptureError("runner semantic contract changed")
     return {"status": "valid-source"}
 

@@ -122,13 +122,15 @@ check("variant rejects noncanonical persona source", lambda: variant_reject(lamb
 
 
 def tier_record(source_name: str, resolved: str = "gemini-3.6-flash-medium") -> dict:
+    tier = "default" if source_name == "implicit-default" else "bulk"
+    resolved_model = None if source_name == "implicit-default" else resolved
     return {
         "schema_version": 1,
         "kind": "agy-worker-selection",
         "selection_mode": "tier",
-        "selected_tier": "bulk",
+        "selected_tier": tier,
         "selected_tier_source": source_name,
-        "resolved_agy_model": resolved,
+        "resolved_agy_model": resolved_model,
     }
 
 

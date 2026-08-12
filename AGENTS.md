@@ -35,6 +35,15 @@ work. Diagnose external CI timing systematically. Escalate for missed security
 reasoning or a repeated semantic bypass. These are Codex-subagent settings only:
 they never change caller-owned agy model, effort, thinking, selection, or routing.
 
+## Repository tool discipline
+
+Use RTK for supported shell/Git rewrites and run `rtk hook check` before promoting a
+rewrite. Use `rtk proxy` when RTK has no adapter, exact output is required, or shell
+semantics are complex. Use Graphify only when an existing fresh graph materially
+improves architecture/data-flow review (or the user explicitly requests a graph);
+query it first, then verify every material edge against source and tests. Graph output
+is non-authoritative and stays outside the repository unless explicitly requested.
+
 ## Ground truth about agy
 
 Never describe agy's CLI from memory — including your own. Run `./ground-truth.sh`
@@ -56,9 +65,11 @@ Keep these counts current when their suites change:
 - Persona Evidence Registry v1: 124 offline semantic-chain/Git-ancestry/portable/mutation cases.
 - Safe local lifecycle: 100 offline state/receipt/Git-policy/cleanup/signal cases.
 - Data-only Workload Profiles v1: 89 offline schema/allowlist/portable/mutation cases.
-- `agy-worker.sh` / `install.sh` / model selection and recommendation: 209 offline
+- `agy-worker.sh` / `install.sh` / model selection and recommendation: 217 offline
   fake-agy/routing cases.
-- `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
+- `update.sh`: 313 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
+- Adoption measurement: 41 offline privacy/aggregation/rolling-window/concurrency cases.
+- Local update notifier: 60 offline install/uninstall/process/signal/notification cases.
 - Canonical version-attestation runner: 165 offline fixed-profile/source-binding cases.
 - Repository-only version bootstrap runner: 139 offline retained-recovery/ownership/scratch/source/process/signal/runtime cases.
 - Repository-only version initial-bootstrap runner: 43 offline current-source/identity/two-copy/recovery-profile/scratch/process/signal cases.
@@ -71,7 +82,8 @@ Keep these counts current when their suites change:
 - Explicit-account models capture profile builder: 121 offline canonical-profile,
   external-evidence, descriptor, publication, and mutation cases.
 - Fixed 1.1.12 models capture profile builder: 30 offline authority/profile cases.
-- Fixed 1.1.12 models capture runner: 53 offline capture/process/publication cases.
+- Fixed 1.1.12 models capture runner: 56 offline capture/process/publication/cache cases
+  (86 with its separate 30-case profile-builder suite).
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
 - Codex package/skill distribution and CI policy: 353 offline
   manifest/runtime-copy/relocation/landing/range cases.
@@ -79,16 +91,9 @@ Keep these counts current when their suites change:
 - Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
 - `proof-demo.sh`: 21 offline synthetic-boundary cases.
 
-Real runs prove one bounded edit, the complete `codex exec` pipeline, the combined
-Codex sandbox requirements, and an honest `repo-inventory` escalation. The
-Playbook-Gemini exercise proved that the gate rejects a worker even after focused
-tests pass when diff hygiene fails; it did not produce an accepted
-`bulk-test-writer` delivery.
-
-Do not claim real coverage for an accepted `bulk-test-writer` delivery,
-`diff-reviewer`, non-`bulk` tiers, oversized live dispatch, Windows, headless skill
-expansion, a public tagged update, or a live GitHub issue submission. Their current
-coverage is offline, partial, or absent as described in `README.md`.
+Do not promote offline or partial evidence into a real-run claim. Keep the current
+coverage inventory and one-off run history in `README.md`; `AGENTS.md` owns only this
+durable evidence rule.
 
 ## Testing
 
@@ -102,6 +107,8 @@ coverage is offline, partial, or absent as described in `README.md`.
 /usr/bin/python3 -I -S -B tests/test-workload-profiles.py # offline data-only profiles
 ./tests/test-agy-worker.sh      # offline fake-agy dispatcher/installer coverage
 ./tests/test-update.sh          # offline local Git remotes; no public fetch
+/usr/bin/python3 -I -S -B tests/test-adoption-measurement.py # offline measurement ledger/reports
+/usr/bin/python3 -I -S -B tests/test-update-notifier.py # offline fake local notifier lifecycle
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
 /usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py # offline retained-recovery bootstrap
 /usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py # offline current-source initial bootstrap
@@ -212,7 +219,7 @@ only a passing test has not been shown to catch anything.
   evidence-unavailable; inconclusive evidence is never green. Metadata changes only
   after a human reconciles official docs, upstream source, command inventories, and a
   bounded real job when behavior changed. Production origins, release channels, and
-  review cadence are not environment-overridable. The weekly watcher never advances
+  review cadence are not environment-overridable. The daily watcher never advances
   metadata or takes an external action. `apply` is always an explicit action.
 - **A GitHub URL is not fixed evidence when Git transport is ambient.** Read-only
   check/watch must use the exact proxyless, redirect-rejecting, bounded GitHub REST
@@ -285,8 +292,10 @@ only a passing test has not been shown to catch anything.
   only runner remains dormant until the user authorizes its exact account HOME,
   profile, and one call. It publishes `captured`, never accepted, evidence and cannot
   advance metadata. A bounded exit-zero stream is retained without inventory/error
-  interpretation, while capture-owned scratch/cache/cwd must be empty after group
-  closure. The authorized external CLI may read, write, mutate, or cache in HOME;
+  interpretation. The fixed 1.1.12 JSON capture may descriptor/hash-bind and
+  compare-delete only its exact bounded owner-private language-server TMP cache leaf;
+  capture-owned scratch/cache/cwd must then be empty before publication. The authorized
+  external CLI may read, write, mutate, or cache in HOME;
   the runner cannot detect or revert those changes, and residuals may remain after a
   rejected capture. Treat
   the reviewed runner sources, account HOME, local owner/same-UID processes,
@@ -361,6 +370,18 @@ only a passing test has not been shown to catch anything.
   Keep reviewed pair-to-slug mappings and fixed classifications explicit in both the
   matrix and validator allowlists; update both in one reconciliation and never derive
   a slug by concatenating model and effort strings.
+  Version drift must not block the agy-owned no-model default. The explicitly approved
+  `--literal-model` surface is CLI-only: validate one lowercase closed slug, perform no
+  version/matrix lookup, send it once, and record `unreconciled-pass-through` with no
+  installed/matrix/source fields. It cannot combine with tier/model/effort/environment,
+  inference, recommendation, fallback, or thinking flags.
+- The local notifier is observational. Bind its full transitive behavior source set,
+  canonical account HOME, private state, launchd label, lifecycle lock, nested cleanup
+  acknowledgement, and resumable uninstall authority. Its child may perform only the
+  existing fixed HTTPS/read-only local-Git check. Never let it apply, mutate metadata,
+  dispatch, inspect personal config, or claim an irreversible notification was rolled
+  back. Measurement remains explicit public aggregate evidence, never telemetry or a
+  routing/activation gate.
 - Do not auto-pull during a worker job, auto-submit an issue, install `gh`, or make
   GitHub CLI a runtime dependency.
 - Run every GitHub network operation through exact, scoped `gh` or `git` commands

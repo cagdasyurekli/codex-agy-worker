@@ -36,6 +36,13 @@ or a due compatibility review) or `not-ready` (a failed prerequisite, repository
 bundle, semantic probe, or metadata record); exit `64` is invalid usage. Inspect the
 reported `overall` value when the exit is `3`.
 
+`not-ready` blocks every dispatch. `review-required` from version drift or review age
+does not lock out ordinary operation: use the no-selector/`--tier default` agy-owned
+default or, only when the caller explicitly accepts the risk, `--literal-model`.
+Reviewed `--model`/`--effort` resolution remains blocked until its exact matrix,
+version, and source are reconciled. Codex drift is observation-only and never gates
+agy dispatch.
+
 The doctor is read-only and offline. It checks the resolved bundle, Bash 3.2,
 Python 3, git/worktree support, the target Git worktree, exact `agy --version`
 semantics, and portable reviewed metadata. It does not scan personal configuration,
@@ -218,6 +225,14 @@ the active exact-SHA/version/source-bound portable matrix and exact installed ag
 `1.1.10`; exit 7 needs human compatibility review and exit 8 means evidence is
 unavailable. The dispatcher sends one downstream `--model`, never downstream
 `--effort` or a thinking flag.
+
+With no selector, the dispatcher uses `--tier default` internally and sends no model,
+leaving the default to agy. `--literal-model EXACT_SLUG` is a CLI-only,
+version-independent caller-owned escape hatch. It performs no version/matrix lookup,
+sends the exact lowercase slug once, and records `unreconciled-pass-through`; it
+cannot combine with tier/model/effort/environment selection, inference,
+recommendation, fallback, or thinking flags. Treat the provider result as unreviewed
+until separately reconciled.
 HUP, INT, or TERM during the direct-selection version preflight closes the exact
 probe process group and returns `129`, `130`, or `143` before task read or selection
 publication.

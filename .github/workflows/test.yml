@@ -57,6 +57,12 @@ jobs:
       - name: updater suite
         run: ./tests/test-update.sh
 
+      - name: adoption measurement suite
+        run: /usr/bin/python3 -I -S -B tests/test-adoption-measurement.py
+
+      - name: local update notifier suite
+        run: /usr/bin/python3 -I -S -B tests/test-update-notifier.py
+
       - name: canonical version attestation runner
         run: /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py
 

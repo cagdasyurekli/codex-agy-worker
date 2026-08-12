@@ -1338,6 +1338,10 @@ required = {
         "schema_version", "kind", "selection_mode", "selected_tier",
         "selected_tier_source", "resolved_agy_model",
     },
+    "unreconciled literal model selection": {
+        "schema_version", "kind", "selection_mode", "user_model",
+        "user_model_source", "resolved_agy_model", "compatibility_status",
+    },
     "exact reviewed model selection": {
         "schema_version", "kind", "selection_mode", "user_model",
         "user_model_source", "resolved_agy_model", "installed_agy_version",
@@ -1355,11 +1359,20 @@ forbidden = {
         "user_model", "user_model_source", "user_effort", "user_effort_source",
         "installed_agy_version", "matrix_sha256", "matrix_agy_version",
         "matrix_source_revision",
+        "compatibility_status",
+    },
+    "unreconciled literal model selection": {
+        "selected_tier", "selected_tier_source", "user_effort", "user_effort_source",
+        "installed_agy_version", "matrix_sha256", "matrix_agy_version",
+        "matrix_source_revision",
     },
     "exact reviewed model selection": {
         "selected_tier", "selected_tier_source", "user_effort", "user_effort_source",
+        "compatibility_status",
     },
-    "reviewed model and effort selection": {"selected_tier", "selected_tier_source"},
+    "reviewed model and effort selection": {
+        "selected_tier", "selected_tier_source", "compatibility_status",
+    },
 }
 
 def assert_strict(value):
@@ -1378,7 +1391,8 @@ def assert_strict(value):
         assert blocked == forbidden[title]
     tier_conditions = json.dumps(variants["legacy tier selection"]["allOf"], sort_keys=True)
     assert '"const": "default"' in tier_conditions and '"type": "null"' in tier_conditions
-    assert '"const": "implicit-default"' in tier_conditions and '"const": "bulk"' in tier_conditions
+    assert '"const": "implicit-default"' in tier_conditions
+    assert tier_conditions.count('"const": "default"') >= 2
 
 assert_strict(schema)
 mutants = []
@@ -1386,7 +1400,7 @@ mutant = copy.deepcopy(schema)
 mutant["additionalProperties"] = True
 mutants.append(mutant)
 mutant = copy.deepcopy(schema)
-mutant["oneOf"][1]["required"].remove("matrix_sha256")
+mutant["oneOf"][2]["required"].remove("matrix_sha256")
 mutants.append(mutant)
 mutant = copy.deepcopy(schema)
 mutant["oneOf"][0]["not"]["anyOf"] = mutant["oneOf"][0]["not"]["anyOf"][1:]
@@ -1811,16 +1825,30 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
             "$ROOT/.github/workflows/test.yml"; then
     governance_lists_all_suites=0
 fi
+for suite in tests/test-adoption-measurement.py tests/test-update-notifier.py; do
+    if ! grep -Fq "/usr/bin/python3 -I -S -B $suite" "$ROOT/CONTRIBUTING.md" \
+            || ! grep -Fq "/usr/bin/python3 -I -S -B $suite" \
+                "$ROOT/.github/pull_request_template.md" \
+            || ! grep -Fq "$suite" "$ROOT/.github/workflows/test.yml"; then
+        governance_lists_all_suites=0
+    fi
+done
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
-        && grep -Fq 'The twenty-four offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The twenty-six offline suites' "$ROOT/README.md" \
+        && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 60 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-update-notifier.py 60-case' "$ROOT/README.md" \
+        && [[ -f "$ROOT/docs/MEASUREMENT.md" ]] \
+        && [[ -x "$ROOT/update-notifier.sh" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all twenty-four suites and disclose public policy boundaries"
+    ok "governance docs require all twenty-six suites and disclose public policy boundaries"
 else
-    bad "governance docs require all twenty-four suites and disclose public policy boundaries"
+    bad "governance docs require all twenty-six suites and disclose public policy boundaries"
 fi
 
 bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
@@ -1863,9 +1891,9 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'tests/test-models-capture-1-1-12-profile.py 30-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-12-profile.py` (30 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.12 models capture runner: 53 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 53-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (53 offline cases)' \
+        && grep -Fq 'Fixed 1.1.12 models capture runner: 56 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 56-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (56 offline runner cases' \
             "$ROOT/docs/REPO_MAP.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \

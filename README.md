@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The twenty-four offline suites need no agy process, network access, API key, or GitHub login.
+The twenty-six offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -96,9 +96,10 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or deferred status. Version 0.2.0 contains the completed
-provider-independent roadmap through P2-A; P2-B and P2-C are deferred because their
-required live terminal-event and recurring-accumulation evidence does not exist.
+their explicit implemented or deferred status. Version 0.2.1 is the current published
+release and includes the completed provider-independent roadmap through P2-A plus its
+accepted evidence hardening. P2-B and P2-C remain deferred because their required live
+terminal-event and recurring-accumulation evidence does not exist.
 Source, tests, and this README remain
 the authority for current CLI behavior; every new slice still requires its own
 approval, tests, review, and pull request.
@@ -114,6 +115,9 @@ cd codex-agy-worker
 for suite in tests/test-*.sh; do "$suite"; done
 ```
 
+That loop is a shell-suite smoke check, not the complete offline gate. Run the full
+shell and Python command list in [CONTRIBUTING.md](CONTRIBUTING.md) before publication.
+
 The GitHub repository is the source of truth. Review the commit you cloned before
 installation. For a released snapshot, check out the exact reviewed
 `vMAJOR.MINOR.PATCH` tag from the
@@ -121,7 +125,11 @@ installation. For a released snapshot, check out the exact reviewed
 before running `./install.sh`; do not substitute an unverified tag.
 
 Requires `agy` (Antigravity CLI) on `PATH`, `git`, `python3`, and bash.
-Tested on macOS with agy 1.1.10 and codex-cli 0.146.0. Not tested on Windows.
+The active reviewed model/effort matrix remains bound to agy `1.1.10`. The
+version-independent agy-owned default and explicit literal pass-through are covered
+offline; the installed agy `1.1.12` version and reviewed source were observed
+separately, without an accepted live inventory or dispatch claim. Codex CLI `0.147.0`
+is the current observational baseline. Not tested on Windows.
 
 Before spending provider quota, run the offline doctor against the repository you
 plan to delegate:
@@ -158,7 +166,12 @@ forwarded to the active probe and its descendants; interruption emits only
 Green covers only those offline prerequisites. It does **not** certify authentication,
 provider availability, Codex/agy sandbox permission, task quality, or a future
 dispatch. A due or drift result asks for human compatibility review; it never updates
-metadata. For a folder-only skill copy, resolve `PIPELINE` as shown in
+metadata. `review-required` is not a blanket dispatch lock: no selector or
+`--tier default` still delegates to agy's own default, and the explicitly approved
+`--literal-model` surface remains an unreconciled caller-owned pass-through. Reviewed
+`--model`/`--effort` resolution remains blocked until installed agy exactly matches
+the reviewed matrix. `not-ready` still blocks all dispatch. For a folder-only skill
+copy, resolve `PIPELINE` as shown in
 `skills/agy-worker/SKILL.md` and run `"$PIPELINE/doctor.sh"`—no checkout or fetch is
 needed.
 
@@ -391,9 +404,10 @@ profile sources.
 | Worker option | Environment equivalent | Meaning |
 |---|---|---|
 | `--mode plan|accept-edits` | `AGY_WORKER_MODE` | defaults to read-only `plan` |
-| `--tier cheap|bulk|hard|hardest|default` | `AGY_WORKER_TIER` | defaults to `bulk`; a model label is also accepted |
+| `--tier cheap|bulk|hard|hardest|default` | `AGY_WORKER_TIER` | explicit legacy tier; a model label is also accepted |
 | `--model EXACT_MODEL` | `AGY_WORKER_MODEL` | reviewed exact slug, or adjustable base used with effort |
 | `--effort low|medium|high` | `AGY_WORKER_EFFORT` | requires an adjustable base and resolves to one exact slug |
+| `--literal-model EXACT_SLUG` | — | CLI-only caller-owned pass-through; no matrix/version claim |
 | `--workdir DIR` | — | agy's workspace |
 | `--add-dir DIR` | — | repeatable file-tool root; must resolve inside `--workdir` |
 | `--persona NAME` | — | inline a bounded worker role |
@@ -422,7 +436,7 @@ race.
 ### Model selection is explicit; recommendations are advisory
 
 The dispatcher does not infer difficulty or score the gap between worker output and
-the expected result. The caller chooses a tier; the default is `bulk`:
+the expected result. With no selector it sends no model and lets agy own its default:
 
 | Tier | Current configured model label |
 |---|---|
@@ -432,13 +446,15 @@ the expected result. The caller chooses a tier; the default is `bulk`:
 | `hardest` | `claude-opus-4-6-thinking` |
 | `default` | no `--model`; let agy choose |
 
-These tier constants remain independent of the compatibility matrix. Any other
-`--tier` value remains the legacy raw-label pass-through; custom labels are accepted
-only on that legacy surface. Direct selection is intentionally stricter:
+The named tier constants predate the current compatibility matrix. During version
+drift they remain legacy best-effort labels, not verified claims that a tier is still
+cheap, hard, provider-bound, or behaviorally equivalent. `--tier default` and the
+no-selector path send no model. Direct reviewed selection is intentionally stricter:
 
 ```bash
 ./agy-worker.sh --model gemini-3.6-flash-high ...
 ./agy-worker.sh --model gemini-3.6-flash --effort high ...
+./agy-worker.sh --literal-model future-model-1.2 ...
 ```
 
 The second form resolves through the active, exact-SHA, agy-version/source-bound
@@ -448,13 +464,22 @@ medium-labelled slug, and every already-compound slug are fixed exact choices an
 reject an effort input. The wrapper sends exactly one downstream `--model` and never
 sends agy's separate `--effort` or an invented thinking flag.
 
+`--literal-model` is the deliberately narrow escape hatch approved for fast-moving
+agy releases. It accepts one lowercase closed slug from CLI only, performs no version
+probe or matrix lookup, sends that exact slug once, and records
+`compatibility_status: unreconciled-pass-through`. It cannot be combined with tier,
+model, effort, environment selection, inference, recommendation, fallback, or
+thinking flags. The provider or agy may reject it; the record makes no compatibility,
+cost, provider, or routing claim.
+
 Selector sources have no silent precedence. A component may come from CLI or its
 matching environment variable, never both—even when equal. Repeated selectors,
 explicit empty values, tier plus any model/effort source, effort without a model,
 unknown models, and unsupported pairs fail before the task is read or a worker is
 dispatched. Model and effort may come from different sources when each has exactly
-one source. New direct selectors run one bounded local `agy --version` preflight and
-require the reviewed `1.1.10`; legacy tier/default behavior performs no such probe.
+one source. Reviewed `--model` selectors run one bounded local `agy --version`
+preflight and require the reviewed `1.1.10`; tier/default and literal behavior perform
+no such probe.
 HUP, INT, or TERM during that preflight closes its exact process group and returns
 `129`, `130`, or `143` before the task is read or a selection record is published.
 
@@ -711,7 +736,7 @@ derived from a repository or another model.
 
 ## Explicit updates and tool compatibility checks
 
-There is no background updater. Checking is read-only:
+There is no automatic updater. Checking is read-only:
 
 ```bash
 ./update.sh check
@@ -768,10 +793,40 @@ isolation described above does not harden that mutating path. Release maintainer
 also protect the GitHub account and tag-publishing process.
 
 The fixed primary sources and exact reviewed revisions are recorded in
-[`compat/sources.md`](compat/sources.md). A separate weekly/manual macOS compatibility
+[`compat/sources.md`](compat/sources.md). A separate daily/manual macOS compatibility
 watch runs the official-evidence-only mode without installing agy or Codex. It writes
 only a bounded Step Summary, preserves the same `0`/`3`/`2` meanings, is not a required
 pull-request check, and cannot advance metadata or open an issue or pull request.
+
+### Optional local daily notifier
+
+macOS users may install an owner-private LaunchAgent that runs the same read-only
+check once per day and displays a notification only when a drift fingerprint changes:
+
+```bash
+./update-notifier.sh install
+./update-notifier.sh status
+./update-notifier.sh run       # manual one-shot check
+./update-notifier.sh uninstall
+```
+
+The notifier has no independent network or mutating Git authority. Its hash-bound
+snapshot child invokes `update.sh check --watch`, whose existing contract performs
+fixed bounded read-only HTTPS observations and read-only local Git inspection. It
+never applies an update, edits a baseline, invokes agy/Codex/provider work, or reads
+personal configuration. Installation binds the complete behavior-bearing source
+manifest, canonical account HOME, exact launchd label, private state, and an
+authenticated resumable uninstall ledger. Source drift requires uninstall/install.
+Signals, overlapping operations, ambiguous launchctl outcomes, nested process groups,
+and replacement files fail closed. A completed uninstall intentionally retains an
+authenticated inert ledger/tombstone, prior result, and lock so recovery and
+notification deduplication remain resumable across reinstall; additional private
+residuals may remain on drift or failure. A
+notification attempt is the final irreversible UI side effect and cannot be retracted.
+
+The separate optional [measurement ledger](docs/MEASUREMENT.md) records only explicit
+sanitized public evidence and renders fixed 30/60/90-day reports. Neither watcher nor
+notifier writes that ledger automatically.
 
 Separately captured `agy models` output can be reconciled offline by the bounded
 semantic parser in `scripts/agy_inventory.py`. It requires exactly one occurrence of
@@ -1111,7 +1166,7 @@ tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   100-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
-tests/test-update.sh          310-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
+tests/test-update.sh          313-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
@@ -1124,14 +1179,17 @@ tests/test-models-attestation-runner.py  116-case offline fixed-profile inventor
 tests/test-models-capture-runner.py  84-case offline fake-account capture-only suite
 tests/test-models-capture-profile.py 121-case offline canonical capture-profile builder suite
 tests/test-models-capture-1-1-12-profile.py 30-case offline fixed 1.1.12 capture-profile suite
-tests/test-models-capture-1-1-12-runner.py 53-case offline fixed 1.1.12 capture-runner suite
+tests/test-models-capture-1-1-12-runner.py 56-case offline fixed 1.1.12 capture-runner suite (86 combined with profile)
+tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
+tests/test-update-notifier.py 60-case offline local notifier lifecycle/signal suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       353-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
-.github/workflows/compatibility-watch.yml  observational weekly/manual fixed-source watch
+.github/workflows/compatibility-watch.yml  observational daily/manual fixed-source watch
+update-notifier.sh              optional local daily notifier lifecycle wrapper
 ```
 
 Contributors should start with [the repository map](docs/REPO_MAP.md) and use

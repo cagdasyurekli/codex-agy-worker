@@ -7,7 +7,7 @@
   "properties": {
     "schema_version": {"type": "integer", "const": 1},
     "kind": {"type": "string", "const": "agy-worker-selection"},
-    "selection_mode": {"type": "string", "enum": ["tier", "exact-model", "model-effort"]},
+    "selection_mode": {"type": "string", "enum": ["tier", "literal-model", "exact-model", "model-effort"]},
     "selected_tier": {"type": "string", "minLength": 1},
     "selected_tier_source": {"type": "string", "enum": ["cli", "environment", "implicit-default"]},
     "user_model": {"type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$", "maxLength": 128},
@@ -24,6 +24,7 @@
     "matrix_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "matrix_agy_version": {"type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"},
     "matrix_source_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+    ,"compatibility_status": {"type": "string", "const": "unreconciled-pass-through"}
   },
   "oneOf": [
     {
@@ -53,7 +54,7 @@
             "required": ["selected_tier_source"],
             "properties": {"selected_tier_source": {"const": "implicit-default"}}
           },
-          "then": {"properties": {"selected_tier": {"const": "bulk"}}}
+          "then": {"properties": {"selected_tier": {"const": "default"}}}
         }
       ],
       "not": {
@@ -66,8 +67,28 @@
           {"required": ["matrix_sha256"]},
           {"required": ["matrix_agy_version"]},
           {"required": ["matrix_source_revision"]}
+          ,{"required": ["compatibility_status"]}
         ]
       }
+    },
+    {
+      "title": "unreconciled literal model selection",
+      "required": [
+        "schema_version", "kind", "selection_mode", "user_model",
+        "user_model_source", "resolved_agy_model", "compatibility_status"
+      ],
+      "properties": {
+        "selection_mode": {"const": "literal-model"},
+        "user_model_source": {"const": "cli"},
+        "resolved_agy_model": {"type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"},
+        "compatibility_status": {"const": "unreconciled-pass-through"}
+      },
+      "not": {"anyOf": [
+        {"required": ["selected_tier"]}, {"required": ["selected_tier_source"]},
+        {"required": ["user_effort"]}, {"required": ["user_effort_source"]},
+        {"required": ["installed_agy_version"]}, {"required": ["matrix_sha256"]},
+        {"required": ["matrix_agy_version"]}, {"required": ["matrix_source_revision"]}
+      ]}
     },
     {
       "title": "exact reviewed model selection",
@@ -93,6 +114,7 @@
           {"required": ["selected_tier_source"]},
           {"required": ["user_effort"]},
           {"required": ["user_effort_source"]}
+          ,{"required": ["compatibility_status"]}
         ]
       }
     },
@@ -120,6 +142,7 @@
         "anyOf": [
           {"required": ["selected_tier"]},
           {"required": ["selected_tier_source"]}
+          ,{"required": ["compatibility_status"]}
         ]
       }
     }
