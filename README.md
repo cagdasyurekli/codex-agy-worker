@@ -97,7 +97,7 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or deferred status. Version 0.3.1 is the release represented
+their explicit implemented or deferred status. Version 0.3.2 is the release represented
 by this source and adds daily compatibility observation, private 30/60/90 measurement,
 the optional local notifier, version-drift-safe default/literal routing, and the
 bounded updater hotfix to the completed provider-independent roadmap through P2-A.

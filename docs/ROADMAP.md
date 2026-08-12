@@ -147,7 +147,7 @@ behavior.
 **Current status:** Daily hosted observation, the optional local notifier, privacy-
 limited 30/60/90 measurement tooling, Codex `0.147.0` reconciliation, bounded GitHub
 transport hardening, and the agy `1.1.12` reconciliation are implemented and offline-
-verified in the current post-v0.3.1 candidate change set. Read-only project/agy/Codex observations use
+verified in the current v0.3.2 release. Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
