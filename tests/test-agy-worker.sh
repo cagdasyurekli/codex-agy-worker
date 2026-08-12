@@ -92,7 +92,7 @@ assert value["user_model"] == model
 assert value.get("user_effort", "") == effort
 assert value["resolved_agy_model"] == resolved
 assert len(value["matrix_sha256"]) == 64
-assert value["matrix_agy_version"] == "1.1.10"
+assert value["matrix_agy_version"] == "1.1.12"
 assert len(value["matrix_source_revision"]) == 40
 assert value["recommendation_only"] is True
 assert value["applied"] is False
@@ -187,11 +187,11 @@ FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-/dev/null}"
 if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
     printf 'version\n' >> "$FAKE_CALLS_FILE"
     case "${FAKE_VERSION_MODE:-ready}" in
-        ready) printf '1.1.10\n' ;;
-        prefixed) printf 'agy 1.1.10\n' ;;
+        ready) printf '1.1.12\n' ;;
+        prefixed) printf 'agy 1.1.12\n' ;;
         drift) printf '1.1.11\n' ;;
         empty) : ;;
-        malformed) printf 'version 1.1.10\n' ;;
+        malformed) printf 'version 1.1.12\n' ;;
         oversize) i=0; while [[ $i -lt 140 ]]; do printf x; i=$((i+1)); done; printf '\n' ;;
         stream) while :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done ;;
         child-stream)
@@ -493,8 +493,8 @@ assert record.get("user_effort", "") == user_effort
 assert record["user_model_source"] == model_source
 assert record.get("user_effort_source", "") == effort_source
 assert record["resolved_agy_model"] == expected
-assert record["installed_agy_version"] == "1.1.10"
-assert record["matrix_agy_version"] == "1.1.10"
+assert record["installed_agy_version"] == "1.1.12"
+assert record["matrix_agy_version"] == "1.1.12"
 assert len(record["matrix_sha256"]) == 64
 assert len(record["matrix_source_revision"]) == 40
 assert stat.S_IMODE(os.stat(selection_path).st_mode) & 0o077 == 0

@@ -146,9 +146,9 @@ exact public repository revisions, and allowlisted public GitHub evidence URLs i
 owner `0600`, one-link file. It never discovers a ledger, reads HOME, calls a process
 or network, or stores prompts, logs, accounts, tokens, provider usage, or user IDs.
 
-The explicit-account models capture runner is a separate, never-automatic future
-action. Its checked-in tests use only disposable synthetic account roots and make no
-agy, provider, or network call. A production invocation would require separate user
+The explicit-account models capture runner is a separate, never-automatic action.
+Its checked-in tests use only disposable synthetic account roots and make no agy,
+provider, or network call. Every production invocation requires separate user
 authorization for the exact canonical owner-`0700` account HOME/profile and one
 snapshot-backed `agy models` call. The external CLI may read account contents or use
 credentials under its own behavior. It may also write or mutate normal HOME state and
@@ -176,7 +176,7 @@ artifacts. The user controls retention and must not commit the private profile o
 evidence.
 
 `scripts/models_capture_profile.py` is the separate, process-inert preparation
-step for that future action. It accepts only explicit stdin paths, does not inspect
+step for that action. It accepts only explicit stdin paths, does not inspect
 HOME contents or ambient configuration, and validates no-follow external source,
 snapshot, and version evidence before atomically creating one owner-private canonical
 profile. It never invokes agy, a provider, a network client, a shell, or a Git
