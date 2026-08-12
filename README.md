@@ -1177,7 +1177,7 @@ tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   100-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
-tests/test-update.sh          313-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
+tests/test-update.sh          314-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness

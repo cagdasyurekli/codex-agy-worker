@@ -67,7 +67,7 @@ Keep these counts current when their suites change:
 - Data-only Workload Profiles v1: 89 offline schema/allowlist/portable/mutation cases.
 - `agy-worker.sh` / `install.sh` / model selection and recommendation: 217 offline
   fake-agy/routing cases.
-- `update.sh`: 313 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
+- `update.sh`: 314 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
 - Adoption measurement: 41 offline privacy/aggregation/rolling-window/concurrency cases.
 - Local update notifier: 60 offline install/uninstall/process/signal/notification cases.
 - Canonical version-attestation runner: 165 offline fixed-profile/source-binding cases.

@@ -12,11 +12,12 @@ source content, command stream, credential, account data, or private artifact pa
 - Stable-tag release commit:
   `be6e8eac029b183056b7e4402879f15d2c85f61b`.
 - Separately observed official `main` revision:
-  `379cb68444057c721b6c8fa0bd610b7c6ecb9824`.
+  `9ca0337dbf9b0ae7513eab2b0f2ee874c97c8a4f`.
 
-The stable-tag commit binds the reviewed release. The `main` revision is a separate
-drift observation and must not be represented as the release commit. Future movement
-of either official surface is `drift-review`; it does not rewrite this record.
+The stable-tag commit binds the reviewed release and is the daily compatibility
+fingerprint. The `main` revision is separate review context and must not be represented
+as the release commit or treated as a daily drift signal. A new stable tag or movement
+of the exact stable-tag ref is `drift-review`; ordinary `main` movement is not.
 
 The refreshed `main` observation was 19 commits ahead of the prior reviewed source
 and remained on the same `rust-v0.147.0` stable release. The reviewed changes covered
@@ -24,6 +25,11 @@ authentication, MCP/plugin internals, delegated-session policy, skills telemetry
 thread history, and tests. They did not remove or rename the maintained `codex exec`,
 `--sandbox workspace-write`, or `--add-dir` CLI surfaces, and they do not add a Codex
 runtime or dispatch dependency to this project.
+
+Subsequent official `main` commits moved model-ETag extraction from WebSocket
+upgrade headers to response metadata events and adjusted the related doctor/client
+tests. The stable release remained `rust-v0.147.0`; the commit did not remove or
+rename the maintained CLI surfaces above and adds no project runtime dependency.
 
 ## Installed interface
 

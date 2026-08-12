@@ -54,7 +54,7 @@ evidence is inconclusive.
 ## Codex CLI
 
 - Verified stable release: `codex-verified-version.txt`
-- Reviewed source revision: `codex-upstream-head.txt`
+- Reviewed stable-tag source revision: `codex-upstream-head.txt`
 - Documentation review date: `codex-last-reviewed.txt`
 - Official releases/source: https://github.com/openai/codex/releases
 - Official changelog: https://developers.openai.com/codex/changelog
@@ -63,8 +63,9 @@ evidence is inconclusive.
 The verified baseline is Codex CLI `0.147.0`. Its official stable tag
 `rust-v0.147.0` resolves to release commit
 `be6e8eac029b183056b7e4402879f15d2c85f61b`; the separately observed official
-`main` revision recorded by the drift watcher is
-`379cb68444057c721b6c8fa0bd610b7c6ecb9824`. The installed macOS arm64 CLI and
+stable-tag source revision recorded by the drift watcher is
+`be6e8eac029b183056b7e4402879f15d2c85f61b`. The moving official `main` branch is
+review context, not a daily compatibility fingerprint. The installed macOS arm64 CLI and
 the maintained `exec`, sandbox, and `--add-dir` surfaces were reconciled in
 [`reviews/codex-0.147.0.md`](reviews/codex-0.147.0.md). Codex compatibility
 metadata is observation-only and never gates agy dispatch, resolves an agy model,
