@@ -31,9 +31,9 @@ PROFILE_LIMIT = 16_384
 STREAM_LIMIT = 64 * 1024
 WALL_SECONDS = 25.0
 EXPECTED_SOURCE_SHA256 = "c8fd3c0016e101689f923f82da1c068b0e6dce3abcb0089e282742693ad4d344"
-EXPECTED_RECOVERY_BINDING_SHA256 = "30a81274557a55ed53109f140f9cf479ea3a1cfd09e6dcb3cb508abf3c50d22f"
+EXPECTED_RECOVERY_BINDING_SHA256 = "b469298550a9d16921dc4f47ae72a5a00dfae414c11286097d2652e498f89da6"
 EXPECTED_RECOVERY_STDOUT = b"1.1.12\n"
-EXPECTED_RECOVERY_RUNNER_SHA256 = "d051c15536cca109101cfd101370038faa99274f1e44816e5551cee7a87da6e1"
+EXPECTED_RECOVERY_RUNNER_SHA256 = "f51dd9f9359b7bc2f46756b7b89838798f3837dfdcf9866414b269d2daf0bab4"
 EXPECTED_RECOVERY_RUNNER_BYTES = 96_663
 EXPECTED_RECOVERY_SUMMARY_BYTES = 263
 OUTPUT_PROFILE_NAME = "models.capture.1.1.12.profile.json"
@@ -49,7 +49,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "5a449f59cc01e565a843743eb23626c2610727294ac29cf09ed9a026474c93a8"
+MODULE_AST_SHA256 = "77a20e96673a227082bee6445182f3c87c8cf902b6c67ce37a6bad0e60cca289"
 ACTIVE_MARKER_ROOT: Optional[str] = None
 ACTIVE_MARKER_ROOT_IDENTITY: Optional[tuple[int, int]] = None
 ACTIVE_MARKER_DIGEST: Optional[str] = None
@@ -245,9 +245,9 @@ def _validate_recovery(profile: Profile) -> None:
             finally: os.close(scratch)
         runner = _read_at(fd, "runner.py", EXPECTED_RECOVERY_RUNNER_BYTES + 1)
         if len(runner) != EXPECTED_RECOVERY_RUNNER_BYTES or hashlib.sha256(runner).hexdigest() != EXPECTED_RECOVERY_RUNNER_SHA256 or _read_at(fd, "runner.py.sha256", 128) != (EXPECTED_RECOVERY_RUNNER_SHA256 + "\n").encode("ascii"): raise CaptureError("recovery runner changed")
-        binding = _read_at(fd, "version.binding.json", 2_051)
+        binding = _read_at(fd, "version.binding.json", 2_060)
         if (profile.version_binding_sha256 != EXPECTED_RECOVERY_BINDING_SHA256 or hashlib.sha256(binding).hexdigest() != EXPECTED_RECOVERY_BINDING_SHA256 or _read_at(fd, "version.binding.sha256", 128) != (EXPECTED_RECOVERY_BINDING_SHA256 + "\n").encode("ascii")): raise CaptureError("recovery binding changed")
-        if len(binding) != 2_051: raise CaptureError("recovery binding changed")
+        if len(binding) != 2_060: raise CaptureError("recovery binding changed")
         value = _json(binding)
         if not isinstance(value, dict): raise CaptureError("recovery binding invalid")
         source, snapshot, version = value.get("source"), value.get("snapshot"), value.get("version")

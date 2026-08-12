@@ -503,7 +503,7 @@ mkdir -p "$TMP/selection-bin"
 cat > "$TMP/selection-bin/agy" <<'SH'
 #!/usr/bin/env bash
 [[ "$*" == "--version" ]] || exit 97
-printf '1.1.10\n'
+printf '1.1.12\n'
 SH
 chmod +x "$TMP/selection-bin/agy"
 PATH="$TMP/selection-bin:$PATH" "$ROOT/model-selection.sh" \

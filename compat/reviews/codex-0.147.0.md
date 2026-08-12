@@ -12,11 +12,18 @@ source content, command stream, credential, account data, or private artifact pa
 - Stable-tag release commit:
   `be6e8eac029b183056b7e4402879f15d2c85f61b`.
 - Separately observed official `main` revision:
-  `93beee910d39d31425d874a15fd56fc921ab2911`.
+  `379cb68444057c721b6c8fa0bd610b7c6ecb9824`.
 
 The stable-tag commit binds the reviewed release. The `main` revision is a separate
 drift observation and must not be represented as the release commit. Future movement
 of either official surface is `drift-review`; it does not rewrite this record.
+
+The refreshed `main` observation was 19 commits ahead of the prior reviewed source
+and remained on the same `rust-v0.147.0` stable release. The reviewed changes covered
+authentication, MCP/plugin internals, delegated-session policy, skills telemetry,
+thread history, and tests. They did not remove or rename the maintained `codex exec`,
+`--sandbox workspace-write`, or `--add-dir` CLI surfaces, and they do not add a Codex
+runtime or dispatch dependency to this project.
 
 ## Installed interface
 

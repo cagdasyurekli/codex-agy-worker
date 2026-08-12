@@ -124,8 +124,8 @@ class ModelsCapture112Tests(unittest.TestCase):
         artifacts = {"version.summary.json": hashlib.sha256(summary).hexdigest(), "version.stdout": hashlib.sha256(b"1.1.12\n").hexdigest(), "version.stderr": hashlib.sha256(b"").hexdigest()}
         binding_value = {"artifacts": artifacts, "claim": "snapshot-version-recovery", "source": {"pre": runner["dataclasses"].asdict(source_identity), "post": runner["dataclasses"].asdict(source_identity), "sha256": source_sha}, "snapshot": {"pre": runner["dataclasses"].asdict(snapshot_identity), "post": runner["dataclasses"].asdict(snapshot_identity), "sha256": source_sha}, "version": {"exit": 0, "logical_argv": [source, "--version"], "observed": "1.1.12", "popen_count": 1}}
         binding = canonical(binding_value)
-        self.assertLess(len(binding), 2_051)
-        binding += b" " * (2_051 - len(binding))
+        self.assertLess(len(binding), 2_060)
+        binding += b" " * (2_060 - len(binding))
         binding_sha = hashlib.sha256(binding).hexdigest(); runner_sha = hashlib.sha256(recovery_runner).hexdigest()
         files = {"runner.py": recovery_runner, "runner.py.sha256": (runner_sha + "\n").encode("ascii"), "version.binding.json": binding, "version.binding.sha256": (binding_sha + "\n").encode("ascii"), "version.stderr": b"", "version.stdout": b"1.1.12\n", "version.summary.json": summary}
         for name, data in files.items():
@@ -139,9 +139,19 @@ class ModelsCapture112Tests(unittest.TestCase):
 
     def test_01_profile_source_contract(self) -> None:
         self.assertEqual(profile["validate_source_contract"](PROFILE_SOURCE.read_bytes())["status"], "valid-source")
+        self.assertEqual(profile["EXPECTED_RECOVERY_BINDING_SHA256"], "b469298550a9d16921dc4f47ae72a5a00dfae414c11286097d2652e498f89da6")
+        self.assertEqual(profile["EXPECTED_RECOVERY_RUNNER_SHA256"], "f51dd9f9359b7bc2f46756b7b89838798f3837dfdcf9866414b269d2daf0bab4")
+        self.assertEqual(profile["EXPECTED_RECOVERY_RUNNER_BYTES"], 96_663)
+        self.assertEqual(profile["EXPECTED_RECOVERY_SUMMARY_BYTES"], 263)
 
     def test_02_runner_source_contract(self) -> None:
         self.assertEqual(runner["validate_source_contract"](RUNNER_SOURCE.read_bytes())["status"], "valid-source")
+        self.assertEqual(runner["EXPECTED_RECOVERY_BINDING_SHA256"], "b469298550a9d16921dc4f47ae72a5a00dfae414c11286097d2652e498f89da6")
+        self.assertEqual(runner["EXPECTED_RECOVERY_RUNNER_SHA256"], "f51dd9f9359b7bc2f46756b7b89838798f3837dfdcf9866414b269d2daf0bab4")
+        self.assertEqual(runner["EXPECTED_RECOVERY_RUNNER_BYTES"], 96_663)
+        self.assertEqual(runner["EXPECTED_RECOVERY_SUMMARY_BYTES"], 263)
+        for name in ("EXPECTED_RECOVERY_BINDING_SHA256", "EXPECTED_RECOVERY_RUNNER_SHA256", "EXPECTED_RECOVERY_RUNNER_BYTES", "EXPECTED_RECOVERY_SUMMARY_BYTES"):
+            self.assertEqual(runner[name], profile[name])
 
     def test_03_profile_accepts_canonical_shape(self) -> None:
         self.assertEqual(profile["CaptureProfile"].from_bytes(canonical(profile_value())).source_path, "/private/capture/agy.source")

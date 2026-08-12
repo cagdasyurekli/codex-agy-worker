@@ -3,7 +3,7 @@
 set -uo pipefail
 
 DOCTOR_SCHEMA_VERSION=1
-DOCTOR_EXPECTED_AGY_SOURCE_REVISION='bfab12dac5bd090015a89cf82e65093d13b567d9'
+DOCTOR_EXPECTED_AGY_SOURCE_REVISION='f7519c9084190ed421e89dd81c63970b5177c9ef'
 
 doctor_usage() {
     echo "usage: doctor.sh [--repo DIR] [--format text|json]" >&2

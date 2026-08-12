@@ -106,10 +106,12 @@ behavior or guarantee no residual after rejection. Fake-account tests can prove 
 wiring; they do not authorize a real account or remove the local-owner, same-UID,
 interpreter, and OS-administrator TCB.
 
-An authorized `1.1.12` capture that leaves capture-owned TMPDIR nonempty must reject
-before publication, even if no other outcome suggests a problem. Preserve that
-residual for review; do not create a marker or artifact, retry the call, or advance
-the `1.1.10` metadata baseline.
+An authorized account capture that leaves capture-owned TMPDIR outside its one exact
+reviewed cache exception must reject before publication, even if no other outcome
+suggests a problem. Preserve ambiguous residuals for review; do not create a marker,
+retry the call, or advance metadata from rejected evidence. A later successful,
+version-bound capture still requires strict offline interpretation and a separate
+human reconciliation before it may update an active baseline.
 
 The companion process-inert profile builder may fail closed on a reviewed source-byte
 or normalized-AST mismatch before stdin or authority traversal. That is a selected
