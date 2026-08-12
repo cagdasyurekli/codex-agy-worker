@@ -47,7 +47,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "fda79e3109cc1c0e828668ddb2f3ce8cb2569d8df2e3ea329a1c727863d85755"
+MODULE_AST_SHA256 = "e187fad30df63871c46e2db86153ac5e64fc0c0b2003efbe4f6f3cb933c33b02"
 ACTIVE_MARKER_ROOT: Optional[str] = None
 ACTIVE_MARKER_ROOT_IDENTITY: Optional[tuple[int, int]] = None
 ACTIVE_MARKER_DIGEST: Optional[str] = None
@@ -720,17 +720,27 @@ def _read_stdin(limit: int = PROFILE_LIMIT, signals: Optional[Signals] = None) -
 
 
 def _finish_success(state: Lifecycle, result: dict[str, object]) -> None:
-    sys.stdout.buffer.write(_canonical(result)); sys.stdout.buffer.flush()
-    signal.pthread_sigmask(signal.SIG_BLOCK, state.signals.owned)
-    pending = set(signal.sigpending()).intersection(state.signals.owned)
-    for item in state.signals.owned:
-        if item in pending:
-            state.signals.latch(signal.sigwait({item}))
+    previous_mask: Optional[set[signal.Signals]] = None
     try:
+        payload = _canonical(result)
+        if sys.stdout.buffer.write(payload) != len(payload): raise OSError("completion output write failed")
+        sys.stdout.buffer.flush()
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, state.signals.owned)
+        pending = set(signal.sigpending()).intersection(state.signals.owned)
+        for item in state.signals.owned:
+            if item in pending:
+                state.signals.latch(signal.sigwait({item}))
         state.signals.poll()
     except Interrupted as exc:
         _rollback_active_marker()
         os._exit(exc.code)
+    except BaseException:
+        try:
+            _rollback_active_marker()
+        finally:
+            if previous_mask is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        raise
     os._exit(0)
 
 

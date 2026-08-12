@@ -22,6 +22,11 @@ PROFILE_TESTS = frozenset({
     "test_50_prepare_publishes_canonical_profile", "test_51_validate_rejects_post_derivation_profile_replacement",
     "test_54_profile_cleanup_preserves_post_normalization_mode_drift",
     "test_58_profile_staging_unlink_failure_removes_both_owned_names",
+    "test_60_profile_completion_write_failure_rolls_back_profile",
+    "test_61_profile_completion_flush_failure_rolls_back_profile",
+    "test_62_profile_completion_primitive_failure_rolls_back_and_restores_mask",
+    "test_63_profile_completion_drift_preserves_residual",
+    "test_67_profile_completion_short_write_rolls_back_profile",
 })
 
 

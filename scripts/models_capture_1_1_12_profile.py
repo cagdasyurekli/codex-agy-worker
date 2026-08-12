@@ -34,9 +34,10 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "18b727c02b026908546a82f43a5f89a87877563a144dbddf04c853c015f85621"
+MODULE_AST_SHA256 = "9b2e0c45ad3bf6ee85d6401edbf44fdc7335429230ecd05f2ccc90176276a858"
 ACTIVE_PROFILE_PATH: Optional[str] = None
 ACTIVE_PROFILE_IDENTITY: Optional[FileIdentity] = None
+ACTIVE_PROFILE_DIGEST: Optional[str] = None
 
 REQUEST_KEYS = frozenset({"account_home", "capture_parent", "output_path", "snapshot_path", "source_path", "version_root"})
 VALIDATE_KEYS = frozenset({"profile_path"})
@@ -342,7 +343,7 @@ def _from_request(value: object) -> tuple[CaptureProfile, str]:
 
 
 def _publish(path: str, data: bytes, signals: Optional[Signals]) -> str:
-    global ACTIVE_PROFILE_PATH, ACTIVE_PROFILE_IDENTITY
+    global ACTIVE_PROFILE_PATH, ACTIVE_PROFILE_IDENTITY, ACTIVE_PROFILE_DIGEST
     parent_path, name = os.path.split(path); parent, _ = _open_directory(parent_path, True)
     temporary = ".models.capture.profile." + os.urandom(16).hex()
     temporary_identity: Optional[FileIdentity] = None
@@ -391,8 +392,9 @@ def _publish(path: str, data: bytes, signals: Optional[Signals]) -> str:
                 raise ProfileError("profile publication changed")
         finally:
             os.close(final_fd)
-        ACTIVE_PROFILE_PATH, ACTIVE_PROFILE_IDENTITY = path, final_identity
-        return hashlib.sha256(data).hexdigest()
+        digest = hashlib.sha256(data).hexdigest()
+        ACTIVE_PROFILE_PATH, ACTIVE_PROFILE_IDENTITY, ACTIVE_PROFILE_DIGEST = path, final_identity, digest
+        return digest
     except BaseException:
         if final_identity is not None and temporary_identity is not None:
             try:
@@ -496,15 +498,15 @@ def validate_source_contract(data: bytes) -> dict[str, str]:
         return None
     request_calls = {(symbol(node.func), node.lineno) for node in ast.walk(functions["_from_request"]) if isinstance(node, ast.Call)}
     allowed_request_calls = {
-        ("isinstance", 319), ("set", 319), ("ProfileError", 320), ("_absolute", 321),
-        ("os.path.basename", 322), ("os.path.dirname", 322), ("os.path.basename", 323), ("os.path.dirname", 323),
-        ("os.path.commonpath", 324), ("os.path.commonpath", 325), ("_disjoint", 326),
-        ("ProfileError", 327), ("_open_directory", 328), ("os.close", 328),
-        ("_open_directory", 329), ("os.close", 329), ("_open_directory", 330), ("os.close", 330),
-        ("_open_file", 331), ("_open_file", 332), ("_hash", 334), ("_hash", 334),
-        ("ProfileError", 335), ("_validate_recovery", 336), ("FileIdentity.from_stat", 337),
-        ("os.fstat", 337), ("FileIdentity.from_stat", 337), ("os.fstat", 337),
-        ("ProfileError", 338), ("os.close", 340), ("os.close", 340), ("CaptureProfile", 341),
+        ("isinstance", 320), ("set", 320), ("ProfileError", 321), ("_absolute", 322),
+        ("os.path.basename", 323), ("os.path.dirname", 323), ("os.path.basename", 324), ("os.path.dirname", 324),
+        ("os.path.commonpath", 325), ("os.path.commonpath", 326), ("_disjoint", 327),
+        ("ProfileError", 328), ("_open_directory", 329), ("os.close", 329),
+        ("_open_directory", 330), ("os.close", 330), ("_open_directory", 331), ("os.close", 331),
+        ("_open_file", 332), ("_open_file", 333), ("_hash", 335), ("_hash", 335),
+        ("ProfileError", 336), ("_validate_recovery", 337), ("FileIdentity.from_stat", 338),
+        ("os.fstat", 338), ("FileIdentity.from_stat", 338), ("os.fstat", 338),
+        ("ProfileError", 339), ("os.close", 341), ("os.close", 341), ("CaptureProfile", 342),
     }
     if request_calls != allowed_request_calls:
         raise ProfileError("profile account authority changed")
@@ -546,7 +548,7 @@ def _read_stdin(limit: int = PROFILE_LIMIT, signals: Optional[Signals] = None) -
 
 
 def _rollback_active_profile() -> None:
-    if ACTIVE_PROFILE_PATH is None or ACTIVE_PROFILE_IDENTITY is None:
+    if ACTIVE_PROFILE_PATH is None or ACTIVE_PROFILE_IDENTITY is None or ACTIVE_PROFILE_DIGEST is None:
         return
     parent, leaf = os.path.split(ACTIVE_PROFILE_PATH)
     try:
@@ -555,9 +557,16 @@ def _rollback_active_profile() -> None:
         return
     try:
         try:
-            current = FileIdentity.from_stat(os.stat(leaf, dir_fd=fd, follow_symlinks=False))
-            if current.dev == ACTIVE_PROFILE_IDENTITY.dev and current.ino == ACTIVE_PROFILE_IDENTITY.ino and current.uid == ACTIVE_PROFILE_IDENTITY.uid:
-                os.unlink(leaf, dir_fd=fd); os.fsync(fd)
+            held = os.open(leaf, os.O_RDONLY | CLOEXEC | NOFOLLOW, dir_fd=fd)
+            try:
+                item = os.fstat(held); current = FileIdentity.from_stat(item)
+                path_identity = FileIdentity.from_stat(os.stat(leaf, dir_fd=fd, follow_symlinks=False))
+                data = os.read(held, item.st_size + 1)
+                if (stat.S_ISREG(item.st_mode) and current == ACTIVE_PROFILE_IDENTITY and path_identity == current
+                        and len(data) == item.st_size and hashlib.sha256(data).hexdigest() == ACTIVE_PROFILE_DIGEST):
+                    os.unlink(leaf, dir_fd=fd); os.fsync(fd)
+            finally:
+                os.close(held)
         except FileNotFoundError:
             pass
     finally:
@@ -565,16 +574,26 @@ def _rollback_active_profile() -> None:
 
 
 def _finish_success(state: Lifecycle, result: dict[str, str]) -> None:
-    sys.stdout.buffer.write(_canonical(result)); sys.stdout.buffer.flush()
-    signal.pthread_sigmask(signal.SIG_BLOCK, state.signals.owned)
-    pending = set(signal.sigpending()).intersection(state.signals.owned)
-    for item in state.signals.owned:
-        if item in pending:
-            state.signals.latch(signal.sigwait({item}))
+    previous_mask: Optional[set[signal.Signals]] = None
     try:
+        payload = _canonical(result)
+        if sys.stdout.buffer.write(payload) != len(payload): raise OSError("completion output write failed")
+        sys.stdout.buffer.flush()
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, state.signals.owned)
+        pending = set(signal.sigpending()).intersection(state.signals.owned)
+        for item in state.signals.owned:
+            if item in pending:
+                state.signals.latch(signal.sigwait({item}))
         state.signals.poll()
     except Interrupted as exc:
         _rollback_active_profile(); os._exit(exc.code)
+    except BaseException:
+        try:
+            _rollback_active_profile()
+        finally:
+            if previous_mask is not None:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        raise
     os._exit(0)
 
 

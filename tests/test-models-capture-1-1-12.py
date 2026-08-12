@@ -629,6 +629,160 @@ class ModelsCapture112Tests(unittest.TestCase):
             self.assertTrue(failed[0])
             self.assertEqual(os.listdir(directory), [])
 
+    def _completion_state(self, owned: tuple[object, ...] = ()) -> object:
+        return types.SimpleNamespace(signals=types.SimpleNamespace(owned=owned, latch=lambda _signal: None, poll=lambda: None))
+
+    def _active_profile(self, directory: str) -> str:
+        output = os.path.join(directory, profile["OUTPUT_NAME"])
+        profile["_publish"](output, b'{"profile":true}\n', PollCounter())
+        return output
+
+    def _active_marker(self, directory: str) -> str:
+        root = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            identity = runner["_marker"](root, "d" * 64, PollCounter(), {})
+            root_item = os.fstat(root)
+            globals_ = runner["_finish_success"].__globals__
+            globals_["ACTIVE_MARKER_ROOT"] = directory
+            globals_["ACTIVE_MARKER_ROOT_IDENTITY"] = (root_item.st_dev, root_item.st_ino)
+            globals_["ACTIVE_MARKER_DIGEST"] = "d" * 64
+            globals_["ACTIVE_MARKER_IDENTITY"] = identity
+        finally:
+            os.close(root)
+        return os.path.join(directory, "models.capture.sha256")
+
+    def test_60_profile_completion_write_failure_rolls_back_profile(self) -> None:
+        class Broken:
+            def write(self, _data: bytes) -> int: raise OSError("write failure")
+            def flush(self) -> None: raise AssertionError("flush must not run")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); output = self._active_profile(directory)
+            globals_ = profile["_finish_success"].__globals__; original_sys = globals_["sys"]
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
+            try:
+                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state(), {"status": "prepared"})
+            finally:
+                globals_["sys"] = original_sys
+            self.assertFalse(os.path.exists(output))
+
+    def test_61_profile_completion_flush_failure_rolls_back_profile(self) -> None:
+        class Broken:
+            def write(self, data: bytes) -> int: return len(data)
+            def flush(self) -> None: raise OSError("flush failure")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); output = self._active_profile(directory)
+            globals_ = profile["_finish_success"].__globals__; original_sys = globals_["sys"]
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
+            try:
+                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state(), {"status": "prepared"})
+            finally:
+                globals_["sys"] = original_sys
+            self.assertFalse(os.path.exists(output))
+
+    def test_62_profile_completion_primitive_failure_rolls_back_and_restores_mask(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); output = self._active_profile(directory)
+            globals_ = profile["_finish_success"].__globals__; original_pending, original_mask, original_sys = globals_["signal"].sigpending, globals_["signal"].pthread_sigmask, globals_["sys"]
+            masks: list[tuple[object, object]] = []
+            globals_["signal"].sigpending = lambda: (_ for _ in ()).throw(OSError("pending failure"))
+            globals_["signal"].pthread_sigmask = lambda how, value: (masks.append((how, value)) or {profile["signal"].SIGTERM})
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=io.BytesIO()))
+            try:
+                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state((profile["signal"].SIGINT,)), {"status": "prepared"})
+            finally:
+                globals_["signal"].sigpending, globals_["signal"].pthread_sigmask, globals_["sys"] = original_pending, original_mask, original_sys
+            self.assertFalse(os.path.exists(output))
+            self.assertEqual(masks[-1][0], profile["signal"].SIG_SETMASK)
+
+    def test_63_profile_completion_drift_preserves_residual(self) -> None:
+        class Broken:
+            def write(self, _data: bytes) -> int: raise OSError("write failure")
+            def flush(self) -> None: raise AssertionError("flush must not run")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); output = self._active_profile(directory)
+            with open(output, "ab") as handle: handle.write(b"x")
+            os.chmod(output, 0o400)
+            globals_ = profile["_finish_success"].__globals__; original_sys = globals_["sys"]
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
+            try:
+                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state(), {"status": "prepared"})
+            finally:
+                globals_["sys"] = original_sys
+            self.assertTrue(os.path.exists(output))
+            self.assertEqual(os.stat(output).st_mode & 0o777, 0o400)
+            self.assertEqual(os.path.getsize(output), len(b'{"profile":true}\n') + 1)
+
+    def test_64_runner_completion_write_failure_rolls_back_marker(self) -> None:
+        class Broken:
+            def write(self, _data: bytes) -> int: raise OSError("write failure")
+            def flush(self) -> None: raise AssertionError("flush must not run")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); marker = self._active_marker(directory)
+            globals_ = runner["_finish_success"].__globals__; original_sys = globals_["sys"]
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
+            try:
+                with self.assertRaises(OSError): runner["_finish_success"](self._completion_state(), {"status": "captured"})
+            finally:
+                globals_["sys"] = original_sys
+            self.assertFalse(os.path.exists(marker))
+
+    def test_65_runner_completion_flush_failure_rolls_back_marker(self) -> None:
+        class Broken:
+            def write(self, data: bytes) -> int: return len(data)
+            def flush(self) -> None: raise OSError("flush failure")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); marker = self._active_marker(directory)
+            globals_ = runner["_finish_success"].__globals__; original_sys = globals_["sys"]
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Broken()))
+            try:
+                with self.assertRaises(OSError): runner["_finish_success"](self._completion_state(), {"status": "captured"})
+            finally:
+                globals_["sys"] = original_sys
+            self.assertFalse(os.path.exists(marker))
+
+    def test_66_runner_completion_primitive_failure_rolls_back_and_restores_mask(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); marker = self._active_marker(directory)
+            globals_ = runner["_finish_success"].__globals__; original_pending, original_mask, original_sys = globals_["signal"].sigpending, globals_["signal"].pthread_sigmask, globals_["sys"]
+            masks: list[tuple[object, object]] = []
+            globals_["signal"].sigpending = lambda: (_ for _ in ()).throw(OSError("pending failure"))
+            globals_["signal"].pthread_sigmask = lambda how, value: (masks.append((how, value)) or {runner["signal"].SIGTERM})
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=io.BytesIO()))
+            try:
+                with self.assertRaises(OSError): runner["_finish_success"](self._completion_state((runner["signal"].SIGINT,)), {"status": "captured"})
+            finally:
+                globals_["signal"].sigpending, globals_["signal"].pthread_sigmask, globals_["sys"] = original_pending, original_mask, original_sys
+            self.assertFalse(os.path.exists(marker))
+            self.assertEqual(masks[-1][0], runner["signal"].SIG_SETMASK)
+
+    def test_67_profile_completion_short_write_rolls_back_profile(self) -> None:
+        class Short:
+            def write(self, _data: bytes) -> int: return 0
+            def flush(self) -> None: raise AssertionError("flush must not run")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); output = self._active_profile(directory)
+            globals_ = profile["_finish_success"].__globals__; original_sys = globals_["sys"]
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Short()))
+            try:
+                with self.assertRaises(OSError): profile["_finish_success"](self._completion_state(), {"status": "prepared"})
+            finally:
+                globals_["sys"] = original_sys
+            self.assertFalse(os.path.exists(output))
+
+    def test_68_runner_completion_short_write_rolls_back_marker(self) -> None:
+        class Short:
+            def write(self, _data: bytes) -> int: return 0
+            def flush(self) -> None: raise AssertionError("flush must not run")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = os.path.realpath(temporary); os.chmod(directory, 0o700); marker = self._active_marker(directory)
+            globals_ = runner["_finish_success"].__globals__; original_sys = globals_["sys"]
+            globals_["sys"] = types.SimpleNamespace(stdout=types.SimpleNamespace(buffer=Short()))
+            try:
+                with self.assertRaises(OSError): runner["_finish_success"](self._completion_state(), {"status": "captured"})
+            finally:
+                globals_["sys"] = original_sys
+            self.assertFalse(os.path.exists(marker))
+
 
 if __name__ == "__main__":
     unittest.main()
