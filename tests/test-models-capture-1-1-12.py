@@ -99,13 +99,14 @@ class PollCounter:
 
 
 class ModelsCapture112Tests(unittest.TestCase):
-    def _synthetic_runner_profile(self, base: str, exit_code: int) -> tuple[object, bytes, dict[str, object], dict[str, object]]:
+    def _synthetic_runner_profile(self, base: str, exit_code: int, scratch_write: bool = False) -> tuple[object, bytes, dict[str, object], dict[str, object]]:
         """Build one private, data-only recovery chain for the real runner path."""
         account, parent = os.path.join(base, "account"), os.path.join(base, "capture")
         os.mkdir(account, 0o700); os.mkdir(parent, 0o700)
         source, snapshots, recovery = os.path.join(parent, "agy.source"), os.path.join(parent, "snapshot"), os.path.join(parent, "recovery")
         os.mkdir(snapshots, 0o700); os.mkdir(recovery, 0o700)
-        child = (f"#!/bin/sh\nprintf '%s|%s|%s|%s|%s|%s|%s\\n' \"$0\" \"$1\" \"$HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\" \"$PATH\" \"$LC_ALL\"\nexit {exit_code}\n").encode("ascii")
+        mutation = 'printf residual > "$TMPDIR/residual"\n' if scratch_write else ""
+        child = (f"#!/bin/sh\n{mutation}printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$0\" \"$1\" \"$HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\" \"$PATH\" \"$LC_ALL\"\nexit {exit_code}\n").encode("ascii")
         snapshot = os.path.join(snapshots, "agy.snapshot")
         for path, mode in ((source, 0o755), (snapshot, 0o500)):
             with open(path, "wb") as handle: handle.write(child)
@@ -987,6 +988,33 @@ class ModelsCapture112Tests(unittest.TestCase):
             self.assertFalse(launched[0])
             roots = [entry for entry in os.listdir(paths["parent"]) if entry.startswith("agy-models-capture-1-1-12.")]
             self.assertEqual(len(roots), 2)
+
+    def test_82_exit_zero_child_scratch_write_rejects_without_marker_and_preserves_residual(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = os.path.realpath(temporary); value, raw, old, paths = self._synthetic_runner_profile(base, 0, scratch_write=True)
+            globals_ = runner["run_capture"].__globals__
+            try:
+                with self.assertRaises(runner["CaptureError"]): runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+            finally:
+                globals_.update(old)
+            roots = [entry for entry in os.listdir(paths["parent"]) if entry.startswith("agy-models-capture-1-1-12.")]
+            self.assertEqual(len(roots), 1)
+            root = os.path.join(paths["parent"], roots[0])
+            self.assertEqual(set(os.listdir(root)), set(runner["SCRATCH_NAMES"]))
+            self.assertEqual(os.listdir(os.path.join(root, "tmp")), ["residual"])
+            for name in (runner["OUTPUT_PROFILE_NAME"], "models.stdout", "models.stderr", "models.capture.summary.json", "models.capture.json", "models.capture.sha256", "models_capture_1_1_12_runner.py", "models_capture_1_1_12_runner.py.sha256"):
+                self.assertFalse(os.path.exists(os.path.join(root, name)))
+
+    def test_83_exit_zero_child_with_empty_scratch_remains_captured(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = os.path.realpath(temporary); value, raw, old, _paths = self._synthetic_runner_profile(base, 0, scratch_write=False)
+            globals_ = runner["run_capture"].__globals__
+            try:
+                result = runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+            finally:
+                globals_.update(old)
+            self.assertEqual(result["status"], "captured")
+            self.assertTrue(os.path.isfile(os.path.join(result["artifact_root"], "models.capture.sha256")))
 
 
 if __name__ == "__main__":
