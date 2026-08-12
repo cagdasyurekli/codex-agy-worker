@@ -833,12 +833,16 @@ coordinated hostile-source or same-UID tamper resistance.
 The separate repository-only `scripts/version_initial_bootstrap_runner.py` starts a
 new source chain without reading a historical recovery record. Its canonical profile
 names only a fresh owner-private output root, current source path/full identity, and
-fixed `1.1.11` / source-SHA expectations; it contains no account-HOME authority. It
-holds the source twice, makes independent mode-`0755` source and mode-`0500` snapshot
+fixed `1.1.12` / source-SHA expectations plus its own exact local `1.1.12` stdout
+authority; it contains no account-HOME authority. It holds the source twice, makes
+independent mode-`0755` source and mode-`0500` snapshot
 copies, and performs exactly one bounded snapshot-backed `--version` observation.
-It emits only the existing recovery runner's `snapshot-version-only` prior/profile;
-it does not read historical recovery evidence, run models or login, access network or
-Git, route, retry, or advance metadata. Identity or scratch drift rejects with at
+It emits a structurally accepted `snapshot-version-only` prior/profile with the
+durable false `recovery_runner_version_reconciled` limitation; the unchanged canonical
+`1.1.11` recovery runner must not execute it until a separately reviewed
+reconciliation.
+It does not read historical recovery evidence, run models or login, access network or
+Git, route, retry, or advance compatibility/model metadata. Identity or scratch drift rejects with at
 most a bounded owner-private residual. Any real call remains separately authorized.
 
 The adjacent version, models, capture, and process-inert profile commands now use the
@@ -1089,7 +1093,7 @@ tests/test-official-github.py test-only fixed-endpoint transport adversary harne
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
 tests/test-version-attestation-runner.py  165-case offline canonical fixed-profile runner suite
 tests/test-version-bootstrap-runner.py  139-case offline retained-recovery bootstrap suite
-tests/test-version-initial-bootstrap-runner.py  38-case offline current-source initial bootstrap suite
+tests/test-version-initial-bootstrap-runner.py  43-case offline current-source initial bootstrap suite
 tests/test-version-attestation-harness.py  60-case offline version-attestation mutation suite
 tests/test-models-attestation-runner.py  116-case offline fixed-profile inventory attestation suite
 tests/test-models-capture-runner.py  84-case offline fake-account capture-only suite

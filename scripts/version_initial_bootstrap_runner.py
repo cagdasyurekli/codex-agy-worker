@@ -29,12 +29,13 @@ from typing import NoReturn, Optional, Sequence
 
 RUNTIME_MAJOR = 3
 RUNTIME_MINOR = 9
-EXPECTED_VERSION = "1.1.11"
+EXPECTED_VERSION = "1.1.12"
+EXPECTED_STDOUT = b"1.1.12\n"
 EXPECTED_SOURCE_SHA256 = "c8fd3c0016e101689f923f82da1c068b0e6dce3abcb0089e282742693ad4d344"
 EXPECTED_SIZE = 172_267_536
 PROFILE_LIMIT = 16_384
 MODULE_LIMIT = 128 * 1024
-MODULE_AST_SHA256 = "0d9721417f50b78d6dc978cf678a6a6238195d009f2d113aaf1d672b584427dc"
+MODULE_AST_SHA256 = "9c95548054f71498d90e357aa9a30c164c79297f198df05be5046c6a4c649864"
 VERSION_RUNNER_BYTES = 69_242
 VERSION_RUNNER_SHA256 = "0e2632c2de1dc2651693dce942429b3219d551eb5a979aa2d8d273ee0aa95d6b"
 HISTORICAL_RECOVERY_BINDING_SHA256 = "72d0bba6040b46109f6968528697579dd1dbe7fdae949e68fb22e6f058452ea2"
@@ -595,12 +596,44 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
     digest = hashlib.sha256(ast.dump(tree, include_attributes=False).encode("utf-8")).hexdigest()
     if digest != MODULE_AST_SHA256:
         raise InitialBootstrapError("initial bootstrap source structure changed")
+    constants = {
+        node.targets[0].id: node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    }
+    if (
+        not isinstance(constants.get("EXPECTED_VERSION"), ast.Constant)
+        or constants["EXPECTED_VERSION"].value != "1.1.12"
+        or not isinstance(constants.get("EXPECTED_STDOUT"), ast.Constant)
+        or constants["EXPECTED_STDOUT"].value != b"1.1.12\n"
+    ):
+        raise InitialBootstrapError("initial bootstrap local version authority changed")
     launch = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess" and node.func.attr == "Popen"]
     if len(launch) != 1:
         raise InitialBootstrapError("initial bootstrap must have one child launch")
     keywords = {node.arg for node in launch[0].keywords}
     if keywords != {"executable", "stdin", "stdout", "stderr", "cwd", "env", "start_new_session"}:
         raise InitialBootstrapError("initial bootstrap child contract changed")
+    stdout_checks = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name)
+        and node.left.id == "stdout"
+        and any(isinstance(item, ast.Name) and item.id == "EXPECTED_STDOUT" for item in node.comparators)
+    ]
+    imported_stdout = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "version"
+        and node.attr == "EXPECTED_STDOUT"
+    ]
+    if len(stdout_checks) != 1 or imported_stdout:
+        raise InitialBootstrapError("initial bootstrap local stdout authority changed")
     historical = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Dict):
@@ -619,6 +652,30 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
         raise InitialBootstrapError("initial bootstrap historical non-continuity changed")
     if any(not isinstance(fields[name], ast.Constant) or fields[name].value is not False for name in ("bytes_used", "revalidated", "source_continuity_claimed")):
         raise InitialBootstrapError("initial bootstrap historical non-continuity changed")
+    limitations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            if isinstance(key, ast.Constant) and key.value == "limitations":
+                limitations.append(value)
+    if len(limitations) != 1 or not isinstance(limitations[0], ast.Dict):
+        raise InitialBootstrapError("initial bootstrap recovery reconciliation limit changed")
+    limitation_fields = {
+        key.value: value
+        for key, value in zip(limitations[0].keys, limitations[0].values)
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    if set(limitation_fields) != {
+        "metadata_advance_authorized",
+        "network_absence_os_enforced",
+        "provider_backend_proven",
+        "recovery_runner_version_reconciled",
+    } or any(
+        not isinstance(item, ast.Constant) or item.value is not False
+        for item in limitation_fields.values()
+    ):
+        raise InitialBootstrapError("initial bootstrap recovery reconciliation limit changed")
     return {"byte_count": len(data), "sha256": hashlib.sha256(data).hexdigest(), "status": "accepted"}
 
 
@@ -698,7 +755,7 @@ def run_initial_bootstrap(profile: InitialProfile, *, lifecycle: Optional[Lifecy
             controller.merge_pending()
             signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
         controller.poll()
-        if exit_code != 0 or stdout != version.EXPECTED_STDOUT or stderr != b"":
+        if exit_code != 0 or stdout != EXPECTED_STDOUT or stderr != b"":
             raise InitialBootstrapError("initial version result did not match fixed contract")
         current_post_first = version._verify_attested_path(first_parent, profile.source_path, first, profile.source_identity, profile.source_sha256, controller)
         current_post_second = version._verify_attested_path(second_parent, profile.source_path, second, profile.source_identity, profile.source_sha256, controller)
@@ -718,7 +775,7 @@ def run_initial_bootstrap(profile: InitialProfile, *, lifecycle: Optional[Lifecy
         logical_sha = hashlib.sha256(json.dumps(argv, separators=(",", ":")).encode("ascii")).hexdigest()
         summary = {"call_count": 1, "child_exit": exit_code, "claim": "snapshot-version-only", "elapsed_ms": int((time.monotonic() - started) * 1000), "logical_argv_sha256": logical_sha, "schema_version": 1, "status": "accepted", "stderr_bytes": 0, "stdout_bytes": len(stdout), "timeout": False}
         summary_sha = _publish(ledger, prior, "version.summary.json", _canonical_json(summary), controller)
-        binding = {"artifacts": {"version.stderr": stderr_sha, "version.stdout": stdout_sha, "version.summary.json": summary_sha}, "claim": "snapshot-version-only", "copy": {"snapshot_post": snapshot_post.as_dict(), "source_post": source_post.as_dict()}, "historical_recovery": {"binding_sha256": HISTORICAL_RECOVERY_BINDING_SHA256, "bytes_used": False, "revalidated": False, "source_continuity_claimed": False, "source_sha256": HISTORICAL_RECOVERY_SOURCE_SHA256}, "inventory": {"executable_version_bound": False}, "limitations": {"metadata_advance_authorized": False, "network_absence_os_enforced": False, "provider_backend_proven": False}, "runner": {"byte_count": runner_contract["byte_count"], "sha256": runner_contract["sha256"]}, "schema_version": 1, "snapshot": {"post": snapshot_post.as_dict(), "pre": snapshot.as_dict(), "sha256": EXPECTED_SOURCE_SHA256}, "source": {"current_post": current_post_first.as_dict(), "current_pre": profile.source_identity.as_dict(), "post": source_post.as_dict(), "pre": source.as_dict(), "sha256": EXPECTED_SOURCE_SHA256}, "version": {"exit": exit_code, "expected": EXPECTED_VERSION, "logical_argv": argv, "logical_argv_sha256": logical_sha, "observed": EXPECTED_VERSION, "popen_count": 1, "stderr_limit": version.STREAM_LIMIT, "stdout_limit": version.STREAM_LIMIT, "timeout_seconds": version.WALL_SECONDS}}
+        binding = {"artifacts": {"version.stderr": stderr_sha, "version.stdout": stdout_sha, "version.summary.json": summary_sha}, "claim": "snapshot-version-only", "copy": {"snapshot_post": snapshot_post.as_dict(), "source_post": source_post.as_dict()}, "historical_recovery": {"binding_sha256": HISTORICAL_RECOVERY_BINDING_SHA256, "bytes_used": False, "revalidated": False, "source_continuity_claimed": False, "source_sha256": HISTORICAL_RECOVERY_SOURCE_SHA256}, "inventory": {"executable_version_bound": False}, "limitations": {"metadata_advance_authorized": False, "network_absence_os_enforced": False, "provider_backend_proven": False, "recovery_runner_version_reconciled": False}, "runner": {"byte_count": runner_contract["byte_count"], "sha256": runner_contract["sha256"]}, "schema_version": 1, "snapshot": {"post": snapshot_post.as_dict(), "pre": snapshot.as_dict(), "sha256": EXPECTED_SOURCE_SHA256}, "source": {"current_post": current_post_first.as_dict(), "current_pre": profile.source_identity.as_dict(), "post": source_post.as_dict(), "pre": source.as_dict(), "sha256": EXPECTED_SOURCE_SHA256}, "version": {"exit": exit_code, "expected": EXPECTED_VERSION, "logical_argv": argv, "logical_argv_sha256": logical_sha, "observed": EXPECTED_VERSION, "popen_count": 1, "stderr_limit": version.STREAM_LIMIT, "stdout_limit": version.STREAM_LIMIT, "timeout_seconds": version.WALL_SECONDS}}
         binding_sha = _publish(ledger, prior, "version.binding.json", _canonical_json(binding), controller)
         _publish(ledger, prior, "version.binding.sha256", (binding_sha + "\n").encode("ascii"), controller)
         recovery_profile = version.AttestationProfile(prior_binding_sha256=binding_sha, prior_root=prior_root, snapshot_identity=snapshot, snapshot_path=snapshot_path, source_identity=source, source_path=source_path, source_sha256=EXPECTED_SOURCE_SHA256, temp_parent=profile.bootstrap_root)

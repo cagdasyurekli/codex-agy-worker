@@ -495,6 +495,13 @@ graph and sole Popen site is useful reviewed-source drift detection under the
 reviewed-source/interpreter/local-owner/same-UID/OS-admin TCB; it is not a proof
 against coordinated hostile-source changes.
 
+An initial current-source bridge must own its exact version and stdout constants; it
+must not borrow the historical canonical recovery runner's `1.1.11` stdout authority.
+Its generated profile may pass the version-agnostic prior shape check, but that is
+structural validation only. Persist a stable false reconciliation limitation and do
+not execute it through the current canonical recovery runner until a separate reviewed
+version reconciliation changes that runner's own contract.
+
 Do not make the first current-source bridge depend on a historical recovery record or
 an account-HOME scan. Its profile must bind only the exact source path/full identity,
 fixed reviewed SHA/version, and a new owner-private root. Hold that one source twice

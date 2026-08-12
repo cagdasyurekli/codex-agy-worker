@@ -75,7 +75,7 @@ def private(path: Path) -> Path:
     return path
 
 
-FAKE = b"#!/bin/sh\nprintf '1.1.11\\n'\n"
+FAKE = b"#!/bin/sh\nprintf '1.1.12\\n'\n"
 
 
 def fixture(label: str) -> tuple[Path, MODULE.InitialProfile]:
@@ -114,6 +114,7 @@ check("exact CPython 3.9 isolation predicate accepts exact flags", lambda: MODUL
 check("runtime predicate rejects wrong implementation", lambda: not MODULE._runtime_contract("pypy", 3, 9, 1, 1, 1, 1))
 check("runtime predicate rejects wrong minor", lambda: not MODULE._runtime_contract("cpython", 3, 10, 1, 1, 1, 1))
 check("runtime predicate rejects missing isolation", lambda: not MODULE._runtime_contract("cpython", 3, 9, 0, 1, 1, 1))
+check("initial bridge owns exact 1.1.12 stdout authority", lambda: MODULE.EXPECTED_VERSION == "1.1.12" and MODULE.EXPECTED_STDOUT == b"1.1.12\n")
 check("profile key set is closed", lambda: MODULE.INITIAL_KEYS == frozenset(("bootstrap_root", "expected_version", "source_identity", "source_path", "source_sha256")))
 
 
@@ -180,12 +181,36 @@ for label, altered in (
     )
 
 
+for label, altered in (
+    ("removal", SOURCE.replace(b'"provider_backend_proven": False, "recovery_runner_version_reconciled": False', b'"provider_backend_proven": False', 1)),
+    ("rename", SOURCE.replace(b'"recovery_runner_version_reconciled": False', b'"recovery_version_reconciled": False', 1)),
+    ("true", SOURCE.replace(b'"recovery_runner_version_reconciled": False', b'"recovery_runner_version_reconciled": True', 1)),
+):
+    check(
+        "repinned source contract rejects recovery runner reconciliation limit " + label,
+        lambda altered=altered: rejects(lambda: MODULE.validate_source_contract(repin_module_ast(altered))),
+    )
+
+
+imported_stdout = SOURCE.replace(b"stdout != EXPECTED_STDOUT", b"stdout != version.EXPECTED_STDOUT", 1)
+check(
+    "repinned source contract rejects imported historical stdout authority",
+    lambda: rejects(lambda: MODULE.validate_source_contract(repin_module_ast(imported_stdout))),
+)
+
+
 def complete_bridge() -> bool:
     root, profile = fixture("complete")
     prior = None
     old = fake_constants()
+    old_run_attestation = MODULE.version.run_attestation
+    canonical_run_attempted = [False]
     try:
         profile = bound_test_profile(profile)
+        def forbidden_canonical_recovery(*_args: object, **_kwargs: object) -> object:
+            canonical_run_attempted[0] = True
+            raise AssertionError("initial bridge must not execute canonical recovery")
+        MODULE.version.run_attestation = forbidden_canonical_recovery
         result = MODULE.run_initial_bootstrap(profile)
         generated = MODULE.version.AttestationProfile.from_bytes(MODULE._canonical_json(result["profile"]))
         prior = Path(generated.prior_root)
@@ -200,21 +225,29 @@ def complete_bridge() -> bool:
             and set(item.name for item in prior.iterdir()) == MODULE.version.PRIOR_FILES
             and binding["claim"] == "snapshot-version-only"
             and binding["version"]["logical_argv"] == [generated.source_path, "--version"]
+            and binding["version"]["expected"] == "1.1.12"
+            and binding["version"]["observed"] == "1.1.12"
+            and (prior / "version.stdout").read_bytes() == MODULE.EXPECTED_STDOUT
             and binding["inventory"] == {"executable_version_bound": False}
             and binding["historical_recovery"]["bytes_used"] is False
             and binding["historical_recovery"]["revalidated"] is False
             and binding["historical_recovery"]["source_continuity_claimed"] is False
             and binding["limitations"]["network_absence_os_enforced"] is False
+            and binding["limitations"]["recovery_runner_version_reconciled"] is False
+            and MODULE.version.EXPECTED_VERSION == "1.1.11"
+            and MODULE.version.EXPECTED_STDOUT == b"1.1.11\n"
+            and not canonical_run_attempted[0]
             and (Path(profile.bootstrap_root) / "initial-bootstrap.profile.json").is_file()
             and (Path(profile.bootstrap_root) / "version.recovery.profile.json").is_file()
             and not (root / "current-agy").is_symlink()
         )
     finally:
+        MODULE.version.run_attestation = old_run_attestation
         restore_constants(old)
         shutil.rmtree(root)
 
 
-check("one held-source bridge emits a recovery-compatible snapshot-version-only prior", complete_bridge)
+check("one held-source bridge emits only a structural 1.1.12 snapshot-version-only prior", complete_bridge)
 
 
 def source_drift_rejects_before_root() -> bool:
@@ -278,12 +311,12 @@ def parent_mode_rejects() -> bool:
 check("nonprivate output parent rejects", parent_mode_rejects)
 
 
-def process_output_rejects() -> bool:
-    root, profile = fixture("bad-output")
+def stale_1_1_11_stdout_rejects() -> bool:
+    root, profile = fixture("stale-1-1-11-output")
     old = fake_constants()
     try:
         profile = bound_test_profile(profile)
-        Path(profile.source_path).write_bytes(b"#!/bin/sh\nprintf 'wrong\\n'\n")
+        Path(profile.source_path).write_bytes(b"#!/bin/sh\nprintf '1.1.11\\n'\n")
         Path(profile.source_path).chmod(0o755)
         identity = MODULE.version.FileIdentity.from_stat(Path(profile.source_path).stat())
         changed = dataclasses.replace(profile, source_identity=identity)
@@ -296,7 +329,7 @@ def process_output_rejects() -> bool:
         shutil.rmtree(root)
 
 
-check("wrong version stdout rolls back all owned artifacts", process_output_rejects)
+check("stale 1.1.11 stdout rejects with safe rollback and no acceptance", stale_1_1_11_stdout_rejects)
 
 
 def scratch_mutation_rejects() -> bool:
@@ -305,7 +338,7 @@ def scratch_mutation_rejects() -> bool:
     try:
         profile = bound_test_profile(profile)
         source = Path(profile.source_path)
-        source.write_bytes(b"#!/bin/sh\n: > \"$TMPDIR/residual\"\nprintf '1.1.11\\n'\n")
+        source.write_bytes(b"#!/bin/sh\n: > \"$TMPDIR/residual\"\nprintf '1.1.12\\n'\n")
         source.chmod(0o755)
         changed = dataclasses.replace(profile, source_identity=MODULE.version.FileIdentity.from_stat(source.stat()))
         MODULE.EXPECTED_SIZE = source.stat().st_size
