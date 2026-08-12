@@ -61,6 +61,13 @@ git diff --check
 Report exact summaries and any checks you could not run. Passing tests do not replace
 human diff review or justify unrelated cleanup.
 
+When a release is also claimed to be installed or collecting local measurements,
+verify those machine states separately after publication. A clean tagged checkout is
+not proof that the global Codex skill was recopied, that the LaunchAgent snapshot was
+rebound, or that an explicit measurement ledger and its daily append path exist. Read
+back installed-bundle parity, notifier status, the ledger header/report, and at least
+one real observation before making those claims.
+
 ## Pull requests
 
 Keep each pull request focused. Explain the trust boundary affected, list changed
