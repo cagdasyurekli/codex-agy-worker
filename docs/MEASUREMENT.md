@@ -80,3 +80,23 @@ denominator and sample size, or latest snapshot.
 To rotate, stop appending to the old ledger and explicitly initialize a new ledger at
 a new owner-chosen path. The tool never overwrites, truncates, auto-prunes, or deletes
 a ledger. Retention of old ledgers is the owner’s separate responsibility.
+
+## Operational setup is a separate state transition
+
+Publishing or checking out a release does not install the Codex skill, initialize a
+ledger, or connect a daily observation to that ledger. Treat these as separate
+post-release states and read each one back independently:
+
+1. run `./install.sh`, then compare the installed bundle with
+   `skills/agy-worker/` while excluding only `.pipeline-root`;
+2. initialize one explicit persistent owner-private ledger and render an empty report;
+3. install and read back the optional notifier separately;
+4. configure a daily collector or reminder that invokes `append-watcher` with the
+   exact sanitized result, repository revision, and public Actions run URL; and
+5. confirm that the first real observation exists in the ledger.
+
+The hosted watcher and local notifier intentionally do not discover or write a
+measurement ledger. Seeing either one run successfully is therefore not evidence that
+30/60/90 data is accumulating. A collector must fail closed rather than fabricate an
+observation when the local result, exact repository revision, or public run URL cannot
+be reconciled.
