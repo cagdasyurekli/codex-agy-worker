@@ -111,8 +111,13 @@ def source(revision: str = "a" * 40, *, ref: str = "refs/heads/main", kind: str 
     return {"ref": ref, "object": {"sha": revision, "type": kind, "url": "ignored"}}
 
 
-def commit(revision: str = "b" * 40) -> dict[str, Any]:
-    return {"sha": revision, "commit": {"message": "ignored"}}
+def tag_ref(
+    revision: str = "b" * 40,
+    *,
+    tag: str = "v0.1.0",
+    kind: str = "commit",
+) -> dict[str, Any]:
+    return {"ref": f"refs/tags/{tag}", "object": {"sha": revision, "type": kind}}
 
 
 passed = 0
@@ -163,15 +168,41 @@ check(
     lambda: collect("codex", release("rust-v0.147.0"), source("c" * 40))[0]
     == ("codex", "0.147.0", "c" * 40),
 )
-check(
-    "project latest release resolves to exact commit",
-    lambda: collect("project", release("v0.1.0"), commit())[0]
-    == ("project", "v0.1.0", "b" * 40),
-)
+def project_release_path_is_bounded() -> bool:
+    large_release = {
+        **release("v0.1.0"),
+        "body": "x" * (MODULE.MAX_RESPONSE_BYTES + 1),
+    }
+    result, opener = collect("project", large_release, tag_ref())
+    return (
+        result == ("project", "v0.1.0", "b" * 40)
+        and [call[0] for call in opener.calls]
+        == [
+            "https://api.github.com/repos/cagdasyurekli/codex-agy-worker/releases/latest",
+            "https://api.github.com/repos/cagdasyurekli/codex-agy-worker/git/ref/tags/v0.1.0",
+        ]
+        and rejects(
+            "response too large",
+            lambda: MODULE.latest_evidence(
+                "project",
+                opener=Opener(
+                    response(
+                        {
+                            **release("v0.1.0"),
+                            "body": "x" * MODULE.MAX_RELEASE_RESPONSE_BYTES,
+                        }
+                    )
+                ),
+            ),
+        )
+    )
+
+
+check("project latest release uses the bounded exact tag ref", project_release_path_is_bounded)
 check(
     "explicit project release resolves to exact commit",
     lambda: MODULE.project_release_evidence(
-        "v1.2.3", opener=Opener(response(commit("d" * 40)))
+        "v1.2.3", opener=Opener(response(tag_ref("d" * 40, tag="v1.2.3")))
     )
     == ("project", "v1.2.3", "d" * 40),
 )
@@ -435,10 +466,24 @@ for value, label in source_rejections:
         ),
     )
 
-check(
-    "malformed release commit is rejected",
-    lambda: rejects("invalid release commit evidence", lambda: MODULE._commit({"sha": "secret"})),
-)
+def malformed_release_tags_reject() -> bool:
+    cases = [
+        tag_ref(tag="v9.9.9"),
+        tag_ref(kind="tag"),
+        tag_ref("A" * 40),
+        tag_ref("a" * 39),
+        {"ref": "refs/tags/v0.1.0", "object": "bad"},
+    ]
+    return all(
+        rejects(
+            "invalid release tag evidence",
+            lambda value=value: MODULE._tag_ref(value, "v0.1.0"),
+        )
+        for value in cases
+    )
+
+
+check("malformed release tag refs are rejected", malformed_release_tags_reject)
 check(
     "unknown tool cannot select an endpoint",
     lambda: rejects("invalid tool policy", lambda: MODULE.latest_evidence("unknown", opener=Opener())),

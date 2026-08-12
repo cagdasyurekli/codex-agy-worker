@@ -44,6 +44,12 @@ configuration. Read-only compatibility evidence therefore uses an exact
 JSON client, and no Git network command. Keep the explicit apply-time fetch limitation
 visible; observation hardening does not silently harden mutation.
 
+A stable release tag should bind through the compact exact Git ref document, not a
+full commit document whose inert file and parent metadata can exceed an otherwise
+sound evidence bound. Keep release-document and ref/source-document byte ceilings
+separate, test both the observed large-release accept path and overflow rejection,
+and still compare the API revision with the separately fetched Git tag before apply.
+
 Bounding a parent command is insufficient when stdout/stderr pipes or descendants can
 outlive it. Capture both streams incrementally, cap them independently, impose a hard
 deadline, create a fresh process group, and kill/reap that group on timeout, overflow,
