@@ -889,8 +889,13 @@ The independently reconciled `1.1.12` bridge uses
 surfaces. The builder emits only a canonical owner-private profile from a closed
 explicit request; the runner performs one separately authorized `models` call with
 logical source argv and snapshot executable, then emits bounded `captured` evidence.
-It cannot enumerate HOME, accept inventory, update metadata, route, retry, or
-authorize a call.
+Its external capture parent is an owner-private container: stable directory identity
+is bound while its changing link count is diagnostic only; exact source, snapshot,
+recovery, profile, and newly owned result-root nodes are revalidated separately.
+Unrelated siblings are neither enumerated as authority nor deleted. The owned root's
+path-through-held-parent identity and exact internal inventory are rechecked before
+the child starts. The bridge cannot enumerate HOME, accept inventory, update
+metadata, route, retry, or authorize a call.
 
 After process-group closure, every capture-owned TMP/XDG/cwd directory must again be
 the same empty directory or publication fails closed. Successful bounded exit-zero
@@ -1111,8 +1116,8 @@ tests/test-version-attestation-harness.py  60-case offline version-attestation m
 tests/test-models-attestation-runner.py  116-case offline fixed-profile inventory attestation suite
 tests/test-models-capture-runner.py  84-case offline fake-account capture-only suite
 tests/test-models-capture-profile.py 121-case offline canonical capture-profile builder suite
-tests/test-models-capture-1-1-12-profile.py 28-case offline fixed 1.1.12 capture-profile suite
-tests/test-models-capture-1-1-12-runner.py 48-case offline fixed 1.1.12 capture-runner suite
+tests/test-models-capture-1-1-12-profile.py 30-case offline fixed 1.1.12 capture-profile suite
+tests/test-models-capture-1-1-12-runner.py 51-case offline fixed 1.1.12 capture-runner suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       353-case offline Codex package/CI-policy/relocation/landing suite
