@@ -194,10 +194,14 @@ rejects before production AST parsing, lifecycle acquisition, or mutation.
 The current-source initial-bootstrap prerequisite is now implemented as a separate
 repository-only bridge, rather than changing retained-recovery bootstrap semantics.
 It accepts a closed canonical profile with a fresh owner-private root, exact current
-source path/full identity, and fixed `1.1.11` / source-SHA expectations; it has no
-account-HOME input or inspection. It holds the source twice, makes independent source
+source path/full identity, fixed `1.1.12` / source-SHA expectations, and its own
+exact `1.1.12` stdout authority; it has no account-HOME input or inspection. It holds the source twice, makes independent source
 and snapshot copies, performs one bounded snapshot-backed `--version` observation,
-and emits only the existing recovery validator's `snapshot-version-only` prior/profile.
+and emits only a structurally accepted `snapshot-version-only` prior/profile. Its
+durable `recovery_runner_version_reconciled:false` limitation means Phase 2 recovery
+execution is STOP/deferred: the unchanged canonical recovery runner remains pinned to
+`1.1.11` and must not execute this profile until a later separately reviewed
+reconciliation.
 It never reads historical recovery evidence or performs model/login/provider/network/
 Git/routing/retry/metadata work. Offline tests cover source/path/identity rejection,
 two-copy production, process/scratch rollback, signals, source-pin mutation, and

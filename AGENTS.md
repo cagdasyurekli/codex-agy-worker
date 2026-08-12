@@ -61,7 +61,7 @@ Keep these counts current when their suites change:
 - `update.sh`: 310 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
 - Canonical version-attestation runner: 165 offline fixed-profile/source-binding cases.
 - Repository-only version bootstrap runner: 139 offline retained-recovery/ownership/scratch/source/process/signal/runtime cases.
-- Repository-only version initial-bootstrap runner: 38 offline current-source/identity/two-copy/recovery-profile/scratch/process/signal cases.
+- Repository-only version initial-bootstrap runner: 43 offline current-source/identity/two-copy/recovery-profile/scratch/process/signal cases.
 - Version-attestation mutation harness: 60 offline publication/process-group/signal cases.
 - Canonical models-inventory attestation runner: 116 offline
   fixed-profile/version-binding/environment/parser/process cases.
@@ -254,6 +254,12 @@ only a passing test has not been shown to catch anything.
   The embedded test API alone restores caller state, with post-snapshot signals owned
   by the caller. Chunk polling does not bound a blocked kernel syscall. Its source graph guard detects reviewed-
   byte drift under the local-owner/same-UID/interpreter/OS-admin TCB.
+- **The current-source initial bridge owns its version contract.** Its exact `1.1.12`
+  stdout must remain a local authority, never an import from the canonical recovery
+  runner. A generated profile may pass only the version-agnostic structural prior
+  validator; keep `recovery_runner_version_reconciled:false` durable and do not run it
+  through the unchanged `1.1.11` canonical recovery runner before separately reviewed
+  reconciliation.
 - **Adjacent signal owners use the same process boundary.** The version, models,
   capture, and profile production CLIs exclude inherited `SIG_IGN` and caller-blocked
   signals from ownership, latch without raising, poll bounded userspace work, and
