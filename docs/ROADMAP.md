@@ -207,6 +207,18 @@ Git/routing/retry/metadata work. Offline tests cover source/path/identity reject
 two-copy production, process/scratch rollback, signals, source-pin mutation, and
 recovery compatibility. A real observation remains separately authorized.
 
+The separate fixed `scripts/version_recovery_1_1_12_runner.py` is the next Phase 1
+recovery surface. Before lifecycle acquisition or source parsing, it accepts only
+the exact retained 954-byte profile and binding instance, then requires the reviewed
+1.1.12 source SHA, source/snapshot identities, exact stdout, one prior version call,
+and durable false reconciliation limitation. It revalidates the complete retained
+evidence after its one static snapshot-backed Popen, and validates a descriptor-held
+output root with empty scratch and exact durable artifacts before publishing only
+`snapshot-version-recovery`. The binding records the consumed profile digest. This evidence is
+non-authorizing: it cannot feed models, capture, inventory, metadata, selection, or
+routing. Phase 2 remains STOP/deferred until separate models reconciliation and
+explicit authorization of its one real call; this runner supplies neither.
+
 The adjacent signal-handoff slice is now implemented without expanding provider or
 metadata authority. Version, models, capture, and profile production entrypoints own
 their process through flushed success output and one final blocked completion
