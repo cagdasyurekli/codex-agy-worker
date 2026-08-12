@@ -1863,9 +1863,9 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'tests/test-models-capture-1-1-12-profile.py 30-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-12-profile.py` (30 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.12 models capture runner: 51 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 51-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (51 offline cases)' \
+        && grep -Fq 'Fixed 1.1.12 models capture runner: 53 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 53-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (53 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \

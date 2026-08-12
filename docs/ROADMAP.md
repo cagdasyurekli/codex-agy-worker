@@ -270,6 +270,13 @@ its runner records one bounded, separately authorized call as `captured` evidenc
 It cannot accept inventory, update metadata, route, retry, or inspect account-HOME
 contents.
 
+One separately authorized diagnostic-only `1.1.12` `models` attempt started its
+child, then the runner exited `1`: capture-owned TMPDIR was nonempty and retained a
+private TMP file, with no capture evidence artifacts or marker. The child’s own exit
+code, stdout, and stderr are unknown because nothing was published. There was no
+retry, inventory interpretation, or metadata advance; active `1.1.10` remains the
+baseline and P2-B/P2-C stay deferred.
+
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a
 runner-image mismatch; it does not make that environment trusted or satisfy the gate.

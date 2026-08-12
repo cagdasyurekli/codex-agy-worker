@@ -916,6 +916,13 @@ mutations are selected drift checks under the reviewed-source/local-owner TCB, n
 proof against coordinated hostile source changes. Stronger assurance would require
 a separately trusted launcher.
 
+One separately authorized diagnostic-only `1.1.12` `models` attempt started its
+child, then the runner exited `1`: capture-owned TMPDIR was nonempty and retained a
+private TMP file, with no capture evidence artifacts or marker. The child’s own exit
+code, stdout, and stderr are unknown because nothing was published. There was no
+retry, inventory interpretation, or metadata advance; active `1.1.10` remains the
+baseline.
+
 The human-reviewed agy baseline is `1.1.10` at source revision
 `bfab12dac5bd090015a89cf82e65093d13b567d9`. The fixed official sources, one
 sandbox-correct 11-slug inventory, and two bounded single-selector jobs are recorded
@@ -1117,7 +1124,7 @@ tests/test-models-attestation-runner.py  116-case offline fixed-profile inventor
 tests/test-models-capture-runner.py  84-case offline fake-account capture-only suite
 tests/test-models-capture-profile.py 121-case offline canonical capture-profile builder suite
 tests/test-models-capture-1-1-12-profile.py 30-case offline fixed 1.1.12 capture-profile suite
-tests/test-models-capture-1-1-12-runner.py 51-case offline fixed 1.1.12 capture-runner suite
+tests/test-models-capture-1-1-12-runner.py 53-case offline fixed 1.1.12 capture-runner suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-packaging.sh       353-case offline Codex package/CI-policy/relocation/landing suite
