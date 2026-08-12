@@ -705,7 +705,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.2.0"
+assert manifest["version"] == "0.2.1"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
