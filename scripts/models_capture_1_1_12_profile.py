@@ -34,7 +34,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "9acd55990640b95454193990bdecccd299d43c7e838d89ef5f98303b9f2a7e65"
+MODULE_AST_SHA256 = "07444f494a6b927558f05da1154bdba04bbe07d42c70bfabf358fe1c33b05421"
 ACTIVE_PROFILE_PATH: Optional[str] = None
 ACTIVE_PROFILE_IDENTITY: Optional[FileIdentity] = None
 ACTIVE_PROFILE_DIGEST: Optional[str] = None
@@ -342,6 +342,13 @@ def _from_request(value: object) -> tuple[CaptureProfile, str]:
     return CaptureProfile(account, account_identity, capture_parent, capture_identity, snapshot_identity, snapshot, source_identity, source, EXPECTED_SOURCE_SHA256, EXPECTED_RECOVERY_BINDING_SHA256, version_root, version_identity), output
 
 
+def _same_capture_parent(observed: DirectoryIdentity, expected: DirectoryIdentity) -> bool:
+    """Bind stable parent identity; nlink is diagnostic, not parent authority."""
+    return (observed.dev == expected.dev and observed.gid == expected.gid
+            and observed.ino == expected.ino and observed.mode == expected.mode
+            and observed.uid == expected.uid and observed.nlink >= 1 and expected.nlink >= 1)
+
+
 def _publish(path: str, data: bytes, signals: Optional[Signals]) -> str:
     global ACTIVE_PROFILE_PATH, ACTIVE_PROFILE_IDENTITY, ACTIVE_PROFILE_DIGEST
     parent_path, name = os.path.split(path); parent, _ = _open_directory(parent_path, True)
@@ -446,12 +453,17 @@ def validate(data: bytes) -> dict[str, str]:
     finally: os.close(parent_fd)
     profile = CaptureProfile.from_bytes(raw)
     current, output = _from_request({"account_home": profile.account_home, "capture_parent": profile.capture_parent, "output_path": path, "snapshot_path": profile.snapshot_path, "source_path": profile.source_path, "version_root": profile.version_root})
-    if output != path or current != profile: raise ProfileError("capture profile changed")
+    if (output != path
+            or not _same_capture_parent(current.capture_parent_identity, profile.capture_parent_identity)
+            or dataclasses.replace(current, capture_parent_identity=profile.capture_parent_identity) != profile):
+        raise ProfileError("capture profile changed")
     parent_check_fd, parent_check = _open_directory(parent, True)
     try:
         check_fd = os.open(leaf, os.O_RDONLY | CLOEXEC | NOFOLLOW, dir_fd=parent_check_fd)
         try:
-            if parent_check != parent_identity or FileIdentity.from_stat(os.fstat(check_fd)) != profile_identity or os.read(check_fd, len(raw) + 1) != raw:
+            if (not _same_capture_parent(parent_check, parent_identity)
+                    or FileIdentity.from_stat(os.fstat(check_fd)) != profile_identity
+                    or os.read(check_fd, len(raw) + 1) != raw):
                 raise ProfileError("capture profile changed")
         finally:
             os.close(check_fd)

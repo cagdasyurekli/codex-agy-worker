@@ -31,6 +31,8 @@ PROFILE_TESTS = frozenset({
     "test_71_profile_completion_signal_during_rollback_exits_after_cleanup",
     "test_73_profile_completion_mask_failure_still_rolls_back",
     "test_75_profile_selected_pending_signal_survives_rollback_failure",
+    "test_77_real_profile_publication_validates_across_capture_parent_nlink_delta",
+    "test_78_capture_parent_stable_identity_rejects_mode_or_invalid_nlink",
 })
 
 

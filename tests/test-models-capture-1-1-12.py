@@ -249,7 +249,7 @@ class ModelsCapture112Tests(unittest.TestCase):
 
     def test_28_final_root_precedes_marker(self) -> None:
         source = RUNNER_SOURCE.read_text()
-        self.assertLess(source.index("_verify_final_root(root_path, root_fd, profile, ledger, scratch_ledger)"), source.index("_marker(root_fd, record_sha, signals, ledger)"))
+        self.assertLess(source.index("_verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger)"), source.index("_marker(root_fd, record_sha, signals, ledger)"))
 
     def test_29_record_binds_nonsemantic_capture_evidence(self) -> None:
         source = RUNNER_SOURCE.read_text()
@@ -298,7 +298,7 @@ class ModelsCapture112Tests(unittest.TestCase):
 
     def test_38_final_inventory_is_marker_inclusive(self) -> None:
         source = RUNNER_SOURCE.read_text()
-        self.assertIn("_verify_final_root(root_path, root_fd, profile, ledger, scratch_ledger, True)", source)
+        self.assertIn("_verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger, True)", source)
         self.assertIn('expected.add("models.capture.sha256")', source)
 
     def test_39_runner_has_unvalidated_child_close_path(self) -> None:
@@ -899,6 +899,94 @@ class ModelsCapture112Tests(unittest.TestCase):
 
     def test_76_runner_selected_pending_signal_survives_rollback_failure(self) -> None:
         self._selected_signal_survives_rollback_failure(runner, runner["signal"].SIGTERM)
+
+    def test_77_real_profile_publication_validates_across_capture_parent_nlink_delta(self) -> None:
+        """The profile leaf changes APFS parent nlink; core identity remains bound."""
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = os.path.realpath(temporary); os.chmod(parent, 0o700)
+            output = os.path.join(parent, profile["OUTPUT_NAME"])
+            pre = profile["DirectoryIdentity"].from_stat(os.stat(parent))
+            expected = profile["CaptureProfile"](
+                "/private/account", profile["DirectoryIdentity"](1, 1, 1, 0o700, 2, 1),
+                parent, pre, profile["FileIdentity"](1, 1, 1, 1, 0o500, 1, 1, 1, 1),
+                "/private/snapshot", profile["FileIdentity"](1, 1, 1, 1, 0o755, 1, 1, 1, 1),
+                "/private/source", profile["EXPECTED_SOURCE_SHA256"], profile["EXPECTED_RECOVERY_BINDING_SHA256"],
+                "/private/recovery", profile["DirectoryIdentity"](1, 1, 1, 0o700, 2, 1),
+            )
+            globals_ = profile["prepare"].__globals__
+            original = globals_["_from_request"]
+            try:
+                globals_["_from_request"] = lambda _request: (expected, output)
+                profile["prepare"](canonical({"closed": "request"}), PollCounter())
+                observed = profile["DirectoryIdentity"].from_stat(os.stat(parent))
+                # Simulate the APFS post-publication delta even on filesystems
+                # whose directory nlink does not track regular children.
+                post = profile["dataclasses"].replace(expected, capture_parent_identity=profile["dataclasses"].replace(observed, nlink=pre.nlink + 1))
+                globals_["_from_request"] = lambda _request: (post, output)
+                self.assertEqual(profile["validate"](canonical({"profile_path": output}))["status"], "valid")
+            finally:
+                globals_["_from_request"] = original
+
+    def test_78_capture_parent_stable_identity_rejects_mode_or_invalid_nlink(self) -> None:
+        base = profile["DirectoryIdentity"](1, 2, 3, 0o700, 2, 4)
+        for field, value in (("dev", 9), ("gid", 9), ("ino", 9), ("mode", 0o755), ("uid", 9)):
+            self.assertFalse(profile["_same_capture_parent"](profile["dataclasses"].replace(base, **{field: value}), base))
+        self.assertFalse(profile["_same_capture_parent"](base, profile["dataclasses"].replace(base, nlink=0)))
+        self.assertFalse(runner["_same_capture_parent"](runner["DirectoryIdentity"](1, 2, 3, 0o700, 0, 4), runner["DirectoryIdentity"](1, 2, 3, 0o700, 2, 4)))
+
+    def test_79_runner_tolerates_foreign_capture_parent_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = os.path.realpath(temporary); value, raw, old, paths = self._synthetic_runner_profile(base, 0)
+            foreign = os.path.join(paths["parent"], "unrelated-owner-file")
+            with open(foreign, "wb") as handle: handle.write(b"preserve")
+            os.chmod(foreign, 0o600)
+            globals_ = runner["run_capture"].__globals__
+            try:
+                result = runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+            finally:
+                globals_.update(old)
+            self.assertEqual(result["status"], "captured")
+            with open(foreign, "rb") as handle: self.assertEqual(handle.read(), b"preserve")
+
+    def test_80_runner_rejects_foreign_entry_inside_owned_root_before_child(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = os.path.realpath(temporary); value, raw, old, paths = self._synthetic_runner_profile(base, 0)
+            globals_ = runner["run_capture"].__globals__; original_empty, original_start = globals_["_empty_scratch"], globals_["_start_capture"]; calls = [0]; launched = [False]
+            def add_foreign(root_fd: int) -> None:
+                original_empty(root_fd); calls[0] += 1
+                if calls[0] == 1:
+                    descriptor = os.open("foreign", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=root_fd)
+                    os.close(descriptor)
+            globals_["_empty_scratch"] = add_foreign
+            globals_["_start_capture"] = lambda *_args: (launched.__setitem__(0, True) or None)
+            try:
+                with self.assertRaises(runner["CaptureError"]): runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+            finally:
+                globals_["_empty_scratch"], globals_["_start_capture"] = original_empty, original_start; globals_.update(old)
+            self.assertFalse(launched[0])
+            roots = [entry for entry in os.listdir(paths["parent"]) if entry.startswith("agy-models-capture-1-1-12.")]
+            self.assertEqual(len(roots), 1)
+            self.assertTrue(os.path.exists(os.path.join(paths["parent"], roots[0], "foreign")))
+
+    def test_81_runner_rejects_owned_root_path_replacement_before_child(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = os.path.realpath(temporary); value, raw, old, paths = self._synthetic_runner_profile(base, 0)
+            globals_ = runner["run_capture"].__globals__; original_verify, original_start = globals_["_verify_pre_child_root"], globals_["_start_capture"]
+            launched = [False]
+            def replace_root(root_path: str, root_name: str, root_fd: int, root_identity: object, capture_profile: object, capture_fd: int) -> None:
+                moved = root_path + ".replaced"
+                os.rename(root_path, moved)
+                os.mkdir(root_path, 0o700)
+                original_verify(root_path, root_name, root_fd, root_identity, capture_profile, capture_fd)
+            globals_["_verify_pre_child_root"] = replace_root
+            globals_["_start_capture"] = lambda *_args: (launched.__setitem__(0, True) or None)
+            try:
+                with self.assertRaises(runner["CaptureError"]): runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+            finally:
+                globals_["_verify_pre_child_root"], globals_["_start_capture"] = original_verify, original_start; globals_.update(old)
+            self.assertFalse(launched[0])
+            roots = [entry for entry in os.listdir(paths["parent"]) if entry.startswith("agy-models-capture-1-1-12.")]
+            self.assertEqual(len(roots), 2)
 
 
 if __name__ == "__main__":

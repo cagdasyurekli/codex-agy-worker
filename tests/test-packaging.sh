@@ -1859,13 +1859,13 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'tests/test-models-capture-profile.py 121-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-profile.py` (121 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.12 models capture profile builder: 28 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-profile.py 28-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-profile.py` (28 offline cases)' \
+        && grep -Fq 'Fixed 1.1.12 models capture profile builder: 30 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-profile.py 30-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-profile.py` (30 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.12 models capture runner: 48 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 48-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (48 offline cases)' \
+        && grep -Fq 'Fixed 1.1.12 models capture runner: 51 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 51-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (51 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \
