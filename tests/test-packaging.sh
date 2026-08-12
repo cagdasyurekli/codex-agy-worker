@@ -35,6 +35,8 @@ paths.update((
     "tests/test-version-bootstrap-runner.py",
     "scripts/version_initial_bootstrap_runner.py",
     "tests/test-version-initial-bootstrap-runner.py",
+    "scripts/version_recovery_1_1_12_runner.py",
+    "tests/test-version-recovery-1-1-12-runner.py",
     "scripts/models_capture_profile.py",
     "tests/test-models-capture-profile.py",
 ))
@@ -1705,6 +1707,16 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-ru
         || [[ ! -f "$ROOT/tests/test-version-initial-bootstrap-runner.py" ]]; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-version-recovery-1-1-12-runner.py' \
+            "$ROOT/.github/workflows/test.yml" \
+        || [[ ! -f "$ROOT/scripts/version_recovery_1_1_12_runner.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-version-recovery-1-1-12-runner.py" ]]; then
+    governance_lists_all_suites=0
+fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
         "$ROOT/CONTRIBUTING.md" \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
@@ -1780,9 +1792,9 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all twenty-one suites and disclose public policy boundaries"
+    ok "governance docs require all twenty-two suites and disclose public policy boundaries"
 else
-    bad "governance docs require all twenty-one suites and disclose public policy boundaries"
+    bad "governance docs require all twenty-two suites and disclose public policy boundaries"
 fi
 
 bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
@@ -1812,6 +1824,10 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'Repository-only version initial-bootstrap runner: 43 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-version-initial-bootstrap-runner.py  43-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-initial-bootstrap-runner.py` (43 synthetic cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Fixed 1.1.12 version recovery runner: 75 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-version-recovery-1-1-12-runner.py  75-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-version-recovery-1-1-12-runner.py` (75 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Explicit-account models capture profile builder: 121 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-capture-profile.py 121-case' "$ROOT/README.md" \
@@ -1849,6 +1865,15 @@ if [[ -x "$ROOT/scripts/version_initial_bootstrap_runner.py" ]] \
     ok "initial bootstrap remains a separate HOME-inert repository-only surface"
 else
     bad "initial bootstrap remains a separate HOME-inert repository-only surface"
+fi
+
+if [[ -x "$ROOT/scripts/version_recovery_1_1_12_runner.py" ]] \
+        && [[ -x "$ROOT/tests/test-version-recovery-1-1-12-runner.py" ]] \
+        && ! grep -Fq 'version_recovery_1_1_12_runner.py' "$ROOT/skills/agy-worker/runtime" -r \
+        && grep -Fq 'non-authorizing' "$ROOT/README.md"; then
+    ok "fixed recovery remains a separate non-authorizing repository-only surface"
+else
+    bad "fixed recovery remains a separate non-authorizing repository-only surface"
 fi
 
 profile_builder_identity="$(/usr/bin/python3 -I -S -B - "$ROOT/scripts/models_capture_profile.py" <<'PY'

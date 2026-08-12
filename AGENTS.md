@@ -62,6 +62,7 @@ Keep these counts current when their suites change:
 - Canonical version-attestation runner: 165 offline fixed-profile/source-binding cases.
 - Repository-only version bootstrap runner: 139 offline retained-recovery/ownership/scratch/source/process/signal/runtime cases.
 - Repository-only version initial-bootstrap runner: 43 offline current-source/identity/two-copy/recovery-profile/scratch/process/signal cases.
+- Fixed 1.1.12 version recovery runner: 75 offline exact-instance/prior/source/snapshot/process/publication/mutation cases.
 - Version-attestation mutation harness: 60 offline publication/process-group/signal cases.
 - Canonical models-inventory attestation runner: 116 offline
   fixed-profile/version-binding/environment/parser/process cases.
@@ -70,7 +71,7 @@ Keep these counts current when their suites change:
 - Explicit-account models capture profile builder: 121 offline canonical-profile,
   external-evidence, descriptor, publication, and mutation cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 351 offline
+- Codex package/skill distribution and CI policy: 352 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
 - Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
@@ -102,6 +103,7 @@ coverage is offline, partial, or absent as described in `README.md`.
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py # offline canonical runner path
 /usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py # offline retained-recovery bootstrap
 /usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py # offline current-source initial bootstrap
+/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py # offline fixed 1.1.12 recovery
 /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py # offline fake-child mutation harness
 /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py # offline fake inventory attestation
 /usr/bin/python3 -I -S -B tests/test-models-capture-runner.py # offline fake-account capture only

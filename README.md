@@ -55,7 +55,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The twenty-one offline suites need no agy process, network access, API key, or GitHub login.
+The twenty-two offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -1056,6 +1056,7 @@ scripts/compatibility_probe.py bounded process-group supervisor for fixed eviden
 scripts/version_attestation_runner.py fixed-profile snapshot version runner with bounded startup diagnostics; real use separately authorized
 scripts/version_bootstrap_runner.py repository-only retained-recovery bootstrap; never a recovery mode or live-account action
 scripts/version_initial_bootstrap_runner.py repository-only current-source initial bridge; never reads HOME or historical recovery evidence
+scripts/version_recovery_1_1_12_runner.py fixed 1.1.12 recovery from the exact phase-one prior; generated output is non-authorizing
 scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
 scripts/models_attestation_runner.py auth-isolated snapshot models runner; not a live-account capture path
 scripts/models_capture_runner.py explicit-account capture-only models runner; never auto-invoked
@@ -1094,13 +1095,14 @@ tests/test-compatibility-probe.py test-only timeout/output/signal/version advers
 tests/test-version-attestation-runner.py  165-case offline canonical fixed-profile runner suite
 tests/test-version-bootstrap-runner.py  139-case offline retained-recovery bootstrap suite
 tests/test-version-initial-bootstrap-runner.py  43-case offline current-source initial bootstrap suite
+tests/test-version-recovery-1-1-12-runner.py  75-case offline fixed 1.1.12 recovery suite
 tests/test-version-attestation-harness.py  60-case offline version-attestation mutation suite
 tests/test-models-attestation-runner.py  116-case offline fixed-profile inventory attestation suite
 tests/test-models-capture-runner.py  84-case offline fake-account capture-only suite
 tests/test-models-capture-profile.py 121-case offline canonical capture-profile builder suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       351-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       352-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
