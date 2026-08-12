@@ -599,3 +599,13 @@ than become invalid when the first record expires. Store only closed aggregate
 metrics, opaque observation IDs, exact revisions, and explicitly public evidence.
 Missing and partial measurements are honest report states. Measurement remains
 after-the-fact evidence and can never activate metadata, routing, cleanup, or P2.
+
+A published tag, a checked-out repository, an installed Codex skill, a loaded
+notifier snapshot, and an accumulating measurement ledger are five different state
+planes. Updating or verifying one does not imply any of the others changed. Release
+handoff must name every intended plane, perform its explicit transition, and read it
+back: exact tag/commit, installed bundle parity, notifier source binding, ledger
+identity, and a first real observation. In particular, a daily watcher without an
+explicit append path produces alerts but no 30/60/90 dataset. Keep that separation
+visible instead of reporting a broad “installed” or “measurement ready” outcome from
+checkout or scheduler evidence alone.
