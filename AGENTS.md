@@ -70,8 +70,10 @@ Keep these counts current when their suites change:
   profile/account-TCB/environment/capture/publication/process cases.
 - Explicit-account models capture profile builder: 121 offline canonical-profile,
   external-evidence, descriptor, publication, and mutation cases.
+- Fixed 1.1.12 models capture profile builder: 19 offline authority/profile cases.
+- Fixed 1.1.12 models capture runner: 40 offline capture/process/publication cases.
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 352 offline
+- Codex package/skill distribution and CI policy: 353 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
 - Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
@@ -108,6 +110,8 @@ coverage is offline, partial, or absent as described in `README.md`.
 /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py # offline fake inventory attestation
 /usr/bin/python3 -I -S -B tests/test-models-capture-runner.py # offline fake-account capture only
 /usr/bin/python3 -I -S -B tests/test-models-capture-profile.py # offline profile preparation only
+/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py # offline fixed 1.1.12 profile bridge
+/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py # offline fixed 1.1.12 capture bridge
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage

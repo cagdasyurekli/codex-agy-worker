@@ -96,6 +96,12 @@ jobs:
       - name: explicit-account models capture profile builder
         run: /usr/bin/python3 -I -S -B tests/test-models-capture-profile.py
 
+      - name: fixed 1.1.12 models capture profile builder
+        run: /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py
+
+      - name: fixed 1.1.12 models capture runner
+        run: /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py
+
       - name: reporting suite
         run: ./tests/test-reporting.sh
 

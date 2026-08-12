@@ -264,6 +264,12 @@ descriptors, and publishes a mode-0600 no-overwrite file with rollback on failur
 interruption. It does not enumerate HOME, read ambient configuration, invoke agy or
 any provider, interpret inventory, or grant authorization for the future capture.
 
+The independent fixed `1.1.12` bridge stays outside those historical surfaces: its
+profile builder binds only the recovered source, snapshot, and version evidence, and
+its runner records one bounded, separately authorized call as `captured` evidence.
+It cannot accept inventory, update metadata, route, retry, or inspect account-HOME
+contents.
+
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a
 runner-image mismatch; it does not make that environment trusted or satisfy the gate.

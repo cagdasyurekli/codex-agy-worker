@@ -39,6 +39,11 @@ paths.update((
     "tests/test-version-recovery-1-1-12-runner.py",
     "scripts/models_capture_profile.py",
     "tests/test-models-capture-profile.py",
+    "scripts/models_capture_1_1_12_profile.py",
+    "scripts/models_capture_1_1_12_runner.py",
+    "tests/test-models-capture-1-1-12.py",
+    "tests/test-models-capture-1-1-12-profile.py",
+    "tests/test-models-capture-1-1-12-runner.py",
 ))
 for relative in sorted(paths):
     path = root / relative
@@ -1746,6 +1751,26 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py' \
         || [[ ! -f "$ROOT/tests/test-models-capture-profile.py" ]]; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-models-capture-1-1-12-profile.py' \
+            "$ROOT/.github/workflows/test.yml" \
+        || [[ ! -f "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-12-profile.py" ]]; then
+    governance_lists_all_suites=0
+fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-models-capture-1-1-12-runner.py' \
+            "$ROOT/.github/workflows/test.yml" \
+        || [[ ! -f "$ROOT/scripts/models_capture_1_1_12_runner.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-12-runner.py" ]]; then
+    governance_lists_all_suites=0
+fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
         "$ROOT/CONTRIBUTING.md" \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
@@ -1788,13 +1813,14 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
 fi
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
+        && grep -Fq 'The twenty-four offline suites' "$ROOT/README.md" \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all twenty-two suites and disclose public policy boundaries"
+    ok "governance docs require all twenty-four suites and disclose public policy boundaries"
 else
-    bad "governance docs require all twenty-two suites and disclose public policy boundaries"
+    bad "governance docs require all twenty-four suites and disclose public policy boundaries"
 fi
 
 bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
@@ -1833,6 +1859,14 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'tests/test-models-capture-profile.py 121-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-profile.py` (121 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Fixed 1.1.12 models capture profile builder: 19 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-profile.py 19-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-profile.py` (19 offline cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Fixed 1.1.12 models capture runner: 40 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 40-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (40 offline cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \
         && (( bootstrap_preflight_line < bootstrap_suite_line )) \
@@ -1845,9 +1879,17 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'sys.flags.ignore_environment == 1' "$ROOT/.github/workflows/test.yml" \
         && grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
             "$ROOT/.github/workflows/test.yml"; then
-    ok "bootstrap, initial bridge, and adjacent signal-owner measured counts stay synchronized"
+    ok "bootstrap, recovery, and independent capture-bridge measured counts stay synchronized"
 else
-    bad "bootstrap, initial bridge, and adjacent signal-owner measured counts stay synchronized"
+    bad "bootstrap, recovery, and independent capture-bridge measured counts stay synchronized"
+fi
+
+if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
+        && [[ -x "$ROOT/scripts/models_capture_1_1_12_runner.py" ]] \
+        && ! grep -Fqr 'models_capture_1_1_12' "$ROOT/skills/agy-worker/runtime"; then
+    ok "fixed 1.1.12 capture bridge stays independent and outside the skill runtime"
+else
+    bad "fixed 1.1.12 capture bridge stays independent and outside the skill runtime"
 fi
 
 if [[ -x "$ROOT/scripts/version_bootstrap_runner.py" ]] \
