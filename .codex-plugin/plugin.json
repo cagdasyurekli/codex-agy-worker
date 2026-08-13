@@ -1,6 +1,6 @@
 {
   "name": "codex-agy-worker",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Delegate bounded coding work to Antigravity CLI, then independently verify repository evidence before acceptance.",
   "author": {
     "name": "cagdasyurekli",
