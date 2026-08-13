@@ -73,8 +73,17 @@ tier, verifier command, dispatch, route, acceptance, or external action.
 Each job can create local private artifacts under `logs/<job>/`, including the task,
 full prompt, agy stream, stderr, staged oversized prompt, and extracted envelope.
 Temporary worktrees and envelopes may also exist outside the repository. Sanitized
-bug-report drafts are local files with mode `0600` until a user explicitly confirms
-the exact SHA-256 and submits them.
+bug-report and improvement drafts are local files with mode `0600` until a user
+explicitly confirms the exact SHA-256 and separately confirms that same digest is
+public-safe before submitting it. A `--kind security` draft is private-route only and
+cannot be submitted publicly. Conservative keyword detection is an additional barrier,
+not proof that another report is safe for public disclosure.
+
+The optional feedback triage command and weekly workflow read only a fixed bounded
+page of public issue metadata: issue number, canonical repository URL, and creation
+and update timestamps. They discard titles, bodies, comments, labels, usernames, and
+all other raw GitHub content before aggregation. The only output is a bounded
+aggregate; neither sends issue content to an agent nor modifies an issue.
 
 When explicitly requested, `verify-job.sh` creates one local receipt at a new path the
 user chose in an owner-private directory outside the audited repository. It records

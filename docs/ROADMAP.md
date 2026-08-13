@@ -147,12 +147,10 @@ behavior.
 
 **Current status:** Daily hosted observation, the optional local notifier, privacy-
 limited 30/60/90 measurement tooling, Codex `0.147.0` reconciliation, bounded GitHub
-transport hardening, and the agy `1.1.12` reconciliation are implemented and offline-
-verified in the published v0.3.3 release. Gate envelope intake, lifecycle Git stdout,
-and Actions checkout credentials are also bounded by explicit fail-closed policy. The
-progress-aware per-job lifecycle is implemented and offline-verified in the v0.4.0
-release candidate; it is not a published-release or live-provider claim until exact-head
-CI, merge, tag, release publication, and readback complete.
+transport hardening, the agy `1.1.12` reconciliation, gate-envelope intake, lifecycle
+Git stdout, Actions checkout credentials, and the progress-aware per-job lifecycle are
+implemented and offline-verified in the published v0.4.0 release. This remains an
+offline and bounded-lifecycle claim, not a live-provider guarantee.
 Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
@@ -163,6 +161,18 @@ unchanged 11-slug matrix bindings after a successful separately authorized JSON
 capture and offline review. P2-B/P2-C remain deferred. Ordinary agy-owned default
 dispatch and explicitly approved literal pass-through remain operational during
 future version drift; reviewed model/effort resolution stays fail-closed.
+
+### Feedback reporting and bounded maintainer review
+
+**Current status:** Implemented and offline-verified in the v0.5.0 release scope
+represented by this source. The local report path creates sanitized bug or improvement
+drafts; public submission requires independent review plus matching exact digest and
+public-safety-digest confirmations. Security drafts remain private-route only. The
+weekly/manual watcher reads one fixed, metadata-only issue page and emits a bounded
+aggregate; raw issue prose never becomes an agent prompt or workflow log, while only
+the canonical aggregate is workflow output. It cannot write GitHub issues, comments,
+labels, or state. A source checkout alone is not proof of publication; verify the
+exact reviewed tag and release state separately.
 
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the

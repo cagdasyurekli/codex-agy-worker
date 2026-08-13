@@ -35,6 +35,7 @@
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py`
 - [ ] `./tests/test-reporting.sh`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-feedback-triage.py`
 - [ ] `./tests/test-packaging.sh`
 - [ ] `./tests/test-doctor.sh`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-conformance.py`

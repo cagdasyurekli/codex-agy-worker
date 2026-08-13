@@ -648,3 +648,13 @@ size and bytes actually read, parse direct inputs through the same ceiling, and 
 child stdout incrementally before it can exhaust memory. CI checkout credentials are
 another ambient capability: disable persistence unless a later reviewed step needs
 them, even when repository workflow permissions are read-only.
+
+Untrusted feedback prose is agent input, even when it arrives through a familiar
+GitHub issue form. A prompt-injection blacklist or a security-keyword classifier is
+not a proof that prose is safe. Keep titles, bodies, comments, usernames, labels, and
+link text out of agent prompts, logs, workflow summaries, and automated decisions;
+derive periodic signals only from a closed metadata projection with byte, record,
+time, and pagination bounds. Public submission is a separate exact-byte decision:
+route explicit security reports privately, treat keyword matching only as an extra
+deny barrier, and require a fresh human acknowledgement bound to the reviewed digest
+before sending a non-security draft to the fixed public destination.

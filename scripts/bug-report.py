@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sanitized, review-bound bug drafting and optional GitHub submission."""
+"""Sanitized, review-bound feedback drafting and optional GitHub submission."""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,10 @@ from pathlib import Path
 MARKER = "<!-- agy-worker-sanitized-bug-draft:v1 -->"
 MAX_DRAFT_BYTES = 20_000
 DEFAULT_REPO = "cagdasyurekli/codex-agy-worker"
+CANONICAL_GITHUB_REPO = f"github.com/{DEFAULT_REPO}"
+PRIVATE_VULNERABILITY_URL = (
+    "https://github.com/cagdasyurekli/codex-agy-worker/security/advisories/new"
+)
 
 PEM_BLOCK = re.compile(
     r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?"
@@ -46,6 +50,15 @@ FORBIDDEN_ARTIFACTS = re.compile(
 )
 CODE_FENCE = re.compile(r"(?:`{3,}|~{3,}).*?(?:(?:`{3,}|~{3,})|\Z)", re.DOTALL)
 INDENTED_CODE = re.compile(r"(?m)(?:^(?: {4}|\t).*(?:\n|$))+")
+# This is intentionally conservative: a public issue must not be the first route for
+# a possible vulnerability. It is a routing safeguard, not a vulnerability detector.
+SECURITY_SENSITIVE = re.compile(
+    r"(?i)\b(?:security[ -]?(?:bug|issue|report|vulnerability)|vulnerability|"
+    r"exploit|cve|cvss|(?:auth(?:entication|orization)?|permission)[ -]?(?:bypass|"
+    r"escalation)|privilege[ -]?escalation|(?:remote[ -]?code|command)[ -]?execution|"
+    r"\brce\b|(?:sql|command)[ -]?injection|(?:cross[ -]?site|xss)[ -]?scripting|"
+    r"(?:secret|credential|token)[ -]?(?:leak|exposure)|data[ -]?exposure)\b"
+)
 
 
 class DraftError(ValueError):
@@ -70,6 +83,11 @@ def safe_title(text: str) -> str:
     if not title:
         raise DraftError("title is empty after sanitization")
     return title.replace("#", "")
+
+
+def is_security_sensitive(*values: str) -> bool:
+    """Fail closed to the private route when feedback may be security-sensitive."""
+    return any(SECURITY_SENSITIVE.search(value) is not None for value in values)
 
 
 def command_output(command: list[str], fallback: str) -> str:
@@ -98,24 +116,21 @@ def render_draft(args: argparse.Namespace) -> str:
     title = safe_title(args.title)
     component = safe_title(args.component)
     summary = sanitize(args.summary, limit=4_000)
-    steps = sanitize(args.steps, limit=6_000)
-    expected = sanitize(args.expected, limit=3_000)
-    actual = sanitize(args.actual, limit=3_000)
-    if not all((summary, steps, expected, actual)):
-        raise DraftError("summary, steps, expected, and actual must be non-empty")
+    security_sensitive = is_security_sensitive(
+        args.title, args.component, args.summary,
+        getattr(args, "steps", "") or "", getattr(args, "expected", "") or "",
+        getattr(args, "actual", "") or "", getattr(args, "problem", "") or "",
+        getattr(args, "proposal", "") or "", getattr(args, "benefit", "") or "",
+    )
     tool, agy, system = runtime_facts()
-    return f"""{MARKER}
-# Bug: {title}
-
-## Component
-
-{component}
-
-## Summary
-
-{summary}
-
-## Minimal reproduction
+    if args.kind == "bug":
+        steps = sanitize(args.steps or "", limit=6_000)
+        expected = sanitize(args.expected or "", limit=3_000)
+        actual = sanitize(args.actual or "", limit=3_000)
+        if not all((summary, steps, expected, actual)):
+            raise DraftError("summary, steps, expected, and actual must be non-empty")
+        heading = "Bug"
+        fields = f"""## Minimal reproduction
 
 {steps}
 
@@ -126,8 +141,63 @@ def render_draft(args: argparse.Namespace) -> str:
 ## Actual behavior
 
 {actual}
+"""
+    elif args.kind == "improvement":
+        problem = sanitize(args.problem or "", limit=4_000)
+        proposal = sanitize(args.proposal or "", limit=6_000)
+        benefit = sanitize(args.benefit or "", limit=3_000)
+        if not all((summary, problem, proposal, benefit)):
+            raise DraftError("summary, problem, proposal, and benefit must be non-empty")
+        heading = "Improvement"
+        fields = f"""## Problem to solve
 
-## Sanitized environment
+{problem}
+
+## Proposed improvement
+
+{proposal}
+
+## Expected benefit
+
+{benefit}
+"""
+    elif args.kind == "security":
+        if any((args.steps, args.expected, args.actual,
+                args.problem, args.proposal, args.benefit)):
+            raise DraftError(
+                "security drafts accept only title, component, and a minimal summary")
+        summary = sanitize(args.summary, limit=1_000)
+        if not summary:
+            raise DraftError("summary must be non-empty")
+        heading = "Security"
+        security_sensitive = True
+        fields = """Do not add exploit details, secrets, prompts, source, paths, or raw logs to this
+draft. Share any necessary sensitive details only through the private route below.
+"""
+    else:  # argparse enforces this; retain a fail-closed library boundary.
+        raise DraftError("feedback kind is invalid")
+
+    private_route = ""
+    if security_sensitive:
+        private_route = f"""## Security-sensitive route
+
+This report is not eligible for public GitHub issue submission. Do not add exploit
+details, secrets, prompts, source, paths, or raw logs. Submit a minimal report through
+the private vulnerability reporting form instead: {PRIVATE_VULNERABILITY_URL}
+
+"""
+    return f"""{MARKER}
+# {heading}: {title}
+
+## Component
+
+{component}
+
+## Summary
+
+{summary}
+
+{fields}{private_route}## Sanitized environment
 
 - codex-agy-worker: {tool}
 - agy: {agy}
@@ -145,8 +215,9 @@ def validate_body(body: str) -> None:
     encoded = body.encode("utf-8")
     if len(encoded) > MAX_DRAFT_BYTES:
         raise DraftError(f"draft exceeds {MAX_DRAFT_BYTES} bytes")
-    if not body.startswith(MARKER + "\n# Bug: "):
-        raise DraftError("file is not a generated sanitized bug draft")
+    if not any(body.startswith(MARKER + f"\n# {kind}: ")
+               for kind in ("Bug", "Improvement", "Security")):
+        raise DraftError("file is not a generated sanitized feedback draft")
     if PEM_BLOCK.search(body):
         raise DraftError("draft still contains sensitive-looking content")
     for pattern in SECRET_PATTERNS + PATH_PATTERNS:
@@ -172,9 +243,19 @@ def digest(body: str) -> str:
 
 def extract_title(body: str) -> str:
     for line in body.splitlines():
-        if line.startswith("# Bug: "):
-            return line[len("# Bug: "):].strip()
+        for kind in ("Bug", "Improvement", "Security"):
+            prefix = f"# {kind}: "
+            if line.startswith(prefix):
+                return line[len(prefix):].strip()
     raise DraftError("draft title is missing")
+
+
+def requires_private_route(body: str) -> bool:
+    # Re-check the reviewed bytes so a manually altered but otherwise sanitized
+    # draft cannot turn a possible vulnerability into a public issue.
+    return (body.startswith(MARKER + "\n# Security: ")
+            or "## Security-sensitive route\n" in body
+            or SECURITY_SENSITIVE.search(body) is not None)
 
 
 def write_private_exclusive(path: Path, body: str) -> None:
@@ -237,15 +318,25 @@ def submit_command(args: argparse.Namespace) -> int:
     print(f"SHA256: {body_digest}")
     if args.confirm_sha != body_digest:
         raise DraftError("confirmation hash does not match the reviewed draft")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.repo):
-        raise DraftError("--repo must be OWNER/REPO")
+    if args.repo != DEFAULT_REPO:
+        raise DraftError(f"--repo must be the fixed canonical repository: {DEFAULT_REPO}")
+    if requires_private_route(body):
+        print(
+            "bug-report: security-sensitive feedback is not submitted publicly; "
+            f"use {PRIVATE_VULNERABILITY_URL}",
+            file=sys.stderr,
+        )
+        return 70
+    if args.confirm_public_safe_sha != body_digest:
+        raise DraftError(
+            "public-safety confirmation hash does not match the reviewed draft; "
+            "review the exact bytes and confirm that no vulnerability is suspected")
     gh = shutil.which("gh")
     if gh is None:
         print("bug-report: gh is not installed; draft was not submitted", file=sys.stderr)
         return 69
-    qualified_repo = f"github.com/{args.repo}"
     command = [
-        gh, "issue", "create", "--repo", qualified_repo,
+        gh, "issue", "create", "--repo", CANONICAL_GITHUB_REPO,
         "--title", extract_title(body), "--body-file", "-",
     ]
     environment = os.environ.copy()
@@ -261,16 +352,21 @@ def submit_command(args: argparse.Namespace) -> int:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
-        description="Create, preview, and explicitly submit sanitized bug drafts")
+        description="Create, preview, and explicitly submit sanitized feedback drafts")
     commands = root.add_subparsers(dest="command", required=True)
     draft = commands.add_parser("draft")
     draft.add_argument("--output", required=True)
+    draft.add_argument(
+        "--kind", choices=("bug", "improvement", "security"), default="bug")
     draft.add_argument("--title", required=True)
     draft.add_argument("--component", default="qa-gate")
     draft.add_argument("--summary", required=True)
-    draft.add_argument("--steps", required=True)
-    draft.add_argument("--expected", required=True)
-    draft.add_argument("--actual", required=True)
+    draft.add_argument("--steps")
+    draft.add_argument("--expected")
+    draft.add_argument("--actual")
+    draft.add_argument("--problem")
+    draft.add_argument("--proposal")
+    draft.add_argument("--benefit")
     draft.set_defaults(handler=draft_command)
 
     preview = commands.add_parser("preview")
@@ -280,6 +376,11 @@ def parser() -> argparse.ArgumentParser:
     submit = commands.add_parser("submit")
     submit.add_argument("file")
     submit.add_argument("--confirm-sha", required=True)
+    submit.add_argument(
+        "--confirm-public-safe-sha",
+        help=("SHA-256 of the same reviewed bytes, explicitly confirming that "
+              "no vulnerability is suspected; required for public submission"),
+    )
     submit.add_argument("--repo", default=DEFAULT_REPO)
     submit.set_defaults(handler=submit_command)
     return root

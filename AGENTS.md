@@ -84,8 +84,9 @@ Keep these counts current when their suites change:
 - Fixed 1.1.12 models capture profile builder: 30 offline authority/profile cases.
 - Fixed 1.1.12 models capture runner: 56 offline capture/process/publication/cache cases
   (86 with its separate 30-case profile-builder suite).
-- `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 361 offline
+- `bug-report.sh`: 47 offline privacy/fake-`gh` cases.
+- Feedback triage: 26 offline bounded-metadata/fake-`gh` cases.
+- Codex package/skill distribution and CI policy: 365 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
 - Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
@@ -120,6 +121,7 @@ durable evidence rule.
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py # offline fixed 1.1.12 profile bridge
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py # offline fixed 1.1.12 capture bridge
 ./tests/test-reporting.sh       # offline fake-gh privacy/submission coverage
+/usr/bin/python3 -I -S -B tests/test-feedback-triage.py # offline metadata-only triage
 ./tests/test-packaging.sh       # offline Codex manifest, relocation, policy, landing
 ./tests/test-doctor.sh          # offline fake-tool/read-only readiness coverage
 /usr/bin/python3 -I -S -B tests/test-conformance.py # offline public gate contract
