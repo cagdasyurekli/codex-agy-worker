@@ -174,7 +174,9 @@ import stat
 import sys
 
 source, destination = sys.argv[1:3]
+maximum = 1024 * 1024
 digest = hashlib.sha256()
+total = 0
 source_fd = os.open(
     source,
     os.O_RDONLY
@@ -183,8 +185,11 @@ source_fd = os.open(
 )
 destination_fd = -1
 try:
-    if not stat.S_ISREG(os.fstat(source_fd).st_mode):
+    source_metadata = os.fstat(source_fd)
+    if not stat.S_ISREG(source_metadata.st_mode):
         raise OSError("envelope snapshot source is not regular")
+    if source_metadata.st_size > maximum:
+        raise OSError("envelope snapshot source is oversized")
     destination_fd = os.open(
         destination,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
@@ -195,6 +200,9 @@ try:
         chunk = os.read(source_fd, 1024 * 1024)
         if not chunk:
             break
+        if len(chunk) > maximum - total:
+            raise OSError("envelope snapshot source grew oversized")
+        total += len(chunk)
         digest.update(chunk)
         view = memoryview(chunk)
         while view:

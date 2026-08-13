@@ -73,7 +73,7 @@ import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 required = (
-    "      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n",
+    "      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
     "      - name: committed diff hygiene\n",
     "          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name }}\n",
     "          AGY_WORKER_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}\n",
@@ -190,6 +190,23 @@ if ! ci_workflow_contract "$TMP/missing-diff-step.yml" 2>/dev/null; then
     ok "workflow policy rejects removal of the committed diff check"
 else
     bad "workflow policy rejects removal of the committed diff check"
+fi
+
+cp "$ROOT/.github/workflows/test.yml" "$TMP/persisted-checkout-credentials.yml"
+python3 - "$TMP/persisted-checkout-credentials.yml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "          persist-credentials: false\n"
+assert text.count(old) == 1
+path.write_text(text.replace(old, ""), encoding="utf-8")
+PY
+if ! ci_workflow_contract "$TMP/persisted-checkout-credentials.yml" 2>/dev/null; then
+    ok "workflow policy rejects persisted checkout credentials"
+else
+    bad "workflow policy rejects persisted checkout credentials"
 fi
 
 mkdir "$TMP/ci-range-repo"

@@ -741,6 +741,51 @@ def default_term_cleanup() -> bool:
 check("default-TERM child is reaped by the sole lifecycle wait", default_term_cleanup)
 
 
+def bounded_git_output_contract() -> bool:
+    small = subprocess.Popen(
+        [PYTHON, "-I", "-S", "-B", "-c", "import sys;sys.stdout.buffer.write(b'x'*64)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    accepted = MODULE._communicate_bounded(small, None, 64, 2.0) == b"x" * 64
+    oversized = subprocess.Popen(
+        [PYTHON, "-I", "-S", "-B", "-c", "import sys;sys.stdout.buffer.write(b'x'*4096)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        MODULE._communicate_bounded(oversized, None, 1024, 2.0)
+    except MODULE.GitOutputLimitError:
+        MODULE._terminate_process(oversized)
+        rejected = oversized.returncode is not None
+    else:
+        MODULE._terminate_process(oversized)
+        rejected = False
+    repo, _base = make_repo("bounded-git-output")
+    (repo / "large.txt").write_bytes(b"y" * 4096)
+    git(repo, "add", "large.txt")
+    git(repo, "commit", "-qm", "large")
+    prior_maximum = MODULE.MAX_GIT_OUTPUT
+    try:
+        MODULE.MAX_GIT_OUTPUT = 1024
+        try:
+            MODULE.git_result(repo, "show", "HEAD:large.txt")
+        except MODULE.GitOutputLimitError:
+            integrated = MODULE.ACTIVE_PROCESS is None
+        else:
+            integrated = False
+    finally:
+        MODULE.MAX_GIT_OUTPUT = prior_maximum
+    return accepted and small.returncode == 0 and rejected and integrated
+
+
+check("Git stdout is bounded while the child is still running", bounded_git_output_contract)
+
+
 def permission_error_cleanup(raise_on: int) -> bool:
     class FakeProcess:
         pid = 424242
@@ -838,7 +883,8 @@ check(
     lambda: (
         source.count(b"stderr=subprocess.DEVNULL") >= 2
         and b"stdout=subprocess.PIPE if capture else subprocess.DEVNULL" in source
-        and b"if capture and len(stdout) > MAX_GIT_OUTPUT:" in source
+        and b"_communicate_bounded(" in source
+        and b"if capture and len(stdout) > MAX_GIT_OUTPUT:" not in source
     ),
 )
 check("compare-delete uses exact ref and expected base", lambda: b'"update-ref", "-d", state["branch_ref"], state["base"]' in source)

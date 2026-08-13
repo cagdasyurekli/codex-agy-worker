@@ -609,3 +609,10 @@ identity, and a first real observation. In particular, a daily watcher without a
 explicit append path produces alerts but no 30/60/90 dataset. Keep that separation
 visible instead of reporting a broad “installed” or “measurement ready” outcome from
 checkout or scheduler evidence alone.
+
+Resource limits must apply while bytes cross the trust boundary, not after a helper
+has already copied or buffered them. Bound regular-file snapshots by both initial
+size and bytes actually read, parse direct inputs through the same ceiling, and stop
+child stdout incrementally before it can exhaust memory. CI checkout credentials are
+another ambient capability: disable persistence unless a later reviewed step needs
+them, even when repository workflow permissions are read-only.
