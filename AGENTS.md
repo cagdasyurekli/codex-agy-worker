@@ -63,9 +63,9 @@ Keep these counts current when their suites change:
 - Evidence Report v1: 80 offline pure-rendering/privacy/CI-format/binding/mutation cases.
 - Offline Benchmark v1: 104 offline plan/Receipt/result/report/privacy/mutation cases.
 - Persona Evidence Registry v1: 124 offline semantic-chain/Git-ancestry/portable/mutation cases.
-- Safe local lifecycle: 101 offline state/receipt/Git-policy/cleanup/signal cases.
+- Safe local lifecycle: 116 offline state/receipt/Git-policy/cleanup/signal cases.
 - Data-only Workload Profiles v1: 89 offline schema/allowlist/portable/mutation cases.
-- `agy-worker.sh` / `install.sh` / model selection and recommendation: 217 offline
+- `agy-worker.sh` / `install.sh` / model selection and recommendation: 238 offline
   fake-agy/routing cases.
 - `update.sh`: 314 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
 - Adoption measurement: 41 offline privacy/aggregation/rolling-window/concurrency cases.
@@ -85,7 +85,7 @@ Keep these counts current when their suites change:
 - Fixed 1.1.12 models capture runner: 56 offline capture/process/publication/cache cases
   (86 with its separate 30-case profile-builder suite).
 - `bug-report.sh`: 21 offline privacy/fake-`gh` cases.
-- Codex package/skill distribution and CI policy: 354 offline
+- Codex package/skill distribution and CI policy: 361 offline
   manifest/runtime-copy/relocation/landing/range cases.
 - `doctor.sh`: 239 offline fake-tool/read-only cases.
 - Public gate conformance v1: 81 offline manifest/fixture/permissive-gate/signal/cleanup cases.
@@ -178,7 +178,11 @@ only a passing test has not been shown to catch anything.
   environment path, emit workflow commands, call a GitHub API, comment, or upload.
 - **Lifecycle cleanup spends fresh explicit authority.** State stays in an external
   owner-private file and binds the exact repo/worktree/ref/base/job/Receipt/candidate.
-  Only rejected exits 10-14 may clean. Reconcile each completed Git step durably,
+  Receipt cleanup remains limited to rejected exits 10-14. A separate pre-gate abort
+  may clean only a lifecycle-created, receiptless `failed` or `cancelled` dispatch
+  whose exact supervisor state, closed ownership lock, and candidate are bound; an
+  `orphaned` controller is preserve-only, and a changed candidate needs explicit
+  discard authority. Reconcile each completed Git step durably,
   stop when reconciliation changes the state SHA, and require fresh job/state/candidate
   approvals before the next destructive step. Remove the exact registered worktree,
   then compare-delete only the unchanged ref; never force-delete a branch, follow a
@@ -189,6 +193,15 @@ only a passing test has not been shown to catch anything.
   or content-filter authority plus every effective base-tree/info filter attribute.
   Treat only documented `show-ref --verify --quiet` exit 1 as ref absence; fatal Git
   evidence must leave cleanup in progress for manual recovery.
+- **Progress renews only an idle lease.** The per-job supervisor owns incremental
+  NDJSON parsing, process-group closure, idle/hard/absolute clocks, and private
+  state. Valid progress cannot prove success or extend the absolute cap. Never retry
+  automatically: resume must bind the exact frozen conversation/task/selection;
+  restart is explicit and still shares the original cap. Local status/cancel is not
+  provider truth, and `orphaned` work cannot resume, restart, or authorize cleanup.
+  Plan mode is an upstream prompt transformation, not filesystem isolation; keep its
+  full prompt privately staged, slash expansion available only to the fixed driver
+  prompt, and the disposable-worktree/no-change gate intact.
 - **A supplied conformance gate is trusted executable code.** Its cleanup TCB includes
   loaded code, the local owner and same-UID processes, and OS administrators. Keep
   parent/root descriptors close-on-exec and no-follow, identities exact, and content

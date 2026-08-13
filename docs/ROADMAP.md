@@ -80,7 +80,8 @@ Every roadmap slice must preserve all of these rules:
    control. After G0 reconciles the exact agy contract, G1 may expose agy's real
    model and effort vocabulary as explicit wrapper choices only. The wrapper resolves
    a verified pair to one exact agy model slug; it does not assume agy's two CLI
-   selectors compose. Retries keep the caller's resolved selection byte-for-byte.
+   selectors compose. Every explicit continuation attempt keeps the caller's resolved
+   selection byte-for-byte; no continuation is automatic.
 6. Permission, authentication, scope-policy, invalid-contract, untrusted-claim, and
    human-required outcomes are non-escalatable.
 7. No feature may automatically commit, push, open a pull request, merge, release,
@@ -147,8 +148,11 @@ behavior.
 **Current status:** Daily hosted observation, the optional local notifier, privacy-
 limited 30/60/90 measurement tooling, Codex `0.147.0` reconciliation, bounded GitHub
 transport hardening, and the agy `1.1.12` reconciliation are implemented and offline-
-verified in the current v0.3.3 release. Gate envelope intake, lifecycle Git stdout,
-and Actions checkout credentials are also bounded by explicit fail-closed policy.
+verified in the published v0.3.3 release. Gate envelope intake, lifecycle Git stdout,
+and Actions checkout credentials are also bounded by explicit fail-closed policy. The
+progress-aware per-job lifecycle is implemented and offline-verified in the v0.4.0
+release candidate; it is not a published-release or live-provider claim until exact-head
+CI, merge, tag, release publication, and readback complete.
 Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
@@ -508,11 +512,11 @@ approval-gated.
 - **Dual-selector evidence gate:** G1 never forwards agy's `--effort`. Passing both
   `--model` and `--effort` to agy requires a later isolated slice with official source
   or a separately approved bounded test proving exact composition, precedence, failure
-  semantics, and retry behavior for the pinned version. That future evidence cannot
+  semantics, and explicit continuation behavior for the pinned version. That future evidence cannot
   silently replace the safe single-selector mapping.
 - **Persistence and evidence:** Resolve selection once before attempt one and retain
   the exact tier or user model/effort provenance, matrix revision, and resolved agy
-  slug across every retry. Pre-dispatch and post-gate recommendations, Evidence Receipt
+  slug across every user-authorized resume or restart. Pre-dispatch and post-gate recommendations, Evidence Receipt
   v1, and the Human Report represent selected tier, user model, user effort, and
   resolved agy model as distinct optional fields. A custom model or effort remains
   unranked; recommendation output stays `recommendation_only: true`, `applied: false`,
@@ -529,7 +533,7 @@ approval-gated.
   probe; each reviewed advertised slug reaches agy as one exact
   `--model`; every matrix-admitted base/effort pair has its own test and reaches agy as
   one exact resolved compound `--model`; fixed Sonnet/Opus/GPT choices remain exact and
-  non-adjustable; retries preserve the same matrix revision and resolved slug;
+  non-adjustable; explicit continuation attempts preserve the same matrix revision and resolved slug;
   recommendations and receipts/reports label user and resolved selection without
   ranking or applying it.
 - **Minimum reject tests:** CLI/env duplicates; tier plus model or effort across any
@@ -537,7 +541,7 @@ approval-gated.
   model; compound/fixed/no-level slug plus effort; unsupported pair (including Pro
   medium); adjustable Sonnet, Opus, or GPT; unknown model or version; stale/unbound
   matrix; missing exact output; inferred capability; dual-selector forwarding;
-  invented thinking flag; fallback to a nearby level/model; retry mutation;
+  invented thinking flag; fallback to a nearby level/model; continuation-attempt mutation;
   recommendation-driven change; or escalation of a non-escalatable failure. Assert
   that fake agy is never invoked for every preflight rejection.
 - **Docs and AGENTS impact:** README option/precedence tables and examples, public
@@ -767,8 +771,11 @@ remains intentionally outside the Doctor contract.
   base, and job ID. `verify` delegates to Receipt v1. `preserve-instructions` prints
   deliberate commands; it does not run them.
 - **Dependencies:** Receipt v1; Doctor is recommended but not required.
-- **Trust boundary:** No background process, polling, daemon, commit, push, PR, merge,
-  release, auto-dispatch, or auto-model choice. Destructive cleanup is allowed only
+- **Trust boundary:** No persistent daemon, shared polling service, commit, push, PR,
+  merge, release, auto-dispatch, or auto-model choice. One explicitly started,
+  owner-private per-job controller may supervise its own agy process group; its
+  status/cancel facts are local and do not assert remote provider state or cancellation.
+  Destructive cleanup is allowed only
   after explicit user approval for the exact job ID and exact hash-bound candidate
   state recorded with receipt verdict `rejected`. Immediately before deletion it
   re-derives that digest and refuses any mismatch. It refuses `gate-passed` or
@@ -788,6 +795,35 @@ remains intentionally outside the Doctor contract.
   example while retaining the manual reference; update SKILL, REPO_MAP, lessons, and
   current completion checks after implementation.
 - **Size:** L.
+
+#### P1-A.1 — Progress-aware local dispatch lifecycle (implemented)
+
+- **Intended surface:** The canonical dispatcher keeps synchronous `run` and adds
+  explicit `start|status|wait|result|extend|cancel|resume|restart` around one private
+  local controller. Valid `init`, `step_update`, and terminal `result` events renew a
+  `10m` idle lease only; the initial hard deadline is `2h`, the caller-owned absolute
+  maximum is `12h`, and agy receives that maximum as `--print-timeout`.
+- **Trust boundary:** NDJSON progress content, prompts, raw stderr, and conversation
+  IDs remain private. Public state is sanitized elapsed/progress-age/count, attempt
+  origin, terminal reason, and resume availability. No automatic retry is allowed:
+  resume uses the exact frozen conversation/selection, while restart visibly begins a
+  new conversation. Local cancellation ends/reaps the process group but records
+  `remote_cancel_unverified`; it is not provider cancellation evidence. The narrow
+  controller is not a daemon or MCP service.
+- **Mode boundary:** Plan stages the complete prompt privately and leaves slash
+  expansion available only for its fixed driver prompt so the documented upstream plan
+  transform can apply. Accept-edits keeps slash expansion disabled by default. Plan is
+  not filesystem isolation; the disposable worktree and no-change gate remain the
+  enforcement path.
+- **Pre-gate residual:** `job.sh abort` is separately hash-approved and accepts only a
+  lifecycle-created exact terminal dispatch residual with a closed controller group and
+  empty or explicitly discarded candidate. Receipt-bound cleanup remains rejected-only.
+- **Exit criteria:** Offline subprocess tests cover fresh heartbeat, idle/hard/max
+  expiry, malformed event non-heartbeat, group reaping, evidence-gated terminal
+  taxonomy with unknown failures left unclassified,
+  explicit resume/restart distinction, stale control approvals, plan argv/prompt
+  staging, and bounded pre-gate abort. A separate authorized synthetic live exercise
+  is still required before any live-coverage claim.
 - **Done/exit criteria:** Crash-safe state transitions; cleanup only for an explicitly
   approved, exact hash-bound rejected disposable state; no loss of gate-passed or
   accepted work; no external action; and independent destructive-target review.
@@ -1040,9 +1076,10 @@ checks remain mandatory; age alone never authorizes deletion.
   key-discovery policy, revocation, CI key custody, and explicit approval of an
   external signer/tool. Never invent a home-grown signature or call a self-signed
   digest trusted provenance.
-- **Async jobs, polling, background daemon, MCP server — rejected.** They add process
-  lifecycle, retention, authentication, and cleanup boundaries while duplicating the
-  main competitor niche.
+- **Persistent async jobs, background daemon, MCP server — rejected.** They add
+  retention, authentication, and cleanup boundaries while duplicating the main
+  competitor niche. The implemented exception is one explicitly started, local,
+  per-job controller with owner-private state and no provider status API claim.
 - **Dashboard or cloud service — rejected.** It would create storage, hosting,
   authentication, privacy, and telemetry obligations unrelated to the local gate.
 - **Windows parity race — deferred.** Do not claim parity until maintainers can run

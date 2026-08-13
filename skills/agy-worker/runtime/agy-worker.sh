@@ -9,9 +9,8 @@
 #   * The prompt is --print's ARGUMENT VALUE. agy ignores stdin in print mode, and
 #     with --print placed before other flags it reads the NEXT FLAG as the message.
 #     So --print is built LAST, always.
-#   * Auth is INTERMITTENT, not sandbox-dependent: a run can fail into an interactive
-#     OAuth prompt and the identical next run succeeds. That is what max_attempts is
-#     for — it fired on the very first end-to-end test.
+#   * Auth can be intermittent and is not sandbox-dependent.  The dispatcher never
+#     retries it automatically: a caller may explicitly resume or restart instead.
 #   * Under --sandbox, SHELL commands need an `unsandboxed(<target>)` allow-rule; a
 #     `command(<name>)` rule alone is NOT enough. But a worker editing files via its
 #     FILE tools needs neither — a full accept-edits job was verified working with no
@@ -21,7 +20,8 @@ set -euo pipefail
 
 # Prompts, streams, stderr, and envelopes can contain private repository content.
 # Create dispatcher-owned artifacts under a private mask regardless of the caller's
-# umask. The agy child gets the caller's mask back so target-file behavior is stable.
+# umask. The local supervisor restores this exact mask only in the agy child, so
+# target-file behavior remains caller-controlled without exposing controller state.
 CALLER_UMASK="$(umask)"
 umask 077
 
@@ -38,9 +38,22 @@ if [[ -n "${AGY_WORKER_TIER+x}" ]]; then tier_env_seen=1; tier_env_value="$AGY_W
 if [[ -n "${AGY_WORKER_MODEL+x}" ]]; then model_env_seen=1; model_env_value="$AGY_WORKER_MODEL"; fi
 if [[ -n "${AGY_WORKER_EFFORT+x}" ]]; then effort_env_seen=1; effort_env_value="$AGY_WORKER_EFFORT"; fi
 mode="${AGY_WORKER_MODE:-plan}"               # plan | accept-edits  (rec: plan is the safe default)
-print_timeout="${AGY_WORKER_TIMEOUT:-5m0s}"
-max_attempts="${AGY_WORKER_MAX_ATTEMPTS:-2}"  # bounded retries, then fail closed (rec #11)
-job_id="${AGY_WORKER_JOB_ID:-job-$$}"
+idle_timeout="${AGY_WORKER_IDLE_TIMEOUT:-10m}"
+hard_timeout="${AGY_WORKER_HARD_TIMEOUT:-2h}"
+max_runtime="${AGY_WORKER_MAX_RUNTIME:-12h}"
+notice_interval="${AGY_WORKER_NOTICE_INTERVAL:-30m}"
+legacy_timeout_seen=0
+if [[ -n "${AGY_WORKER_TIMEOUT+x}" ]]; then
+    legacy_timeout_seen=1
+    hard_timeout="$AGY_WORKER_TIMEOUT"
+fi
+job_env_seen=0; job_id=""
+if [[ -n "${AGY_WORKER_JOB_ID+x}" ]]; then job_env_seen=1; job_id="$AGY_WORKER_JOB_ID"; fi
+dispatch_action="run"
+case "${1:-}" in
+    run|start|status|wait|result|extend|cancel|resume|restart)
+        dispatch_action="$1"; shift ;;
+esac
 
 validate_log_root() {
     python3 -B - "$1" <<'PY'
@@ -69,18 +82,84 @@ usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
                      [--tier bulk|cheap|hard|hardest|default|MODEL]
                      [--model REVIEWED_MODEL [--effort low|medium|high]]
                      [--literal-model EXACT_SLUG]
+                     [--idle-timeout 10m] [--hard-timeout 2h]
+                     [--max-runtime 12h]
                      [--add-dir DIR]... [--allow-slash-commands]
        ... task prompt on stdin ...
+
+       agy-worker.sh start [run options] ... task prompt on stdin ...
+       agy-worker.sh status|result|resume|restart --job-id JOB
+       agy-worker.sh wait --job-id JOB --after-state-sha SHA [--timeout 60s]
+       agy-worker.sh cancel --job-id JOB --approve-state-sha SHA
+       agy-worker.sh extend --job-id JOB --approve-state-sha SHA --by 2h
 
 Emits the schema-valid result envelope on stdout. Non-zero exit means the job failed;
 stdout is then NOT a valid envelope. Artifacts land in $AGY_WORKER_LOG_DIR.
 
-Exit codes: 0 ok · 2 no prompt · 3 empty output (agy silent-empty) · 4 schema invalid
-            5 agy nonzero exit · 6 permission gate hit · 7 compatibility review
-            8 compatibility evidence unavailable · 64 invalid usage
+Exit codes: 0 ok · 2 no prompt · 3 empty output · 4 schema invalid · 5 unclassified agy failure
+            6 permission gate · 7 compatibility review · 8 compatibility evidence unavailable
+            9 idle timeout · 16 hard deadline · 17-19 reserved for version-bound
+            provider/auth evidence · 20 status unavailable · 21 resume failed
+            22 cancelled · 23 output oversized · 64 invalid usage
 EOF
     exit 64
 }
+
+if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
+    control_job="$job_id"
+    control_job_seen=0
+    control_state_sha=""
+    control_after_sha=""
+    control_timeout="60s"
+    control_by=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --job-id)
+                [[ $# -ge 2 && $control_job_seen -eq 0 ]] || usage
+                control_job="$2"; control_job_seen=1; shift 2 ;;
+            --approve-state-sha)
+                [[ $# -ge 2 && -z "$control_state_sha" ]] || usage
+                control_state_sha="$2"; shift 2 ;;
+            --after-state-sha)
+                [[ $# -ge 2 && -z "$control_after_sha" ]] || usage
+                control_after_sha="$2"; shift 2 ;;
+            --timeout)
+                [[ $# -ge 2 && "$control_timeout" == "60s" ]] || usage
+                control_timeout="$2"; shift 2 ;;
+            --by)
+                [[ $# -ge 2 && -z "$control_by" ]] || usage
+                control_by="$2"; shift 2 ;;
+            -h|--help) usage ;;
+            *) echo "agy-worker.sh: invalid $dispatch_action argument: $1" >&2; usage ;;
+        esac
+    done
+    case "$control_job" in
+        ''|.|..|*[!A-Za-z0-9._-]*) echo "agy-worker.sh: invalid job ID" >&2; exit 64 ;;
+    esac
+    [[ -d "$LOG_DIR" ]] || { echo "agy-worker.sh: log root is unavailable" >&2; exit 64; }
+    validate_log_root "$LOG_DIR" || {
+        echo "agy-worker.sh: log root must be an owner-owned, non-writable real directory" >&2
+        exit 64
+    }
+    LOG_DIR="$(CDPATH= cd -- "$LOG_DIR" 2>/dev/null && pwd -P)" || exit 64
+    job_dir="$LOG_DIR/$control_job"
+    supervisor=(python3 -I -S -B "$SCRIPT_DIR/scripts/agy_dispatch.py" "$dispatch_action" --job-dir "$job_dir")
+    case "$dispatch_action" in
+        wait)
+            [[ -n "$control_after_sha" ]] || usage
+            supervisor+=(--after-state-sha "$control_after_sha" --timeout "$control_timeout") ;;
+        cancel)
+            [[ -n "$control_state_sha" ]] || usage
+            supervisor+=(--approve-state-sha "$control_state_sha") ;;
+        extend)
+            [[ -n "$control_state_sha" && -n "$control_by" ]] || usage
+            supervisor+=(--approve-state-sha "$control_state_sha" --by "$control_by") ;;
+        resume|restart)
+            [[ -n "$control_state_sha" ]] || usage
+            supervisor+=(--approve-state-sha "$control_state_sha") ;;
+    esac
+    exec "${supervisor[@]}"
+fi
 
 workdir="$PWD"
 persona=""
@@ -89,6 +168,8 @@ tier_cli_seen=0; tier_cli_value=""
 model_cli_seen=0; model_cli_value=""
 effort_cli_seen=0; effort_cli_value=""
 literal_cli_seen=0; literal_cli_value=""
+idle_cli_seen=0; hard_cli_seen=0; max_cli_seen=0
+job_cli_seen=0
 # Injection control (rec #8): worker prompts routinely embed repo content, and a
 # "/skill ..." string inside that content would otherwise expand as a real command.
 # Default OFF; only a caller who controls the whole prompt should re-enable it.
@@ -117,6 +198,22 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || usage
             (( literal_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --literal-model" >&2; exit 64; }
             literal_cli_seen=1; literal_cli_value="$2"; shift 2 ;;
+        --idle-timeout)
+            [[ $# -ge 2 ]] || usage
+            (( idle_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --idle-timeout" >&2; exit 64; }
+            idle_cli_seen=1; idle_timeout="$2"; shift 2 ;;
+        --hard-timeout)
+            [[ $# -ge 2 ]] || usage
+            (( hard_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --hard-timeout" >&2; exit 64; }
+            hard_cli_seen=1; hard_timeout="$2"; shift 2 ;;
+        --max-runtime)
+            [[ $# -ge 2 ]] || usage
+            (( max_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --max-runtime" >&2; exit 64; }
+            max_cli_seen=1; max_runtime="$2"; shift 2 ;;
+        --job-id)
+            [[ $# -ge 2 ]] || usage
+            (( job_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --job-id" >&2; exit 64; }
+            job_cli_seen=1; job_id="$2"; shift 2 ;;
         --effort)
             [[ $# -ge 2 ]] || usage
             (( effort_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --effort" >&2; exit 64; }
@@ -127,6 +224,22 @@ while [[ $# -gt 0 ]]; do
         *) echo "agy-worker.sh: unknown arg: $1" >&2; usage ;;
     esac
 done
+
+if (( job_cli_seen == 0 && job_env_seen == 0 )); then
+    job_id="job-$(python3 -I -S -B - <<'PY'
+import secrets
+print(secrets.token_hex(16))
+PY
+)" || { echo "agy-worker.sh: could not generate an opaque job ID" >&2; exit 64; }
+fi
+
+if (( legacy_timeout_seen && hard_cli_seen )); then
+    echo "agy-worker.sh: --hard-timeout conflicts with deprecated AGY_WORKER_TIMEOUT" >&2
+    exit 64
+fi
+if (( legacy_timeout_seen )); then
+    echo "agy-worker.sh: warning: AGY_WORKER_TIMEOUT is deprecated; use --hard-timeout" >&2
+fi
 
 (( tier_cli_seen == 0 || tier_env_seen == 0 )) || {
     echo "agy-worker.sh: --tier conflicts with AGY_WORKER_TIER" >&2; exit 64;
@@ -183,14 +296,38 @@ case "$mode" in
     plan|accept-edits) ;;
     *) echo "agy-worker.sh: invalid mode: $mode" >&2; exit 64 ;;
 esac
-case "$max_attempts" in
-    ''|*[!0-9]*|0) echo "agy-worker.sh: AGY_WORKER_MAX_ATTEMPTS must be a positive integer" >&2; exit 64 ;;
-esac
+if [[ -n "${AGY_WORKER_MAX_ATTEMPTS+x}" && "$AGY_WORKER_MAX_ATTEMPTS" != "1" ]]; then
+    echo "agy-worker.sh: automatic retries were removed; AGY_WORKER_MAX_ATTEMPTS must be 1" >&2
+    exit 64
+fi
 case "$job_id" in
     ''|.|..|*[!A-Za-z0-9._-]*) echo "agy-worker.sh: invalid AGY_WORKER_JOB_ID: $job_id" >&2; exit 64 ;;
 esac
 if [[ "$mode" != "plan" && ( "$persona" == "repo-inventory" || "$persona" == "diff-reviewer" ) ]]; then
     echo "agy-worker.sh: persona '$persona' is read-only and requires --mode plan" >&2
+    exit 64
+fi
+
+duration_seconds() {
+    python3 -I -S -B - "$1" <<'PY'
+import re
+import sys
+match = re.fullmatch(r"([1-9][0-9]*)(s|m|h)", sys.argv[1])
+if match is None:
+    raise SystemExit(64)
+factor = {"s": 1, "m": 60, "h": 3600}[match.group(2)]
+value = int(match.group(1)) * factor
+if value > 7 * 24 * 3600:
+    raise SystemExit(64)
+print(value)
+PY
+}
+idle_seconds="$(duration_seconds "$idle_timeout")" || { echo "agy-worker.sh: invalid idle timeout" >&2; exit 64; }
+hard_seconds="$(duration_seconds "$hard_timeout")" || { echo "agy-worker.sh: invalid hard timeout" >&2; exit 64; }
+max_seconds="$(duration_seconds "$max_runtime")" || { echo "agy-worker.sh: invalid max runtime" >&2; exit 64; }
+notice_seconds="$(duration_seconds "$notice_interval")" || { echo "agy-worker.sh: invalid notice interval" >&2; exit 64; }
+if (( idle_seconds > hard_seconds || hard_seconds > max_seconds )); then
+    echo "agy-worker.sh: require idle-timeout <= hard-timeout <= max-runtime" >&2
     exit 64
 fi
 
@@ -343,15 +480,18 @@ printf '%s' "$full_prompt" > "$full_prompt_file"
 # --- build the command -------------------------------------------------------
 # --sandbox is deliberately unconditional: see the auth note in the header.
 build_cmd() {
-    cmd=(agy --sandbox --mode "$mode" --print-timeout "$print_timeout")
+    cmd=(agy --sandbox --mode "$mode" --print-timeout "${max_seconds}s")
     cmd+=(--output-format stream-json --json-schema "$SCHEMA")
     [[ -n "$model" ]] && cmd+=(--model "$model")
-    (( disable_slash )) && cmd+=(--disable-slash-commands)
+    if (( disable_slash )) && [[ "$mode" != "plan" ]]; then
+        cmd+=(--disable-slash-commands)
+    fi
     for d in ${extra_dirs+"${extra_dirs[@]}"}; do cmd+=(--add-dir "$d"); done
     # argv ceiling: MAX_ARG_STRLEN is ~128KiB of BYTES. Oversized prompts get staged
     # to the cached file and agy is pointed at it instead of failing the job.
     local LC_ALL=C
-    if (( ${#full_prompt} > 100000 )); then
+    stage_used=0
+    if [[ "$mode" == "plan" ]] || (( ${#full_prompt} > 100000 )); then
         # The automatic out-of-repo root contains only one read-only staged prompt.
         # Logs and envelopes remain outside agy's granted roots.
         restore_staged_permissions
@@ -359,6 +499,7 @@ build_cmd() {
         printf '%s' "$full_prompt" > "$staged_prompt_file"
         chmod 0444 "$staged_prompt_file"
         chmod 0555 "$staged_dir"
+        stage_used=1
         cmd+=(--add-dir "$staged_dir")
         cmd+=(--print "Read '$staged_prompt_file' as the complete prompt, including its
 output contract, persona, and task. Follow it exactly. The staged job directory is
@@ -369,110 +510,59 @@ according to --mode and --add-dir. Return the JSON envelope inline.")
     fi
 }
 
-# --- classify the outcome ----------------------------------------------------
-# Exit 0 is not success. This is the whole point of the wrapper.
-classify() {
-    local rc=$1
-    if grep -qiE 'permission that headless mode cannot prompt for' "$stderr_file" 2>/dev/null; then
-        local want
-        want=$(grep -oiE '"[a-z]+" permission' "$stderr_file" | head -1)
-        echo "agy-worker.sh: BLOCKED — agy needs the ${want:-unknown} permission and headless mode cannot prompt." >&2
-        echo "agy-worker.sh: add a narrow allow-rule to ~/.gemini/antigravity-cli/settings.json." >&2
-        echo "agy-worker.sh: do NOT use --dangerously-skip-permissions; it approves every tool for the run." >&2
-        return 6
-    fi
-    (( rc != 0 )) && return 5
-    [[ -s "$stdout_file" ]] || return 3
-    return 0
+# --- hand one frozen command to the common foreground/background supervisor ---
+build_cmd
+command_file="$job_dir/dispatch-command.json"
+stage_dir_arg=""; stage_file_arg=""
+if (( stage_used )); then
+    stage_dir_arg="$staged_dir"; stage_file_arg="$staged_prompt_file"
+fi
+agy_version="$(<"$SCRIPT_DIR/compat/agy-verified-version.txt")"
+python3 -I -S -B - "$command_file" "$job_id" "$workdir" "$agy_version" \
+    "$idle_seconds" "$hard_seconds" "$max_seconds" "$notice_seconds" \
+    "$stage_dir_arg" "$stage_file_arg" "$CALLER_UMASK" "${cmd[@]}" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+(
+    output, job_id, workdir, agy_version, idle, hard, maximum, notice,
+    stage_dir, stage_file, child_umask, *argv
+) = sys.argv[1:]
+if not isinstance(child_umask, str) or len(child_umask) not in (3, 4) or any(ch not in "01234567" for ch in child_umask):
+    raise SystemExit(64)
+value = {
+    "schema_version": 1,
+    "kind": "agy-worker-dispatch-command",
+    "job_id": job_id,
+    "workdir": workdir,
+    "argv": argv,
+    "agy_version": agy_version,
+    "idle_seconds": int(idle),
+    "hard_seconds": int(hard),
+    "max_seconds": int(maximum),
+    "notice_seconds": int(notice),
+    "stage_dir": stage_dir or None,
+    "stage_file": stage_file or None,
+    "child_umask": child_umask,
+    "resume_prompt": (
+        "Continue the existing bounded task from its retained conversation. "
+        "Do not repeat completed work. Return only the final schema-valid envelope."
+    ),
 }
-
-# --- extract the envelope from the NDJSON stream -----------------------------
-# VERIFIED event shape (agy 1.1.9, captured 2026-08-01):
-#   {"event":"...","conversation_id":...,"init":{...}}
-#   {"event":"step_update","step_update":{...}}          (repeated)
-#   {"event":"result","result":{conversation_id,status,response,duration_seconds,
-#                               num_turns,structured_output,json_schema,usage}}
-# The schema-validated instance is result.structured_output.
-# NOTE: result.json_schema is the ECHOED SCHEMA. A naive "find the object whose keys
-# match required" walker matches the schema's own `properties` block instead of the
-# answer — that bug cost a run; hence the exact path below rather than a search.
-extract_envelope() {
-    python3 -B - "$stdout_file" <<'PY'
-import json, sys
-stream = sys.argv[1]
-result = None
-for line in open(stream, encoding="utf-8", errors="replace"):
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        evt = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    if isinstance(evt, dict) and evt.get("event") == "result":
-        result = evt.get("result")          # keep the last one
-if not isinstance(result, dict):
-    print("agy-worker: no terminal result event in stream", file=sys.stderr)
-    sys.exit(4)
-
-# agy's own run status, distinct from our envelope's status field.
-if str(result.get("status", "")).upper() != "SUCCESS":
-    print(f"agy-worker: agy reported non-success status={result.get('status')}",
-          file=sys.stderr)
-    sys.exit(4)
-
-envelope = result.get("structured_output")
-if not isinstance(envelope, dict):
-    print("agy-worker: result carried no structured_output "
-          "(schema not enforced or worker answered in prose)", file=sys.stderr)
-    sys.exit(4)
-
-# Cost/latency accounting (rec #10) — to stderr so stdout stays a clean envelope.
-usage = result.get("usage") or {}
-print(f"agy-worker: turns={result.get('num_turns')} "
-      f"duration={result.get('duration_seconds')}s usage={json.dumps(usage)}",
-      file=sys.stderr)
-
-json.dump(envelope, sys.stdout, indent=2)
-print()
+raw = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
+descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+try:
+    os.fchmod(descriptor, 0o600)
+    os.write(descriptor, raw)
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
 PY
-}
 
-# --- run, with bounded retries and fail-closed -------------------------------
-attempt=1
-rc_final=1
-while (( attempt <= max_attempts )); do
-    build_cmd
-    : > "$stdout_file"; : > "$stderr_file"
-    set +e
-    (
-        umask "$CALLER_UMASK"
-        exec "${cmd[@]}"
-    ) > "$stdout_file" 2> "$stderr_file" < /dev/null
-    agy_rc=$?
-    restore_staged_permissions
-    classify "$agy_rc"
-    verdict=$?
-    set -e
-
-    if (( verdict == 6 )); then
-        exit 6                       # permission gate: retrying reproduces it exactly
-    fi
-    if (( verdict == 0 )); then
-        if extract_envelope > "$envelope_file" \
-                && "$SCRIPT_DIR/scripts/validate-envelope.py" "$SCHEMA" "$envelope_file"; then
-            cat "$envelope_file"
-            exit 0
-        fi
-        echo "agy-worker.sh: attempt $attempt produced no schema-valid envelope" >&2
-        rc_final=4
-    else
-        echo "agy-worker.sh: attempt $attempt failed (verdict=$verdict, agy_rc=$agy_rc)" >&2
-        [[ -s "$stderr_file" ]] && head -3 "$stderr_file" >&2
-        rc_final=$verdict
-    fi
-    (( attempt++ ))
-done
-
-echo "agy-worker.sh: failing closed after $max_attempts attempts (artifacts in $LOG_DIR)" >&2
-exit "$rc_final"
+# From this point the controller owns staged-file modes and child cleanup.
+restore_staged_permissions
+trap - EXIT HUP INT TERM
+exec python3 -I -S -B "$SCRIPT_DIR/scripts/agy_dispatch.py" \
+    "$dispatch_action" --job-dir "$job_dir"

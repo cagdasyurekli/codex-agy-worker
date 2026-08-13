@@ -28,6 +28,38 @@ verification so a passing verifier cannot rewrite it. Use a branch-backed dispos
 worktree so rejected changes are isolated and accepted changes are not destroyed by
 cleanup.
 
+## Progress renews only an idle lease
+
+Progress is evidence that a locally supervised stream is still moving, not evidence
+of success or permission to run indefinitely. Renew an idle lease only for bounded,
+schema-valid lifecycle events; malformed, oversized, or unrecognized bytes must not
+count as a heartbeat. Keep idle timeout, per-attempt hard deadline, and caller-owned
+absolute maximum separate. A fresh heartbeat may justify an explicit bounded deadline
+extension, but never an automatic fresh provider attempt or an unbounded extension.
+Sanitize elapsed time, progress age/count, attempt origin, and terminal reason; do
+not publish progress content, prompts, raw errors, or conversation identifiers.
+
+Timeout recovery is a new authority decision. Prefer an exact-conversation resume
+when the local state proves eligibility; make any new conversation an explicit restart
+and label it as such. Local status and cancellation describe the controller and its
+process group only. They do not prove a provider's remote status or cancellation.
+
+Pre-gate dispatch failure is not a rejected receipt. Keep it in a separate terminal
+lifecycle state and permit cleanup only after binding the exact closed controller,
+immutable lifecycle worktree/base, current state and candidate approvals, and an
+empty or explicitly discarded candidate. Never force a receiptless residual through
+the receipt-based cleanup authority.
+
+## Mode flags can be prompt transformations
+
+An upstream mode label may be implemented by transforming the prompt rather than by
+enforcing a filesystem permission. Do not disable the mechanism that applies that
+mode in the same invocation. For plan dispatches, stage untrusted/full prompt content
+privately and pass only a fixed driver prompt when slash expansion is required for the
+upstream transformation. Still describe the mode honestly: disposable worktrees and
+post-run no-change gates, not the label itself, provide the enforceable read-only
+boundary.
+
 ## Updates are explicit and trust official sources
 
 `update.sh check` is read-only. `update.sh apply` is an explicit human-authorized
