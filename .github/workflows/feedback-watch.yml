@@ -1,0 +1,45 @@
+name: feedback-watch
+
+on:
+  schedule:
+    - cron: "23 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  feedback-watch:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Summarize bounded public feedback metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PROMPT_DISABLED: "1"
+        run: |
+          set +e
+          summary="$(./feedback-triage.sh fetch)"
+          status=$?
+          set -e
+          case "$status" in
+            0) label="available" ;;
+            *) label="unavailable"; status=2 ;;
+          esac
+          {
+            echo "## Feedback watch: $label"
+            echo
+            if [ "$label" = available ]; then
+              printf '%s\n' "$summary"
+            fi
+            echo
+            echo "Read-only aggregate: no issue writes, comments, labels, closes, creates, dispatches, or agent input."
+            echo "Repository revision: $GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

@@ -56,7 +56,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The twenty-six offline suites need no agy process, network access, API key, or GitHub login.
+The twenty-seven offline suites need no agy process, network access, API key, or GitHub login.
 
 ## See the evidence boundary in under a minute
 
@@ -97,13 +97,15 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or deferred status. This source is the **v0.4.0 release
-candidate**; the last published release remains v0.3.3. In addition to the v0.3.3
-daily compatibility observation, private 30/60/90 measurement, optional local
-notifier, version-drift-safe default/literal routing, bounded updater, gate-envelope,
-lifecycle-Git-output, and Actions-checkout hardening, v0.4.0 adds the progress-aware
-per-job dispatch lifecycle. Publication still requires exact-head CI, merge, tag, and
-release readback; source behavior is not a published-release claim.
+their explicit implemented or deferred status. The **v0.5.0 release scope represented
+by this source** adds sanitized bug/improvement drafts with exact double confirmation,
+private-only security drafts, and the bounded metadata-only feedback aggregate and
+weekly/manual watcher. The prior v0.4.0 scope includes daily compatibility observation,
+private 30/60/90 measurement, the optional local notifier, version-drift-safe
+default/literal routing, bounded updater, gate-envelope, lifecycle-Git-output,
+Actions-checkout hardening, and the progress-aware per-job dispatch lifecycle. A
+source checkout alone is not proof of publication; verify the exact reviewed tag and
+release state separately.
 P2-B and P2-C remain deferred because their required live terminal-event and
 recurring-accumulation evidence does not exist.
 Source, tests, and this README remain
@@ -1068,7 +1070,7 @@ unable to escalate permission, authentication, scope-policy, or human-required
 outcomes. The bounded jobs proved exact argv and candidate verification, not effective
 provider backend identity, quality, or billing.
 
-## Sanitized bug reports and feature requests
+## Sanitized bug reports and improvement requests
 
 Codex can create a local draft, but nothing is submitted automatically:
 
@@ -1084,16 +1086,30 @@ Codex can create a local draft, but nothing is submitted automatically:
 ./bug-report.sh preview /tmp/agy-worker-bug.md
 ```
 
+For a bounded improvement request, choose that kind explicitly:
+
+```bash
+./bug-report.sh draft --kind improvement --output /tmp/agy-worker-improvement.md \
+  --title "Show a clearer routed outcome" --component reporting \
+  --summary "The current result needs manual interpretation." \
+  --problem "Maintainers cannot quickly see why a job was routed." \
+  --proposal "Add a bounded reason label to the local report." \
+  --benefit "Faster review without exposing job data."
+```
+
 The generator reads no prompts, source files, envelopes, or logs. It conservatively
 redacts credential-bearing lines, GitHub/Bearer/Basic tokens, complete private-key
 blocks, absolute POSIX/Windows/UNC paths, current worker artifact names, and closed or
 unclosed fenced/indented code. Safe relative synthetic paths remain usable. Drafts are
 published atomically with mode `0600`, then a SHA-256 review token is printed.
-Submission requires the exact reviewed hash and an existing, authenticated GitHub
+Drafting and submitting are two separate user decisions. A public bug or improvement
+submission requires the exact reviewed hash, a second explicit confirmation that the
+same digest is public-safe, and an existing authenticated GitHub
 CLI; `gh` is optional and not a runtime dependency:
 
 ```bash
-./bug-report.sh submit /tmp/agy-worker-bug.md --confirm-sha <SHA256-FROM-PREVIEW>
+./bug-report.sh submit /tmp/agy-worker-bug.md --confirm-sha <SHA256-FROM-PREVIEW> \
+  --confirm-public-safe-sha <SAME-SHA256-FROM-PREVIEW>
 ```
 
 Immediately before invoking `gh issue create`, submission validates and prints the
@@ -1103,6 +1119,12 @@ explicitly `github.com/cagdasyurekli/codex-agy-worker`; an inherited `GH_HOST` c
 redirect it. A changed draft invalidates the hash. Without `gh`, or when `gh` fails,
 the local draft remains and nothing else is attempted.
 
+Use `--kind security` for a minimal private-only security report. Security drafts are
+deliberately ineligible for public submission. The conservative keyword check is an
+extra barrier, never proof that a report is safe to publish. Do not add details to
+make them public; use the [private vulnerability reporting
+form](https://github.com/cagdasyurekli/codex-agy-worker/security/advisories/new).
+
 The repository also includes GitHub Issue Forms for
 [sanitized bugs](.github/ISSUE_TEMPLATE/bug_report.yml) and
 [feature requests](.github/ISSUE_TEMPLATE/feature_request.yml). Feature requests ask
@@ -1110,6 +1132,15 @@ for the problem, concrete use case, acceptance criteria, alternatives, minimal s
 security/privacy impact, and an explicit privacy acknowledgement. Blank issues are
 disabled so maintainers can review proposals consistently; submission does not imply
 acceptance or roadmap commitment.
+
+Maintainers may run `./feedback-triage.sh fetch` deliberately, or inspect the weekly
+read-only workflow summary. It requests at most one metadata-only page of open issues
+from this repository and emits only canonical URLs/numbers, month counts, and
+burst/overflow flags. Because fetch never reads titles or bodies, its type counts are
+all `other` and it produces no duplicate groups; those fields are meaningful only for
+an explicitly supplied, already-safe `summarize` input. It never fetches or emits
+titles, bodies, comments, labels, usernames, or raw issue content, and it never writes
+to GitHub or feeds issue text to an agent.
 
 ---
 
@@ -1197,6 +1228,7 @@ doctor.sh                     repository wrapper for offline read-only diagnosti
 ground-truth.sh               dump live agy facts for skill authoring
 update.sh                     explicit release + agy/Codex compatibility check/apply
 bug-report.sh                 sanitized local draft/preview/optional submission
+feedback-triage.sh            bounded metadata-only feedback aggregate
 compat/                       per-tool baselines, reviewed evidence, and active exact matrix
 scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
@@ -1216,6 +1248,7 @@ scripts/agy_inventory.py      bounded exact-line semantic parser for private inv
 scripts/official_github.py    fixed, proxyless, redirect-free GitHub REST evidence client
 scripts/official_distribution.py  fixed, bounded agy distribution-manifest canary
 scripts/bug-report.py         privacy filter and SHA-bound gh submission
+scripts/feedback-triage.py    bounded metadata-only feedback parser/fetcher
 skills/agy-worker/            canonical self-contained Agent Skill and runtime
 skills/agy-worker/runtime/    dispatcher, gate, advisory, personas, schema, Python helpers
 benchmarks/v1/                frozen public synthetic benchmark manifest and inputs
@@ -1229,6 +1262,7 @@ CONTRIBUTING.md               contributor workflow and evidence expectations
 SECURITY.md                   private vulnerability reporting policy
 CODE_OF_CONDUCT.md            enforceable participation standards
 .github/pull_request_template.md  review and verification checklist
+.github/workflows/feedback-watch.yml weekly/manual read-only feedback aggregate
 tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/mutation suite
@@ -1255,7 +1289,8 @@ tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 meas
 tests/test-update-notifier.py 60-case offline local notifier lifecycle/signal suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       361-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-feedback-triage.py 26-case offline metadata-only triage suite
+tests/test-packaging.sh       365-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite

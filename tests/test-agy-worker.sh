@@ -2,6 +2,14 @@
 # Offline dispatcher and installer tests using a fake agy executable.
 set -uo pipefail
 
+# The suite owns every dispatcher input it exercises. Ambient caller values would
+# otherwise conflict with explicit selector cases or silently change default
+# timeout/mode behavior before the fake worker is reached.
+unset AGY_WORKER_TIER AGY_WORKER_MODEL AGY_WORKER_EFFORT AGY_WORKER_MODE
+unset AGY_WORKER_IDLE_TIMEOUT AGY_WORKER_HARD_TIMEOUT AGY_WORKER_MAX_RUNTIME
+unset AGY_WORKER_NOTICE_INTERVAL AGY_WORKER_TIMEOUT AGY_WORKER_SCHEMA
+unset AGY_WORKER_MAX_ATTEMPTS AGY_WORKER_JOB_ID AGY_WORKER_LOG_DIR
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$HERE/.."
 WORKER="$ROOT/agy-worker.sh"
@@ -401,7 +409,7 @@ run_worker() {
 echo "agy-worker.sh offline test suite"
 echo
 
-printf 'small task\n' | run_worker tier --tier cheap > "$TMP/tier.out" 2>/dev/null
+printf 'small task\n' | run_worker tier --tier cheap > "$TMP/tier.out" 2> "$TMP/tier.err"
 rc=$?
 expect_exit "--tier cheap produces an envelope" 0 "$rc"
 if [[ "$(<"$TMP/tier.model")" == "gemini-3.6-flash-low" ]]; then
@@ -1888,21 +1896,39 @@ else
     bad "max runtime cap after extension"
 fi
 
+cancel_barrier_ready="$TMP/cancel-active.barrier-ready"
+cancel_barrier_release="$TMP/cancel-active.barrier-release"
 printf 'cancel active job\n' | FAKE_DISPATCH_MODE=heartbeat-forever \
     FAKE_HEARTBEAT_DELAY=0.40 \
+    FAKE_HEARTBEAT_BARRIER_READY="$cancel_barrier_ready" \
+    FAKE_HEARTBEAT_BARRIER_RELEASE="$cancel_barrier_release" \
     start_worker cancel-active --idle-timeout 1s --hard-timeout 3s --max-runtime 3s \
     > "$TMP/cancel-active.start" 2> "$TMP/cancel-active.start.err"
-sleep 0.20
-control_worker status cancel-active > "$TMP/cancel-active.status"
-cancel_sha="$(status_sha "$TMP/cancel-active.status")"
-control_worker cancel cancel-active --approve-state-sha "$cancel_sha" \
-    > "$TMP/cancel-active.cancel-a" 2> "$TMP/cancel-active.cancel-a.err" &
-cancel_a_pid=$!
-control_worker cancel cancel-active --approve-state-sha "$cancel_sha" \
-    > "$TMP/cancel-active.cancel-b" 2> "$TMP/cancel-active.cancel-b.err" &
-cancel_b_pid=$!
-wait "$cancel_a_pid"; cancel_a_rc=$?
-wait "$cancel_b_pid"; cancel_b_rc=$?
+cancel_barrier_observed=0
+for (( cancel_barrier_index=0; cancel_barrier_index<200; cancel_barrier_index++ )); do
+    if [[ -e "$cancel_barrier_ready" ]]; then
+        control_worker status cancel-active > "$TMP/cancel-active.status"
+        if [[ "$(status_field "$TMP/cancel-active.status" progress_count)" -ge 1 ]]; then
+            cancel_barrier_observed=1
+            break
+        fi
+    fi
+    sleep 0.01
+done
+cancel_a_rc=64
+cancel_b_rc=64
+if [[ "$cancel_barrier_observed" == 1 ]]; then
+    cancel_sha="$(status_sha "$TMP/cancel-active.status")"
+    control_worker cancel cancel-active --approve-state-sha "$cancel_sha" \
+        > "$TMP/cancel-active.cancel-a" 2> "$TMP/cancel-active.cancel-a.err" &
+    cancel_a_pid=$!
+    control_worker cancel cancel-active --approve-state-sha "$cancel_sha" \
+        > "$TMP/cancel-active.cancel-b" 2> "$TMP/cancel-active.cancel-b.err" &
+    cancel_b_pid=$!
+    wait "$cancel_a_pid"; cancel_a_rc=$?
+    wait "$cancel_b_pid"; cancel_b_rc=$?
+fi
+: > "$cancel_barrier_release"
 cancel_rc=64
 cancel_file="$TMP/cancel-active.cancel-a"
 if [[ "$cancel_a_rc" == 0 && "$cancel_b_rc" == 64 ]]; then
@@ -1911,10 +1937,13 @@ elif [[ "$cancel_b_rc" == 0 && "$cancel_a_rc" == 64 ]]; then
     cancel_rc=0
     cancel_file="$TMP/cancel-active.cancel-b"
 fi
-cancel_after="$(status_sha "$cancel_file")"
-control_worker wait cancel-active --after-state-sha "$cancel_after" --timeout 2s \
-    > "$TMP/cancel-active.wait"
-wait_rc=$?
+wait_rc=64
+if [[ "$cancel_rc" == 0 ]]; then
+    cancel_after="$(status_sha "$cancel_file")"
+    control_worker wait cancel-active --after-state-sha "$cancel_after" --timeout 2s \
+        > "$TMP/cancel-active.wait"
+    wait_rc=$?
+fi
 if [[ "$cancel_rc" == 0 && "$wait_rc" == 0 ]] && python3 - "$TMP/cancel-active.wait" <<'PY'
 import json
 import sys

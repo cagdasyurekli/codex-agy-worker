@@ -86,6 +86,65 @@ rc=$?
 expect_exit "safe relative synthetic text remains usable" 0 "$rc"
 if grep -Fq 'tests/test_gate.py' "$SAFE_DRAFT"; then ok "safe relative path is preserved"; else bad "safe relative path is preserved"; fi
 
+IMPROVEMENT="$TMP/improvement.md"
+"$REPORT" draft --kind improvement --output "$IMPROVEMENT" --title 'Preview feedback workflow' \
+    --component reporting --summary 'Submitting useful feedback is too cumbersome.' \
+    --problem 'Users need a short, sanitized improvement path.' \
+    --proposal 'Offer a local draft that captures the requested outcome.' \
+    --benefit 'Maintainers receive bounded, reviewable requests.' \
+    > "$TMP/improvement.out" 2> "$TMP/improvement.err"
+rc=$?
+expect_exit "improvement draft has type-specific required fields" 0 "$rc"
+if grep -Fq '# Improvement: Preview feedback workflow' "$IMPROVEMENT" \
+        && grep -Fq '## Problem to solve' "$IMPROVEMENT" \
+        && grep -Fq '## Proposed improvement' "$IMPROVEMENT" \
+        && grep -Fq '## Expected benefit' "$IMPROVEMENT"; then
+    ok "improvement draft renders bounded type-specific fields"
+else
+    bad "improvement draft renders bounded type-specific fields"
+fi
+
+"$REPORT" draft --kind improvement --output "$TMP/incomplete-improvement.md" --title incomplete \
+    --summary s --problem p --proposal q \
+    > "$TMP/incomplete-improvement.out" 2> "$TMP/incomplete-improvement.err"
+rc=$?
+expect_exit "improvement rejects a missing type-specific field" 65 "$rc"
+
+SECURITY_DRAFT="$TMP/security-sensitive.md"
+"$REPORT" draft --output "$SECURITY_DRAFT" --title 'Authentication bypass in synthetic mode' \
+    --component qa-gate --summary 'A security vulnerability may affect a synthetic path.' \
+    --steps 'Use a minimal synthetic reproduction.' --expected 'Access is denied.' \
+    --actual 'The request is accepted.' > "$TMP/security-draft.out" 2> "$TMP/security-draft.err"
+rc=$?
+expect_exit "security-sensitive feedback remains a local draft" 0 "$rc"
+if grep -Fq '## Security-sensitive route' "$SECURITY_DRAFT" \
+        && grep -Fq 'security/advisories/new' "$SECURITY_DRAFT"; then
+    ok "security-sensitive draft names only the private route"
+else
+    bad "security-sensitive draft names only the private route"
+fi
+
+EXPLICIT_SECURITY_DRAFT="$TMP/explicit-security.md"
+"$REPORT" draft --kind security --output "$EXPLICIT_SECURITY_DRAFT" \
+    --title 'Archive boundary concern' --component updater \
+    --summary 'A suspected vulnerability needs private maintainer review.' \
+    > "$TMP/explicit-security.out" 2> "$TMP/explicit-security.err"
+rc=$?
+expect_exit "explicit security kind creates a private-only local draft" 0 "$rc"
+if grep -Fq '# Security: Archive boundary concern' "$EXPLICIT_SECURITY_DRAFT" \
+        && grep -Fq '## Security-sensitive route' "$EXPLICIT_SECURITY_DRAFT" \
+        && grep -Fq 'security/advisories/new' "$EXPLICIT_SECURITY_DRAFT"; then
+    ok "security kind contains only the minimal private route"
+else
+    bad "security kind contains only the minimal private route"
+fi
+"$REPORT" draft --kind security --output "$TMP/security-too-detailed.md" \
+    --title concern --component updater --summary 'Private review is needed.' \
+    --steps 'Exploit details must not be collected here.' \
+    > "$TMP/security-too-detailed.out" 2> "$TMP/security-too-detailed.err"
+rc=$?
+expect_exit "security kind rejects public-report detail fields" 65 "$rc"
+
 "$REPORT" preview "$DRAFT" > "$TMP/preview.out" 2> "$TMP/preview.err"
 rc=$?
 expect_exit "preview validates and prints exact body" 0 "$rc"
@@ -95,6 +154,33 @@ print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
 PY
 )"
 if grep -Fq "SHA256: $SHA" "$TMP/preview.out"; then ok "preview binds content to SHA256"; else bad "preview binds content to SHA256"; fi
+
+rm -f "$TMP/gh.args"
+PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
+    "$REPORT" submit "$DRAFT" --confirm-sha "$SHA" \
+    > "$TMP/missing-public-safe.out" 2> "$TMP/missing-public-safe.err"
+rc=$?
+expect_exit "public submission requires a separate exact public-safety acknowledgement" 65 "$rc"
+if [[ ! -e "$TMP/gh.args" ]]; then ok "missing public-safety acknowledgement never invokes gh"; else bad "missing public-safety acknowledgement never invokes gh"; fi
+
+PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
+    "$REPORT" submit "$DRAFT" --confirm-sha "$SHA" \
+    --confirm-public-safe-sha "0000000000000000000000000000000000000000000000000000000000000000" \
+    > "$TMP/wrong-public-safe.out" 2> "$TMP/wrong-public-safe.err"
+rc=$?
+expect_exit "wrong public-safety acknowledgement blocks submission" 65 "$rc"
+if [[ ! -e "$TMP/gh.args" ]]; then ok "wrong public-safety acknowledgement never invokes gh"; else bad "wrong public-safety acknowledgement never invokes gh"; fi
+
+MUTATED_AFTER_REVIEW="$TMP/mutated-after-review.md"
+cp "$DRAFT" "$MUTATED_AFTER_REVIEW"
+printf '\nBenign but unreviewed edit.\n' >> "$MUTATED_AFTER_REVIEW"
+PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
+    "$REPORT" submit "$MUTATED_AFTER_REVIEW" --confirm-sha "$SHA" \
+    --confirm-public-safe-sha "$SHA" \
+    > "$TMP/mutated-after-review.out" 2> "$TMP/mutated-after-review.err"
+rc=$?
+expect_exit "file mutation invalidates both review acknowledgements" 65 "$rc"
+if [[ ! -e "$TMP/gh.args" ]]; then ok "mutated reviewed file never invokes gh"; else bad "mutated reviewed file never invokes gh"; fi
 
 PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
     "$REPORT" submit "$DRAFT" --confirm-sha "0000000000000000000000000000000000000000000000000000000000000000" \
@@ -108,6 +194,7 @@ PATH="$TMP/bin:$PATH" GH_HOST=attacker.example \
     FAKE_GH_ARGS="$TMP/gh.args" FAKE_GH_BODY="$TMP/gh.body" \
     FAKE_GH_HOST="$TMP/gh.host" FAKE_ORIGINAL="$DRAFT" \
     "$REPORT" submit "$DRAFT" --confirm-sha "$SHA" \
+    --confirm-public-safe-sha "$SHA" \
     > "$TMP/submit.out" 2> "$TMP/submit.err"
 rc=$?
 expect_exit "reviewed hash permits optional gh submission" 0 "$rc"
@@ -128,6 +215,81 @@ else
     bad "submitted bytes are SHA-bound despite file mutation and hostile GH_HOST"
 fi
 cp "$TMP/reviewed-body.md" "$DRAFT"
+
+rm -f "$TMP/gh.args"
+SECURITY_SHA="$(python3 - "$SECURITY_DRAFT" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)"
+PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
+    "$REPORT" submit "$SECURITY_DRAFT" --confirm-sha "$SECURITY_SHA" \
+    --confirm-public-safe-sha "$SECURITY_SHA" \
+    > "$TMP/security-submit.out" 2> "$TMP/security-submit.err"
+rc=$?
+expect_exit "security-sensitive feedback fails closed before public submission" 70 "$rc"
+if [[ ! -e "$TMP/gh.args" ]] && grep -Fq 'security/advisories/new' "$TMP/security-submit.err"; then
+    ok "security-sensitive feedback never invokes gh and names private route"
+else
+    bad "security-sensitive feedback never invokes gh and names private route"
+fi
+
+EXPLICIT_SECURITY_SHA="$(python3 - "$EXPLICIT_SECURITY_DRAFT" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)"
+PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
+    "$REPORT" submit "$EXPLICIT_SECURITY_DRAFT" \
+    --confirm-sha "$EXPLICIT_SECURITY_SHA" \
+    --confirm-public-safe-sha "$EXPLICIT_SECURITY_SHA" \
+    > "$TMP/explicit-security-submit.out" 2> "$TMP/explicit-security-submit.err"
+rc=$?
+expect_exit "security kind cannot be publicly submitted even with both hashes" 70 "$rc"
+if [[ ! -e "$TMP/gh.args" ]]; then ok "security kind never invokes gh"; else bad "security kind never invokes gh"; fi
+
+UNKNOWN_SECURITY="$TMP/unknown-security-class.md"
+"$REPORT" draft --output "$UNKNOWN_SECURITY" \
+    --title 'Archive and fetch boundary' --component updater \
+    --summary 'Zip Slip and SSRF phrasing may describe a suspected flaw.' \
+    --steps 'Use only a minimal synthetic fixture.' \
+    --expected 'The boundary rejects the request.' --actual 'Review is required.' \
+    > "$TMP/unknown-security-draft.out" 2> "$TMP/unknown-security-draft.err"
+rc=$?
+expect_exit "unclassified security phrasing can remain a local draft" 0 "$rc"
+UNKNOWN_SECURITY_SHA="$(python3 - "$UNKNOWN_SECURITY" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)"
+PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
+    "$REPORT" submit "$UNKNOWN_SECURITY" --confirm-sha "$UNKNOWN_SECURITY_SHA" \
+    > "$TMP/unknown-security-submit.out" 2> "$TMP/unknown-security-submit.err"
+rc=$?
+if [[ "$rc" != "0" ]]; then ok "unknown vulnerability phrasing cannot submit without public-safety acknowledgement"; else bad "unknown vulnerability phrasing cannot submit without public-safety acknowledgement"; fi
+if [[ ! -e "$TMP/gh.args" ]]; then ok "classifier blind spots never bypass explicit public review"; else bad "classifier blind spots never bypass explicit public review"; fi
+
+PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
+    "$REPORT" submit "$DRAFT" --confirm-sha "$SHA" --repo attacker/example \
+    > "$TMP/wrong-repo.out" 2> "$TMP/wrong-repo.err"
+rc=$?
+expect_exit "non-canonical repository is rejected before gh" 65 "$rc"
+if [[ ! -e "$TMP/gh.args" ]]; then ok "non-canonical repository never invokes gh"; else bad "non-canonical repository never invokes gh"; fi
+
+cp "$DRAFT" "$TMP/late-security.md"
+printf '\nPossible exploit impact needs private review.\n' >> "$TMP/late-security.md"
+LATE_SECURITY_SHA="$(python3 - "$TMP/late-security.md" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)"
+PATH="$TMP/bin:$PATH" FAKE_GH_ARGS="$TMP/gh.args" \
+    "$REPORT" submit "$TMP/late-security.md" --confirm-sha "$LATE_SECURITY_SHA" \
+    --confirm-public-safe-sha "$LATE_SECURITY_SHA" \
+    > "$TMP/late-security.out" 2> "$TMP/late-security.err"
+rc=$?
+expect_exit "late security-sensitive content also blocks public submission" 70 "$rc"
+if [[ ! -e "$TMP/gh.args" ]]; then ok "late security-sensitive content never invokes gh"; else bad "late security-sensitive content never invokes gh"; fi
 
 cp "$DRAFT" "$TMP/tampered.md"
 printf '\npassword=supersecretvalue\n' >> "$TMP/tampered.md"
@@ -155,6 +317,15 @@ if grep -Fq 'I removed prompts, source code, envelopes, credentials, paths, and 
     ok "bug issue form requires sanitized evidence"
 else
     bad "bug issue form requires sanitized evidence"
+fi
+
+if "$REPORT" submit --help > "$TMP/submit-help.out" 2> "$TMP/submit-help.err" \
+        && grep -Fq -- '--confirm-public-safe-sha' "$TMP/submit-help.out" \
+        && "$REPORT" draft --help > "$TMP/draft-help.out" 2> "$TMP/draft-help.err" \
+        && grep -Fq 'security' "$TMP/draft-help.out"; then
+    ok "CLI help exposes security drafts and the second public acknowledgement"
+else
+    bad "CLI help exposes security drafts and the second public acknowledgement"
 fi
 if grep -Fq 'Acceptance criteria' "$ROOT/.github/ISSUE_TEMPLATE/feature_request.yml" \
         && grep -Fq 'Security and privacy impact' "$ROOT/.github/ISSUE_TEMPLATE/feature_request.yml" \

@@ -722,7 +722,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.4.0"
+assert manifest["version"] == "0.5.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -769,6 +769,17 @@ if [[ -x "$ROOT/doctor.sh" ]] \
     ok "root and portable packages include the canonical read-only doctor"
 else
     bad "root and portable packages include the canonical read-only doctor"
+fi
+
+if [[ -x "$ROOT/feedback-triage.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/feedback-triage.sh" ]] \
+        && [[ -x "$ROOT/scripts/feedback-triage.py" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/feedback-triage.py" ]] \
+        && cmp -s "$ROOT/scripts/feedback-triage.py" \
+            "$ROOT/skills/agy-worker/runtime/scripts/feedback-triage.py"; then
+    ok "root and portable packages include byte-identical bounded feedback triage"
+else
+    bad "root and portable packages include byte-identical bounded feedback triage"
 fi
 
 if [[ -x "$ROOT/model-selection.sh" ]] \
@@ -896,6 +907,7 @@ required_runtime_dependencies=(
     model-recommendation.sh
     model-selection.sh
     doctor.sh
+    feedback-triage.sh
     scripts/validate-envelope.py
     scripts/evidence_receipt.py
     scripts/evidence_report.py
@@ -910,6 +922,7 @@ required_runtime_dependencies=(
     scripts/agy_dispatch.py
     scripts/job_lifecycle.py
     scripts/doctor-metadata.py
+    scripts/feedback-triage.py
     schemas/worker-result.schema.json
     schemas/evidence-receipt.schema.json
     schemas/model-selection.schema.json
@@ -1136,6 +1149,33 @@ if grep -Fq 'run: ./tests/test-doctor.sh' "$ROOT/.github/workflows/test.yml" \
     ok "macOS CI runs the dedicated offline doctor suite"
 else
     bad "macOS CI runs the dedicated offline doctor suite"
+fi
+
+if python3 - "$ROOT/.github/workflows/feedback-watch.yml" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = (
+    'name: feedback-watch\n',
+    '    - cron: "23 8 * * 1"\n',
+    '  workflow_dispatch:\n',
+    '  contents: read\n',
+    '  issues: read\n',
+    '          persist-credentials: false\n',
+    '          GH_TOKEN: ${{ github.token }}\n',
+    '          GH_PROMPT_DISABLED: "1"\n',
+    'summary="$(./feedback-triage.sh fetch)"\n',
+    'Read-only aggregate: no issue writes, comments, labels, closes, creates, dispatches, or agent input."\n',
+)
+forbidden = ('--paginate', 'issue create', 'issue comment', 'issue edit', 'issue close', 'gh api repos')
+assert all(text.count(item) == 1 for item in required)
+assert not any(item in text for item in forbidden)
+PY
+then
+    ok "weekly feedback watch is fixed, read-only, and metadata-only"
+else
+    bad "weekly feedback watch is fixed, read-only, and metadata-only"
 fi
 
 if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-benchmark.py' \
@@ -1862,7 +1902,7 @@ for suite in tests/test-adoption-measurement.py tests/test-update-notifier.py; d
 done
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
-        && grep -Fq 'The twenty-six offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The twenty-seven offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 60 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
@@ -1873,9 +1913,9 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all twenty-six suites and disclose public policy boundaries"
+    ok "governance docs require all twenty-seven suites and disclose public policy boundaries"
 else
-    bad "governance docs require all twenty-six suites and disclose public policy boundaries"
+    bad "governance docs require all twenty-seven suites and disclose public policy boundaries"
 fi
 
 bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \

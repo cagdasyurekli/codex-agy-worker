@@ -26,7 +26,7 @@ is_pipeline() {
     fi
     pipeline_runtime_complete "$runtime_root" || return 1
 
-    for required in agy-worker.sh qa-gate.sh verify-job.sh evidence-report.sh benchmark.sh persona-evidence.sh profile.sh model-recommendation.sh model-selection.sh doctor.sh; do
+    for required in agy-worker.sh qa-gate.sh verify-job.sh evidence-report.sh benchmark.sh persona-evidence.sh profile.sh model-recommendation.sh model-selection.sh doctor.sh feedback-triage.sh; do
         [[ -f "$pipeline_root/$required" && -x "$pipeline_root/$required" \
             && ! -L "$pipeline_root/$required" ]] || return 1
     done
@@ -62,6 +62,7 @@ pipeline_runtime_complete() {
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
+        feedback-triage.sh \
         scripts/validate-envelope.py \
         scripts/evidence_receipt.py \
         scripts/evidence_report.py \
@@ -75,7 +76,8 @@ pipeline_runtime_complete() {
         scripts/candidate_state.py \
         scripts/agy_dispatch.py \
         scripts/job_lifecycle.py \
-        scripts/doctor-metadata.py; do
+        scripts/doctor-metadata.py \
+        scripts/feedback-triage.py; do
         case "$required" in
             */*) dependency_parent="${required%/*}" ;;
             *) dependency_parent='.' ;;

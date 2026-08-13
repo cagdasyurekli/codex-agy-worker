@@ -54,6 +54,7 @@ doctor_runtime_complete() {
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
+        feedback-triage.sh \
         scripts/validate-envelope.py \
         scripts/evidence_receipt.py \
         scripts/evidence_report.py \
@@ -67,7 +68,8 @@ doctor_runtime_complete() {
         scripts/candidate_state.py \
         scripts/agy_dispatch.py \
         scripts/job_lifecycle.py \
-        scripts/doctor-metadata.py; do
+        scripts/doctor-metadata.py \
+        scripts/feedback-triage.py; do
         case "$required" in
             */*) dependency_parent="${required%/*}" ;;
             *) dependency_parent='.' ;;
