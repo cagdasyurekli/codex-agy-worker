@@ -14,8 +14,9 @@ driver task
        -> one bounded installed `agy --version` probe for direct selection only
           -> HUP/INT/TERM closes the probe process group before task read
        -> owner-private selection.json; exact slug and matrix SHA frozen once
-  -> agy-worker.sh (bounded prompt, sandbox/mode/one exact model, private artifacts)
-  -> agy (untrusted worker)
+  -> agy-worker.sh / agy_dispatch.py (private staged prompt, one exact model,
+       process-owning per-job controller, idle/hard/max clocks)
+  -> agy (untrusted worker; NDJSON is consumed incrementally)
   -> structured envelope
   -> skills/agy-worker/runtime/scripts/validate-envelope.py (shape and contract only)
   -> one caller-chosen verification path:
@@ -47,9 +48,13 @@ The optional local lifecycle wraps that same authority without adding autonomy:
 ```text
 job.sh init (explicit repo/worktree/branch/full base/job ID -> private state v1)
   -> separately approved agy-worker.sh dispatch in the bound worktree
+       -> `run` foreground or one explicit owner-private `start` controller
+       -> local `status|wait|result|extend|cancel|resume|restart` state only
   -> job.sh verify -> exact verify-job.sh / qa-gate.sh receipt path
   -> job.sh status (read-only facts and current approval hashes)
   -> gate-passed: preserve-instructions only, never execution
+  -> receiptless terminal dispatch failure: exact dispatch binding + `job.sh abort`
+       with fresh state/candidate approvals; empty or explicitly discarded candidate
   -> rejected exit 10-14 only: fresh triple-approved cleanup
        -> durable cleanup-in-progress
        -> exact registered worktree removal
@@ -61,6 +66,15 @@ The lifecycle cannot dispatch, accept, commit, publish, or clean routed/passed w
 Reconciliation never spends an approval for stale state bytes on a later destructive
 step. Its deletion scan does not follow symlinks and rejects nested repositories,
 initialized submodules, special nodes, device/mount changes, and unbound digest drift.
+The dispatch controller is intentionally not a daemon: one explicitly started job
+owns one local process group and private state. Its status and cancellation do not
+assert remote/provider job state or remote cancellation; a local cancellation retains
+`remote_cancel_unverified`. Valid `init`, `step_update`, and terminal `result` events
+renew only the idle lease; they cannot override the hard deadline or maximum runtime.
+Resume keeps the stored conversation and frozen selection, while restart is visibly a
+new conversation. Plan mode stages the full prompt privately and relies on upstream
+plan transformation plus the disposable worktree/no-change gate, not mode as a
+filesystem isolation guarantee.
 
 The provider-independent benchmark reuses the Receipt authority without joining the
 delegation or routing path:
@@ -189,16 +203,16 @@ does not establish same-user tamper resistance.
 
 | Path | Responsibility | Owning offline suite |
 |---|---|---|
-| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh` | Root compatibility entry plus strict selector-source parsing, agy-owned no-model default, explicit unreconciled literal pass-through, canonical dispatch, bounded retries, private selection/prompt/log staging, envelope extraction | `tests/test-agy-worker.sh` (217 cases) |
+| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh`, `skills/agy-worker/runtime/scripts/agy_dispatch.py` | Root compatibility entry plus strict selector-source parsing, agy-owned no-model default, explicit unreconciled literal pass-through, private selection/prompt/log staging, process-owning progress-aware dispatch, bounded local job state, envelope extraction, explicit resume/restart, and no automatic fresh retry | `tests/test-agy-worker.sh` (238 cases) |
 | `model-selection.sh`, `skills/agy-worker/runtime/model-selection.sh`, `skills/agy-worker/runtime/scripts/model_selection.py`, portable matrix/schema/SHA | Root compatibility entry plus exact matrix-bound model/effort resolution, CLI-only version-independent literal records, bounded installed-version preflight only for reviewed resolution, and driver selection provenance | dispatcher, doctor, and packaging suites |
-| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre/post recommendations; direct selections are labelled but unranked and never applied | `tests/test-agy-worker.sh` (217 cases) |
+| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre/post recommendations; direct selections are labelled but unranked and never applied | `tests/test-agy-worker.sh` (238 cases) |
 | `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (239 cases) plus packaging synchronization checks |
 | `install.sh`, `skills/agy-worker/`, `skills/agy-worker/scripts/resolve-pipeline.sh` | Install and resolve complete-plugin, explicit-checkout, or folder-only skill layouts without fetching code | dispatcher and packaging suites |
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
 | `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, bounded envelope intake, path policy, escalation, driver verification, and internal pre-opened structured evidence handoff | `tests/test-qa-gate.sh` (42 cases) plus receipt suite no-FD compatibility checks |
 | `verify-job.sh`, `skills/agy-worker/runtime/verify-job.sh`, `skills/agy-worker/runtime/scripts/evidence_receipt.py`, `skills/agy-worker/runtime/schemas/evidence-receipt.schema.json` | Root compatibility entry plus exact input hashing, strict selection/advisory binding, startup-isolated parent-exclusive gate evidence, interruption cleanup, unsigned receipt validation, and private durable no-overwrite publication | `tests/test-evidence-receipt.sh` (88 cases) |
 | `evidence-report.sh`, `skills/agy-worker/runtime/evidence-report.sh`, `skills/agy-worker/runtime/scripts/evidence_report.py`, `skills/agy-worker/runtime/scripts/recommendation_record.py` | Root compatibility entry plus pure Receipt v1 validation, deterministic bounded text/canonical-JSON/Markdown/GitHub-Step-Summary rendering, final workflow-command and Markdown safety checks, separately trusted binding checks, privacy filtering, and optional mode-0600 no-overwrite publication; the renderer never discovers the GitHub summary environment path; stdout-only `main(argv)` returns, while file-output `main(argv)` is process-owning through `os._exit(0)` and must run as a command/subprocess; never dispatches, routes, gates, uploads, or changes a verdict | `tests/test-evidence-report.sh` (80 cases), receipt back-compat, and packaging checks |
-| `job.sh`, `skills/agy-worker/runtime/job.sh`, `skills/agy-worker/runtime/scripts/job_lifecycle.py`, `skills/agy-worker/runtime/scripts/candidate_state.py`, `skills/agy-worker/runtime/schemas/job-state.schema.json` | Root compatibility entry plus process-owning lifecycle CLI, external private v1 state, canonical branch-backed worktree init/status, fixed sanitized Git execution with incrementally bounded stdout and no checkout hook/filter authority, exact Receipt delegation/binding, read-only preserve instructions, interrupted-progress reconciliation, rc1-only ref-absence evidence, and triple-approved rejected-only compare-and-delete cleanup; the shared candidate helper is also the gate's sole digest implementation | `tests/test-job-lifecycle.py` (101 cases), gate parity, doctor, and packaging suites |
+| `job.sh`, `skills/agy-worker/runtime/job.sh`, `skills/agy-worker/runtime/scripts/job_lifecycle.py`, `skills/agy-worker/runtime/scripts/candidate_state.py`, `skills/agy-worker/runtime/schemas/job-state.schema.json` | Root compatibility entry plus process-owning lifecycle CLI, external private state, canonical branch-backed worktree init/status, fixed sanitized Git execution with incrementally bounded stdout and no checkout hook/filter authority, exact Receipt delegation/binding, read-only preserve instructions, interrupted-progress reconciliation, receipt-bound rejected-only cleanup, and separately bound pre-gate abort; the shared candidate helper is also the gate's sole digest implementation | `tests/test-job-lifecycle.py` (116 cases), gate parity, doctor, and packaging suites |
 | `benchmark.sh`, `benchmarks/v1/`, `docs/BENCHMARKING.md`, `skills/agy-worker/runtime/benchmark.sh`, `skills/agy-worker/runtime/scripts/benchmark.py`, benchmark schemas and portable assets | Root compatibility entry plus explicit clean-commit or reviewed portable-source-manifest authority, structurally complete v1 schemas, immutable offline plan, exact one synthetic attempt per ordered caller variant/task, canonical Receipt v1 delegation, unsigned result binding, and pure manifest-order completeness report; no agy, provider, ranking, route, recommendation, retry, or live mode | `tests/test-benchmark.py` (104 cases), doctor, resolver, and packaging suites |
 | `persona-evidence.sh`, `compat/personas/`, `docs/PERSONAS.md`, and canonical runtime registry/schema/validator assets | Fixed shipped-persona allowlist, coherent immutable tool/persona/version source chain, exact immutable P1-C source assets/plan/result, exact per-phase evidence inventories, exact `accept-edits` candidate-state authority, reviewed P1-C public-contract bindings, immutable semantic evidence/approval/review ancestry, and pure deterministic table; no persona execution, dynamic registration, promotion, trust, routing, ranking, or acceptance | `tests/test-persona-evidence.py` (124 cases), doctor, resolver, and packaging suites |
 | `profile.sh`, `profiles/v1/`, `docs/PROFILES.md`, and canonical runtime profile/schema/renderer assets | Fixed hash-bound data-only workload skeletons plus pure canonical list/show; maintained mode/persona/path-policy-shape suggestions only, with caller repo/tier/path/verifier/approval still required; no discovery, command, dispatch, route, gate, acceptance, provider, network, or Git action | `tests/test-workload-profiles.py` (89 cases), doctor, resolver, and packaging suites |
@@ -219,15 +233,15 @@ does not establish same-user tamper resistance.
 | `scripts/models_capture_1_1_12_profile.py` | Independent process-inert bridge from exact recovered 1.1.12 source/snapshot/binding evidence to a canonical profile with explicit capture parent. Parent `nlink` is diagnostic because profile publication changes it; stable parent identity remains bound and exact named authorities are revalidated separately. It never lists or reads account HOME, launches a child, uses provider/network/Git authority, or authorizes capture. | `tests/test-models-capture-1-1-12-profile.py` (30 offline cases) |
 | `scripts/models_capture_1_1_12_runner.py` | Independent explicit-account `models` capture bridge using logical argv `source --output-format json models`. It accepts only one exact owner-private bounded TMP cache leaf, descriptor/hash compare-deletes and fsyncs it, then requires empty scratch before private `captured` publication. It cannot accept inventory, update metadata, route, retry, or inspect HOME contents. | `tests/test-models-capture-1-1-12-runner.py` (56 offline runner cases; 86 combined with the separate 30-case profile suite) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact review binding, optional issue submission | `tests/test-reporting.sh` (21 cases) |
-| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (354 cases) plus platform validators |
-| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (354 cases) plus review |
-| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (354 cases) plus rendered review |
-| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (354 cases) plus rendered review |
+| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (361 cases) plus platform validators |
+| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (361 cases) plus review |
+| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (361 cases) plus rendered review |
+| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (361 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
 | `.github/workflows/test.yml`, `scripts/ci-diff-check.sh`, `scripts/ci_diff_check.py` | macOS CI for committed PR/push diff hygiene, syntax, and all twenty-six offline suites. Checkout supplies the event range; the helper performs no fetch and linearly scans changed immutable head blobs from one bounded `git cat-file --batch` process, independently of attributes or diff drivers. | packaging policy tests plus GitHub Actions |
 | `.github/workflows/compatibility-watch.yml` | Daily/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
-| `docs/ROADMAP.md` | Dependency-ordered product slices with explicit implemented or deferred status, historical v0.2.0 scope, current v0.3.3 release context, approval gates, and honest success measures; source, tests, and README remain current-behavior authority | human review; implementation claims remain prohibited until their slices land |
+| `docs/ROADMAP.md` | Dependency-ordered product slices with explicit implemented or deferred status, historical v0.2.0 scope, published v0.3.3 and v0.4.0 release-candidate context, approval gates, and honest success measures; source, tests, and README remain current-behavior authority | human review; implementation claims remain prohibited until their slices land |
 | `AGENTS.md`, `docs/lessons_learned.md`, this file | Durable contributor rules and architecture | `agents-md-auditor` after material changes |
 
 ## Trust boundaries

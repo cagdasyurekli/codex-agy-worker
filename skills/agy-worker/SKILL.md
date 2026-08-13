@@ -239,10 +239,11 @@ publication.
 
 Every job has an owner-private `selection.json`. Direct selection records input
 sources, exact resolved slug, installed version, matrix version/source, and matrix SHA
-before attempt one; retries cannot re-resolve it. This is provenance, not gate
-evidence or acceptance. Tier selection remains explicit: retries reuse the same
-model, and this skill never infers a thinking level or silently escalates after a gate
-failure. Direct advisories are unranked, recommendation-only, and never applied.
+before attempt one; a user-authorized `resume` or `restart` cannot re-resolve it. This
+is provenance, not gate evidence or acceptance. Tier selection remains explicit:
+every continuation attempt reuses the same model, and this skill never infers a
+thinking level or silently escalates after a gate failure. Direct advisories are
+unranked, recommendation-only, and never applied.
 Every user-supplied `--add-dir` must resolve inside the audited `--workdir`; do not
 delegate multi-repository mutation in one job.
 
@@ -266,9 +267,9 @@ they execute in a scratch directory, not this repo, and will mislead you.
 The driver runs every command; report commands_run and tests_run as empty arrays.
 ```
 
-If the dispatcher exits nonzero, stop. Its stdout is not an envelope. Inspect the
-job-scoped stderr after its built-in bounded attempts; never feed failed stdout into
-the gate or wrap dispatch in an unbounded retry loop.
+If the dispatcher exits nonzero, stop. Its stdout is not an envelope. Inspect only
+the sanitized local terminal state; never feed failed stdout into the gate or wrap
+dispatch in a retry loop.
 
 ### 4. Read the worker exit code
 
@@ -276,10 +277,15 @@ the gate or wrap dispatch in an unbounded retry loop.
 |---|---|---|
 | 0 | Envelope produced | Continue to step 5 — you have NOT verified anything yet |
 | 2 | No/empty prompt | Your bug |
-| 3 | agy returned empty stdout | Check `logs/<job>/stderr.txt`; usually a permission gate |
+| 3 | Empty output | Read the sanitized terminal reason only; do not inspect raw stderr or infer a permission cause |
 | 4 | No schema-valid envelope | Worker answered in prose; retighten the task |
-| 5 | agy failed | Read stderr; often transient auth — retry once |
+| 5 | agy failed, unclassified | Preserve the job; ask for explicit resume, restart, or stop |
 | 6 | Permission gate | Read stderr for the exact rule. **Do not** suggest `--dangerously-skip-permissions` |
+| 9 | Idle timeout | Fresh progress stopped; ask for explicit resume, restart, or stop |
+| 16 | Hard deadline | Terminal: choose explicit resume, restart, or stop; an extension was possible only before expiry with fresh progress |
+| 17–19 | Reserved provider/auth terminal classes | Use only with an exact version-bound reviewed signature; the current 1.1.12 allowlist is empty, so unproven cases remain exit 5 |
+| 20–22 | Local status/resume/cancel terminal result | Read the sanitized reason; never automatically re-dispatch |
+| 23 | Output oversized | Preserve the job and read the sanitized terminal reason; do not treat partial bytes as an envelope |
 
 ### 5. Verify — this is the step that matters
 
@@ -408,11 +414,31 @@ Do not pass worker-written rationale as evidence. Do not change `TIER` from this
 output. Default/custom model labels and the highest named tier produce
 `no-escalation` when no ordered higher tier can be proved.
 
-### 6. Retry policy
+### 6. Progress-aware lifecycle
 
-At most one corrective re-dispatch, with the specific failure quoted back. If the
-second attempt fails, take over the task yourself or escalate to the user. Do not
-loop — vague "try again" cycles are the documented failure mode here.
+Use `run` for short work. For an explicitly started long job, use `start`, then
+`status` or bounded `wait`; `result` is valid only after terminal success. Treat
+`init`, `step_update`, and terminal `result` as a local idle-lease heartbeat only.
+Fresh progress does not prove completion or grant unlimited runtime. The defaults are
+`10m` idle, `2h` initial hard deadline, and `12h` caller-owned maximum. At 80% of a
+deadline with fresh progress, Codex may apply one `2h` `extend` within that maximum
+and report a sanitized status every `30m`; it must never reveal progress contents.
+
+On failure or timeout, do not start another provider call automatically. Offer the
+user `resume` (same frozen conversation), explicit `restart` (new conversation,
+frozen task and selection), or preserve-and-stop. `cancel` is local: wait for the
+controller to close/reap its process group and report `remote_cancel_unverified`, not
+provider cancellation. `status`, `wait`, and `cancel` are local-controller facts, not
+an agy status/result/cancel API.
+
+For `plan`, the dispatcher stages the complete prompt privately and gives agy only a
+fixed driver prompt with slash expansion available for the documented plan transform.
+For `accept-edits`, slash expansion remains disabled by default. Neither mode is a
+filesystem isolation claim: use the disposable worktree and post-run no-change gate.
+
+If dispatch failed before a receipt exists, use the separately approved `job.sh abort`
+path only for its exact terminal dispatch residual. It must not be forced through the
+receipt-based cleanup path.
 
 ### 7. Preserve or deliberately reject
 

@@ -8,7 +8,11 @@ WORKER="$ROOT/agy-worker.sh"
 RECOMMENDER="$ROOT/model-recommendation.sh"
 SELECTOR="$ROOT/model-selection.sh"
 TMP="$(mktemp -d -t agyworker-dispatch.XXXXXX)"
-trap 'rm -rf "$TMP"' EXIT
+if [[ "${KEEP_AGY_WORKER_TEST_TMP:-0}" == "1" ]]; then
+    trap 'printf "kept test tmp: %s\n" "$TMP" >&2' EXIT
+else
+    trap 'rm -rf "$TMP"' EXIT
+fi
 pass=0; fail=0
 
 ok() { printf '  ok   %s\n' "$1"; pass=$((pass+1)); }
@@ -295,10 +299,56 @@ if [[ -n "${FAKE_SIGNAL_PARENT:-}" ]]; then
     kill -s "$FAKE_SIGNAL_PARENT" "$PPID"
     exit "${FAKE_EXIT_CODE:-23}"
 fi
+case "${FAKE_DISPATCH_MODE:-result}" in
+    idle)
+        sleep 10
+        exit 0
+        ;;
+    malformed-heartbeat)
+        while :; do
+            printf '{not-valid-json}\n'
+            sleep 0.10
+        done
+        ;;
+    oversized-heartbeat)
+        python3 -c 'import json; print(json.dumps({"event":"step_update", "blob":"x" * 1100000}))'
+        sleep 10
+        exit 0
+        ;;
+    heartbeat-forever)
+        printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+        if [[ -n "${FAKE_SIDE_EFFECT_FILE:-}" ]]; then
+            ( sleep 3; : > "$FAKE_SIDE_EFFECT_FILE" ) &
+        fi
+        while :; do
+            printf '{"event":"step_update","step_update":{}}\n'
+            sleep "${FAKE_HEARTBEAT_DELAY:-0.10}"
+        done
+        ;;
+    heartbeat-success)
+        printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+        heartbeat_count="${FAKE_HEARTBEAT_COUNT:-8}"
+        heartbeat_delay="${FAKE_HEARTBEAT_DELAY:-0.10}"
+        heartbeat_index=0
+        while [[ "$heartbeat_index" -lt "$heartbeat_count" ]]; do
+            printf '{"event":"step_update","step_update":{}}\n'
+            sleep "$heartbeat_delay"
+            heartbeat_index=$((heartbeat_index+1))
+        done
+        ;;
+    conversation-fail)
+        printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+        exit 23
+        ;;
+esac
 if [[ "${FAKE_EXIT_CODE:-0}" != "0" ]]; then
+    [[ -z "${FAKE_ERROR_LINE:-}" ]] || printf '%s\n' "$FAKE_ERROR_LINE" >&2
     exit "$FAKE_EXIT_CODE"
 fi
 status="${FAKE_AGY_STATUS:-SUCCESS}"
+if [[ "${FAKE_DISPATCH_MODE:-result}" == "result" ]]; then
+    printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+fi
 if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
 else
@@ -330,6 +380,11 @@ run_worker() {
     FAKE_DISPATCH_COUNT_FILE="${FAKE_DISPATCH_COUNT_FILE:-}" \
     FAKE_FAIL_FIRST="${FAKE_FAIL_FIRST:-0}" \
     FAKE_TRY_STAGE_WRITE="${FAKE_TRY_STAGE_WRITE:-0}" \
+    FAKE_DISPATCH_MODE="${FAKE_DISPATCH_MODE:-result}" \
+    FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
+    FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
+    FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
+    FAKE_ERROR_LINE="${FAKE_ERROR_LINE:-}" \
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
@@ -1050,7 +1105,7 @@ expect_invalid_selection_record "runtime validator rejects extra artifact fields
 RETRY_FIXTURE="$TMP/selector-retry-freeze"
 make_selector_fixture "$RETRY_FIXTURE" clean
 RETRY_MATRIX="$RETRY_FIXTURE/runtime/compat/agy-model-effort-matrix.json"
-printf 'retry must freeze selection\n' | \
+printf 'automatic retry is forbidden\n' | \
     FAKE_DISPATCH_COUNT_FILE="$TMP/retry-freeze.dispatch-count" \
     FAKE_MUTATE_MATRIX="$RETRY_MATRIX" FAKE_FAIL_FIRST=1 \
     AGY_TEST_WORKER="$RETRY_FIXTURE/runtime/agy-worker.sh" \
@@ -1058,7 +1113,7 @@ printf 'retry must freeze selection\n' | \
         --model gemini-3.6-flash --effort high \
         > "$TMP/retry-freeze.out" 2> "$TMP/retry-freeze.err"
 rc=$?
-if [[ "$rc" == 0 ]] && python3 - \
+if [[ "$rc" == 5 ]] && python3 - \
         "$TMP/logs/retry-freeze/selection.json" "$RETRY_MATRIX" \
         "$RETRY_FIXTURE/runtime/compat/agy-model-effort-matrix.sha256" \
         "$TMP/retry-freeze.calls" "$TMP/retry-freeze.worker-calls" <<'PY'
@@ -1072,13 +1127,13 @@ expected = open(sha_path, encoding="ascii").read().strip()
 assert selection["resolved_agy_model"] == "gemini-3.6-flash-high"
 assert selection["matrix_sha256"] == expected
 assert hashlib.sha256(open(matrix_path, "rb").read()).hexdigest() != expected
-assert open(calls_path).read().splitlines() == ["version", "worker", "worker"]
-assert open(workers_path).read().splitlines() == ["worker", "worker"]
+assert open(calls_path).read().splitlines() == ["version", "worker"]
+assert open(workers_path).read().splitlines() == ["worker"]
 PY
 then
-    ok "retry freezes the resolved slug and exact matrix SHA before attempt one"
+    ok "failure never starts an automatic fresh retry and preserves frozen selection"
 else
-    bad "retry freezes the resolved slug and exact matrix SHA before attempt one"
+    bad "failure must not start an automatic fresh retry"
 fi
 
 WRAPPER_FIXTURE="$TMP/root-wrapper"
@@ -1234,16 +1289,21 @@ fi
 WEAK_UMASK_ROOT="$TMP/weak-umask"
 mkdir -p "$WEAK_UMASK_ROOT"
 cp -R "$ROOT/skills/agy-worker" "$WEAK_UMASK_ROOT/agy-worker"
-python3 - "$WEAK_UMASK_ROOT/agy-worker/runtime/agy-worker.sh" <<'PY'
+python3 - "$WEAK_UMASK_ROOT/agy-worker/runtime/scripts/agy_dispatch.py" <<'PY'
 import sys
 
 path = sys.argv[1]
 with open(path, encoding="utf-8") as handle:
     source = handle.read()
-old = 'CALLER_UMASK="$(umask)"\numask 077\n'
-new = 'CALLER_UMASK="$(umask)"\n# TEST MUTATION: private creation mask removed.\n'
+old = 'def _ensure_new_private(path: Path) -> int:\n    return os.open(\n'
+new = 'def _ensure_new_private(path: Path) -> int:\n    os.umask(0)  # TEST MUTATION: private artifact creation weakened.\n    return os.open(\n'
 if source.count(old) != 1:
-    raise SystemExit("expected exactly one private-mask block")
+    raise SystemExit("expected exactly one supervisor private-artifact block")
+source = source.replace(old, new, 1)
+old = '        0o600,\n    )\n\n\ndef _stage('
+new = '        0o666,\n    )\n\n\ndef _stage('
+if source.count(old) != 1:
+    raise SystemExit("expected exactly one supervisor artifact mode")
 with open(path, "w", encoding="utf-8") as handle:
     handle.write(source.replace(old, new, 1))
 PY
@@ -1257,9 +1317,9 @@ chmod 0755 "$WEAK_UMASK_LOG"
         AGY_TEST_LOG_DIR="$WEAK_UMASK_LOG" run_worker weak-umask
 ) > "$TMP/weak-umask.out" 2>/dev/null
 rc=$?
-if [[ "$rc" == "0" ]] \
+if [[ "$rc" != "0" && ! -s "$TMP/weak-umask.out" ]] \
         && ! private_tree_is_private "$WEAK_UMASK_LOG/weak-umask" 2>/dev/null; then
-    ok "privacy acceptance rejects a runtime with the private creation mask removed"
+    ok "supervisor fails closed when a mutation weakens private creation"
 else
     bad "privacy acceptance rejects a runtime with the private creation mask removed"
 fi
@@ -1368,7 +1428,7 @@ expect_print_last "oversized prompt keeps --print and its value last" "$TMP/over
 WEAK_RESTORE_ROOT="$TMP/weak-restore"
 mkdir -p "$WEAK_RESTORE_ROOT"
 cp -R "$ROOT/skills/agy-worker" "$WEAK_RESTORE_ROOT/agy-worker"
-python3 - "$WEAK_RESTORE_ROOT/agy-worker/runtime/agy-worker.sh" <<'PY'
+python3 - "$WEAK_RESTORE_ROOT/agy-worker/runtime/scripts/agy_dispatch.py" <<'PY'
 import sys
 
 path = sys.argv[1]
@@ -1376,12 +1436,12 @@ with open(path, encoding="utf-8") as handle:
     source = handle.read()
 replacements = (
     (
-        'chmod 0700 "$staged_dir" 2>/dev/null || true',
-        'chmod 0755 "$staged_dir" 2>/dev/null || true',
+        'directory.chmod(0o555 if readonly else 0o700)',
+        'directory.chmod(0o555 if readonly else 0o755)',
     ),
     (
-        'chmod 0600 "$staged_prompt_file" 2>/dev/null || true',
-        'chmod 0644 "$staged_prompt_file" 2>/dev/null || true',
+        'source.chmod(0o444 if readonly else 0o600)',
+        'source.chmod(0o444 if readonly else 0o644)',
     ),
 )
 for old, new in replacements:
@@ -1399,9 +1459,9 @@ AGY_TEST_WORKER="$WEAK_RESTORE_ROOT/agy-worker/runtime/agy-worker.sh" \
     run_worker weak-restore < "$TMP/large-task.txt" \
     > "$TMP/weak-restore.out" 2>/dev/null
 rc=$?
-if [[ "$rc" == "0" ]] \
+if [[ "$rc" == "20" && ! -s "$TMP/weak-restore.out" ]] \
         && ! private_tree_is_private "$WEAK_RESTORE_LOG/weak-restore" 2>/dev/null; then
-    ok "privacy acceptance rejects a runtime that restores staged artifacts publicly"
+    ok "supervisor fails closed when a mutation restores staged artifacts publicly"
 else
     bad "privacy acceptance rejects a runtime that restores staged artifacts publicly"
 fi
@@ -1456,6 +1516,569 @@ printf 'bad envelope\n' | PATH="$TMP/bin:$PATH" \
     "$WORKER" --workdir "$TMP/repo" > "$TMP/bad.out" 2>/dev/null
 rc=$?
 expect_exit "dispatcher independently rejects schema-invalid output" 4 "$rc"
+
+echo
+echo "progress-aware local dispatch lifecycle tests:"
+
+status_sha() {
+    python3 - "$1" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["state_sha256"])
+PY
+}
+status_field() {
+    python3 - "$1" "$2" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))[sys.argv[2]])
+PY
+}
+wait_terminal() {
+    local job="$1" state_file="$2" next_file index sha status
+    next_file="$state_file.next"
+    for (( index=0; index<40; index++ )); do
+        status="$(status_field "$state_file" status)"
+        case "$status" in succeeded|failed|cancelled|orphaned) return 0 ;; esac
+        sha="$(status_sha "$state_file")"
+        control_worker wait "$job" --after-state-sha "$sha" --timeout 1s > "$next_file" || return 1
+        mv "$next_file" "$state_file"
+    done
+    return 1
+}
+control_worker() {
+    local action="$1" job="$2"; shift 2
+    PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" \
+        FAKE_MODEL_FILE="$TMP/$job.model" FAKE_PROMPT_FILE="$TMP/$job.prompt" \
+        FAKE_DIRS_FILE="$TMP/$job.dirs" FAKE_ARGV_FILE="$TMP/$job.argv" \
+        FAKE_STAGE_RESULT_FILE="$TMP/$job.stage-result" \
+        FAKE_CALLS_FILE="$TMP/$job.calls" FAKE_WORKER_CALLS_FILE="$TMP/$job.worker-calls" \
+    FAKE_DISPATCH_MODE="${FAKE_DISPATCH_MODE:-result}" \
+        FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
+        FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
+        "$WORKER" "$action" --job-id "$job" "$@"
+}
+start_worker() {
+    local job="$1"; shift
+    PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID="$job" \
+        FAKE_MODEL_FILE="$TMP/$job.model" FAKE_PROMPT_FILE="$TMP/$job.prompt" \
+        FAKE_DIRS_FILE="$TMP/$job.dirs" FAKE_ARGV_FILE="$TMP/$job.argv" \
+        FAKE_STAGE_RESULT_FILE="$TMP/$job.stage-result" \
+        FAKE_CALLS_FILE="$TMP/$job.calls" FAKE_WORKER_CALLS_FILE="$TMP/$job.worker-calls" \
+        FAKE_DISPATCH_MODE="${FAKE_DISPATCH_MODE:-result}" \
+        FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
+        FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
+        "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$TMP/repo" "$@"
+}
+
+printf 'plan staged prompt marker\n' | run_worker plan-staged --mode plan \
+    > "$TMP/plan-staged.out" 2> "$TMP/plan-staged.err"
+rc=$?
+if [[ "$rc" == 0 ]] && python3 - "$TMP/plan-staged.argv" \
+        "$TMP/logs/plan-staged/staged/full-prompt.txt" <<'PY'
+import sys
+argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
+staged = open(sys.argv[2], encoding="utf-8").read()
+assert b"--mode" in argv and argv[argv.index(b"--mode") + 1] == b"plan"
+assert b"--disable-slash-commands" not in argv
+assert b"Read '" in argv[-1]
+assert "plan staged prompt marker" in staged
+PY
+then
+    ok "plan stages the complete prompt and leaves slash expansion available only for its fixed driver prompt"
+else
+    bad "plan staging/slash contract"
+fi
+
+printf 'heartbeat completes\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_HEARTBEAT_COUNT=8 FAKE_HEARTBEAT_DELAY=0.10 \
+    run_worker heartbeat-success --idle-timeout 1s --hard-timeout 2s --max-runtime 3s \
+    > "$TMP/heartbeat-success.out" 2> "$TMP/heartbeat-success.err"
+rc=$?
+if [[ "$rc" == 0 ]] && python3 - "$TMP/logs/heartbeat-success/dispatch-state.json" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["status"] == "succeeded"
+assert state["progress_count"] >= 2
+assert state["conversation_id"] == "fake-conversation-01"
+PY
+then
+    ok "valid init and step updates renew the idle lease without changing hard limits"
+else
+    bad "valid stream heartbeats must complete below the hard deadline"
+fi
+
+printf 'idle must fail\n' | FAKE_DISPATCH_MODE=idle \
+    run_worker idle-timeout --idle-timeout 1s --hard-timeout 2s --max-runtime 3s \
+    > "$TMP/idle-timeout.out" 2> "$TMP/idle-timeout.err"
+rc=$?
+if [[ "$rc" == 9 ]] && [[ "$(status_field "$TMP/idle-timeout.err" reason)" == idle_timeout ]]; then
+    ok "silent worker terminates at the independent idle deadline"
+else
+    bad "silent worker idle timeout classification"
+fi
+
+printf 'malformed heartbeat must not count\n' | FAKE_DISPATCH_MODE=malformed-heartbeat \
+    run_worker malformed-heartbeat --idle-timeout 1s --hard-timeout 2s --max-runtime 3s \
+    > "$TMP/malformed-heartbeat.out" 2> "$TMP/malformed-heartbeat.err"
+rc=$?
+if [[ "$rc" == 9 ]] && python3 - "$TMP/malformed-heartbeat.err" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["reason"] == "idle_timeout"
+assert state["progress_count"] == 0
+PY
+then
+    ok "malformed events never renew the idle lease"
+else
+    bad "malformed event heartbeat boundary"
+fi
+
+printf 'oversized heartbeat must not count\n' | FAKE_DISPATCH_MODE=oversized-heartbeat \
+    run_worker oversized-heartbeat --idle-timeout 1s --hard-timeout 2s --max-runtime 3s \
+    > "$TMP/oversized-heartbeat.out" 2> "$TMP/oversized-heartbeat.err"
+rc=$?
+if [[ "$rc" == 23 ]] && python3 - "$TMP/oversized-heartbeat.err" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["reason"] == "output_oversized"
+assert state["progress_count"] == 0
+PY
+then
+    ok "oversized stream events fail closed and never renew the idle lease"
+else
+    bad "oversized event heartbeat boundary"
+fi
+
+for classified_case in authentication_text provider_text unknown_text; do
+    case "$classified_case" in
+        authentication_text) classified_line='authentication failed' ;;
+        provider_text) classified_line='provider unavailable' ;;
+        *) classified_line='unrecognized provider diagnostic' ;;
+    esac
+    printf 'classification %s\n' "$classified_case" | FAKE_EXIT_CODE=23 \
+        FAKE_ERROR_LINE="$classified_line" run_worker "classification-$classified_case" \
+        --idle-timeout 1s --hard-timeout 2s --max-runtime 3s \
+        > "$TMP/classification-$classified_case.out" \
+        2> "$TMP/classification-$classified_case.err"
+    rc=$?
+    if [[ "$rc" == 5 ]] \
+            && [[ "$(status_field "$TMP/classification-$classified_case.err" reason)" == agy_failed_unclassified ]]; then
+        ok "unproven $classified_case remains unclassified without free-form guessing"
+    else
+        bad "closed error classification for $classified_case"
+    fi
+done
+
+HARD_SIDE_EFFECT="$TMP/hard-side-effect"
+printf 'hard limit must win\n' | FAKE_DISPATCH_MODE=heartbeat-forever \
+    FAKE_SIDE_EFFECT_FILE="$HARD_SIDE_EFFECT" \
+    run_worker hard-timeout --idle-timeout 1s --hard-timeout 1s --max-runtime 3s \
+    > "$TMP/hard-timeout.out" 2> "$TMP/hard-timeout.err"
+rc=$?
+sleep 1
+if [[ "$rc" == 16 && ! -e "$HARD_SIDE_EFFECT" ]] && python3 - "$TMP/hard-timeout.err" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["reason"] == "hard_deadline_exceeded"
+assert state["limit_kind"] == "hard"
+assert state["progress_count"] >= 2
+PY
+then
+    ok "fresh heartbeats cannot exceed hard deadline and process-group descendants are reaped"
+else
+    bad "hard deadline/process-group boundary"
+fi
+
+FOREGROUND_SIGNAL_SIDE_EFFECT="$TMP/foreground-signal-side-effect"
+printf 'foreground signal ownership\n' > "$TMP/foreground-signal.task"
+PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID=foreground-signal \
+    FAKE_MODEL_FILE="$TMP/foreground-signal.model" \
+    FAKE_PROMPT_FILE="$TMP/foreground-signal.prompt" \
+    FAKE_DIRS_FILE="$TMP/foreground-signal.dirs" \
+    FAKE_ARGV_FILE="$TMP/foreground-signal.argv" \
+    FAKE_STAGE_RESULT_FILE="$TMP/foreground-signal.stage-result" \
+    FAKE_CALLS_FILE="$TMP/foreground-signal.calls" \
+    FAKE_WORKER_CALLS_FILE="$TMP/foreground-signal.worker-calls" \
+    FAKE_VERSION_MODE=ready FAKE_DISPATCH_MODE=heartbeat-forever \
+    FAKE_SIDE_EFFECT_FILE="$FOREGROUND_SIGNAL_SIDE_EFFECT" \
+    "$WORKER" --workdir "$TMP/repo" --idle-timeout 2s --hard-timeout 4s --max-runtime 4s \
+    < "$TMP/foreground-signal.task" > "$TMP/foreground-signal.out" \
+    2> "$TMP/foreground-signal.err" &
+foreground_wrapper=$!
+for (( foreground_wait=0; foreground_wait<200; foreground_wait++ )); do
+    [[ -s "$TMP/foreground-signal.worker-calls" ]] && break
+    kill -0 "$foreground_wrapper" 2>/dev/null || break
+    sleep 0.01
+done
+kill -TERM "$foreground_wrapper" 2>/dev/null || true
+wait "$foreground_wrapper"
+foreground_rc=$?
+sleep 1
+if [[ "$foreground_rc" == 143 && ! -e "$FOREGROUND_SIGNAL_SIDE_EFFECT" ]] \
+        && python3 - "$TMP/logs/foreground-signal/dispatch-state.json" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["status"] == "cancelled"
+assert state["reason"] == "interrupted"
+assert state["exit_code"] == 143
+PY
+then
+    ok "foreground TERM is forwarded through the controller and leaves no late process-group side effect"
+else
+    bad "foreground signal ownership/process-group cleanup"
+fi
+
+printf 'async status wait result\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_HEARTBEAT_COUNT=12 FAKE_HEARTBEAT_DELAY=0.10 \
+    start_worker async-success --idle-timeout 1s --hard-timeout 3s --max-runtime 3s \
+    > "$TMP/async-success.start" 2> "$TMP/async-success.start.err"
+rc=$?
+control_worker status async-success > "$TMP/async-success.status"
+status_rc=$?
+async_sha="$(status_sha "$TMP/async-success.status")"
+control_worker wait async-success --after-state-sha "$async_sha" --timeout 1s \
+    > "$TMP/async-success.wait"
+wait_rc=$?
+sleep 2
+control_worker result async-success > "$TMP/async-success.result"
+result_rc=$?
+if [[ "$rc" == 0 && "$status_rc" == 0 && "$wait_rc" == 0 && "$result_rc" == 0 ]] \
+        && python3 - "$TMP/async-success.status" "$TMP/async-success.wait" "$TMP/async-success.result" <<'PY'
+import json
+import sys
+first, changed, result = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
+assert first["status"] in {"queued", "running"}
+assert changed["state_sha256"] != first["state_sha256"] or changed["status"] == "succeeded"
+assert result["status"] == "completed"
+PY
+then
+    ok "start/status/wait/result expose only bounded local controller state and a terminal valid envelope"
+else
+    bad "async start/status/wait/result lifecycle"
+fi
+
+startup_stress=0
+for (( startup_index=1; startup_index<=12; startup_index++ )); do
+    startup_job="startup-race-$startup_index"
+    printf 'fast startup race\n' | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=1 \
+        FAKE_HEARTBEAT_DELAY=0.01 start_worker "$startup_job" --idle-timeout 1s \
+        --hard-timeout 3s --max-runtime 4s > "$TMP/$startup_job.start" \
+        2> "$TMP/$startup_job.err" || { startup_stress=1; break; }
+    wait_terminal "$startup_job" "$TMP/$startup_job.start" || { startup_stress=1; break; }
+    if ! python3 - "$TMP/$startup_job.start" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["status"] == "succeeded"
+PY
+    then startup_stress=1; break; fi
+done
+if [[ "$startup_stress" == 0 ]]; then
+    ok "fast controller ownership handoff is stable without a competing parent PID transition"
+else
+    bad "fast controller ownership handoff race"
+fi
+
+printf 'extend active deadline\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_HEARTBEAT_COUNT=2 FAKE_HEARTBEAT_DELAY=1.00 \
+    start_worker extend-active --idle-timeout 2s --hard-timeout 2s --max-runtime 4s \
+    > "$TMP/extend-active.start" 2> "$TMP/extend-active.start.err"
+sleep 0.20
+control_worker status extend-active > "$TMP/extend-active.status"
+extend_sha="$(status_sha "$TMP/extend-active.status")"
+control_worker extend extend-active --approve-state-sha "$(printf '0%.0s' {1..64})" --by 1s \
+    > "$TMP/extend-active.stale" 2>&1
+stale_extend_rc=$?
+control_worker extend extend-active --approve-state-sha "$extend_sha" --by 3s \
+    > "$TMP/extend-active.over-max" 2>&1
+over_max_rc=$?
+control_worker extend extend-active --approve-state-sha "$extend_sha" --by 1s \
+    > "$TMP/extend-active.extend"
+extend_rc=$?
+sleep 2
+control_worker result extend-active > "$TMP/extend-active.result"
+result_rc=$?
+if [[ "$stale_extend_rc" == 64 && "$over_max_rc" == 64 \
+        && "$extend_rc" == 0 && "$result_rc" == 0 ]] && python3 - \
+        "$TMP/extend-active.extend" "$TMP/extend-active.result" <<'PY'
+import json
+import sys
+extended = json.load(open(sys.argv[1], encoding="utf-8"))
+result = json.load(open(sys.argv[2], encoding="utf-8"))
+assert extended["hard_seconds"] == 3.0
+assert result["status"] == "completed"
+PY
+then
+    ok "stale/over-max extend is rejected; fresh state-SHA extend changes only the local hard deadline"
+else
+    bad "extend control lifecycle"
+fi
+
+printf 'max runtime wins after extension\n' | FAKE_DISPATCH_MODE=heartbeat-forever \
+    FAKE_HEARTBEAT_DELAY=0.60 \
+    start_worker max-runtime --idle-timeout 1s --hard-timeout 1s --max-runtime 2s \
+    > "$TMP/max-runtime.start" 2> "$TMP/max-runtime.start.err"
+sleep 0.20
+control_worker status max-runtime > "$TMP/max-runtime.status"
+max_sha="$(status_sha "$TMP/max-runtime.status")"
+control_worker extend max-runtime --approve-state-sha "$max_sha" --by 1s \
+    > "$TMP/max-runtime.extend"
+max_extend_rc=$?
+max_after="$(status_sha "$TMP/max-runtime.extend")"
+control_worker wait max-runtime --after-state-sha "$max_after" --timeout 3s \
+    > "$TMP/max-runtime.wait"
+max_wait_rc=$?
+for (( max_wait_index=0; max_wait_index<20; max_wait_index++ )); do
+    max_status="$(status_field "$TMP/max-runtime.wait" status)"
+    [[ "$max_status" == "running" || "$max_status" == "cancel-requested" ]] || break
+    max_after="$(status_sha "$TMP/max-runtime.wait")"
+    control_worker wait max-runtime --after-state-sha "$max_after" --timeout 1s \
+        > "$TMP/max-runtime.wait.next"
+    max_wait_rc=$?
+    mv "$TMP/max-runtime.wait.next" "$TMP/max-runtime.wait"
+done
+if [[ "$max_extend_rc" == 0 && "$max_wait_rc" == 0 ]] && python3 - "$TMP/max-runtime.wait" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["status"] == "failed"
+assert state["reason"] == "hard_deadline_exceeded"
+assert state["limit_kind"] == "max-runtime"
+assert state["hard_seconds"] == 2.0 == state["max_seconds"]
+PY
+then
+    ok "max runtime remains an absolute cap even after an approved hard-deadline extension"
+else
+    bad "max runtime cap after extension"
+fi
+
+printf 'cancel active job\n' | FAKE_DISPATCH_MODE=heartbeat-forever \
+    FAKE_HEARTBEAT_DELAY=0.40 \
+    start_worker cancel-active --idle-timeout 1s --hard-timeout 3s --max-runtime 3s \
+    > "$TMP/cancel-active.start" 2> "$TMP/cancel-active.start.err"
+sleep 0.20
+control_worker status cancel-active > "$TMP/cancel-active.status"
+cancel_sha="$(status_sha "$TMP/cancel-active.status")"
+control_worker cancel cancel-active --approve-state-sha "$cancel_sha" \
+    > "$TMP/cancel-active.cancel-a" 2> "$TMP/cancel-active.cancel-a.err" &
+cancel_a_pid=$!
+control_worker cancel cancel-active --approve-state-sha "$cancel_sha" \
+    > "$TMP/cancel-active.cancel-b" 2> "$TMP/cancel-active.cancel-b.err" &
+cancel_b_pid=$!
+wait "$cancel_a_pid"; cancel_a_rc=$?
+wait "$cancel_b_pid"; cancel_b_rc=$?
+cancel_rc=64
+cancel_file="$TMP/cancel-active.cancel-a"
+if [[ "$cancel_a_rc" == 0 && "$cancel_b_rc" == 64 ]]; then
+    cancel_rc=0
+elif [[ "$cancel_b_rc" == 0 && "$cancel_a_rc" == 64 ]]; then
+    cancel_rc=0
+    cancel_file="$TMP/cancel-active.cancel-b"
+fi
+cancel_after="$(status_sha "$cancel_file")"
+control_worker wait cancel-active --after-state-sha "$cancel_after" --timeout 2s \
+    > "$TMP/cancel-active.wait"
+wait_rc=$?
+if [[ "$cancel_rc" == 0 && "$wait_rc" == 0 ]] && python3 - "$TMP/cancel-active.wait" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["status"] == "cancelled"
+assert state["reason"] == "cancelled"
+assert state["remote_cancel_unverified"] is True
+PY
+then
+    ok "concurrent cancel is state-SHA-gated, reaps the local process group, and does not claim remote cancellation"
+else
+    bad "cancel control lifecycle"
+fi
+
+PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$TMP/queued-cancel-job" "$TMP/repo" <<'PY'
+import fcntl
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+source, job_text, workdir = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("agy_dispatch_queued_cancel", source)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+job = Path(job_text).resolve()
+job.mkdir(mode=0o700)
+command = {
+    "schema_version": 1, "kind": "agy-worker-dispatch-command",
+    "job_id": "queued-cancel", "workdir": workdir,
+    "argv": ["agy", "--sandbox", "--mode", "plan", "--print-timeout", "4s",
+             "--output-format", "stream-json", "--json-schema", str(Path(source).parent.parent / "schemas/worker-result.schema.json"),
+             "--print", "must not dispatch"],
+    "agy_version": "1.1.12", "idle_seconds": 1, "hard_seconds": 2,
+    "max_seconds": 4, "notice_seconds": 3, "stage_dir": None,
+    "stage_file": None, "child_umask": "022", "resume_prompt": "continue",
+}
+module.write_atomic(job, module.COMMAND_NAME, command)
+lock_path = job / module.LOCK_NAME
+lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+os.fchmod(lock_fd, 0o600)
+fcntl.flock(lock_fd, fcntl.LOCK_EX)
+state, sha = module.create_state(job, "initial", resume=False)
+module.command_control(job, "cancel", sha, None)
+child = subprocess.Popen(
+    [sys.executable, "-I", "-S", "-B", source, "controller", "--job-dir", str(job),
+     "--ownership-fd", str(lock_fd)], pass_fds=(lock_fd,), stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+os.close(lock_fd)
+assert child.wait(timeout=5) == module.EXIT_BY_REASON["cancelled"]
+terminal, _, _ = module.load_state(job)
+assert terminal["status"] == "cancelled"
+assert terminal["reason"] == "cancelled"
+assert terminal["remote_cancel_unverified"] is False
+assert not (job / "stream.ndjson").exists()
+PY
+queued_cancel_rc=$?
+if [[ "$queued_cancel_rc" == 0 ]]; then
+    ok "queued cancel is consumed by inherited controller ownership without starting agy"
+else
+    bad "queued cancel/start ownership handoff"
+fi
+
+printf 'orphan fixture\n' | FAKE_EXIT_CODE=23 \
+    run_worker orphan-no-resume --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/orphan-no-resume.out" 2> "$TMP/orphan-no-resume.err"
+ORPHAN_JOB="$TMP/logs/orphan-no-resume"
+rm -f "$ORPHAN_JOB/dispatch-state.json"
+rm -f "$ORPHAN_JOB/stream.ndjson" "$ORPHAN_JOB/stderr.txt"
+PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$ORPHAN_JOB" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+spec = importlib.util.spec_from_file_location("agy_dispatch_orphan", sys.argv[1])
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+job = Path(sys.argv[2])
+command, raw, identity = module.load_command(job)
+state = module.initial_state(
+    command, "initial", 1, command_sha=module.digest(raw),
+    command_identity=identity, stage_sha=None, stage_identity=None,
+)
+state.update({
+    "status": "orphaned", "reason": "status_unavailable", "exit_code": 20,
+    "finished_epoch": 1.0, "conversation_id": "fake-conversation-01",
+    "resume_available": False,
+})
+module.write_atomic(job, module.STATE_NAME, state)
+PY
+orphan_sha="$(PYTHONDONTWRITEBYTECODE=1 python3 - "$ORPHAN_JOB/dispatch-state.json" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)"
+orphan_calls_before="$(wc -l < "$TMP/orphan-no-resume.calls" | tr -d ' ')"
+control_worker resume orphan-no-resume --approve-state-sha "$orphan_sha" >/dev/null 2>&1
+orphan_resume_rc=$?
+control_worker restart orphan-no-resume --approve-state-sha "$orphan_sha" >/dev/null 2>&1
+orphan_restart_rc=$?
+orphan_calls_after="$(wc -l < "$TMP/orphan-no-resume.calls" | tr -d ' ')"
+if [[ "$orphan_resume_rc" == 21 && "$orphan_restart_rc" == 64 \
+        && "$orphan_calls_before" == "$orphan_calls_after" ]]; then
+    ok "orphaned dispatch is preserve-only and cannot resume or restart a provider call"
+else
+    bad "orphaned dispatch continuation boundary"
+fi
+
+printf 'resume conversation\n' | FAKE_DISPATCH_MODE=conversation-fail \
+    run_worker resume-case --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/resume-case.out" 2> "$TMP/resume-case.err"
+rc=$?
+resume_sha="$(status_sha "$TMP/resume-case.err")"
+FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    control_worker resume resume-case --approve-state-sha "$resume_sha" \
+    > "$TMP/resume-case.resume"
+resume_rc=$?
+wait_terminal resume-case "$TMP/resume-case.resume"
+resume_wait_rc=$?
+control_worker result resume-case > "$TMP/resume-case.result"
+result_rc=$?
+if [[ "$rc" == 5 && "$resume_rc" == 0 && "$resume_wait_rc" == 0 && "$result_rc" == 0 ]] && python3 - \
+        "$TMP/resume-case.argv" "$TMP/resume-case.resume" <<'PY'
+import json
+import sys
+argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+assert argv.count(b"--conversation") == 1
+assert argv[argv.index(b"--conversation") + 1] == b"fake-conversation-01"
+assert b"Continue the existing bounded task" in argv[-1]
+assert state["attempt_origin"] == "conversation-resume"
+assert state["attempt"] == 2
+PY
+then
+    ok "resume uses the exact private conversation and fixed continuation prompt without re-resolving selection"
+else
+    bad "conversation resume contract"
+fi
+
+printf 'restart without conversation\n' | FAKE_DISPATCH_MODE=conversation-fail \
+    run_worker restart-case --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/restart-case.out" 2> "$TMP/restart-case.err"
+restart_sha="$(status_sha "$TMP/restart-case.err")"
+FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    control_worker restart restart-case --approve-state-sha "$restart_sha" \
+    > "$TMP/restart-case.restart"
+restart_rc=$?
+wait_terminal restart-case "$TMP/restart-case.restart"
+restart_wait_rc=$?
+control_worker result restart-case > "$TMP/restart-case.result"
+result_rc=$?
+if [[ "$restart_rc" == 0 && "$restart_wait_rc" == 0 && "$result_rc" == 0 ]] && python3 - \
+        "$TMP/restart-case.argv" "$TMP/restart-case.restart" <<'PY'
+import json
+import sys
+argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+assert b"--conversation" not in argv
+assert state["attempt_origin"] == "fresh-restart"
+assert state["attempt"] == 2
+PY
+then
+    ok "restart is explicit fresh origin and remains distinct from resume"
+else
+    bad "fresh restart contract"
+fi
+
+printf 'resume unavailable\n' | FAKE_EXIT_CODE=23 \
+    run_worker resume-unavailable --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/resume-unavailable.out" 2> "$TMP/resume-unavailable.err"
+unavailable_sha="$(status_sha "$TMP/resume-unavailable.err")"
+FAKE_DISPATCH_MODE=heartbeat-success control_worker resume resume-unavailable \
+    --approve-state-sha "$unavailable_sha" > "$TMP/resume-unavailable.resume" 2>&1
+resume_rc=$?
+resume_unavailable_calls="$(wc -l < "$TMP/resume-unavailable.calls" | tr -d ' ')"
+if [[ "$resume_rc" == 21 && "$resume_unavailable_calls" == 1 ]]; then
+    ok "resume failure does not start a new provider call"
+else
+    bad "resume failure must not redispatch (exit $resume_rc, calls $resume_unavailable_calls)"
+fi
+
+SYMLINK_STATE_DIR="$TMP/logs/resume-unavailable"
+mv "$SYMLINK_STATE_DIR/dispatch-state.json" "$SYMLINK_STATE_DIR/dispatch-state.real"
+ln -s dispatch-state.real "$SYMLINK_STATE_DIR/dispatch-state.json"
+control_worker status resume-unavailable > "$TMP/symlink-state.out" 2> "$TMP/symlink-state.err"
+symlink_state_rc=$?
+if [[ "$symlink_state_rc" == 20 ]] && [[ ! -s "$TMP/symlink-state.out" ]]; then
+    ok "control state refuses symlink replacement rather than following a swapped state file"
+else
+    bad "control state symlink replacement"
+fi
 
 echo
 echo "model-recommendation.sh offline policy tests:"

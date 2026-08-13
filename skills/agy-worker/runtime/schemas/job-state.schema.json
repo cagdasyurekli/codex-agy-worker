@@ -26,7 +26,8 @@
         "initializing", "ready", "init-failed", "init-interrupted",
         "verifying", "verify-failed", "verify-interrupted",
         "verified-gate-passed", "verified-rejected", "verified-routed",
-        "cleanup-in-progress", "cleaned"
+        "dispatch-failed", "cleanup-in-progress", "cleaned",
+        "abort-in-progress", "aborted"
       ]
     },
     "job_id": {"type": "string"},
@@ -41,6 +42,30 @@
     "branch_ref": {"type": "string"},
     "base": {"type": "string"},
     "receipt": {"anyOf": [{"type": "object"}, {"type": "null"}]},
+    "dispatch": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path", "sha256", "state_identity", "job_identity", "lock_identity",
+            "status", "reason", "exit_code", "candidate_state_sha256"
+          ],
+          "properties": {
+            "path": {"type": "string"},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "state_identity": {"type": "object"},
+            "job_identity": {"type": "object"},
+            "lock_identity": {"type": "object"},
+            "status": {"type": "string", "enum": ["failed", "cancelled"]},
+            "reason": {"type": "string", "minLength": 1},
+            "exit_code": {"type": "integer"},
+            "candidate_state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
     "cleanup_step": {
       "type": "string",
       "enum": ["none", "worktree-removed", "branch-removed"]
@@ -50,7 +75,7 @@
       "anyOf": [
         {
           "type": "string",
-          "enum": ["init-failed", "interrupted", "verify-failed", "cleanup-failed"]
+          "enum": ["init-failed", "interrupted", "verify-failed", "dispatch-failed", "cleanup-failed"]
         },
         {"type": "null"}
       ]

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -38,6 +40,7 @@ def load(name: str, path: Path) -> Any:
 
 MODULE = load("job_lifecycle_tested", MODULE_PATH)
 CANDIDATE = sys.modules["candidate_state"]
+DISPATCH = sys.modules["agy_dispatch"]
 TMP = Path(tempfile.mkdtemp(prefix="agyworker-job-lifecycle-tests.")).resolve()
 TMP.chmod(0o700)
 passed = 0
@@ -175,6 +178,68 @@ class Fixture:
             "--approve-state-sha", state_sha or self.state_sha(),
             "--approve-candidate-sha", candidate or bound.get("final_candidate_state_sha256", "0" * 64),
         )
+
+    def make_failed_dispatch(
+        self, label: str = "dispatch", *, status: str = "failed",
+        reason: str = "idle_timeout", exit_code: int = 9,
+    ) -> Path:
+        job = self.root / label
+        job.mkdir(mode=0o700)
+        lock = job / DISPATCH.LOCK_NAME
+        lock.write_bytes(b""); lock.chmod(0o600)
+        now = time.time()
+        value = {
+            "schema_version": 1, "kind": "agy-worker-dispatch-state",
+            "sequence": 2, "previous_state_sha256": "1" * 64,
+            "job_id": self.job_id, "status": status, "attempt": 1,
+            "attempt_origin": "initial", "reason": reason, "exit_code": exit_code,
+            "controller_pid": None, "workdir": str(self.worktree),
+            "created_epoch": now - 2, "started_epoch": now - 2,
+            "updated_epoch": now, "finished_epoch": now,
+            "elapsed_seconds": 2.0, "progress_count": 1,
+            "last_progress_epoch": now - 1, "notice_count": 0,
+            "hard_seconds": 7200.0, "max_seconds": 43200.0,
+            "idle_seconds": 600.0, "attempt_base_elapsed": 0.0,
+            "cancel_requested": False, "conversation_id": None,
+            "resume_available": False, "remote_cancel_unverified": False,
+            "result_path": None, "stream_path": str(job / "stream.ndjson"),
+            "stderr_path": str(job / "stderr.log"), "agy_returncode": -15,
+            "limit_kind": "idle",
+            "command_sha256": "2" * 64,
+            "command_identity": [1, 2, os.getuid(), os.getgid(), 0o600],
+            "stage_sha256": None, "stage_identity": None,
+            "result_sha256": None, "result_identity": None,
+        }
+        DISPATCH.validate_state(value)
+        state = job / DISPATCH.STATE_NAME
+        state.write_bytes(DISPATCH.canonical(value)); state.chmod(0o600)
+        return state
+
+    def record_dispatch(
+        self, dispatch_state: Path, *, state_sha: str | None = None,
+        candidate: str | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return run_cli(
+            "record-dispatch-failure", "--state", str(self.state),
+            "--dispatch-state", str(dispatch_state),
+            "--approve-job", self.job_id,
+            "--approve-state-sha", state_sha or self.state_sha(),
+            "--approve-candidate-sha", candidate or CANDIDATE.candidate_state_digest(self.worktree, self.base),
+        )
+
+    def abort(
+        self, *, state_sha: str | None = None, candidate: str | None = None,
+        discard: bool = False,
+    ) -> subprocess.CompletedProcess[bytes]:
+        value = self.value(); bound = value.get("dispatch") or {}
+        argv = [
+            "abort", "--state", str(self.state), "--approve-job", self.job_id,
+            "--approve-state-sha", state_sha or self.state_sha(),
+            "--approve-candidate-sha", candidate or bound.get("candidate_state_sha256", "0" * 64),
+        ]
+        if discard:
+            argv.append("--discard-unverified")
+        return run_cli(*argv)
 
 
 def clean_fixture(fixture: Fixture) -> None:
@@ -423,6 +488,8 @@ check("status is read-only and grants zero cleanup authority", lambda: status.re
 check("preserve instructions reject unverified state", lambda: run_cli("preserve-instructions", "--state", str(fixture.state)).returncode == 64)
 
 original = fixture.value()
+legacy = dict(original); legacy.pop("dispatch")
+check("pre-feature schema-v1 lifecycle states remain readable", lambda: MODULE.validate_state(legacy) is legacy)
 mutated = dict(original); mutated["previous_state_sha256"] = None
 check("state history rejects a missing digest after sequence one", lambda: rejects(lambda: MODULE.validate_state(mutated)))
 mutated = dict(original); mutated["branch_ref"] = "refs/heads/other"
@@ -471,6 +538,143 @@ cleanup = fixture.cleanup()
 check("digest-bound symlink cleans without traversing its outside target", lambda: cleanup.returncode == 0 and outside_target.read_bytes() == b"preserve\n")
 check("triple-approved rejected candidate cleans exact worktree and ref", lambda: not fixture.worktree.exists() and git(fixture.repo, "rev-parse", "--verify", f"refs/heads/{fixture.branch}", check_result=False) == b"")
 check("cleanup retains private canonical cleaned tombstone", lambda: fixture.value()["phase"] == "cleaned" and fixture.value()["cleanup_step"] == "branch-removed" and stat.S_IMODE(fixture.state.stat().st_mode) == 0o600)
+
+
+abort_clean = Fixture("abort-clean")
+assert abort_clean.init().returncode == 0
+clean_sha = CANDIDATE.candidate_state_digest(abort_clean.worktree, abort_clean.base)
+check("canonical clean candidate digest matches explicit empty-domain digest", lambda: clean_sha == MODULE.EMPTY_CANDIDATE_STATE_SHA256)
+clean_dispatch = abort_clean.make_failed_dispatch()
+check("dispatch failure recording rejects stale lifecycle SHA", lambda: abort_clean.record_dispatch(clean_dispatch, state_sha="0" * 64).returncode == 64)
+clean_record = abort_clean.record_dispatch(clean_dispatch)
+check("receiptless terminal dispatch failure binds exact state and candidate", lambda: clean_record.returncode == 0 and abort_clean.value()["phase"] == "dispatch-failed" and abort_clean.value()["receipt"] is None)
+check("abort rejects stale lifecycle SHA", lambda: abort_clean.abort(state_sha="0" * 64).returncode == 64)
+clean_abort = abort_clean.abort()
+check("clean terminal dispatch residual aborts without discard flag", lambda: clean_abort.returncode == 0 and abort_clean.value()["phase"] == "aborted" and not abort_clean.worktree.exists())
+
+
+abort_changed = Fixture("abort-changed")
+assert abort_changed.init().returncode == 0
+abort_changed.worktree.joinpath("fixture.txt").write_text("unverified edit\n", encoding="utf-8")
+changed_dispatch = abort_changed.make_failed_dispatch()
+assert abort_changed.record_dispatch(changed_dispatch).returncode == 0
+check("changed candidate abort requires explicit discard-unverified", lambda: abort_changed.abort().returncode == 64 and abort_changed.worktree.exists())
+changed_abort = abort_changed.abort(discard=True)
+check("explicit discard removes exact bound unverified candidate", lambda: changed_abort.returncode == 0 and abort_changed.value()["phase"] == "aborted" and not abort_changed.worktree.exists())
+
+
+abort_active = Fixture("abort-active")
+assert abort_active.init().returncode == 0
+active_dispatch = abort_active.make_failed_dispatch()
+active_lock_fd = os.open(active_dispatch.parent / DISPATCH.LOCK_NAME, os.O_RDWR)
+fcntl.flock(active_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+try:
+    check("active supervisor lock blocks dispatch-failure recording", lambda: abort_active.record_dispatch(active_dispatch).returncode == 64)
+finally:
+    fcntl.flock(active_lock_fd, fcntl.LOCK_UN); os.close(active_lock_fd)
+clean_fixture(abort_active)
+
+
+abort_orphaned = Fixture("abort-orphaned")
+assert abort_orphaned.init().returncode == 0
+orphaned_dispatch = abort_orphaned.make_failed_dispatch(
+    status="orphaned", reason="status_unavailable", exit_code=20,
+)
+check(
+    "orphaned supervisor state is preserve-only and cannot authorize abort",
+    lambda: abort_orphaned.record_dispatch(orphaned_dispatch).returncode == 64
+    and abort_orphaned.value()["phase"] == "ready"
+    and abort_orphaned.worktree.exists(),
+)
+clean_fixture(abort_orphaned)
+
+
+abort_symlink = Fixture("abort-symlink")
+assert abort_symlink.init().returncode == 0
+real_dispatch = abort_symlink.make_failed_dispatch()
+alias_dispatch = abort_symlink.root / "dispatch-alias.json"
+alias_dispatch.symlink_to(real_dispatch)
+check("symlink dispatch state is never recordable", lambda: abort_symlink.record_dispatch(alias_dispatch).returncode == 64)
+clean_fixture(abort_symlink)
+
+
+abort_replaced = Fixture("abort-replaced")
+assert abort_replaced.init().returncode == 0
+replaced_dispatch = abort_replaced.make_failed_dispatch()
+assert abort_replaced.record_dispatch(replaced_dispatch).returncode == 0
+replaced_raw = replaced_dispatch.read_bytes()
+replaced_dispatch.unlink(); replaced_dispatch.write_bytes(replaced_raw); replaced_dispatch.chmod(0o600)
+check("dispatch state inode replacement blocks abort even with identical bytes", lambda: abort_replaced.abort().returncode == 64 and abort_replaced.worktree.exists())
+clean_fixture(abort_replaced)
+
+
+abort_race = Fixture("abort-race")
+assert abort_race.init().returncode == 0
+race_dispatch = abort_race.make_failed_dispatch()
+assert abort_race.record_dispatch(race_dispatch).returncode == 0
+race_lock_fd = os.open(race_dispatch.parent / DISPATCH.LOCK_NAME, os.O_RDWR)
+fcntl.flock(race_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+try:
+    check("active controller lock blocks abort after failure was recorded", lambda: abort_race.abort().returncode == 64 and abort_race.worktree.exists())
+finally:
+    fcntl.flock(race_lock_fd, fcntl.LOCK_UN); os.close(race_lock_fd)
+clean_fixture(abort_race)
+
+
+def abort_holds_lock_across_delete() -> bool:
+    subject = Fixture("abort-held-lock")
+    if subject.init().returncode != 0:
+        return False
+    dispatch_state = subject.make_failed_dispatch()
+    if subject.record_dispatch(dispatch_state).returncode != 0:
+        clean_fixture(subject); return False
+    observed: list[bool] = []
+    original_checkpoint = MODULE._cleanup_checkpoint
+    probe = (
+        "import fcntl,os,sys;f=os.open(sys.argv[1],os.O_RDWR);"
+        "\ntry:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)"
+        "\nexcept BlockingIOError:raise SystemExit(0)"
+        "\nraise SystemExit(1)"
+    )
+
+    def checkpoint(name: str) -> None:
+        if name == "before-abort-worktree-remove":
+            completed = subprocess.run(
+                [PYTHON, "-I", "-S", "-B", "-c", probe, str(dispatch_state.parent / DISPATCH.LOCK_NAME)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=3, check=False,
+            )
+            observed.append(completed.returncode == 0)
+
+    value = subject.value()
+    argv = [
+        "abort", "--state", str(subject.state), "--approve-job", subject.job_id,
+        "--approve-state-sha", subject.state_sha(), "--approve-candidate-sha",
+        value["dispatch"]["candidate_state_sha256"],
+    ]
+    try:
+        MODULE._cleanup_checkpoint = checkpoint
+        prior_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            result = MODULE.main(argv)
+        finally:
+            sys.stdout = prior_stdout
+    finally:
+        MODULE._cleanup_checkpoint = original_checkpoint
+        clean_fixture(subject)
+    return result == 0 and observed == [True]
+
+
+check("abort holds supervisor lock through destructive worktree removal", abort_holds_lock_across_delete)
+
+
+abort_protected = Fixture("abort-protected")
+assert abort_protected.init().returncode == 0
+abort_protected.worktree.joinpath("fixture.txt").write_text("verified edit\n", encoding="utf-8")
+assert abort_protected.verify_reject().returncode == 10
+check("receipt-bound rejected work cannot enter dispatch abort", lambda: abort_protected.abort(discard=True).returncode == 64 and abort_protected.worktree.exists())
+clean_fixture(abort_protected)
 
 
 passed_fixture = Fixture("passed")
@@ -966,7 +1170,7 @@ for old, new, label in (
     check(f"mutation removing {label} is killed", lambda mutated=mutated: not checkout_preflight_contract(mutated))
 
 def candidate_policy_contract(data: bytes) -> bool:
-    return data.count(b"git_reader=git") >= 4
+    return data.count(b"git_reader=git") == 8
 
 
 check("lifecycle candidate digest uses the fixed Git policy reader", lambda: candidate_policy_contract(source))
@@ -981,7 +1185,8 @@ def ref_contract(data: bytes) -> bool:
     start = data.index(b"def ref_value")
     end = data.index(b"\ndef _config_key", start)
     body = data[start:end]
-    cleanup = data[data.index(b"def command_cleanup"):data.index(b"\ndef status_facts")]
+    cleanup = data[data.index(b"def command_cleanup"):data.index(b"\ndef command_abort")]
+    abort = data[data.index(b"def command_abort"):data.index(b"\ndef status_facts")]
     return (
         b'"show-ref", "--verify", "--quiet", reference' in body
         and b"if existence.returncode == 1:" in body
@@ -989,8 +1194,10 @@ def ref_contract(data: bytes) -> bool:
         and b"returncode == 128" not in body
         and b'if ref_value(repo, state["branch_ref"]) is not None:' in cleanup
         and b"except GitError:" in cleanup
+        and b"except GitError:" in abort
         and b"Do not retry/reconcile it into `cleaned`" in cleanup
         and b"except JobError:\n                pass" not in cleanup
+        and b"except JobError:\n                pass" not in abort
     )
 
 

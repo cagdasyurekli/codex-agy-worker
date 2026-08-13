@@ -10,7 +10,8 @@ independently check Git scope and run driver-owned verification commands before
 accepting the candidate. The gate verifies those specific conditions; it does not
 prove general correctness or security.
 
-Bash + Python 3 + git. No Node, no MCP daemon, no polling loop.
+Bash + Python 3 + git. No Node and no MCP daemon. A deliberately started job may
+have one private, per-job local controller; it is not a shared service.
 
 ```bash
 # Codex dispatches a bounded job to agy...
@@ -32,9 +33,8 @@ There are already several Codex→agy delegators — [codex-agy-delegator](https
 [codex-antigravity-bridge](https://github.com/Common-ka/codex-antigravity-bridge),
 [agy-mcp](https://github.com/Boulea7/agy-mcp), [antigravity-cli-mcp](https://github.com/topics/agy),
 and [antigravity-for-claude-code](https://github.com/VKirill/antigravity-for-claude-code).
-Most are MCP servers; several are more featureful than this one. If you need async
-job polling, validated native-Windows support, or multiple worker backends, use one
-of those.
+Most are MCP servers; several are more featureful than this one. This project keeps
+one agy backend and does not claim validated native-Windows support.
 
 **This one exists for a single reason: it does not accept the worker's self-report as
 evidence.** The worker's JSON report is treated as a *claim*. The gate independently
@@ -97,12 +97,13 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or deferred status. Version 0.3.3 is the release represented
-by this source and adds daily compatibility observation, private 30/60/90 measurement,
-the optional local notifier, version-drift-safe default/literal routing, and the
-bounded updater hotfix to the completed provider-independent roadmap through P2-A.
-It also bounds gate envelopes and lifecycle Git output while keeping checkout
-credentials out of the offline Actions job.
+their explicit implemented or deferred status. This source is the **v0.4.0 release
+candidate**; the last published release remains v0.3.3. In addition to the v0.3.3
+daily compatibility observation, private 30/60/90 measurement, optional local
+notifier, version-drift-safe default/literal routing, bounded updater, gate-envelope,
+lifecycle-Git-output, and Actions-checkout hardening, v0.4.0 adds the progress-aware
+per-job dispatch lifecycle. Publication still requires exact-head CI, merge, tag, and
+release readback; source behavior is not a published-release claim.
 P2-B and P2-C remain deferred because their required live terminal-event and
 recurring-accumulation evidence does not exist.
 Source, tests, and this README remain
@@ -283,7 +284,7 @@ The driver runs every command. Return commands_run and tests_run as empty arrays
   AGY_WORKER_JOB_ID="$JOB_ID" "$PIPELINE/agy-worker.sh" \
     --mode accept-edits --tier bulk --persona bulk-test-writer \
     --workdir "$WT" --add-dir "$WT" > "$ENVELOPE"; then
-  echo "Dispatch failed after its bounded attempts; inspect $PIPELINE/logs/$JOB_ID/stderr.txt" >&2
+  echo "Dispatch failed; inspect the sanitized terminal state and choose explicit resume, restart, or stop." >&2
   exit 1
 fi
 
@@ -320,8 +321,9 @@ git -C "$TARGET" branch -D "$JOB_BRANCH"
 
 Gate failure handling is deliberately small: exits 10–14 reject the candidate, exit
 15 routes its questions to a human, and exit 64 means the driver invocation is wrong.
-The wrapper already exhausted its bounded attempts before returning a dispatch error;
-do not add an unbounded shell retry loop.
+A dispatch error starts no further provider call automatically; do not add a shell
+retry loop. Preserve the job or choose an explicit, hash-bound `resume` or `restart`
+through the lifecycle controller.
 
 ### Read-only inventory example
 
@@ -422,13 +424,38 @@ profile sources.
 | `--workdir DIR` | — | agy's workspace |
 | `--add-dir DIR` | — | repeatable file-tool root; must resolve inside `--workdir` |
 | `--persona NAME` | — | inline a bounded worker role |
-| — | `AGY_WORKER_TIMEOUT` | `--print-timeout`, default `5m0s` |
-| — | `AGY_WORKER_MAX_ATTEMPTS` | bounded attempts, default `2` |
+| `--idle-timeout DURATION` | `AGY_WORKER_IDLE_TIMEOUT` | no valid progress for this long ends the attempt; default `10m` |
+| `--hard-timeout DURATION` | `AGY_WORKER_HARD_TIMEOUT`; `AGY_WORKER_TIMEOUT` (deprecated alias) | initial per-attempt deadline; default `2h` |
+| `--max-runtime DURATION` | `AGY_WORKER_MAX_RUNTIME` | caller-owned absolute cap across extensions; default `12h` |
 | — | `AGY_WORKER_JOB_ID` | safe artifact directory name |
 
 Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid ·
-`5` agy failed · `6` permission gate · `7` compatibility review required ·
-`8` compatibility evidence unavailable · `64` invalid usage.
+`5` unclassified agy failure · `6` permission gate · `7` compatibility review required ·
+`8` compatibility evidence unavailable · `9` idle timeout · `16` hard deadline ·
+`17` provider timeout (reserved) · `18` authentication failure (reserved) ·
+`19` provider unavailable (reserved) ·
+`20` local status unavailable · `21` resume failure · `22` cancelled ·
+`23` output oversized · `64` invalid usage.
+
+The reserved `17`–`19` exits require an exact, version-bound reviewed signature.
+The current agy `1.1.12` signature allowlist is intentionally empty, so an unproven
+provider timeout, authentication error, or provider outage remains
+`agy_failed_unclassified` with exit `5`; the supervisor does not infer a reason from
+free-form stderr.
+
+`init`, `step_update`, and terminal `result` events renew only an idle lease. They
+never prove success and never extend the hard deadline or the caller-owned maximum.
+The supervisor forwards the maximum as agy's `--print-timeout`, owns the shorter
+local clocks and process group, and records only sanitized elapsed/progress-age/count,
+attempt origin, terminal reason, and resume availability. It never prints progress,
+prompts, raw stderr, or a conversation ID.
+
+There is no automatic fresh retry. On a terminal dispatch failure, choose exactly one
+explicit action: `resume` from the frozen conversation when eligible, `restart` as a
+new conversation with the frozen task/selection, or preserve the job and stop.
+`status`, `wait`, `result`, `extend`, and `cancel` describe the local controller,
+not an agy/provider status or a proven remote cancellation. A locally cancelled job
+therefore reports `remote_cancel_unverified`.
 
 The dispatcher creates each job directory and its task, full prompt, stream, stderr,
 staged prompt, and envelope under an owner-only mask, even when the caller's mask is
@@ -443,6 +470,30 @@ owner-only modes after the child, on an early exit, and before HUP, INT, or TERM
 re-raised with its normal status. This bounded final-root check does not validate the
 full ancestor chain or claim to eliminate every filesystem time-of-check/time-of-use
 race.
+
+### Progress-aware local jobs
+
+`run` remains synchronous. For a long explicitly approved job, `start` returns an
+opaque job ID after the local controller handshake; `status` and bounded `wait` read
+its private state, `result` emits an envelope only after terminal success, `extend`
+requires the current state SHA and cannot exceed `--max-runtime`, and `cancel` writes
+a local request before the controller closes and reaps its process group. `resume`
+requires a terminal resume-eligible state and its SHA, and uses the exact stored
+conversation with a fixed continuation prompt. `restart` also requires that SHA but
+starts a new conversation and labels its attempt `fresh-restart`.
+
+The Codex skill does not split a comprehensive task merely to fit a timer. While
+progress is fresh, it may extend the initial deadline by `2h` at 80% utilization,
+within the maximum cap; it provides only a sanitized progress summary every `30m` and
+honors a user cancel request at any time. An extension is not another provider
+attempt. A timeout never causes a new provider call without the user's explicit
+resume or restart decision.
+
+For `plan`, the complete user/repository prompt is owner-private staged input and agy
+receives only a fixed driver prompt, with slash expansion enabled so its documented
+plan transformation can operate. `accept-edits` keeps slash expansion disabled by
+default. Plan mode is not a filesystem-security boundary: the disposable worktree and
+post-run no-change gate remain the controls that make its read-only claim testable.
 
 ### Model selection is explicit; recommendations are advisory
 
@@ -496,13 +547,11 @@ HUP, INT, or TERM during that preflight closes its exact process group and retur
 
 The resolved slug, input provenance, installed version, matrix version/source, and
 matrix SHA-256 are frozen before attempt one in owner-private
-`logs/<job>/selection.json`. Retries reuse that exact selection even if the matrix
-file changes later. This driver-owned record is provenance, not worker evidence, a QA
-receipt, or an acceptance path.
-Its built-in retry handles dispatch failure with the same model. After a gate failure,
-the Codex skill permits at most one targeted corrective dispatch, also at the
-caller-selected tier. It never silently escalates cost or changes model in response
-to failed tests, scope violations, or malformed output.
+`logs/<job>/selection.json`. A user-authorized resume/restart reuses the exact frozen
+selection even if the matrix file changes later. This driver-owned record is
+provenance, not worker evidence, a QA receipt, or an acceptance path. It never
+silently escalates cost or changes model after failed tests, scope violations, or
+malformed output.
 
 `model-recommendation.sh` is a separate, read-only policy layer. It prints a visible
 JSON recommendation before dispatch or after a gate result, but never calls `agy`,
@@ -613,6 +662,12 @@ dispatcher. Then bind the resulting envelope to the same gate and receipt protoc
   --only 'tests/**' --expect-edits \
   --verify "git -C '$WORKTREE_DIR' diff --check"
 ```
+
+Pre-gate dispatch failure is separate from receipt cleanup. `job.sh abort` requires
+the exact terminal dispatch-state binding, a closed supervisor process group, current
+job/state/candidate SHA approvals, and an empty candidate unless the caller explicitly
+adds `--discard-unverified`. It refuses active, receipt-bound, gate-passed, routed,
+or otherwise unbound residuals.
 
 For `verified-gate-passed`, `preserve-instructions` prints review/commit/integration
 commands but runs none of them. Cleanup is deliberately narrower: only Receipt exits
@@ -741,7 +796,9 @@ documented command or a subprocess; do not call its `main(argv)` from a host pro
 `--allow-slash-commands` exists for callers who fully control the entire prompt, but
 is intentionally omitted from normal examples. It disables protection against
 embedded `/skill` or slash-command text; leave slash expansion disabled for content
-derived from a repository or another model.
+derived from a repository or another model. The plan dispatcher is the narrow
+exception: it stages that content privately and enables slash expansion only for a
+fixed driver prompt so upstream's documented plan transform can run.
 
 ---
 
@@ -1071,7 +1128,8 @@ your own install rather than treating historical observations as a current contr
   null and the worker answers in prose. agy also accepts *any* `--agent` name without
   error, so a typo yields a default worker that believes it is a specialist.
 - **Auth is intermittent.** A run can fail into an interactive OAuth prompt and the
-  identical next run succeeds. Hence bounded retries.
+  identical next run can succeed. Classify only reviewed exact failure signatures;
+  never turn that observation into an automatic retry.
 - **`stream-json` shape:** `init` → repeated `step_update` → one `result`. The answer is
   at `result.structured_output`. `result.json_schema` is the *echoed schema* — a naive
   key-matching parser grabs that and hands you back your own schema.
@@ -1177,8 +1235,8 @@ tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/m
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
-tests/test-job-lifecycle.py   101-case offline state/Git-policy/receipt/cleanup/signal suite
-tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
+tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
+tests/test-agy-worker.sh      238-case offline dispatcher/installer/routing/lifecycle suite
 tests/test-update.sh          314-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
@@ -1197,7 +1255,7 @@ tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 meas
 tests/test-update-notifier.py 60-case offline local notifier lifecycle/signal suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       354-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       361-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
@@ -1211,7 +1269,9 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
 
 ## Limitations
 
-- No async/polling; jobs are synchronous and bounded by `--print-timeout`.
+- No persistent daemon, MCP server, or shared polling service. `start` is a narrow
+  explicit per-job local controller with owner-private state and bounded `wait`; it
+  does not expose provider job status or remote cancellation truth.
 - Native Windows is not tested or guaranteed. There is no Windows-specific denylist,
   but the maintained entrypoints require a POSIX-compatible environment; WSL may work
   on a best-effort basis. Fixed-POSIX-path evidence runners and the macOS-only
@@ -1232,7 +1292,7 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
 - Headless skill expansion (`agy -p "/skill-name ..."`) is untested.
 - Direct model/effort selection has exhaustive offline fake-agy coverage but no new
   post-G0 live provider run. It proves argv, conflict, version/matrix, packaging, and
-  retry-freeze behavior—not backend identity, quality, relative performance, cost,
+  frozen-selection continuation behavior—not backend identity, quality, relative performance, cost,
   quota efficiency, or dual-selector composition inside agy.
 - A green doctor result covers offline prerequisites only. It does not predict live
   authentication, provider, sandbox, task, or dispatch behavior and never fixes them.
