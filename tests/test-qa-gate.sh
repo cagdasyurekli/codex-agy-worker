@@ -146,6 +146,33 @@ else
     printf '  FAIL %-52s exit %s (wanted 12)\n' "unsupported optional schema keyword fails closed" "$got"; fail=$((fail+1))
 fi
 
+oversized_envelope="$TMP/oversized-valid.json"
+python3 - "$TMP/honest.json" "$oversized_envelope" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_bytes()
+Path(sys.argv[2]).write_bytes(source + b" " * (1024 * 1024))
+PY
+internal_token="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+"$GATE" --envelope "$oversized_envelope" --repo "$TMP/repo" \
+    --base "$BASE_COMMIT" --verify true >/dev/null 2>&1
+direct_got=$?
+exec 9> "$TMP/oversized-evidence.jsonl"
+AGY_WORKER_INTERNAL_EVIDENCE_TOKEN="$internal_token" \
+AGY_WORKER_INTERNAL_PYTHON="/usr/bin/python3" \
+    "$GATE" --evidence-token "$internal_token" \
+        --envelope "$oversized_envelope" --repo "$TMP/repo" \
+        --base "$BASE_COMMIT" --verify true --evidence-fd 9 \
+        >/dev/null 2>&1
+got=$?
+exec 9>&-
+if [[ "$direct_got" == 12 && "$got" == 70 && ! -s "$TMP/oversized-evidence.jsonl" ]]; then
+    printf '  ok   %-52s exit %s/%s\n' "oversized valid envelope rejects before evidence" "$direct_got" "$got"; pass=$((pass+1))
+else
+    printf '  FAIL %-52s exit %s/%s (wanted 12/70)\n' "oversized valid envelope rejects before evidence" "$direct_got" "$got"; fail=$((fail+1))
+fi
+
 echo
 echo "edit expectation and artifact allowlist:"
 git checkout -q -- a.txt

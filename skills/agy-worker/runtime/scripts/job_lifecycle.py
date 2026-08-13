@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import selectors
 import shlex
 import shutil
 import signal
@@ -82,6 +83,10 @@ class JobError(ValueError):
 
 
 class GitError(OSError):
+    pass
+
+
+class GitOutputLimitError(GitError):
     pass
 
 
@@ -619,6 +624,73 @@ def _terminate_process(process: subprocess.Popen[bytes]) -> None:
         raise JobError("child cleanup failed") from exc
 
 
+def _communicate_bounded(
+    process: subprocess.Popen[bytes],
+    input_data: bytes | None,
+    maximum: int,
+    timeout: float,
+) -> bytes:
+    if process.stdout is None or maximum < 0 or timeout <= 0:
+        raise GitError("invalid bounded Git capture")
+    selector = selectors.DefaultSelector()
+    output = bytearray()
+    pending = memoryview(input_data if input_data is not None else b"")
+    deadline = time.monotonic() + timeout
+    try:
+        os.set_blocking(process.stdout.fileno(), False)
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        if process.stdin is not None:
+            os.set_blocking(process.stdin.fileno(), False)
+            if pending:
+                selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+            else:
+                process.stdin.close()
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            events = selector.select(remaining)
+            if not events:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            for key, _mask in events:
+                if key.data == "stdout":
+                    try:
+                        chunk = os.read(key.fd, min(64 * 1024, maximum - len(output) + 1))
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                        continue
+                    output.extend(chunk)
+                    if len(output) > maximum:
+                        raise GitOutputLimitError("Git validation output is oversized")
+                else:
+                    try:
+                        written = os.write(key.fd, pending[:64 * 1024])
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        written = 0
+                        pending = pending[len(pending):]
+                    if written > 0:
+                        pending = pending[written:]
+                    if not pending:
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        process.wait(timeout=remaining)
+        return bytes(output)
+    finally:
+        selector.close()
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
+        if process.stdout is not None and not process.stdout.closed:
+            process.stdout.close()
+
+
 def run_process(arguments: list[str], *, cwd: Path | None = None) -> int:
     global ACTIVE_PROCESS
     prior = signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
@@ -730,9 +802,14 @@ def git_result(
             signal.pthread_sigmask(signal.SIG_SETMASK, prior)
         try:
             try:
-                stdout, _stderr = ACTIVE_PROCESS.communicate(
-                    input=input_data, timeout=GIT_TIMEOUT_SECONDS
-                )
+                if capture:
+                    stdout = _communicate_bounded(
+                        ACTIVE_PROCESS, input_data, MAX_GIT_OUTPUT, GIT_TIMEOUT_SECONDS
+                    )
+                else:
+                    stdout, _stderr = ACTIVE_PROCESS.communicate(
+                        input=input_data, timeout=GIT_TIMEOUT_SECONDS
+                    )
             except subprocess.TimeoutExpired as exc:
                 signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
                 try:
@@ -742,8 +819,24 @@ def git_result(
                 finally:
                     signal.pthread_sigmask(signal.SIG_SETMASK, prior)
                 raise GitError("Git validation timed out") from exc
-            if capture and len(stdout) > MAX_GIT_OUTPUT:
-                raise GitError("Git validation output is oversized")
+            except GitOutputLimitError:
+                signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+                try:
+                    _terminate_process(ACTIVE_PROCESS)
+                except JobError as cleanup_exc:
+                    raise GitError("Git cleanup failed") from cleanup_exc
+                finally:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, prior)
+                raise
+            except (OSError, ValueError) as exc:
+                signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+                try:
+                    _terminate_process(ACTIVE_PROCESS)
+                except JobError as cleanup_exc:
+                    raise GitError("Git cleanup failed") from cleanup_exc
+                finally:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, prior)
+                raise GitError("Git validation failed") from exc
             return GitResult(ACTIVE_PROCESS.returncode, stdout if capture else b"")
         except JobSignal as exc:
             signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)

@@ -19,6 +19,7 @@ SUPPORTED_KEYS = {
     "required", "properties", "items", "enum", "minLength", "maxLength",
     "minimum", "maximum",
 }
+MAX_JSON_BYTES = 1024 * 1024
 
 
 class ValidationError(ValueError):
@@ -35,8 +36,13 @@ def load_json(path: Path) -> Any:
         return result
 
     try:
-        with path.open(encoding="utf-8") as handle:
-            return json.load(handle, object_pairs_hook=reject_duplicates)
+        with path.open("rb") as handle:
+            payload = handle.read(MAX_JSON_BYTES + 1)
+        if not payload or len(payload) > MAX_JSON_BYTES:
+            raise ValidationError("JSON input is empty or oversized")
+        return json.loads(
+            payload.decode("utf-8", "strict"), object_pairs_hook=reject_duplicates
+        )
     except (OSError, json.JSONDecodeError, UnicodeError) as exc:
         raise ValidationError(str(exc)) from exc
 

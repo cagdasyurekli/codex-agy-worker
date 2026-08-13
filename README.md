@@ -97,10 +97,12 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or deferred status. Version 0.3.2 is the release represented
+their explicit implemented or deferred status. Version 0.3.3 is the release represented
 by this source and adds daily compatibility observation, private 30/60/90 measurement,
 the optional local notifier, version-drift-safe default/literal routing, and the
 bounded updater hotfix to the completed provider-independent roadmap through P2-A.
+It also bounds gate envelopes and lifecycle Git output while keeping checkout
+credentials out of the offline Actions job.
 P2-B and P2-C remain deferred because their required live terminal-event and
 recurring-accumulation evidence does not exist.
 Source, tests, and this README remain
@@ -1175,7 +1177,7 @@ tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/m
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
-tests/test-job-lifecycle.py   100-case offline state/Git-policy/receipt/cleanup/signal suite
+tests/test-job-lifecycle.py   101-case offline state/Git-policy/receipt/cleanup/signal suite
 tests/test-agy-worker.sh       offline dispatcher/installer/routing suite
 tests/test-update.sh          314-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
@@ -1195,7 +1197,7 @@ tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 meas
 tests/test-update-notifier.py 60-case offline local notifier lifecycle/signal suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
-tests/test-packaging.sh       353-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       354-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
