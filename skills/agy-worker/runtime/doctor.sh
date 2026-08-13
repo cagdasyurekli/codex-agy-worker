@@ -65,6 +65,7 @@ doctor_runtime_complete() {
         scripts/model_selection.py \
         scripts/compatibility.py \
         scripts/candidate_state.py \
+        scripts/agy_dispatch.py \
         scripts/job_lifecycle.py \
         scripts/doctor-metadata.py; do
         case "$required" in

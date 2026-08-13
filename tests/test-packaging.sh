@@ -722,7 +722,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.3.3"
+assert manifest["version"] == "0.4.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -805,6 +805,14 @@ if [[ -x "$ROOT/job.sh" ]] \
     ok "root and portable packages include the safe local job lifecycle"
 else
     bad "root and portable packages include the safe local job lifecycle"
+fi
+
+if [[ -x "$ROOT/agy-worker.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/agy-worker.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" ]]; then
+    ok "root and portable packages include the progress-aware local dispatcher"
+else
+    bad "root and portable packages include the progress-aware local dispatcher"
 fi
 
 if [[ -x "$ROOT/benchmark.sh" ]] \
@@ -899,6 +907,7 @@ required_runtime_dependencies=(
     scripts/model_selection.py
     scripts/compatibility.py
     scripts/candidate_state.py
+    scripts/agy_dispatch.py
     scripts/job_lifecycle.py
     scripts/doctor-metadata.py
     schemas/worker-result.schema.json
@@ -1043,6 +1052,7 @@ for specification in \
     'scripts/workload_profiles.py:executable' \
     'scripts/recommendation_record.py:executable' \
     'scripts/candidate_state.py:executable' \
+    'scripts/agy_dispatch.py:executable' \
     'scripts/job_lifecycle.py:executable' \
     'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \

@@ -42,6 +42,16 @@ from evidence_receipt import (  # noqa: E402
     parse_json_bytes,
     validate_receipt,
 )
+from agy_dispatch import (  # noqa: E402
+    DispatchError,
+    LOCK_NAME as DISPATCH_LOCK_NAME,
+    MAX_STATE_BYTES as MAX_DISPATCH_STATE_BYTES,
+    canonical as dispatch_canonical_bytes,
+    canonical_job as canonical_dispatch_job,
+    parse_json as parse_dispatch_json,
+    read_regular as read_dispatch_regular,
+    validate_state as validate_dispatch_state,
+)
 
 
 SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
@@ -53,16 +63,22 @@ STATE_FIELDS = {
     "job_id", "repo_path", "repo_identity", "git_common_dir",
     "git_common_identity", "worktree_path", "worktree_parent_device",
     "worktree_identity", "branch", "branch_ref", "base", "receipt",
-    "cleanup_step", "last_result", "failure",
+    "dispatch", "cleanup_step", "last_result", "failure",
 }
+LEGACY_STATE_FIELDS = STATE_FIELDS - {"dispatch"}
 PHASES = {
     "initializing", "ready", "init-failed", "init-interrupted", "verifying",
     "verify-failed", "verify-interrupted", "verified-gate-passed",
-    "verified-rejected", "verified-routed", "cleanup-in-progress", "cleaned",
+    "verified-rejected", "verified-routed", "dispatch-failed",
+    "cleanup-in-progress", "cleaned", "abort-in-progress", "aborted",
 }
 CLEANUP_STEPS = {"none", "worktree-removed", "branch-removed"}
 RECEIPT_FIELDS = {
     "path", "sha256", "gate_exit", "verdict", "final_candidate_state_sha256"
+}
+DISPATCH_FIELDS = {
+    "path", "sha256", "state_identity", "job_identity", "lock_identity",
+    "status", "reason", "exit_code", "candidate_state_sha256",
 }
 MAX_STATE_BYTES = 128 * 1024
 MAX_RECEIPT_BYTES = 1024 * 1024
@@ -71,6 +87,7 @@ MAX_GIT_OUTPUT = 32 * 1024 * 1024
 MAX_ATTRIBUTE_PATH_BYTES = 16 * 1024 * 1024
 GIT_TIMEOUT_SECONDS = 30.0
 GIT_EXECUTABLE = "/usr/bin/git"
+EMPTY_CANDIDATE_STATE_SHA256 = hashlib.sha256(b"\0" * 8).hexdigest()
 UNSAFE_GIT_CONFIG_RE = re.compile(
     rb"^(?:filter\..*\.(?:clean|smudge|process|required)|core\.(?:fsmonitor|hooksPath|pager)"
     rb"|diff\.external|interactive\.diffFilter|pager\..*|include(?:If)?\..*)$",
@@ -317,7 +334,7 @@ def canonical_branch_syntax(branch: str) -> bool:
 
 
 def validate_state(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != STATE_FIELDS:
+    if not isinstance(value, dict) or set(value) not in {frozenset(STATE_FIELDS), frozenset(LEGACY_STATE_FIELDS)}:
         raise JobError("state fields are invalid")
     if value["schema_version"] != 1 or value["kind"] != "agy-worker-local-job-state":
         raise JobError("state version is invalid")
@@ -360,7 +377,10 @@ def validate_state(value: Any) -> dict[str, Any]:
         raise JobError("state result is invalid")
     if value["failure"] is not None and (
         not isinstance(value["failure"], str)
-        or value["failure"] not in {"init-failed", "interrupted", "verify-failed", "cleanup-failed"}
+        or value["failure"] not in {
+            "init-failed", "interrupted", "verify-failed", "dispatch-failed",
+            "cleanup-failed",
+        }
     ):
         raise JobError("state failure is invalid")
     receipt = value["receipt"]
@@ -387,22 +407,49 @@ def validate_state(value: Any) -> dict[str, Any]:
         )
         if receipt["verdict"] != expected_verdict:
             raise JobError("state receipt outcome is inconsistent")
+    dispatch = value.get("dispatch")
+    if dispatch is not None:
+        if not isinstance(dispatch, dict) or set(dispatch) != DISPATCH_FIELDS:
+            raise JobError("state dispatch binding is invalid")
+        path = dispatch["path"]
+        if (
+            not isinstance(path, str)
+            or not Path(path).is_absolute()
+            or os.path.normpath(path) != path
+            or Path(path).name != "dispatch-state.json"
+            or "\n" in path
+            or "\r" in path
+        ):
+            raise JobError("state dispatch path is invalid")
+        for key in ("sha256", "candidate_state_sha256"):
+            if not isinstance(dispatch[key], str) or SHA_RE.fullmatch(dispatch[key]) is None:
+                raise JobError("state dispatch digest is invalid")
+        for key in ("state_identity", "job_identity", "lock_identity"):
+            validate_identity(dispatch[key], f"dispatch {key}")
+        if dispatch["status"] not in {"failed", "cancelled"}:
+            raise JobError("state dispatch status is invalid")
+        if not isinstance(dispatch["reason"], str) or not dispatch["reason"]:
+            raise JobError("state dispatch reason is invalid")
+        if type(dispatch["exit_code"]) is not int or dispatch["exit_code"] == 0:
+            raise JobError("state dispatch result is invalid")
 
     phase = value["phase"]
     cleanup_step = value["cleanup_step"]
     worktree_identity = value["worktree_identity"]
     last_result = value["last_result"]
     failure = value["failure"]
+    if receipt is not None and dispatch is not None:
+        raise JobError("receipt and dispatch bindings are mutually exclusive")
     if phase == "initializing":
-        consistent = worktree_identity is None and receipt is None and cleanup_step == "none" and last_result is None and failure is None
+        consistent = worktree_identity is None and receipt is None and dispatch is None and cleanup_step == "none" and last_result is None and failure is None
     elif phase == "ready":
-        consistent = worktree_identity is not None and receipt is None and cleanup_step == "none" and last_result is None and failure is None
+        consistent = worktree_identity is not None and receipt is None and dispatch is None and cleanup_step == "none" and last_result is None and failure is None
     elif phase in {"init-failed", "init-interrupted"}:
-        consistent = receipt is None and cleanup_step == "none" and isinstance(last_result, int) and failure in {"init-failed", "interrupted"}
+        consistent = receipt is None and dispatch is None and cleanup_step == "none" and isinstance(last_result, int) and failure in {"init-failed", "interrupted"}
     elif phase == "verifying":
-        consistent = worktree_identity is not None and receipt is None and cleanup_step == "none" and last_result is None and failure is None
+        consistent = worktree_identity is not None and receipt is None and dispatch is None and cleanup_step == "none" and last_result is None and failure is None
     elif phase in {"verify-failed", "verify-interrupted"}:
-        consistent = worktree_identity is not None and receipt is None and cleanup_step == "none" and isinstance(last_result, int) and failure in {"verify-failed", "interrupted"}
+        consistent = worktree_identity is not None and receipt is None and dispatch is None and cleanup_step == "none" and isinstance(last_result, int) and failure in {"verify-failed", "interrupted"}
     elif phase in {"verified-gate-passed", "verified-rejected", "verified-routed"}:
         expected = {
             "verified-gate-passed": "gate-passed",
@@ -412,15 +459,26 @@ def validate_state(value: Any) -> dict[str, Any]:
         consistent = (
             worktree_identity is not None
             and receipt is not None
+            and dispatch is None
             and receipt["verdict"] == expected
             and cleanup_step == "none"
             and last_result == receipt["gate_exit"]
             and failure is None
         )
+    elif phase == "dispatch-failed":
+        consistent = (
+            worktree_identity is not None
+            and receipt is None
+            and dispatch is not None
+            and cleanup_step == "none"
+            and last_result == dispatch["exit_code"]
+            and failure == "dispatch-failed"
+        )
     elif phase == "cleanup-in-progress":
         consistent = (
             worktree_identity is not None
             and receipt is not None
+            and dispatch is None
             and receipt["verdict"] == "rejected"
             and cleanup_step in {"none", "worktree-removed"}
             and (
@@ -428,11 +486,32 @@ def validate_state(value: Any) -> dict[str, Any]:
                 or (isinstance(last_result, int) and failure in {"interrupted", "cleanup-failed"})
             )
         )
-    else:  # cleaned
+    elif phase == "cleaned":
         consistent = (
             worktree_identity is not None
             and receipt is not None
+            and dispatch is None
             and receipt["verdict"] == "rejected"
+            and cleanup_step == "branch-removed"
+            and last_result == 0
+            and failure is None
+        )
+    elif phase == "abort-in-progress":
+        consistent = (
+            worktree_identity is not None
+            and receipt is None
+            and dispatch is not None
+            and cleanup_step in {"none", "worktree-removed"}
+            and (
+                (last_result is None and failure is None)
+                or (isinstance(last_result, int) and failure in {"interrupted", "cleanup-failed"})
+            )
+        )
+    else:  # aborted
+        consistent = (
+            worktree_identity is not None
+            and receipt is None
+            and dispatch is not None
             and cleanup_step == "branch-removed"
             and last_result == 0
             and failure is None
@@ -1030,6 +1109,7 @@ def initial_state(args: argparse.Namespace) -> tuple[dict[str, Any], Path, Path]
         "branch_ref": branch_ref,
         "base": args.base,
         "receipt": None,
+        "dispatch": None,
         "cleanup_step": "none",
         "last_result": None,
         "failure": None,
@@ -1216,6 +1296,176 @@ def validate_receipt_binding(state: dict[str, Any]) -> dict[str, Any]:
     return current
 
 
+def _acquire_dispatch_lock(
+    job: Path, expected: dict[str, int] | None = None
+) -> tuple[int, dict[str, int]]:
+    path = job / DISPATCH_LOCK_NAME
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise JobError("dispatch controller lock is unavailable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        try:
+            named = path.lstat()
+        except OSError as exc:
+            raise JobError("dispatch controller lock path changed") from exc
+        current = identity(metadata)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(named.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or not same_identity(named, current)
+            or (expected is not None and current != expected)
+        ):
+            raise JobError("dispatch controller lock binding changed")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise JobError("dispatch controller is still active") from exc
+        return descriptor, current
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _closed_dispatch_lock(job: Path, expected: dict[str, int] | None = None) -> dict[str, int]:
+    descriptor, current = _acquire_dispatch_lock(job, expected)
+    os.close(descriptor)
+    return current
+
+
+@contextlib.contextmanager
+def _held_dispatch_lock(
+    job: Path, expected: dict[str, int] | None = None
+) -> Iterator[dict[str, int]]:
+    descriptor, current = _acquire_dispatch_lock(job, expected)
+    try:
+        yield current
+    finally:
+        os.close(descriptor)
+
+
+def _dispatch_binding(
+    state: dict[str, Any], path: Path, candidate_sha256: str
+) -> dict[str, Any]:
+    path = real_absolute(path, "dispatch state")
+    if path.name != "dispatch-state.json":
+        raise JobError("dispatch state filename is invalid")
+    try:
+        job = canonical_dispatch_job(path.parent)
+        with _held_dispatch_lock(job) as lock_identity:
+            raw, metadata = read_dispatch_regular(
+                path, MAX_DISPATCH_STATE_BYTES, "dispatch state"
+            )
+            dispatch = parse_dispatch_json(raw, "dispatch state")
+            validate_dispatch_state(dispatch)
+            if dispatch_canonical_bytes(dispatch) != raw:
+                raise JobError("dispatch state bytes are not canonical")
+            if (
+                dispatch["status"] not in {"failed", "cancelled"}
+                or dispatch["reason"] is None
+                or dispatch["exit_code"] in {None, 0}
+                or dispatch["controller_pid"] is not None
+                or dispatch["finished_epoch"] is None
+                or dispatch["sequence"] < 2
+                or dispatch["previous_state_sha256"] is None
+            ):
+                raise JobError("dispatch is not one terminal failure")
+            if dispatch["job_id"] != state["job_id"]:
+                raise JobError("dispatch job binding does not match lifecycle")
+            if dispatch["workdir"] != state["worktree_path"]:
+                raise JobError("dispatch worktree binding does not match lifecycle")
+            repo = Path(state["repo_path"])
+            worktree = Path(state["worktree_path"])
+            if contains(repo, job) or contains(worktree, job):
+                raise JobError("dispatch evidence must be outside repository and worktree")
+            return {
+                "path": str(path),
+                "sha256": sha256_bytes(raw),
+                "state_identity": identity(metadata),
+                "job_identity": identity(job.lstat()),
+                "lock_identity": lock_identity,
+                "status": dispatch["status"],
+                "reason": dispatch["reason"],
+                "exit_code": dispatch["exit_code"],
+                "candidate_state_sha256": candidate_sha256,
+            }
+    except (DispatchError, OSError) as exc:
+        raise JobError("dispatch state is invalid") from exc
+
+
+def validate_dispatch_binding(
+    state: dict[str, Any], *, lock_is_held: bool = False
+) -> dict[str, Any]:
+    binding = state["dispatch"]
+    if not isinstance(binding, dict):
+        raise JobError("dispatch-failed state has no dispatch binding")
+    path = Path(binding["path"])
+    try:
+        job = canonical_dispatch_job(path.parent)
+        raw, metadata = read_dispatch_regular(
+            path, MAX_DISPATCH_STATE_BYTES, "dispatch state"
+        )
+        dispatch = parse_dispatch_json(raw, "dispatch state")
+        validate_dispatch_state(dispatch)
+    except (DispatchError, OSError) as exc:
+        raise JobError("dispatch binding changed") from exc
+    if (
+        identity(job.lstat()) != binding["job_identity"]
+        or identity(metadata) != binding["state_identity"]
+        or sha256_bytes(raw) != binding["sha256"]
+        or dispatch_canonical_bytes(dispatch) != raw
+        or dispatch["job_id"] != state["job_id"]
+        or dispatch["workdir"] != state["worktree_path"]
+        or dispatch["status"] != binding["status"]
+        or dispatch["reason"] != binding["reason"]
+        or dispatch["exit_code"] != binding["exit_code"]
+        or dispatch["controller_pid"] is not None
+    ):
+        raise JobError("dispatch binding changed")
+    if not lock_is_held:
+        _closed_dispatch_lock(job, binding["lock_identity"])
+    return binding
+
+
+def command_record_dispatch_failure(args: argparse.Namespace) -> int:
+    store = StateStore(Path(args.state))
+    try:
+        state = store.value
+        assert state is not None and store.sha256 is not None
+        if state["phase"] != "ready" or state["receipt"] is not None:
+            raise JobError("state is not eligible for dispatch-failure recording")
+        if args.approve_job != state["job_id"]:
+            raise JobError("dispatch job approval does not match")
+        if args.approve_state_sha != store.sha256:
+            raise JobError("dispatch state approval does not match current bytes")
+        if not isinstance(args.approve_candidate_sha, str) or SHA_RE.fullmatch(args.approve_candidate_sha) is None:
+            raise JobError("dispatch candidate approval is invalid")
+        facts = validate_ready_state(state)
+        current = candidate_state_digest(
+            facts["worktree"], state["base"], git_reader=git
+        )
+        if current != args.approve_candidate_sha:
+            raise JobError("dispatch candidate approval does not match current bytes")
+        binding = _dispatch_binding(state, Path(args.dispatch_state), current)
+        store.update({
+            "phase": "dispatch-failed",
+            "dispatch": binding,
+            "failure": "dispatch-failed",
+            "last_result": binding["exit_code"],
+        })
+        output_state(store.value, store.sha256)  # type: ignore[arg-type]
+        return 0
+    finally:
+        store.close()
+
+
 def scan_deletion_domain(worktree: Path) -> None:
     root = worktree.lstat()
     root_device = root.st_dev
@@ -1259,7 +1509,8 @@ def _cleanup_reconcile(store: StateStore) -> None:
         assert state is not None
     ref_exists = ref_value(repo, state["branch_ref"]) is not None
     if not ref_exists and state["cleanup_step"] == "worktree-removed":
-        store.update({"cleanup_step": "branch-removed", "phase": "cleaned", "failure": None, "last_result": 0})
+        terminal = "aborted" if state["phase"] == "abort-in-progress" else "cleaned"
+        store.update({"cleanup_step": "branch-removed", "phase": terminal, "failure": None, "last_result": 0})
 
 
 def _cleanup_checkpoint(_name: str) -> None:
@@ -1388,10 +1639,148 @@ def command_cleanup(args: argparse.Namespace) -> int:
         store.close()
 
 
+def command_abort(args: argparse.Namespace) -> int:
+    dispatch_lock_descriptor = -1
+    store = StateStore(Path(args.state))
+    try:
+        state = store.value
+        assert state is not None and store.sha256 is not None
+        if args.approve_job != state["job_id"]:
+            raise JobError("abort job approval does not match")
+        if args.approve_state_sha != store.sha256:
+            raise JobError("abort state approval does not match current bytes")
+        if not isinstance(args.approve_candidate_sha, str) or SHA_RE.fullmatch(args.approve_candidate_sha) is None:
+            raise JobError("abort candidate approval is invalid")
+        if state["phase"] not in {"dispatch-failed", "abort-in-progress"}:
+            raise JobError("state is not abort-eligible")
+        untrusted_binding = state["dispatch"]
+        if not isinstance(untrusted_binding, dict):
+            raise JobError("dispatch-failed state has no dispatch binding")
+        dispatch_job = canonical_dispatch_job(Path(untrusted_binding["path"]).parent)
+        dispatch_lock_descriptor, _lock_identity = _acquire_dispatch_lock(
+            dispatch_job, untrusted_binding["lock_identity"]
+        )
+        binding = validate_dispatch_binding(state, lock_is_held=True)
+        if args.approve_candidate_sha != binding["candidate_state_sha256"]:
+            raise JobError("abort candidate approval does not match dispatch binding")
+        if (
+            binding["candidate_state_sha256"] != EMPTY_CANDIDATE_STATE_SHA256
+            and not args.discard_unverified
+        ):
+            raise JobError("changed unverified candidate needs explicit discard approval")
+        if state["phase"] == "abort-in-progress":
+            approved_sha = store.sha256
+            _cleanup_reconcile(store)
+            state = store.value
+            assert state is not None and store.sha256 is not None
+            if state["phase"] == "aborted":
+                output_state(state, store.sha256)
+                return 0
+            if store.sha256 != approved_sha:
+                output_state(state, store.sha256)
+                return 74
+        facts: dict[str, Any] | None = None
+        if state["cleanup_step"] == "none":
+            facts = validate_ready_state(state)
+            scan_deletion_domain(facts["worktree"])
+            current = candidate_state_digest(
+                facts["worktree"], state["base"], git_reader=git
+            )
+            if current != args.approve_candidate_sha:
+                raise JobError("candidate changed after dispatch failure")
+        if state["phase"] != "abort-in-progress":
+            store.update({
+                "phase": "abort-in-progress", "failure": None,
+                "last_result": None,
+            })
+            state = store.value
+            assert state is not None
+        if state["cleanup_step"] == "none":
+            validate_dispatch_binding(state, lock_is_held=True)
+            facts = validate_ready_state(state)
+            scan_deletion_domain(facts["worktree"])
+            if candidate_state_digest(
+                facts["worktree"], state["base"], git_reader=git
+            ) != args.approve_candidate_sha:
+                raise JobError("candidate changed before abort")
+            _cleanup_checkpoint("before-abort-worktree-remove")
+            rc = run_git(
+                facts["repo"], "worktree", "remove", "--force", str(facts["worktree"])
+            )
+            if rc != 0:
+                raise JobError("worktree abort removal failed")
+            if facts["worktree"].exists() or any(
+                record.get("worktree") == str(facts["worktree"])
+                for record in worktree_records(facts["repo"])
+            ):
+                raise JobError("worktree abort removal was incomplete")
+            store.update({"cleanup_step": "worktree-removed"})
+            state = store.value
+            assert state is not None
+        if state["cleanup_step"] == "worktree-removed":
+            validate_dispatch_binding(state, lock_is_held=True)
+            repo = validate_repo_binding(state)
+            worktree = Path(state["worktree_path"])
+            if worktree.exists() or any(
+                record.get("worktree") == str(worktree)
+                for record in worktree_records(repo)
+            ):
+                raise JobError("removed abort worktree does not match Git reality")
+            if ref_value(repo, state["branch_ref"]) != state["base"]:
+                raise JobError("branch ref moved before abort compare-and-delete")
+            _cleanup_checkpoint("before-abort-ref-delete")
+            rc = run_git(repo, "update-ref", "-d", state["branch_ref"], state["base"])
+            if rc != 0:
+                raise JobError("abort compare-and-delete ref failed")
+            if ref_value(repo, state["branch_ref"]) is not None:
+                raise JobError("aborted branch ref still exists")
+            store.update({
+                "cleanup_step": "branch-removed", "phase": "aborted",
+                "failure": None, "last_result": 0,
+            })
+        output_state(store.value, store.sha256)  # type: ignore[arg-type]
+        return 0
+    except JobSignal as exc:
+        prior_mask = signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+        try:
+            _cleanup_reconcile(store)
+            if store.value is not None and store.value["phase"] == "abort-in-progress":
+                store.update({"failure": "interrupted", "last_result": 128 + exc.number})
+        except (JobError, OSError):
+            pass
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, prior_mask)
+        output_state(store.value, store.sha256)  # type: ignore[arg-type]
+        return 128 + exc.number
+    except GitError:
+        if store.value is not None and store.value["phase"] == "abort-in-progress":
+            try:
+                store.update({"failure": "cleanup-failed", "last_result": 1})
+            except (JobError, OSError):
+                pass
+        raise
+    except (JobError, CandidateStateError, OSError):
+        if store.value is not None and store.value["phase"] == "abort-in-progress":
+            try:
+                _cleanup_reconcile(store)
+                if store.value is not None and store.value["phase"] == "abort-in-progress":
+                    store.update({"failure": "cleanup-failed", "last_result": 1})
+            except (JobError, OSError):
+                pass
+        raise
+    finally:
+        if dispatch_lock_descriptor >= 0:
+            os.close(dispatch_lock_descriptor)
+        store.close()
+
+
 def status_facts(state: dict[str, Any]) -> dict[str, Any]:
     result = {
         "branch_matches": False,
         "candidate_matches_receipt": False,
+        "candidate_matches_dispatch": False,
+        "dispatch_bound": False,
+        "dispatch_candidate_state_sha256": None,
         "receipt_candidate_state_sha256": None,
         "cleanup_authorized": False,
         "job_id": state["job_id"],
@@ -1412,6 +1801,16 @@ def status_facts(state: dict[str, Any]) -> dict[str, Any]:
                     facts["worktree"], state["base"], git_reader=git
                 )
                 == receipt["final_candidate_state_sha256"]
+            )
+        elif state.get("dispatch") is not None:
+            dispatch = validate_dispatch_binding(state)
+            result["dispatch_bound"] = True
+            result["dispatch_candidate_state_sha256"] = dispatch["candidate_state_sha256"]
+            result["candidate_matches_dispatch"] = (
+                candidate_state_digest(
+                    facts["worktree"], state["base"], git_reader=git
+                )
+                == dispatch["candidate_state_sha256"]
             )
     except (JobError, CandidateStateError, OSError):
         pass
@@ -1475,6 +1874,18 @@ def parser() -> argparse.ArgumentParser:
     cleanup.add_argument("--approve-job", action=Once, required=True)
     cleanup.add_argument("--approve-state-sha", action=Once, required=True)
     cleanup.add_argument("--approve-candidate-sha", action=Once, required=True)
+    record = commands.add_parser("record-dispatch-failure")
+    record.add_argument("--state", action=Once, required=True)
+    record.add_argument("--dispatch-state", action=Once, required=True)
+    record.add_argument("--approve-job", action=Once, required=True)
+    record.add_argument("--approve-state-sha", action=Once, required=True)
+    record.add_argument("--approve-candidate-sha", action=Once, required=True)
+    abort = commands.add_parser("abort")
+    abort.add_argument("--state", action=Once, required=True)
+    abort.add_argument("--approve-job", action=Once, required=True)
+    abort.add_argument("--approve-state-sha", action=Once, required=True)
+    abort.add_argument("--approve-candidate-sha", action=Once, required=True)
+    abort.add_argument("--discard-unverified", action=OnceTrue)
     return result
 
 
@@ -1497,6 +1908,10 @@ def main(argv: list[str] | None = None) -> int:
             return command_preserve(args)
         if args.command == "cleanup":
             return command_cleanup(args)
+        if args.command == "record-dispatch-failure":
+            return command_record_dispatch_failure(args)
+        if args.command == "abort":
+            return command_abort(args)
         raise JobError("unknown command")
     except JobSignal as exc:
         print("job: interrupted", file=sys.stderr)
