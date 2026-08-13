@@ -317,6 +317,13 @@ case "${FAKE_DISPATCH_MODE:-result}" in
         ;;
     heartbeat-forever)
         printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+        if [[ -n "${FAKE_HEARTBEAT_BARRIER_READY:-}" \
+                && -n "${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" ]]; then
+            : > "$FAKE_HEARTBEAT_BARRIER_READY"
+            while [[ ! -e "$FAKE_HEARTBEAT_BARRIER_RELEASE" ]]; do
+                sleep 0.01
+            done
+        fi
         if [[ -n "${FAKE_SIDE_EFFECT_FILE:-}" ]]; then
             ( sleep 3; : > "$FAKE_SIDE_EFFECT_FILE" ) &
         fi
@@ -1568,6 +1575,8 @@ start_worker() {
         FAKE_DISPATCH_MODE="${FAKE_DISPATCH_MODE:-result}" \
         FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
+        FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
+        FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
         "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$TMP/repo" "$@"
 }
 
@@ -1820,21 +1829,42 @@ else
     bad "extend control lifecycle"
 fi
 
+max_barrier_ready="$TMP/max-runtime.barrier-ready"
+max_barrier_release="$TMP/max-runtime.barrier-release"
 printf 'max runtime wins after extension\n' | FAKE_DISPATCH_MODE=heartbeat-forever \
     FAKE_HEARTBEAT_DELAY=0.60 \
-    start_worker max-runtime --idle-timeout 1s --hard-timeout 1s --max-runtime 2s \
+    FAKE_HEARTBEAT_BARRIER_READY="$max_barrier_ready" \
+    FAKE_HEARTBEAT_BARRIER_RELEASE="$max_barrier_release" \
+    start_worker max-runtime --idle-timeout 3s --hard-timeout 3s --max-runtime 4s \
     > "$TMP/max-runtime.start" 2> "$TMP/max-runtime.start.err"
-sleep 0.20
-control_worker status max-runtime > "$TMP/max-runtime.status"
-max_sha="$(status_sha "$TMP/max-runtime.status")"
-control_worker extend max-runtime --approve-state-sha "$max_sha" --by 1s \
-    > "$TMP/max-runtime.extend"
-max_extend_rc=$?
-max_after="$(status_sha "$TMP/max-runtime.extend")"
-control_worker wait max-runtime --after-state-sha "$max_after" --timeout 3s \
-    > "$TMP/max-runtime.wait"
-max_wait_rc=$?
+max_barrier_observed=0
+for (( max_barrier_index=0; max_barrier_index<200; max_barrier_index++ )); do
+    if [[ -e "$max_barrier_ready" ]]; then
+        control_worker status max-runtime > "$TMP/max-runtime.status"
+        if [[ "$(status_field "$TMP/max-runtime.status" progress_count)" -ge 1 ]]; then
+            max_barrier_observed=1
+            break
+        fi
+    fi
+    sleep 0.01
+done
+max_extend_rc=64
+max_wait_rc=64
+if [[ "$max_barrier_observed" == 1 ]]; then
+    max_sha="$(status_sha "$TMP/max-runtime.status")"
+    control_worker extend max-runtime --approve-state-sha "$max_sha" --by 1s \
+        > "$TMP/max-runtime.extend"
+    max_extend_rc=$?
+fi
+: > "$max_barrier_release"
+if [[ "$max_extend_rc" == 0 ]]; then
+    max_after="$(status_sha "$TMP/max-runtime.extend")"
+    control_worker wait max-runtime --after-state-sha "$max_after" --timeout 5s \
+        > "$TMP/max-runtime.wait"
+    max_wait_rc=$?
+fi
 for (( max_wait_index=0; max_wait_index<20; max_wait_index++ )); do
+    [[ "$max_wait_rc" == 0 ]] || break
     max_status="$(status_field "$TMP/max-runtime.wait" status)"
     [[ "$max_status" == "running" || "$max_status" == "cancel-requested" ]] || break
     max_after="$(status_sha "$TMP/max-runtime.wait")"
@@ -1850,7 +1880,7 @@ state = json.load(open(sys.argv[1], encoding="utf-8"))
 assert state["status"] == "failed"
 assert state["reason"] == "hard_deadline_exceeded"
 assert state["limit_kind"] == "max-runtime"
-assert state["hard_seconds"] == 2.0 == state["max_seconds"]
+assert state["hard_seconds"] == 4.0 == state["max_seconds"]
 PY
 then
     ok "max runtime remains an absolute cap even after an approved hard-deadline extension"
