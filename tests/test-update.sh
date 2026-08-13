@@ -928,6 +928,12 @@ make_json_variant "$ACTIVE_MATRIX" "$DISABLED_MATRIX" matrix-disabled
 
 expect_matrix_resolution "3.6 Flash low resolves exactly" \
     gemini-3.6-flash low gemini-3.6-flash-low pair-36-low
+expect_matrix_resolution "3.7 Flash low resolves exactly" \
+    gemini-3.7-flash low gemini-3.7-flash-low pair-37-low
+expect_matrix_resolution "3.7 Flash medium resolves exactly" \
+    gemini-3.7-flash medium gemini-3.7-flash-medium pair-37-medium
+expect_matrix_resolution "3.7 Flash high resolves exactly" \
+    gemini-3.7-flash high gemini-3.7-flash-high pair-37-high
 expect_matrix_resolution "3.6 Flash medium resolves exactly" \
     gemini-3.6-flash medium gemini-3.6-flash-medium pair-36-medium
 expect_matrix_resolution "3.6 Flash high resolves exactly" \
@@ -1097,10 +1103,10 @@ agy_inventory_rc=$?
 printf '%s\n' "$AGY_INVENTORY_TEST_OUTPUT"
 AGY_INVENTORY_RESULT="$(printf '%s\n' "$AGY_INVENTORY_TEST_OUTPUT" | tail -1)"
 if [[ "$agy_inventory_rc" == 0 \
-        && "$AGY_INVENTORY_RESULT" == "AGY_INVENTORY_TEST_RESULT passed=32 failed=0" ]]; then
-    pass=$((pass+32))
+        && "$AGY_INVENTORY_RESULT" == "AGY_INVENTORY_TEST_RESULT passed=34 failed=0" ]]; then
+    pass=$((pass+34))
 else
-    bad "agy inventory semantic parser tests (expected 32 controlled passes)"
+    bad "agy inventory semantic parser tests (expected 34 controlled passes)"
 fi
 snapshot_ignored_pyc "$TMP/github-probe-pyc-after"
 if cmp -s "$TMP/github-probe-pyc-before" "$TMP/github-probe-pyc-after"; then

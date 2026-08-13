@@ -17,6 +17,11 @@ REVISION_RE = re.compile(r"[0-9a-f]{40}")
 MODEL_RE = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)+")
 EFFORTS = ("low", "medium", "high")
 ADJUSTABLE_RESOLUTIONS = {
+    "gemini-3.7-flash": {
+        "low": "gemini-3.7-flash-low",
+        "medium": "gemini-3.7-flash-medium",
+        "high": "gemini-3.7-flash-high",
+    },
     "gemini-3.6-flash": {
         "low": "gemini-3.6-flash-low",
         "medium": "gemini-3.6-flash-medium",
@@ -224,8 +229,8 @@ def canonical_schema() -> dict[str, Any]:
             "inventory": {"$ref": "#/$defs/inventory"},
             "adjustable_models": {
                 "type": "array",
-                "minItems": 3,
-                "maxItems": 3,
+                "minItems": 4,
+                "maxItems": 4,
                 "items": {"$ref": "#/$defs/adjustableModel"},
             },
             "fixed_models": {

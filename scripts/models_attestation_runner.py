@@ -32,9 +32,9 @@ sys.dont_write_bytecode = True
 
 VERSION_RUNNER_BYTES = 69_242
 VERSION_RUNNER_SHA256 = "0e2632c2de1dc2651693dce942429b3219d551eb5a979aa2d8d273ee0aa95d6b"
-INVENTORY_PARSER_BYTES = 3_652
-INVENTORY_PARSER_SHA256 = "824fc35b7c87df61a437b5c93e508b6caf5759626b004e0f82acd8f903eadd18"
-EXPECTED_NORMALIZED_SHA256 = "8d46bcac6b8f27995635d91dc6f5a0e549d351e707efe11a82d8b6593fe12daf"
+INVENTORY_PARSER_BYTES = 3_740
+INVENTORY_PARSER_SHA256 = "1c769423b47fc12ff9af7ba383454fb9ba7f1576773293eb41b5bad58ab37aff"
+EXPECTED_NORMALIZED_SHA256 = "db2a3529568b1ce4bb112d4cb9a0c31a4f3d1b32bd787728d224894ec6db133c"
 EXPECTED_VERSION_BINDING_SHA256 = "72d0bba6040b46109f6968528697579dd1dbe7fdae949e68fb22e6f058452ea2"
 EXPECTED_STDERR_BYTES = 29
 EXPECTED_STDERR_SHA256 = "53f588bc9a928f4a66908deacaca57dddc7e7ce177a0cc3586b5a501be26e1e8"
@@ -60,7 +60,7 @@ PRODUCTION_AST_SHA256 = {
     "_validate_stderr": "0abacd437c8dc19669339c2c3273342fd0e9a2d0b20fd7a0817e69d971d64eff",
     "_private_directory_identity": "4a19c9e4b92eabdced7ca4d79fad544cc2c532964d8ad28ba19d87927fadb31d",
     "_revalidate_private_directories": "d50498ba403904036956f13335864ec1a38b0ca5a0b0eb0a4881c487edefa20a",
-    "run_attestation": "7dadb4f0d3c5472e14c9b5e153b7c292eb1afd6594afab5cc4e6da3cdea4317e",
+    "run_attestation": "035c914baef87990e31bbc2d483720fdaeb2ccb8ec153a6fa63c6b3db15ef3ac",
     "main": "0057f238185514dd4fb7238d0348031109f54da61ddbbed2297e3a073723ced4",
 }
 PROFILE_KEYS = frozenset(
@@ -1107,7 +1107,7 @@ def run_attestation(
         if (
             evidence.normalized_sha256 != profile.inventory_normalized_sha256
             or evidence.slugs != tuple(sorted(inventory.EXPECTED_SLUGS))
-            or evidence.line_count != 11
+            or evidence.line_count != 14
         ):
             raise ModelsAttestationError("models inventory changed")
         stderr_sha = _validate_stderr(stderr, stderr_contract)
