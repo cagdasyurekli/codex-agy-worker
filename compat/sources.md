@@ -31,13 +31,16 @@ separately authorized mutation path.
 - Official CLI overview: https://antigravity.google/docs/cli-overview
 - Official usage guidance: https://antigravity.google/docs/cli-using
 - Official installer: https://antigravity.google/cli/install.sh
+- Official Google Gemini 3.7 Flash page: https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash
+- Official Google thinking guide: https://ai.google.dev/gemini-api/docs/thinking
 - Fixed `darwin_arm64` distribution manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
 - Installed interface evidence: `./ground-truth.sh`
 
 The verified baseline is agy `1.1.12` at reviewed source revision
 `f7519c9084190ed421e89dd81c63970b5177c9ef`. The official release/tag/source,
-retained version binding, separately authorized JSON capture, strict unchanged
-11-slug inventory, and existing representative single-selector behavior were
+retained version binding, separately authorized JSON captures, strict fourteen-slug
+inventory (the prior eleven retained plus Gemini 3.7 Flash low/medium/high), and
+existing representative single-selector behavior were
 human-reconciled in [`reviews/agy-1.1.12.md`](reviews/agy-1.1.12.md). The active matrix binds every
 adjustable pair to one exact advertised compound slug and records fixed choices as
 non-adjustable. It neither forwards `--effort` nor attests the effective provider
@@ -82,17 +85,17 @@ baseline. For agy, a future version or source change disables reviewed pair
 resolution until another human reconciliation is accepted. Codex drift remains
 observation-only and never disables agy dispatch.
 
-agy `1.1.12` is reconciled in the checked-in metadata. Its successful capture remains
+agy `1.1.12` is reconciled in the checked-in metadata. Its successful captures remain
 `captured` evidence rather than self-authorizing output: the active update follows
 from the separate human review of exact official release/source, retained
-version/executable binding, strict unchanged inventory, and canonical matrix bytes.
+version/executable binding, strict reconciled inventory, and canonical matrix bytes.
 Ordinary version-independent literal model pass-through and agy-owned default
 selection remain independent of that matrix; reviewed model/effort resolution still
 depends on an exact accepted version/source/digest binding.
 
 Owner-captured inventory bytes are interpreted offline by `scripts/agy_inventory.py`,
 which requires one exact reviewed canonical slug per line and complete one-time
-coverage of all 11 slugs. Unknown tokens in reviewed provider namespaces fail closed.
+coverage of all 14 slugs. Unknown tokens in reviewed provider namespaces fail closed.
 Display text is non-authoritative: the `gpt-oss` alias is
 valid only beside `gpt-oss-120b-medium` on that same line. This semantic parse is one
 evidence input, not a version/executable binding or permission to advance metadata.

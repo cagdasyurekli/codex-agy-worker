@@ -97,8 +97,10 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or deferred status. The **v0.5.0 release scope represented
-by this source** adds sanitized bug/improvement drafts with exact double confirmation,
+their explicit implemented or deferred status. The **v0.6.0 release scope represented
+by this source** adds the reviewed Gemini 3.7 Flash low/medium/high mappings and hardens
+the capture child mode and dispatch-state snapshot boundaries. The published v0.5.0
+scope added sanitized bug/improvement drafts with exact double confirmation,
 private-only security drafts, and the bounded metadata-only feedback aggregate and
 weekly/manual watcher. The prior v0.4.0 scope includes daily compatibility observation,
 private 30/60/90 measurement, the optional local notifier, version-drift-safe
@@ -139,8 +141,9 @@ fixed POSIX paths. Native Windows is untested; WSL or another compatible environ
 may work on a best-effort basis. The optional daily notifier is specifically a macOS
 LaunchAgent.
 The active reviewed model/effort matrix is bound to agy `1.1.12`. Its exact official
-release/source, retained snapshot, separately authorized 11-slug account capture,
-and unchanged pair-to-compound-slug mappings are reconciled in
+release/source, retained snapshot, separately authorized 14-slug account capture
+(the earlier eleven retained plus Gemini 3.7 Flash low/medium/high), and reviewed
+pair-to-compound-slug mappings are reconciled in
 [`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md). The agy-owned default
 and explicit literal pass-through remain version-independent. Codex CLI `0.147.0` is
 the current observational baseline.
@@ -522,8 +525,9 @@ no-selector path send no model. Direct reviewed selection is intentionally stric
 ```
 
 The second form resolves through the active, exact-SHA, agy-version/source-bound
-matrix to `gemini-3.6-flash-high`. Flash 3.6 and 3.5 accept low/medium/high; Pro 3.1
-accepts low/high and rejects medium. Sonnet, the Opus thinking-labelled slug, the GPT
+matrix to `gemini-3.6-flash-high`. Flash 3.7, 3.6, and 3.5 accept low/medium/high;
+Gemini 3.7 `minimal` is unsupported. Pro 3.1 accepts low/high and rejects medium.
+Sonnet, the Opus thinking-labelled slug, the GPT
 medium-labelled slug, and every already-compound slug are fixed exact choices and
 reject an effort input. The wrapper sends exactly one downstream `--model` and never
 sends agy's separate `--effort` or an invented thinking flag.
@@ -1044,12 +1048,13 @@ mutations are selected drift checks under the reviewed-source/local-owner TCB, n
 proof against coordinated hostile source changes. Stronger assurance would require
 a separately trusted launcher.
 
-One newly authorized no-retry `1.1.12` JSON `models` capture completed with exit `0`,
-one Popen, empty capture scratch, an exact completion marker, and a strict 11-model
-JSON shape. Offline normalization produced the same 11 slugs and the same
-pair-to-compound-slug mappings as the prior baseline. An earlier failed attempt
-remains non-authoritative; it was not retried or reconstructed. The sanitized hashes,
-official source binding, and claim limits are recorded in
+The retained historical `1.1.12` capture established eleven slugs. A later separately
+authorized no-retry capture completed with exit `0`, one Popen, empty capture scratch,
+an exact completion marker, and a strict 14-model JSON shape. Offline normalization
+retained the earlier eleven slugs and added Gemini 3.7 Flash low/medium/high; `minimal`
+is unsupported. An earlier failed attempt remains non-authoritative; it was not
+retried or reconstructed. The sanitized hashes, official source binding, and claim
+limits are recorded in
 [`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md).
 
 The human-reviewed agy baseline is `1.1.12` at source revision
@@ -1059,8 +1064,8 @@ archive build, URL, or SHA-512 change requires review and cannot itself activate
 advance compatibility metadata.
 
 The G1 direct-selection surface consumes the checked-in active model/effort matrix as
-validated compatibility metadata, never as routing or gate authority. It maps eight explicit
-base/effort pairs to exact advertised compound slugs and records three exact fixed
+validated compatibility metadata, never as routing or gate authority. It maps eleven
+explicit base/effort pairs to exact advertised compound slugs and records three exact fixed
 choices; Pro medium is unsupported. The matrix resolves only while its agy version
 and reviewed source revision match the canonical records and its exact bytes match
 the checked-in SHA-256. The wrapper resolves one exact model slug and never sends
@@ -1270,8 +1275,8 @@ tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
-tests/test-agy-worker.sh      238-case offline dispatcher/installer/routing/lifecycle suite
-tests/test-update.sh          314-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
+tests/test-agy-worker.sh      257-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-update.sh          319-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness

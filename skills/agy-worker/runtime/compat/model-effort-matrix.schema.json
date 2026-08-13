@@ -17,8 +17,8 @@
     "inventory": {"$ref": "#/$defs/inventory"},
     "adjustable_models": {
       "type": "array",
-      "minItems": 3,
-      "maxItems": 3,
+      "minItems": 4,
+      "maxItems": 4,
       "items": {"$ref": "#/$defs/adjustableModel"}
     },
     "fixed_models": {
@@ -50,7 +50,7 @@
       "additionalProperties": false,
       "required": ["model", "resolutions", "unsupported_efforts"],
       "properties": {
-        "model": {"enum": ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-pro"]},
+        "model": {"enum": ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-pro"]},
         "resolutions": {
           "type": "object",
           "minProperties": 2,

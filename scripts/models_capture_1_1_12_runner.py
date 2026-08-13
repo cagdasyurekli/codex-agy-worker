@@ -49,7 +49,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "77a20e96673a227082bee6445182f3c87c8cf902b6c67ce37a6bad0e60cca289"
+MODULE_AST_SHA256 = "58ce44a6ff785cf42d9dcf0a1d499819c9703682430c6eb61290c6108535c5b6"
 ACTIVE_MARKER_ROOT: Optional[str] = None
 ACTIVE_MARKER_ROOT_IDENTITY: Optional[tuple[int, int]] = None
 ACTIVE_MARKER_DIGEST: Optional[str] = None
@@ -569,7 +569,7 @@ def _start_capture(profile: Profile, root_path: str) -> subprocess.Popen[bytes]:
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
     try:
         environment = {"HOME": profile.account_home, "TMPDIR": os.path.join(root_path, "tmp"), "XDG_CACHE_HOME": os.path.join(root_path, "xdg-cache"), "XDG_CONFIG_HOME": os.path.join(root_path, "xdg-config"), "XDG_STATE_HOME": os.path.join(root_path, "xdg-state"), "PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TERM": "dumb", "NO_COLOR": "1"}
-        process = subprocess.Popen([profile.source_path, "--output-format", "json", "models"], executable=profile.snapshot_path, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=os.path.join(root_path, "cwd"), env=environment, start_new_session=True, close_fds=True)
+        process = subprocess.Popen([profile.source_path, "--output-format", "json", "models"], executable=profile.snapshot_path, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=os.path.join(root_path, "cwd"), env=environment, start_new_session=True, close_fds=True, umask=0o077)
         try:
             pgid = os.getpgid(process.pid)
         except ProcessLookupError:
@@ -759,7 +759,7 @@ def validate_source_contract(data: bytes) -> dict[str, str]:
     if len(popens) != 1: raise CaptureError("runner must own exactly one Popen")
     if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"system", "popen", "run", "call", "check_call", "check_output"} for node in ast.walk(tree)): raise CaptureError("runner source gained execution authority")
     popen_text = ast.get_source_segment(data.decode("utf-8", "strict"), popens[0]) or ""
-    for required in ("[profile.source_path, \"--output-format\", \"json\", \"models\"]", "executable=profile.snapshot_path", "env=environment", "cwd=os.path.join(root_path, \"cwd\")", "start_new_session=True", "close_fds=True"):
+    for required in ("[profile.source_path, \"--output-format\", \"json\", \"models\"]", "executable=profile.snapshot_path", "env=environment", "cwd=os.path.join(root_path, \"cwd\")", "start_new_session=True", "close_fds=True", "umask=0o077"):
         if required not in popen_text: raise CaptureError("runner Popen contract changed")
     source = data.decode("utf-8", "strict")
     for required in ("_close_group(process)", "_marker(root_fd, record_sha, signals)", "_consume_optional_tmp_cache", "TMP_CACHE_LEAF", "allow_tmp_cache=True", "\"routing_authority\": False", "\"metadata_updated\": False", "_finish_success(state, result)"):

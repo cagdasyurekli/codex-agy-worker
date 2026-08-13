@@ -267,6 +267,13 @@ def load_state(job: Path) -> tuple[dict[str, Any], bytes, str]:
     return value, raw, digest(raw)
 
 
+def read_state_snapshot(job: Path) -> tuple[dict[str, Any], bytes, str]:
+    """Read one strict state snapshot without racing an approved replacement."""
+
+    with state_lock(job):
+        return load_state(job)
+
+
 def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int, int, int]]:
     raw, info = read_regular(job / COMMAND_NAME, MAX_COMMAND_BYTES, "dispatch command")
     value = parse_json(raw, "dispatch command")
@@ -713,7 +720,7 @@ def controller(job: Path, ownership_fd: int) -> int:
         signal.signal(number, interrupted)
     try:
       with inherited_lifecycle_lock(job, ownership_fd):
-        state, prior_raw, _sha = load_state(job)
+        state, prior_raw, _sha = read_state_snapshot(job)
         if state["status"] == "cancel-requested" and state["cancel_requested"]:
             transition(job, state, prior_raw, {
                 "status": "cancelled", "reason": "cancelled",
@@ -751,7 +758,7 @@ def controller(job: Path, ownership_fd: int) -> int:
             if stdout_fd >= 0: os.close(stdout_fd)
             if stderr_fd >= 0: os.close(stderr_fd)
             with contextlib.suppress(OSError): _stage(command, False)
-            current, current_raw, _current_sha = load_state(job)
+            current, current_raw, _current_sha = read_state_snapshot(job)
             transition(job, current, current_raw, {
                 "status": "failed", "reason": "status_unavailable",
                 "exit_code": EXIT_BY_REASON["status_unavailable"],
@@ -788,7 +795,7 @@ def controller(job: Path, ownership_fd: int) -> int:
             except DispatchError as exc:
                 if str(exc) != "dispatch state changed before transition":
                     raise
-                current, current_raw, _current_sha = load_state(job)
+                current, current_raw, _current_sha = read_state_snapshot(job)
                 if current["attempt"] != state["attempt"]:
                     raise DispatchError("dispatch attempt changed during control")
                 state, prior_raw = current, current_raw
@@ -821,7 +828,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 now_mono = time.monotonic()
                 elapsed = float(state["attempt_base_elapsed"]) + now_mono - started_mono
                 try:
-                    current, current_raw, _current_sha = load_state(job)
+                    current, current_raw, _current_sha = read_state_snapshot(job)
                 except DispatchError:
                     reason = "status_unavailable"
                     break
@@ -1095,7 +1102,7 @@ def spawn(
       deadline = time.monotonic() + 5.0
       forwarded = False
       while time.monotonic() < deadline:
-        current, _raw, sha = load_state(job)
+        current, _raw, sha = read_state_snapshot(job)
         if parent_signal is not None and not forwarded:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(controller_process.pid, parent_signal)
@@ -1139,7 +1146,7 @@ def spawn(
             break
       if completion_signal is not None:
         result_code = 128 + completion_signal
-      final, _raw, sha = load_state(job)
+      final, _raw, sha = read_state_snapshot(job)
       if completion_signal is None and final["status"] == "succeeded" and final["result_path"] is not None:
         command_result(job)
       else:
@@ -1180,11 +1187,11 @@ def _terminalize_queued_signal(job: Path, number: int) -> None:
 
 
 def command_status(job: Path) -> int:
-    state, _raw, sha = load_state(job)
+    state, _raw, sha = read_state_snapshot(job)
     if state["status"] in {"queued", "running", "cancel-requested"}:
         try:
             with lifecycle_lock(job, blocking=False):
-                state, raw, sha = load_state(job)
+                state, raw, sha = read_state_snapshot(job)
                 if state["status"] in {"queued", "running", "cancel-requested"}:
                     state, raw, sha = transition(job, state, raw, {
                         "status": "orphaned", "reason": "status_unavailable",
@@ -1204,7 +1211,7 @@ def command_wait(job: Path, after: str, timeout: float) -> int:
         raise DispatchError("wait arguments are invalid")
     deadline = time.monotonic() + timeout
     while True:
-        state, _raw, sha = load_state(job)
+        state, _raw, sha = read_state_snapshot(job)
         if sha != after or state["status"] in TERMINAL:
             print_json(public_status(state, sha))
             return 0
@@ -1215,7 +1222,7 @@ def command_wait(job: Path, after: str, timeout: float) -> int:
 
 
 def command_result(job: Path) -> int:
-    state, _raw, _sha = load_state(job)
+    state, _raw, _sha = read_state_snapshot(job)
     if state["status"] != "succeeded" or state["result_path"] is None:
         raise DispatchError("dispatch has no successful result")
     raw, info = read_regular(Path(state["result_path"]), 1024 * 1024, "dispatch result")
