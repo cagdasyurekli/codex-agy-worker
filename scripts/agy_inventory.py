@@ -15,6 +15,9 @@ from typing import Iterable, Tuple
 
 MAX_INVENTORY_BYTES = 64 * 1024
 EXPECTED_SLUGS: Tuple[str, ...] = (
+    "gemini-3.7-flash-low",
+    "gemini-3.7-flash-medium",
+    "gemini-3.7-flash-high",
     "gemini-3.6-flash-low",
     "gemini-3.6-flash-medium",
     "gemini-3.6-flash-high",

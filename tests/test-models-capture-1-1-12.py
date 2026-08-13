@@ -99,7 +99,7 @@ class PollCounter:
 
 
 class ModelsCapture112Tests(unittest.TestCase):
-    def _synthetic_runner_profile(self, base: str, exit_code: int, scratch_write: bool = False, tmp_cache: str = "", tmp_cache_mode: str = "") -> tuple[object, bytes, dict[str, object], dict[str, object]]:
+    def _synthetic_runner_profile(self, base: str, exit_code: int, scratch_write: bool = False, tmp_cache: str = "", tmp_cache_mode: str = "", child_sets_private_umask: bool = True) -> tuple[object, bytes, dict[str, object], dict[str, object]]:
         """Build one private, data-only recovery chain for the real runner path."""
         account, parent = os.path.join(base, "account"), os.path.join(base, "capture")
         os.mkdir(account, 0o700); os.mkdir(parent, 0o700)
@@ -107,7 +107,9 @@ class ModelsCapture112Tests(unittest.TestCase):
         os.mkdir(snapshots, 0o700); os.mkdir(recovery, 0o700)
         mutation = 'printf residual > "$TMPDIR/residual"\n' if scratch_write else ""
         if tmp_cache:
-            mutation += f'umask 077; printf cache > "$TMPDIR/{tmp_cache}"\n'
+            if child_sets_private_umask:
+                mutation += "umask 077\n"
+            mutation += f'printf cache > "$TMPDIR/{tmp_cache}"\n'
             if tmp_cache_mode:
                 mutation += f'chmod {tmp_cache_mode} "$TMPDIR/{tmp_cache}"\n'
         child = (f"#!/bin/sh\n{mutation}printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$0\" \"$1\" \"$HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\" \"$PATH\" \"$LC_ALL\"\nexit {exit_code}\n").encode("ascii")
@@ -300,6 +302,8 @@ class ModelsCapture112Tests(unittest.TestCase):
     def test_35_source_contract_rejects_popen_environment_mutation(self) -> None:
         mutated = RUNNER_SOURCE.read_bytes().replace(b"env=environment", b"env=os.environ", 1)
         with self.assertRaises(runner["CaptureError"]): runner["validate_source_contract"](mutated)
+        mutated = RUNNER_SOURCE.read_bytes().replace(b", umask=0o077", b"", 1)
+        with self.assertRaises(runner["CaptureError"]): runner["validate_source_contract"](mutated)
 
     def test_36_source_contract_rejects_profile_process_import(self) -> None:
         mutated = PROFILE_SOURCE.read_bytes().replace(b"import ast", b"import subprocess\nimport ast", 1)
@@ -415,6 +419,7 @@ class ModelsCapture112Tests(unittest.TestCase):
         self.assertEqual(kwargs["cwd"], "/private/capture/root/cwd")
         self.assertTrue(kwargs["start_new_session"])
         self.assertTrue(kwargs["close_fds"])
+        self.assertEqual(kwargs["umask"], 0o077)
         self.assertEqual(kwargs["env"], {"HOME": value.account_home, "TMPDIR": "/private/capture/root/tmp", "XDG_CACHE_HOME": "/private/capture/root/xdg-cache", "XDG_CONFIG_HOME": "/private/capture/root/xdg-config", "XDG_STATE_HOME": "/private/capture/root/xdg-state", "PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TERM": "dumb", "NO_COLOR": "1"})
 
     def test_48_start_capture_reaps_fast_exit_before_group_registration(self) -> None:
@@ -1031,16 +1036,22 @@ class ModelsCapture112Tests(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(result["artifact_root"], "models.capture.sha256")))
 
     def test_84_known_tmp_cache_is_descriptor_checked_deleted_and_captured(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            base = os.path.realpath(temporary)
-            value, raw, old, _paths = self._synthetic_runner_profile(base, 0, tmp_cache=runner["TMP_CACHE_LEAF"])
-            globals_ = runner["run_capture"].__globals__
-            try:
-                result = runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
-            finally:
-                globals_.update(old)
-            self.assertEqual(result["status"], "captured")
-            self.assertEqual(os.listdir(os.path.join(result["artifact_root"], "tmp")), [])
+        previous_umask = os.umask(0o022)
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                base = os.path.realpath(temporary)
+                value, raw, old, _paths = self._synthetic_runner_profile(
+                    base, 0, tmp_cache=runner["TMP_CACHE_LEAF"], child_sets_private_umask=False
+                )
+                globals_ = runner["run_capture"].__globals__
+                try:
+                    result = runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+                finally:
+                    globals_.update(old)
+                self.assertEqual(result["status"], "captured")
+                self.assertEqual(os.listdir(os.path.join(result["artifact_root"], "tmp")), [])
+        finally:
+            os.umask(previous_umask)
 
     def test_85_unknown_tmp_cache_rejects_and_preserves_residual(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

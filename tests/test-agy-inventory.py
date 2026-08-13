@@ -20,7 +20,7 @@ inventory = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = inventory
 SPEC.loader.exec_module(inventory)
 
-EXPECTED_HASH = "8d46bcac6b8f27995635d91dc6f5a0e549d351e707efe11a82d8b6593fe12daf"
+EXPECTED_HASH = "db2a3529568b1ce4bb112d4cb9a0c31a4f3d1b32bd787728d224894ec6db133c"
 
 
 def fixture_lines() -> list[str]:
@@ -65,13 +65,31 @@ def test(name: str) -> Callable[[Callable[[], None]], Callable[[], None]]:
 def _() -> None:
     result = inventory.parse_inventory_bytes(encode(fixture_lines()))
     assert result.slugs == tuple(sorted(inventory.EXPECTED_SLUGS))
-    assert result.line_count == 11
+    assert result.line_count == 14
 
 
 @test("corrected canonical normalized hash is pinned")
 def _() -> None:
     result = inventory.parse_inventory_bytes(encode(fixture_lines()))
     assert result.normalized_sha256 == EXPECTED_HASH
+
+
+@test("all three reviewed 3.7 Flash effort slugs are accepted exactly")
+def _() -> None:
+    result = inventory.parse_inventory_bytes(encode(fixture_lines()))
+    assert {
+        "gemini-3.7-flash-low",
+        "gemini-3.7-flash-medium",
+        "gemini-3.7-flash-high",
+    }.issubset(result.slugs)
+
+
+@test("unreviewed 3.7 Flash base slug is rejected")
+def _() -> None:
+    lines = replace_line(
+        fixture_lines(), "gemini-3.7-flash-low", "gemini-3.7-flash"
+    )
+    expect_error(encode(lines))
 
 
 @test("inventory ordering does not change canonical hash")

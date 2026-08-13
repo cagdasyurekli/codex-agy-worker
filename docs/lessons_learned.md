@@ -219,6 +219,11 @@ owner-only modes immediately afterward. Restore those modes from the normal chil
 return path and an EXIT trap; HUP, INT, and TERM handlers must restore first and then
 re-raise the same signal so cleanup does not turn termination into success.
 
+A private parent directory does not determine the modes of files a child creates.
+Set an owner-private umask at the child execution boundary without changing the
+caller mask, and keep post-child validators strict: accept an expected cache leaf
+only when its exact owner-only mode and descriptor identity still match.
+
 Treat a direct-selection version probe as a process-group boundary too. Read its
 stdout incrementally under byte and wall-clock limits, close the whole group on
 oversize, timeout, HUP, INT, or TERM, and do so before reading the task or publishing

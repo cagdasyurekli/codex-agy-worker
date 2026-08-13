@@ -65,9 +65,9 @@ Keep these counts current when their suites change:
 - Persona Evidence Registry v1: 124 offline semantic-chain/Git-ancestry/portable/mutation cases.
 - Safe local lifecycle: 116 offline state/receipt/Git-policy/cleanup/signal cases.
 - Data-only Workload Profiles v1: 89 offline schema/allowlist/portable/mutation cases.
-- `agy-worker.sh` / `install.sh` / model selection and recommendation: 238 offline
+- `agy-worker.sh` / `install.sh` / model selection and recommendation: 257 offline
   fake-agy/routing cases.
-- `update.sh`: 314 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
+- `update.sh`: 319 offline transport/process/inventory/local-remote/matrix/manifest/watch-policy cases.
 - Adoption measurement: 41 offline privacy/aggregation/rolling-window/concurrency cases.
 - Local update notifier: 60 offline install/uninstall/process/signal/notification cases.
 - Canonical version-attestation runner: 165 offline fixed-profile/source-binding cases.

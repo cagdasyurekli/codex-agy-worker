@@ -8,6 +8,15 @@
   },
   "adjustable_models": [
     {
+      "model": "gemini-3.7-flash",
+      "resolutions": {
+        "low": "gemini-3.7-flash-low",
+        "medium": "gemini-3.7-flash-medium",
+        "high": "gemini-3.7-flash-high"
+      },
+      "unsupported_efforts": []
+    },
+    {
       "model": "gemini-3.6-flash",
       "resolutions": {
         "low": "gemini-3.6-flash-low",

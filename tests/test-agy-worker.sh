@@ -611,6 +611,9 @@ while IFS='|' read -r pair_model pair_effort pair_resolved; do
         fi
     done
 done <<'EOF'
+gemini-3.7-flash|low|gemini-3.7-flash-low
+gemini-3.7-flash|medium|gemini-3.7-flash-medium
+gemini-3.7-flash|high|gemini-3.7-flash-high
 gemini-3.6-flash|low|gemini-3.6-flash-low
 gemini-3.6-flash|medium|gemini-3.6-flash-medium
 gemini-3.6-flash|high|gemini-3.6-flash-high
@@ -623,6 +626,7 @@ EOF
 
 exact_index=0
 for exact_model in \
+    gemini-3.7-flash-low gemini-3.7-flash-medium gemini-3.7-flash-high \
     gemini-3.6-flash-low gemini-3.6-flash-medium gemini-3.6-flash-high \
     gemini-3.5-flash-low gemini-3.5-flash-medium gemini-3.5-flash-high \
     gemini-3.1-pro-low gemini-3.1-pro-high \
@@ -2009,6 +2013,114 @@ if [[ "$queued_cancel_rc" == 0 ]]; then
     ok "queued cancel is consumed by inherited controller ownership without starting agy"
 else
     bad "queued cancel/start ownership handoff"
+fi
+
+PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$TMP/state-snapshot-job" <<'PY'
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+source, job_text = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("agy_dispatch_state_snapshot", source)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+job = Path(job_text).resolve()
+job.mkdir(mode=0o700)
+command = {
+    "job_id": "state-snapshot", "workdir": str(job),
+    "idle_seconds": 1.0, "hard_seconds": 2.0, "max_seconds": 3.0,
+}
+state = module.initial_state(
+    command, "initial", 1, command_sha="0" * 64,
+    command_identity=(1, 1, os.getuid(), os.getgid(), 0o600),
+    stage_sha=None, stage_identity=None,
+)
+module.write_atomic(job, module.STATE_NAME, state)
+done = job / "writer.done"
+blocked = job / "writer.blocked"
+acquired = job / "writer.acquired"
+writer_source = r'''
+import fcntl
+import importlib.util
+import os
+from pathlib import Path
+import sys
+
+source, job_text, done_text, blocked_text, acquired_text = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("agy_dispatch_state_writer", source)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+job = Path(job_text)
+lock_fd = os.open(
+    job / module.STATE_LOCK_NAME,
+    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+    0o600,
+)
+os.fchmod(lock_fd, 0o600)
+try:
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        Path(blocked_text).touch(mode=0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    else:
+        Path(acquired_text).touch(mode=0o600)
+    state, raw, _sha = module.load_state(job)
+    module._transition_locked(job, state, raw, {
+        "notice_count": state["notice_count"] + 1,
+    })
+finally:
+    os.close(lock_fd)
+Path(done_text).touch(mode=0o600)
+'''
+original_lstat = Path.lstat
+child = None
+writer_was_blocked = False
+
+def replace_during_identity_check(path: Path):
+    global child, writer_was_blocked
+    if path == job / module.STATE_NAME and child is None:
+        child = subprocess.Popen(
+            [sys.executable, "-I", "-S", "-B", "-c", writer_source,
+             source, str(job), str(done), str(blocked), str(acquired)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 2.0
+        while not blocked.exists() and not acquired.exists() \
+                and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert blocked.exists() != acquired.exists()
+        writer_was_blocked = blocked.exists()
+        if not writer_was_blocked:
+            child.wait(timeout=3)
+            assert done.exists()
+    return original_lstat(path)
+
+Path.lstat = replace_during_identity_check
+try:
+    snapshot, raw, sha = module.read_state_snapshot(job)
+finally:
+    Path.lstat = original_lstat
+assert child is not None and child.wait(timeout=3) == 0
+terminal, terminal_raw, terminal_sha = module.read_state_snapshot(job)
+assert writer_was_blocked
+assert snapshot["sequence"] == 1 and sha == module.digest(raw)
+assert terminal["sequence"] == 2
+assert terminal["previous_state_sha256"] == sha
+assert terminal_sha == module.digest(terminal_raw)
+PY
+state_snapshot_rc=$?
+if [[ "$state_snapshot_rc" == 0 ]]; then
+    ok "state snapshot serializes an approved atomic replacement without weakening identity checks"
+else
+    bad "state snapshot atomic-replacement identity boundary"
 fi
 
 printf 'orphan fixture\n' | FAKE_EXIT_CODE=23 \

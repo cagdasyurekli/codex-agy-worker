@@ -217,8 +217,9 @@ environment variable conflict even when equal, repeated or empty components fail
 and any explicit tier conflicts with every model/effort source. Model and effort may
 use different sources. Do not normalize or guess names.
 
-Exact reviewed compound/fixed slugs are model-only. Adjustable Flash 3.6/3.5 bases
-accept low/medium/high; Pro 3.1 accepts low/high and rejects medium. Fixed Sonnet,
+Exact reviewed compound/fixed slugs are model-only. Adjustable Flash 3.7/3.6/3.5 bases
+accept low/medium/high; Gemini 3.7 `minimal` is unsupported; Pro 3.1 accepts low/high
+and rejects medium. Fixed Sonnet,
 Opus thinking-labelled, GPT medium-labelled, and compound slugs reject effort. Custom
 labels remain available only through legacy `--tier CUSTOM`. Direct resolution needs
 the active exact-SHA/version/source-bound portable matrix and exact installed agy

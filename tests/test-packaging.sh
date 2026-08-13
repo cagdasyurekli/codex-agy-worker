@@ -722,7 +722,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.5.0"
+assert manifest["version"] == "0.6.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -1366,7 +1366,7 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
         && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
         "$ROOT/skills/agy-worker/runtime/compat/agy-last-reviewed.txt" \
         && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.12" ]] \
-        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-12" ]]; then
+        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-13" ]]; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
@@ -1620,7 +1620,7 @@ rc=$?
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "a36ead9a39715bb2380b3c36cbd8ae8e6e570e4147a4a4c7dc92f78e82e691a0"' \
+        && grep -Fq '"matrix_sha256": "7aed92cc79154691407324f6d3bd75f335b67ab8ecc04cad89a60b5d15c03b3d"' \
             "$TMP/copied-selection.json" \
         && [[ ! -e "$TMP/network-called" ]]; then
     ok "skill-folder-only copy resolves an exact direct selector offline"
@@ -1990,7 +1990,11 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
             "$ROOT/compat/reviews/agy-1.1.12.md" \
         && grep -Fq '8d46bcac6b8f27995635d91dc6f5a0e549d351e707efe11a82d8b6593fe12daf' \
             "$ROOT/compat/reviews/agy-1.1.12.md" \
+        && grep -Fq 'db2a3529568b1ce4bb112d4cb9a0c31a4f3d1b32bd787728d224894ec6db133c' \
+            "$ROOT/compat/reviews/agy-1.1.12.md" \
         && grep -Fq 'a36ead9a39715bb2380b3c36cbd8ae8e6e570e4147a4a4c7dc92f78e82e691a0' \
+            "$ROOT/compat/reviews/agy-1.1.12.md" \
+        && grep -Fq '7aed92cc79154691407324f6d3bd75f335b67ab8ecc04cad89a60b5d15c03b3d' \
             "$ROOT/compat/reviews/agy-1.1.12.md" \
         && ! grep -Fqr 'models_capture_1_1_12' "$ROOT/skills/agy-worker/runtime"; then
     ok "fixed 1.1.12 capture bridge stays independent and outside the skill runtime"

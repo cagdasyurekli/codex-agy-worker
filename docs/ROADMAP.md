@@ -101,9 +101,9 @@ Every roadmap slice must preserve all of these rules:
 ## Current agy inventory correction
 
 The accepted agy `1.1.12` reconciliation combines documented `--effort` and
-machine-readable `models` surfaces with one separately authorized, version-bound
-JSON model capture. The exact 11-slug list, its SHA-256, reviewed source revision,
-and bounded behavior limits live in
+machine-readable `models` surfaces with separately authorized, version-bound JSON
+model captures. The exact 14-slug list (the historical eleven plus Gemini 3.7 Flash
+low/medium/high), its SHA-256, reviewed source revision, and bounded behavior limits live in
 [`../compat/reviews/agy-1.1.12.md`](../compat/reviews/agy-1.1.12.md). Agent and plugin
 catalogs were not part of that bounded review and remain outside this contract.
 
@@ -151,28 +151,31 @@ transport hardening, the agy `1.1.12` reconciliation, gate-envelope intake, life
 Git stdout, Actions checkout credentials, and the progress-aware per-job lifecycle are
 implemented and offline-verified in the published v0.4.0 release. This remains an
 offline and bounded-lifecycle claim, not a live-provider guarantee.
+The v0.6.0 release scope represented by this source adds the human-reconciled Gemini
+3.7 Flash low/medium/high mappings plus capture-child mode and dispatch-state snapshot
+hardening. Publication remains a separate exact tag/release readback.
 Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
 ambient-Git transport path and is not claimed hardened by this slice. The agy
 `1.1.12` reconciliation advances only the exact version/source/distribution and
-unchanged 11-slug matrix bindings after a successful separately authorized JSON
-capture and offline review. P2-B/P2-C remain deferred. Ordinary agy-owned default
+14-slug matrix bindings after successful separately authorized JSON captures and
+offline review; the former eleven remain unchanged and only Gemini 3.7 Flash
+low/medium/high was added. P2-B/P2-C remain deferred. Ordinary agy-owned default
 dispatch and explicitly approved literal pass-through remain operational during
 future version drift; reviewed model/effort resolution stays fail-closed.
 
 ### Feedback reporting and bounded maintainer review
 
-**Current status:** Implemented and offline-verified in the v0.5.0 release scope
-represented by this source. The local report path creates sanitized bug or improvement
+**Current status:** Implemented, offline-verified, and published in v0.5.0. The local
+report path creates sanitized bug or improvement
 drafts; public submission requires independent review plus matching exact digest and
 public-safety-digest confirmations. Security drafts remain private-route only. The
 weekly/manual watcher reads one fixed, metadata-only issue page and emits a bounded
 aggregate; raw issue prose never becomes an agent prompt or workflow log, while only
 the canonical aggregate is workflow output. It cannot write GitHub issues, comments,
-labels, or state. A source checkout alone is not proof of publication; verify the
-exact reviewed tag and release state separately.
+labels, or state.
 
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the
@@ -256,7 +259,7 @@ profile pins. All coverage remains synthetic and offline.
 
 A separate canonical models-inventory runner now binds one exact `models` Popen to
 an accepted version binding and the same attested snapshot. Its 116-case offline suite
-uses synthetic executables only, pins the exact 11-line semantic parser and corrected
+uses synthetic executables only, pins the exact 14-line semantic parser and corrected
 normalized hash, enforces 25-second/64-KiB bounds and private detached publication,
 and kills mutations of the executable override, logical argv, private cwd, stream
 wiring, exact closed environment, bounds, parser, version-binding digest, and
@@ -294,13 +297,16 @@ its runner records one bounded, separately authorized call as `captured` evidenc
 It cannot accept inventory, update metadata, route, retry, or inspect account-HOME
 contents.
 
-One fresh, separately authorized, no-retry `1.1.12` JSON `models` capture completed
-with child exit `0`, one Popen, empty post-child scratch, and an exact marker/record
-digest chain. Strict offline parsing confirmed the unchanged 11-slug inventory and
-normalized hash. An earlier rejected capture remains non-authoritative and was not
-reconstructed or retried. The successful capture does not prove provider backend,
-pricing, or routing authority; it is accepted only through the separate human
-reconciliation record. P2-B/P2-C stay deferred.
+The historical authorized no-retry `1.1.12` capture established eleven slugs. A later
+separately authorized no-retry capture completed with child exit `0`, one Popen,
+empty post-child scratch, and an exact marker/record digest chain. Strict offline
+parsing retained those eleven and added Gemini 3.7 Flash low/medium/high, for a
+14-slug normalized inventory; Google documentation establishes the base levels but
+the exact agy compound slugs come from capture. Gemini 3.7 `minimal` is unsupported.
+An earlier rejected capture remains non-authoritative and was not reconstructed or
+retried. The successful capture does not prove provider backend, pricing, or routing
+authority; it is accepted only through the separate human reconciliation record.
+P2-B/P2-C stay deferred.
 
 Startup rejection now emits one capped canonical, path-redacted diagnostic line from
 the same evaluator that owns the boolean decision. This is evidence for reconciling a
@@ -390,7 +396,7 @@ provenance, code-signing verification, or OS attestation.
   an explicit public fixture is a separate live-data approval, not part of the watch.
   The watch never performs this reconciliation. agy `1.1.12` was advanced only after
   its official evidence, retained version binding, successful account capture,
-  strict unchanged inventory, and offline gates were human-reviewed. Any later
+  strict reconciled inventory, and offline gates were human-reviewed. Any later
   version or source movement returns the result to
   drift-review until another reconciliation is accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
@@ -398,8 +404,9 @@ provenance, code-signing verification, or OS attestation.
   bounded CLI behavior—not from a provider API table or a model-name guess. The
   matrix records its agy version and source revision. Any agy version/source drift
   makes it stale and keeps effort resolution disabled until human reconciliation.
-  The verified `1.1.12` inventory exposes compound slugs: Gemini 3.6 Flash and Gemini
-  3.5 Flash have low/medium/high; Gemini 3.1 Pro has low/high but **not medium**.
+  The verified `1.1.12` inventory exposes compound slugs: Gemini 3.7 Flash, Gemini 3.6
+  Flash, and Gemini 3.5 Flash have low/medium/high; Gemini 3.7 `minimal` is unsupported;
+  Gemini 3.1 Pro has low/high but **not medium**.
   Sonnet is no-level; the advertised Opus thinking slug and GPT medium-labelled slug
   are fixed model choices, not adjustable effort pairs. G0 binds those exact entries
   as compatibility metadata; the wrapper does not consume the mappings until G1.
@@ -417,7 +424,7 @@ provenance, code-signing verification, or OS attestation.
   [model catalog](https://ai.google.dev/gemini-api/docs/models) describes Gemini 3.6
   Flash as a speed/intelligence balance and Gemini 3.1 Pro as the advanced model for
   complex reasoning and coding. The official
-  [thinking guide](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
+  [thinking guide](https://ai.google.dev/gemini-api/docs/thinking)
   shows real but model-specific effort levels, and
   [pricing](https://ai.google.dev/gemini-api/docs/pricing) distinguishes model and
   thinking usage. Those API facts must not be copied into the agy resolution matrix;
