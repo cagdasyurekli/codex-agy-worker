@@ -491,13 +491,16 @@ job branch. Never force-remove accepted, uncommitted work.
   atomic rollback. Its explicit Git fetch still honors the caller's Git transport
   configuration; the read-only check's transport isolation does not cover apply.
   Never invoke it during a worker job.
-- A detected bug authorizes diagnosis, not external submission. When
-  `$PIPELINE/bug-report.sh` exists and the user wants a report, create only a sanitized
-  local draft with `bug-report.sh draft`, show it with `bug-report.sh preview`, and
-  provide its SHA-256. A folder-only install may instead direct the user to the public
-  support page; it must not fetch reporting tools. Run `bug-report.sh submit` only
-  after the user explicitly approves that exact hash. Submission sends the confirmed
-  in-memory body to an explicitly bound github.com repository, never a mutable file.
+- After an evidenced agy-worker defect or concrete improvement, offer the local
+  reporting option. Create a draft only after the user separately opts in; diagnosis
+  and drafting do not authorize external submission. Use `draft --kind bug` or
+  `draft --kind improvement`, show the exact body with
+  `preview`, and provide its SHA-256. Run `submit` only after the user explicitly
+  approves both that exact hash and a second public-safety confirmation of the same
+  hash. Use `--kind security` only for a minimal private-only report; it must never
+  submit publicly. A conservative keyword match is an extra private-route barrier,
+  never proof that a draft is public-safe. A folder-only install may direct the user
+  to the public support page but must not fetch reporting tools.
 - Never attach or paste prompts, source code, envelopes, credentials, absolute paths,
   or raw logs into GitHub. `gh` is optional; if it is absent or fails, keep the draft
   local and stop.

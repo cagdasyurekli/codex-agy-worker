@@ -112,6 +112,9 @@ jobs:
       - name: reporting suite
         run: ./tests/test-reporting.sh
 
+      - name: feedback triage suite
+        run: /usr/bin/python3 -I -S -B tests/test-feedback-triage.py
+
       - name: Codex distribution suite
         run: ./tests/test-packaging.sh
 
