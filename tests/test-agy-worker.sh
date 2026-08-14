@@ -1616,6 +1616,8 @@ control_worker() {
     FAKE_DISPATCH_MODE="${FAKE_DISPATCH_MODE:-result}" \
         FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
+        FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
+        FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
         "$WORKER" "$action" --job-id "$job" "$@"
 }
 start_worker() {
@@ -1811,10 +1813,15 @@ async_sha="$(status_sha "$TMP/async-success.status")"
 control_worker wait async-success --after-state-sha "$async_sha" --timeout 1s \
     > "$TMP/async-success.wait"
 wait_rc=$?
-sleep 2
-control_worker result async-success > "$TMP/async-success.result"
-result_rc=$?
-if [[ "$rc" == 0 && "$status_rc" == 0 && "$wait_rc" == 0 && "$result_rc" == 0 ]] \
+terminal_wait_rc=64
+result_rc=64
+if [[ "$wait_rc" == 0 ]] && wait_terminal async-success "$TMP/async-success.wait"; then
+    terminal_wait_rc=0
+    control_worker result async-success > "$TMP/async-success.result"
+    result_rc=$?
+fi
+if [[ "$rc" == 0 && "$status_rc" == 0 && "$wait_rc" == 0 \
+        && "$terminal_wait_rc" == 0 && "$result_rc" == 0 ]] \
         && python3 - "$TMP/async-success.status" "$TMP/async-success.wait" "$TMP/async-success.result" <<'PY'
 import json
 import sys
@@ -2800,21 +2807,48 @@ printf 'project cancel repair fixture\n' | FAKE_DISPATCH_MODE=heartbeat-success 
 wait_terminal project-cancel-repair "$TMP/project-cancel-repair.start"
 control_worker status project-cancel-repair > "$TMP/project-cancel-repair.status"
 project_cancel_sha="$(status_sha "$TMP/project-cancel-repair.status")"
+project_cancel_barrier_ready="$TMP/project-cancel-repair.barrier-ready"
+project_cancel_barrier_release="$TMP/project-cancel-repair.barrier-release"
 project_feedback | FAKE_DISPATCH_MODE=heartbeat-forever \
+    FAKE_HEARTBEAT_BARRIER_READY="$project_cancel_barrier_ready" \
+    FAKE_HEARTBEAT_BARRIER_RELEASE="$project_cancel_barrier_release" \
     control_worker continue project-cancel-repair --approve-state-sha "$project_cancel_sha" \
     > "$TMP/project-cancel-repair.continue" 2> "$TMP/project-cancel-repair.continue.err"
-project_cancel_running_sha="$(status_sha "$TMP/project-cancel-repair.continue")"
-control_worker cancel project-cancel-repair --approve-state-sha "$project_cancel_running_sha" \
-    > "$TMP/project-cancel-repair.cancel"
-wait_terminal project-cancel-repair "$TMP/project-cancel-repair.cancel"
-project_cancel_terminal_sha="$(status_sha "$TMP/project-cancel-repair.cancel")"
-project_feedback | control_worker finalize project-cancel-repair \
-    --approve-state-sha "$project_cancel_terminal_sha" --assurance partially_verified \
-    > "$TMP/project-cancel-repair.finalize"
-project_cancel_finalize_rc=$?
-control_worker result project-cancel-repair > "$TMP/project-cancel-repair.result"
-project_cancel_result_rc=$?
-if [[ "$project_cancel_finalize_rc" == 0 && "$project_cancel_result_rc" == 0 ]]; then
+project_cancel_barrier_observed=0
+for (( project_cancel_index=0; project_cancel_index<200; project_cancel_index++ )); do
+    if [[ -e "$project_cancel_barrier_ready" ]]; then
+        control_worker status project-cancel-repair > "$TMP/project-cancel-repair.running"
+        if [[ "$(status_field "$TMP/project-cancel-repair.running" progress_count)" -ge 1 ]]; then
+            project_cancel_barrier_observed=1
+            break
+        fi
+    fi
+    sleep 0.01
+done
+project_cancel_rc=64
+project_cancel_wait_rc=64
+project_cancel_finalize_rc=64
+project_cancel_result_rc=64
+if [[ "$project_cancel_barrier_observed" == 1 ]]; then
+    project_cancel_running_sha="$(status_sha "$TMP/project-cancel-repair.running")"
+    control_worker cancel project-cancel-repair --approve-state-sha "$project_cancel_running_sha" \
+        > "$TMP/project-cancel-repair.cancel"
+    project_cancel_rc=$?
+fi
+: > "$project_cancel_barrier_release"
+if [[ "$project_cancel_rc" == 0 ]] \
+        && wait_terminal project-cancel-repair "$TMP/project-cancel-repair.cancel"; then
+    project_cancel_wait_rc=0
+    project_cancel_terminal_sha="$(status_sha "$TMP/project-cancel-repair.cancel")"
+    project_feedback | control_worker finalize project-cancel-repair \
+        --approve-state-sha "$project_cancel_terminal_sha" --assurance partially_verified \
+        > "$TMP/project-cancel-repair.finalize"
+    project_cancel_finalize_rc=$?
+    control_worker result project-cancel-repair > "$TMP/project-cancel-repair.result"
+    project_cancel_result_rc=$?
+fi
+if [[ "$project_cancel_wait_rc" == 0 && "$project_cancel_finalize_rc" == 0 \
+        && "$project_cancel_result_rc" == 0 ]]; then
     ok "cancelled repair can partially finalize and return the prior bound success"
 else
     bad "cancelled repair prior-candidate finalization"
