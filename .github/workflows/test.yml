@@ -1,128 +1,44 @@
 name: test
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Exact committed comparison base SHA for a manual release check.
+        required: true
+        type: string
+      head_sha:
+        description: Exact committed comparison head SHA for a manual release check.
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test:
     # The suite is deliberately offline — no agy, no API keys, no network — so it
     # runs on every PR.
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.ref }}
 
       - name: committed diff hygiene
         env:
-          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name }}
-          AGY_WORKER_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          AGY_WORKER_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name == 'workflow_dispatch' && 'push' || github.event_name }}
+          AGY_WORKER_CI_BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          AGY_WORKER_CI_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
         run: ./scripts/ci-diff-check.sh
 
-      - name: syntax
-        run: for f in ./*.sh conformance/*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh; do bash -n "$f"; done
-
-      - name: Python syntax
-        env:
-          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/codex-agy-worker-pycache
-        run: python3 -m py_compile conformance/v1/*.py scripts/*.py skills/*/runtime/scripts/*.py
-
-      - name: qa-gate suite
-        run: ./tests/test-qa-gate.sh
-
-      - name: Evidence Receipt v1 suite
-        run: ./tests/test-evidence-receipt.sh
-
-      - name: Evidence Report suite
-        run: ./tests/test-evidence-report.sh
-
-      - name: offline benchmark suite
-        run: /usr/bin/python3 -I -S -B tests/test-benchmark.py
-
-      - name: persona evidence registry suite
-        run: /usr/bin/python3 -I -S -B tests/test-persona-evidence.py
-
-      - name: local job lifecycle suite
-        run: /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py
-
-      - name: data-only workload profiles suite
-        run: /usr/bin/python3 -I -S -B tests/test-workload-profiles.py
-
-      - name: dispatcher suite
-        run: ./tests/test-agy-worker.sh
-
-      - name: updater suite
-        run: ./tests/test-update.sh
-
-      - name: adoption measurement suite
-        run: /usr/bin/python3 -I -S -B tests/test-adoption-measurement.py
-
-      - name: local update notifier suite
-        run: /usr/bin/python3 -I -S -B tests/test-update-notifier.py
-
-      - name: canonical version attestation runner
-        run: /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py
-
-      - name: repository-only version bootstrap runtime preflight
-        run: |
-          /usr/bin/python3 -I -S -B - <<'PY'
-          import sys
-          if not (
-              sys.implementation.name == "cpython"
-              and sys.version_info[:2] == (3, 9)
-              and sys.flags.isolated == 1
-              and sys.flags.no_site == 1
-              and sys.flags.dont_write_bytecode == 1
-              and sys.flags.ignore_environment == 1
-          ):
-              raise SystemExit("repository-only version bootstrap requires CPython 3.9 with -I -S -B")
-          PY
-
-      - name: repository-only version bootstrap runner
-        run: /usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py
-
-      - name: repository-only version initial bootstrap runner
-        run: /usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py
-
-      - name: fixed 1.1.12 version recovery runner
-        run: /usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py
-
-      - name: version attestation mutation harness
-        run: /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py
-
-      - name: canonical models inventory attestation runner
-        run: /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py
-
-      - name: explicit-account models capture runner
-        run: /usr/bin/python3 -I -S -B tests/test-models-capture-runner.py
-
-      - name: explicit-account models capture profile builder
-        run: /usr/bin/python3 -I -S -B tests/test-models-capture-profile.py
-
-      - name: fixed 1.1.12 models capture profile builder
-        run: /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py
-
-      - name: fixed 1.1.12 models capture runner
-        run: /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py
-
-      - name: reporting suite
-        run: ./tests/test-reporting.sh
-
-      - name: feedback triage suite
-        run: /usr/bin/python3 -I -S -B tests/test-feedback-triage.py
-
-      - name: Codex distribution suite
-        run: ./tests/test-packaging.sh
-
-      - name: read-only doctor suite
-        run: ./tests/test-doctor.sh
-
-      - name: public gate conformance suite
-        run: /usr/bin/python3 -I -S -B tests/test-conformance.py
-
-      - name: starter proof suite
-        run: ./tests/test-proof-demo.sh
+      - name: full offline suite and static checks
+        run: ./scripts/ci-offline.sh

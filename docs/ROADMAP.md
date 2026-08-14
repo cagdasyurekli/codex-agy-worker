@@ -151,9 +151,11 @@ transport hardening, the agy `1.1.12` reconciliation, gate-envelope intake, life
 Git stdout, Actions checkout credentials, and the progress-aware per-job lifecycle are
 implemented and offline-verified in the published v0.4.0 release. This remains an
 offline and bounded-lifecycle claim, not a live-provider guarantee.
-The v0.6.0 release scope represented by this source adds the human-reconciled Gemini
-3.7 Flash low/medium/high mappings plus capture-child mode and dispatch-state snapshot
-hardening. Publication remains a separate exact tag/release readback.
+The published v0.6.0 release scope added the human-reconciled Gemini 3.7 Flash
+low/medium/high mappings plus capture-child mode and dispatch-state snapshot hardening.
+The v0.7.0 usability-first project workflow is implemented and offline-verified as a
+release candidate; tag, release, and live-provider gates remain separate and are not
+claimed by this source tree.
 Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
@@ -177,9 +179,26 @@ aggregate; raw issue prose never becomes an agent prompt or workflow log, while 
 the canonical aggregate is workflow output. It cannot write GitHub issues, comments,
 labels, or state.
 
+### Usability-first project workflow
+
+**Current status:** Implemented and offline-verified as the v0.7.0 release candidate;
+not published. Tag/release readback and live-provider gates remain separate.
+The product is moving from a mechanical-task admission model to three explicit Codex
+workflows: read-only `explore`, implementation `task`, and repo-wide iterative
+`project`. Unknown final file lists, broad architecture work, missing initial test
+commands, and omission of a persona are not admission failures.
+
+Project jobs will bind a bounded local cycle count and let Codex provide strict,
+sanitized, driver-owned verification JSON to `continue` the exact conversation after
+an observed check failure. `finalize` will record only Codex's `verified`,
+`partially_verified`, or `blocked` assurance conclusion; it will not execute the JSON
+as a command or allow agy to self-assign quality. A useful unresolved candidate is
+preserved for review instead of being silently retried, discarded, or presented as
+complete. Personas remain optional prompt specializations.
+
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the
-11 exact reviewed slugs, and rejects unknown reviewed-provider tokens,
+14 exact reviewed slugs, and rejects unknown reviewed-provider tokens,
 generic-regex aliases, or prefix matches. In
 particular, `gpt-oss` is accepted only as display text on the same line as
 `gpt-oss-120b-medium`. Synthetic tests pin the corrected canonical-slug hash without
@@ -347,7 +366,7 @@ provenance, code-signing verification, or OS attestation.
   offline controls prove that ambient Git URL rewrites, credentials, and proxies
   cannot redirect check/watch, which performs no Git network query. This does not
   make the explicit apply-time `git fetch` independent of ambient Git configuration.
-- **Watch workflow contract:** The workflow runs only on `macos-latest`, declares
+- **Watch workflow contract:** The compatibility workflow runs only on `macos-latest`, declares
   `permissions: contents: read`, uses no secrets, installs no package or CLI, invokes
   no model, and performs no apply, pull, issue, PR, commit, or baseline write. A
   bounded GitHub Step Summary identifies each fixed source as unchanged, review-due,
@@ -355,6 +374,14 @@ provenance, code-signing verification, or OS attestation.
   same `0`/`3`/`2` meanings; the workflow may surface nonzero status for maintainers
   but cannot open or modify anything. Scheduling it does not add it to the protected
   branch's required `test` check.
+- **CI cost and continuity:** The protected `test` job runs the full macOS offline
+  suite only for pull requests and exact-SHA manual dispatch. Strict up-to-date PR
+  protection plus unchanged squash-merge trees avoids a duplicate post-merge suite;
+  same-PR concurrency cancels superseded work. `scripts/ci-offline.sh` is the local
+  fail-fast static/all-suite fallback when a private fork has no Actions quota. Its
+  evidence is never a substitute for the required GitHub check; exact manual dispatch
+  remains required before publication after service availability returns. The weekly
+  read-only metadata feedback aggregate is Linux because it has no macOS contract.
 - **Local notifier contract:** An optional owner-private macOS LaunchAgent runs the
   same watch daily from hash-bound snapshots. It derives HOME from the account
   database, binds the complete transitive behavior source set, serializes lifecycle

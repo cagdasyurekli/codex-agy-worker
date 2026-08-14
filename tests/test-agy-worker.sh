@@ -189,6 +189,10 @@ wait_probe_cleanup() {
 }
 
 mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/logs"
+git -C "$TMP/repo" init -q
+git -C "$TMP/repo" -c user.name='agy-worker test' -c user.email='test@example.invalid' \
+    commit --allow-empty -q -m initial
+git -C "$TMP/repo" worktree add --detach -q "$TMP/project-worktree" HEAD
 chmod 0755 "$TMP/logs"
 LOGS_REAL="$(cd "$TMP/logs" && pwd -P)"
 cat > "$TMP/bin/agy" <<'FAKE'
@@ -292,6 +296,16 @@ fi
 if [[ -n "${FAKE_MUTATE_MATRIX:-}" ]]; then
     printf '{"mutated":true}\n' > "$FAKE_MUTATE_MATRIX"
 fi
+if [[ -n "${FAKE_MUTATE_PROJECT_MARKER:-}" ]]; then
+    printf 'gitdir: tampered\n' > "$FAKE_MUTATE_PROJECT_MARKER"
+fi
+if [[ -n "${FAKE_SPARSE_PROJECT_MARKER:-}" ]]; then
+    python3 -B - "$FAKE_SPARSE_PROJECT_MARKER" <<'PY'
+import os
+import sys
+os.truncate(sys.argv[1], 1 << 20)
+PY
+fi
 dispatch_count=1
 if [[ -n "${FAKE_DISPATCH_COUNT_FILE:-}" ]]; then
     if [[ -f "$FAKE_DISPATCH_COUNT_FILE" ]]; then
@@ -374,8 +388,10 @@ FAKE
 chmod +x "$TMP/bin/agy"
 
 run_worker() {
-    local job="$1"; shift
+    local job="$1" workdir; shift
+    workdir="${AGY_TEST_WORKDIR:-$TMP/repo}"
     PATH="$TMP/bin:$PATH" \
+    AGY_WORKER_MODE="${AGY_WORKER_MODE:-accept-edits}" \
     AGY_WORKER_LOG_DIR="${AGY_TEST_LOG_DIR:-$TMP/logs}" \
     AGY_WORKER_JOB_ID="$job" \
     FAKE_MODEL_FILE="$TMP/$job.model" \
@@ -392,6 +408,8 @@ run_worker() {
     FAKE_PROBE_READY_FILE="${FAKE_PROBE_READY_FILE:-}" \
     FAKE_PROBE_RELEASE_FILE="${FAKE_PROBE_RELEASE_FILE:-}" \
     FAKE_MUTATE_MATRIX="${FAKE_MUTATE_MATRIX:-}" \
+    FAKE_MUTATE_PROJECT_MARKER="${FAKE_MUTATE_PROJECT_MARKER:-}" \
+    FAKE_SPARSE_PROJECT_MARKER="${FAKE_SPARSE_PROJECT_MARKER:-}" \
     FAKE_DISPATCH_COUNT_FILE="${FAKE_DISPATCH_COUNT_FILE:-}" \
     FAKE_FAIL_FIRST="${FAKE_FAIL_FIRST:-0}" \
     FAKE_TRY_STAGE_WRITE="${FAKE_TRY_STAGE_WRITE:-0}" \
@@ -403,7 +421,7 @@ run_worker() {
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
-    "${AGY_TEST_WORKER:-$WORKER}" --workdir "$TMP/repo" "$@"
+    "${AGY_TEST_WORKER:-$WORKER}" --workdir "$workdir" "$@"
 }
 
 echo "agy-worker.sh offline test suite"
@@ -1000,6 +1018,7 @@ NO_AGY_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 run_without_fake_agy() {
     local job="$1" path_value="$2"; shift 2
     PATH="$path_value" \
+    AGY_WORKER_MODE=accept-edits \
     AGY_WORKER_LOG_DIR="$TMP/no-agy-logs" \
     AGY_WORKER_JOB_ID="$job" \
     AGY_WORKER_MAX_ATTEMPTS=1 \
@@ -1161,7 +1180,7 @@ cp "$ROOT/agy-worker.sh" "$WRAPPER_FIXTURE/agy-worker.sh"
 cp -R "$ROOT/skills/agy-worker" "$WRAPPER_FIXTURE/skills/agy-worker"
 chmod +x "$WRAPPER_FIXTURE/agy-worker.sh"
 printf 'empty log override\n' | PATH="$TMP/bin:$PATH" \
-    AGY_WORKER_LOG_DIR= AGY_WORKER_JOB_ID=empty-log-override \
+    AGY_WORKER_LOG_DIR= AGY_WORKER_JOB_ID=empty-log-override AGY_WORKER_MODE=accept-edits \
     FAKE_MODEL_FILE="$TMP/empty-log.model" \
     FAKE_PROMPT_FILE="$TMP/empty-log.prompt" \
     FAKE_DIRS_FILE="$TMP/empty-log.dirs" \
@@ -1397,6 +1416,28 @@ printf 'unknown must fail\n' | run_worker unknown --persona unknown > "$TMP/unkn
 rc=$?
 expect_exit "unknown persona is rejected" 64 "$rc"
 
+printf 'broad audit is a usable default plan\n' | (
+    unset AGY_WORKER_MODE
+    PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" \
+        AGY_WORKER_JOB_ID=plan-without-persona \
+        FAKE_MODEL_FILE="$TMP/plan-without-persona.model" \
+        FAKE_PROMPT_FILE="$TMP/plan-without-persona.prompt" \
+        FAKE_DIRS_FILE="$TMP/plan-without-persona.dirs" \
+        FAKE_ARGV_FILE="$TMP/plan-without-persona.argv" \
+        FAKE_STAGE_RESULT_FILE="$TMP/plan-without-persona.stage-result" \
+        FAKE_CALLED_FILE="$TMP/plan-without-persona.called" \
+        "$WORKER" --workdir "$TMP/repo"
+) > "$TMP/plan-without-persona.out" 2> "$TMP/plan-without-persona.err"
+rc=$?
+if [[ "$rc" == "0" ]] \
+        && [[ -s "$TMP/plan-without-persona.out" ]] \
+        && [[ -e "$TMP/plan-without-persona.called" ]] \
+        && [[ -d "$TMP/logs/plan-without-persona" ]]; then
+    ok "generic plan dispatches without requiring a persona"
+else
+    bad "generic plan should remain usable without a persona"
+fi
+
 mkdir -p "$TMP/outside"
 printf 'outside root\n' | run_worker outside --add-dir "$TMP/outside" > "$TMP/outside.out" 2>/dev/null
 rc=$?
@@ -1518,7 +1559,7 @@ done
 
 printf 'terminal failure\n' | PATH="$TMP/bin:$PATH" \
     AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID=terminal \
-    AGY_WORKER_MAX_ATTEMPTS=1 FAKE_AGY_STATUS=FAILED \
+    AGY_WORKER_MODE=accept-edits AGY_WORKER_MAX_ATTEMPTS=1 FAKE_AGY_STATUS=FAILED \
     FAKE_MODEL_FILE="$TMP/terminal.model" FAKE_PROMPT_FILE="$TMP/terminal.prompt" \
     FAKE_DIRS_FILE="$TMP/terminal.dirs" \
     FAKE_ARGV_FILE="$TMP/terminal.argv" FAKE_STAGE_RESULT_FILE="$TMP/terminal.stage-result" \
@@ -1528,7 +1569,7 @@ expect_exit "non-success terminal status fails closed" 4 "$rc"
 
 printf 'bad envelope\n' | PATH="$TMP/bin:$PATH" \
     AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID=bad-envelope \
-    AGY_WORKER_MAX_ATTEMPTS=1 FAKE_BAD_ENVELOPE=1 \
+    AGY_WORKER_MODE=accept-edits AGY_WORKER_MAX_ATTEMPTS=1 FAKE_BAD_ENVELOPE=1 \
     FAKE_MODEL_FILE="$TMP/bad.model" FAKE_PROMPT_FILE="$TMP/bad.prompt" \
     FAKE_DIRS_FILE="$TMP/bad.dirs" \
     FAKE_ARGV_FILE="$TMP/bad.argv" FAKE_STAGE_RESULT_FILE="$TMP/bad.stage-result" \
@@ -1575,11 +1616,15 @@ control_worker() {
     FAKE_DISPATCH_MODE="${FAKE_DISPATCH_MODE:-result}" \
         FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
+        FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
+        FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
         "$WORKER" "$action" --job-id "$job" "$@"
 }
 start_worker() {
-    local job="$1"; shift
+    local job="$1" workdir; shift
+    workdir="${AGY_TEST_WORKDIR:-$TMP/repo}"
     PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID="$job" \
+        AGY_WORKER_MODE="${AGY_WORKER_MODE:-accept-edits}" \
         FAKE_MODEL_FILE="$TMP/$job.model" FAKE_PROMPT_FILE="$TMP/$job.prompt" \
         FAKE_DIRS_FILE="$TMP/$job.dirs" FAKE_ARGV_FILE="$TMP/$job.argv" \
         FAKE_STAGE_RESULT_FILE="$TMP/$job.stage-result" \
@@ -1589,10 +1634,10 @@ start_worker() {
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
         FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
-        "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$TMP/repo" "$@"
+        "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$workdir" "$@"
 }
 
-printf 'plan staged prompt marker\n' | run_worker plan-staged --mode plan \
+printf 'plan staged prompt marker\n' | run_worker plan-staged --mode plan --persona repo-inventory \
     > "$TMP/plan-staged.out" 2> "$TMP/plan-staged.err"
 rc=$?
 if [[ "$rc" == 0 ]] && python3 - "$TMP/plan-staged.argv" \
@@ -1604,9 +1649,10 @@ assert b"--mode" in argv and argv[argv.index(b"--mode") + 1] == b"plan"
 assert b"--disable-slash-commands" not in argv
 assert b"Read '" in argv[-1]
 assert "plan staged prompt marker" in staged
+assert "read-only repository surveyor for a Codex-driven worker pipeline" in staged
 PY
 then
-    ok "plan stages the complete prompt and leaves slash expansion available only for its fixed driver prompt"
+    ok "maintained-persona plan stages the complete prompt and leaves slash expansion available only for its fixed driver prompt"
 else
     bad "plan staging/slash contract"
 fi
@@ -1718,6 +1764,7 @@ fi
 FOREGROUND_SIGNAL_SIDE_EFFECT="$TMP/foreground-signal-side-effect"
 printf 'foreground signal ownership\n' > "$TMP/foreground-signal.task"
 PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID=foreground-signal \
+    AGY_WORKER_MODE=accept-edits \
     FAKE_MODEL_FILE="$TMP/foreground-signal.model" \
     FAKE_PROMPT_FILE="$TMP/foreground-signal.prompt" \
     FAKE_DIRS_FILE="$TMP/foreground-signal.dirs" \
@@ -1766,10 +1813,15 @@ async_sha="$(status_sha "$TMP/async-success.status")"
 control_worker wait async-success --after-state-sha "$async_sha" --timeout 1s \
     > "$TMP/async-success.wait"
 wait_rc=$?
-sleep 2
-control_worker result async-success > "$TMP/async-success.result"
-result_rc=$?
-if [[ "$rc" == 0 && "$status_rc" == 0 && "$wait_rc" == 0 && "$result_rc" == 0 ]] \
+terminal_wait_rc=64
+result_rc=64
+if [[ "$wait_rc" == 0 ]] && wait_terminal async-success "$TMP/async-success.wait"; then
+    terminal_wait_rc=0
+    control_worker result async-success > "$TMP/async-success.result"
+    result_rc=$?
+fi
+if [[ "$rc" == 0 && "$status_rc" == 0 && "$wait_rc" == 0 \
+        && "$terminal_wait_rc" == 0 && "$result_rc" == 0 ]] \
         && python3 - "$TMP/async-success.status" "$TMP/async-success.wait" "$TMP/async-success.result" <<'PY'
 import json
 import sys
@@ -2034,6 +2086,7 @@ job.mkdir(mode=0o700)
 command = {
     "job_id": "state-snapshot", "workdir": str(job),
     "idle_seconds": 1.0, "hard_seconds": 2.0, "max_seconds": 3.0,
+    "workflow": "legacy", "max_cycles": 1,
 }
 state = module.initial_state(
     command, "initial", 1, command_sha="0" * 64,
@@ -2238,6 +2291,567 @@ if [[ "$resume_rc" == 21 && "$resume_unavailable_calls" == 1 ]]; then
     ok "resume failure does not start a new provider call"
 else
     bad "resume failure must not redispatch (exit $resume_rc, calls $resume_unavailable_calls)"
+fi
+
+project_feedback() {
+    printf '%s\n' '{"schema_version":1,"summary":"driver checks found one repairable failure","passed_checks":["lint"],"failed_checks":["unit-tests"],"advisory_checks":0,"missing_checks":0}'
+}
+project_verified_feedback() {
+    printf '%s\n' '{"schema_version":1,"summary":"driver checks passed","passed_checks":["lint","unit-tests"],"failed_checks":[],"advisory_checks":0,"missing_checks":0}'
+}
+project_missing_feedback() {
+    printf '%s\n' '{"schema_version":1,"summary":"one required driver check is missing","passed_checks":["lint"],"failed_checks":[],"advisory_checks":0,"missing_checks":1}'
+}
+
+printf 'project workflow initial implementation\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_HEARTBEAT_COUNT=2 AGY_TEST_WORKDIR="$TMP/project-worktree" start_worker project-cycles --workflow project \
+    --idle-timeout 1s --hard-timeout 2s --max-runtime 8s > "$TMP/project-cycles.start" 2> "$TMP/project-cycles.err"
+project_start_rc=$?
+wait_terminal project-cycles "$TMP/project-cycles.start"
+project_wait_rc=$?
+control_worker status project-cycles > "$TMP/project-cycles.status"
+project_sha="$(status_sha "$TMP/project-cycles.status")"
+if [[ "$project_start_rc" == 0 && "$project_wait_rc" == 0 ]] && python3 - "$TMP/project-cycles.status" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["workflow"] == "project"
+assert value["status"] == "succeeded"
+assert value["phase"] == "awaiting-verification"
+assert value["cycle"] == 1 and value["max_cycles"] == 5
+assert value["assurance"] == "pending"
+assert value["resume_available"] is False and value["continue_available"] is True
+assert value["check_counts"] == {"passed": 0, "failed": 0, "advisory": 0, "missing": 0}
+PY
+then
+    ok "project workflow exposes pending Codex-owned verification without changing resume semantics"
+else
+    bad "project workflow status contract"
+fi
+
+printf 'project missing verification repair\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_HEARTBEAT_COUNT=2 AGY_TEST_WORKDIR="$TMP/project-worktree" \
+    start_worker project-missing-check --workflow project \
+    --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/project-missing-check.start" 2> "$TMP/project-missing-check.err"
+wait_terminal project-missing-check "$TMP/project-missing-check.start"
+control_worker status project-missing-check > "$TMP/project-missing-check.status"
+project_missing_sha="$(status_sha "$TMP/project-missing-check.status")"
+project_missing_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    control_worker continue project-missing-check --approve-state-sha "$project_missing_sha" \
+    > "$TMP/project-missing-check.continue" 2> "$TMP/project-missing-check.continue.err"
+project_missing_rc=$?
+wait_terminal project-missing-check "$TMP/project-missing-check.continue"
+project_missing_wait_rc=$?
+control_worker status project-missing-check > "$TMP/project-missing-check.status"
+project_missing_calls="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
+if [[ "$project_missing_rc" == 0 && "$project_missing_wait_rc" == 0 \
+        && "$project_missing_calls" == 2 ]] \
+        && python3 - "$TMP/project-missing-check.status" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["cycle"] == 2
+assert value["attempt_origin"] == "conversation-continue"
+assert value["check_counts"] == {"passed": 1, "failed": 0, "advisory": 0, "missing": 1}
+PY
+then
+    ok "project continuation treats a missing required check as repairable verification feedback"
+else
+    bad "project continuation missing-check repair contract"
+fi
+
+project_missing_sha="$(status_sha "$TMP/project-missing-check.status")"
+project_missing_calls_before_finalize="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
+project_missing_feedback | control_worker finalize project-missing-check \
+    --approve-state-sha "$project_missing_sha" --assurance partially-verified \
+    > /dev/null 2>&1
+project_hyphen_assurance_rc=$?
+project_missing_feedback | control_worker finalize project-missing-check \
+    --approve-state-sha "$project_missing_sha" --assurance partially_verified \
+    > "$TMP/project-missing-check.finalize" 2> "$TMP/project-missing-check.finalize.err"
+project_partial_assurance_rc=$?
+project_missing_calls_after_finalize="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
+if [[ "$project_hyphen_assurance_rc" == 64 && "$project_partial_assurance_rc" == 0 \
+        && "$project_missing_calls_after_finalize" == "$project_missing_calls_before_finalize" ]] \
+        && python3 - "$TMP/project-missing-check.finalize" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["phase"] == "completed"
+assert value["assurance"] == "partially_verified"
+assert value["check_counts"] == {"passed": 1, "failed": 0, "advisory": 0, "missing": 1}
+PY
+then
+    ok "project partial assurance uses the exact underscore contract without a provider call"
+else
+    bad "project partial assurance underscore contract"
+fi
+
+project_cycle_ok=1
+for project_cycle in 2 3 4 5; do
+    project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+        control_worker continue project-cycles --approve-state-sha "$project_sha" \
+        > "$TMP/project-cycles.$project_cycle" 2> "$TMP/project-cycles.$project_cycle.err"
+    project_continue_rc=$?
+    wait_terminal project-cycles "$TMP/project-cycles.$project_cycle" || project_cycle_ok=0
+    control_worker status project-cycles > "$TMP/project-cycles.status"
+    project_sha="$(status_sha "$TMP/project-cycles.status")"
+    [[ "$project_continue_rc" == 0 ]] || project_cycle_ok=0
+done
+project_feedback | control_worker continue project-cycles --approve-state-sha "$project_sha" \
+    > "$TMP/project-cycles.exhausted" 2> "$TMP/project-cycles.exhausted.err"
+project_exhausted_rc=$?
+project_calls="$(wc -l < "$TMP/project-cycles.calls" | tr -d ' ')"
+if [[ "$project_cycle_ok" == 1 && "$project_exhausted_rc" == 64 && "$project_calls" == 5 ]] \
+        && python3 - "$TMP/project-cycles.status" "$TMP/project-cycles.argv" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+argv = [item.decode() for item in open(sys.argv[2], "rb").read().split(b"\0") if item]
+assert state["cycle"] == 5 and state["continue_available"] is False
+assert argv.count("--conversation") == 1
+assert "unit-tests" not in " ".join(argv)
+assert "driver checks found one repairable failure" not in " ".join(argv)
+PY
+then
+    ok "project continuation is same-conversation, feedback-private, and bounded to initial plus four repairs"
+else
+    bad "project continuation cycle bound"
+fi
+
+printf 'project finalization\n' | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    AGY_TEST_WORKDIR="$TMP/project-worktree" start_worker project-final --workflow project --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/project-final.start" 2> "$TMP/project-final.err"
+wait_terminal project-final "$TMP/project-final.start"
+control_worker status project-final > "$TMP/project-final.status"
+project_final_sha="$(status_sha "$TMP/project-final.status")"
+project_final_calls_before="$(wc -l < "$TMP/project-final.calls" | tr -d ' ')"
+project_verified_feedback | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
+    --assurance verified > "$TMP/project-final.finalize" 2> "$TMP/project-final.finalize.err"
+project_finalize_rc=$?
+project_verified_feedback | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
+    --assurance verified > /dev/null 2>&1
+project_finalize_stale_rc=$?
+project_final_calls_after="$(wc -l < "$TMP/project-final.calls" | tr -d ' ')"
+if [[ "$project_finalize_rc" == 0 && "$project_finalize_stale_rc" == 64 \
+        && "$project_final_calls_before" == "$project_final_calls_after" ]] \
+        && python3 - "$TMP/project-final.finalize" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["phase"] == "completed"
+assert value["assurance"] == "verified"
+assert value["check_counts"] == {"passed": 2, "failed": 0, "advisory": 0, "missing": 0}
+PY
+then
+    ok "project finalization is a SHA-bound no-provider Codex quality decision"
+else
+    bad "project finalization contract"
+fi
+
+mkdir -p "$TMP/project-outside"
+ln -s "$TMP/project-outside" "$TMP/project-worktree/outward-link"
+printf 'outward link\n' | AGY_TEST_WORKDIR="$TMP/project-worktree" run_worker project-outward --workflow project > "$TMP/project-outward.out" 2> "$TMP/project-outward.err"
+project_outward_rc=$?
+rm "$TMP/project-worktree/outward-link"
+mkdir -p "$TMP/project-worktree/internal-link-target"
+ln -s "$TMP/project-worktree/internal-link-target" "$TMP/project-worktree/internal-link"
+printf 'internal link\n' | AGY_TEST_WORKDIR="$TMP/project-worktree" run_worker project-internal --workflow project > "$TMP/project-internal.out" 2> "$TMP/project-internal.err"
+project_internal_rc=$?
+if [[ "$project_outward_rc" == 64 && "$project_internal_rc" == 0 ]]; then
+    ok "project workflow rejects outward symlinks while allowing contained links"
+else
+    bad "project worktree symlink boundary"
+fi
+
+printf 'main checkout is not an eligible project worktree\n' | run_worker project-main-reject --workflow project \
+    > "$TMP/project-main-reject.out" 2> "$TMP/project-main-reject.err"
+project_main_rc=$?
+if [[ "$project_main_rc" == 64 && ! -e "$TMP/logs/project-main-reject/task.txt" ]]; then
+    ok "project workflow requires a linked-worktree Git marker file"
+else
+    bad "project workflow main-checkout boundary"
+fi
+
+cp "$TMP/project-worktree/.git" "$TMP/project-marker.saved"
+printf 'project marker drift\n' | AGY_TEST_WORKDIR="$TMP/project-worktree" \
+    FAKE_MUTATE_PROJECT_MARKER="$TMP/project-worktree/.git" run_worker project-marker-drift --workflow project \
+    > "$TMP/project-marker-drift.out" 2> "$TMP/project-marker-drift.err"
+project_marker_rc=$?
+cp "$TMP/project-marker.saved" "$TMP/project-worktree/.git"
+control_worker status project-marker-drift > "$TMP/project-marker-drift.status"
+if [[ "$project_marker_rc" == 20 ]] && python3 - "$TMP/project-marker-drift.status" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["status"] == "failed"
+assert value["phase"] == "blocked"
+assert value["assurance"] == "blocked"
+assert value["continue_available"] is False
+PY
+then
+    ok "project workflow binds the linked-worktree marker before and after provider execution"
+else
+    bad "project workflow marker drift boundary"
+fi
+
+cp "$TMP/project-worktree/.git" "$TMP/project-marker-sparse-post.saved"
+printf 'project sparse marker drift after provider start\n' | \
+    AGY_TEST_WORKDIR="$TMP/project-worktree" \
+    FAKE_SPARSE_PROJECT_MARKER="$TMP/project-worktree/.git" \
+    run_worker project-marker-sparse-post --workflow project \
+    > "$TMP/project-marker-sparse-post.out" 2> "$TMP/project-marker-sparse-post.err"
+project_marker_sparse_post_rc=$?
+cp "$TMP/project-marker-sparse-post.saved" "$TMP/project-worktree/.git"
+control_worker status project-marker-sparse-post > "$TMP/project-marker-sparse-post.status"
+project_marker_sparse_post_calls="$(wc -l < "$TMP/project-marker-sparse-post.worker-calls" | tr -d ' ')"
+if [[ "$project_marker_sparse_post_rc" == 20 && "$project_marker_sparse_post_calls" == 1 ]] \
+        && python3 - "$TMP/project-marker-sparse-post.status" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["status"] == "failed"
+assert value["phase"] == "blocked"
+assert value["assurance"] == "blocked"
+assert value["has_prior_candidate"] is False
+PY
+then
+    ok "project post-provider boundary rejects a sparse oversized marker without accepting a result"
+else
+    bad "project post-provider sparse marker boundary"
+fi
+
+printf 'project boundary cannot rebaseline between cycles\n' | \
+    FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    AGY_TEST_WORKDIR="$TMP/project-worktree" start_worker project-between-cycle-drift \
+    --workflow project --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/project-between-cycle-drift.start" 2> "$TMP/project-between-cycle-drift.err"
+wait_terminal project-between-cycle-drift "$TMP/project-between-cycle-drift.start"
+control_worker status project-between-cycle-drift > "$TMP/project-between-cycle-drift.status"
+project_between_sha="$(status_sha "$TMP/project-between-cycle-drift.status")"
+cp "$TMP/logs/project-between-cycle-drift/dispatch-state.json" \
+    "$TMP/project-between-cycle-drift.state-before"
+mv "$TMP/project-worktree/.git" "$TMP/project-between-cycle-drift.marker"
+printf 'gitdir: between-cycle-tamper\n' > "$TMP/project-worktree/.git"
+project_between_calls_before="$(wc -l < "$TMP/project-between-cycle-drift.worker-calls" | tr -d ' ')"
+project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    control_worker continue project-between-cycle-drift --approve-state-sha "$project_between_sha" \
+    > "$TMP/project-between-cycle-drift.continue" 2> "$TMP/project-between-cycle-drift.continue.err"
+project_between_rc=$?
+project_between_calls_after="$(wc -l < "$TMP/project-between-cycle-drift.worker-calls" | tr -d ' ')"
+rm "$TMP/project-worktree/.git"
+mv "$TMP/project-between-cycle-drift.marker" "$TMP/project-worktree/.git"
+if [[ "$project_between_rc" == 64 \
+        && "$project_between_calls_before" == 1 \
+        && "$project_between_calls_after" == "$project_between_calls_before" \
+        && ! -e "$TMP/logs/project-between-cycle-drift/continue-staged/cycle-002.json" ]] \
+        && cmp -s "$TMP/project-between-cycle-drift.state-before" \
+            "$TMP/logs/project-between-cycle-drift/dispatch-state.json"; then
+    ok "project continuation rejects between-cycle marker drift without provider call or state replacement"
+else
+    bad "project continuation must not rebaseline a changed worktree boundary"
+fi
+
+project_oversized_boundary_case() {
+    local job="$1" fixture_kind="$2" description="$3"
+    printf 'project oversized boundary fixture\n' | \
+        FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+        AGY_TEST_WORKDIR="$TMP/project-worktree" start_worker "$job" \
+        --workflow project --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+        > "$TMP/$job.start" 2> "$TMP/$job.err"
+    wait_terminal "$job" "$TMP/$job.start"
+    control_worker status "$job" > "$TMP/$job.status"
+    local approved_sha calls_before calls_after continue_rc
+    approved_sha="$(status_sha "$TMP/$job.status")"
+    cp "$TMP/logs/$job/dispatch-state.json" "$TMP/$job.state-before"
+    mv "$TMP/project-worktree/.git" "$TMP/$job.marker"
+    if [[ "$fixture_kind" == "dense" ]]; then
+        PYTHONDONTWRITEBYTECODE=1 python3 - "$TMP/project-worktree/.git" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_bytes(b"x" * 4097)
+PY
+    else
+        PYTHONDONTWRITEBYTECODE=1 python3 - "$TMP/project-worktree/.git" <<'PY'
+import os
+import sys
+descriptor = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    os.ftruncate(descriptor, 1 << 20)
+finally:
+    os.close(descriptor)
+PY
+    fi
+    calls_before="$(wc -l < "$TMP/$job.worker-calls" | tr -d ' ')"
+    project_feedback | control_worker continue "$job" --approve-state-sha "$approved_sha" \
+        > "$TMP/$job.continue" 2> "$TMP/$job.continue.err"
+    continue_rc=$?
+    calls_after="$(wc -l < "$TMP/$job.worker-calls" | tr -d ' ')"
+    rm "$TMP/project-worktree/.git"
+    mv "$TMP/$job.marker" "$TMP/project-worktree/.git"
+    if [[ "$continue_rc" == 64 && "$calls_before" == 1 && "$calls_after" == "$calls_before" \
+            && ! -e "$TMP/logs/$job/continue-staged/cycle-002.json" ]] \
+            && cmp -s "$TMP/$job.state-before" "$TMP/logs/$job/dispatch-state.json"; then
+        ok "$description"
+    else
+        bad "$description"
+    fi
+}
+
+project_oversized_boundary_case project-between-cycle-oversized dense \
+    "project continuation rejects a 4097-byte marker before state replacement or provider call"
+project_oversized_boundary_case project-between-cycle-sparse sparse \
+    "project continuation rejects a sparse oversized marker before state replacement or provider call"
+
+printf 'project orphan preserve-only fixture\n' | \
+    FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    AGY_TEST_WORKDIR="$TMP/project-worktree" start_worker project-orphan-preserve \
+    --workflow project --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/project-orphan-preserve.start" 2> "$TMP/project-orphan-preserve.err"
+wait_terminal project-orphan-preserve "$TMP/project-orphan-preserve.start"
+PROJECT_ORPHAN_JOB="$TMP/logs/project-orphan-preserve"
+PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$PROJECT_ORPHAN_JOB" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+spec = importlib.util.spec_from_file_location("agy_dispatch_project_orphan", sys.argv[1])
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+job = Path(sys.argv[2])
+state, raw, _sha = module.load_state(job)
+state.update({
+    "sequence": state["sequence"] + 1,
+    "previous_state_sha256": module.digest(raw),
+    "status": "orphaned", "reason": "status_unavailable", "exit_code": 20,
+    "attempt": 2, "cycle": 2, "attempt_origin": "conversation-continue",
+    "controller_pid": None, "finished_epoch": 1.0,
+    "resume_available": False, "continue_available": False,
+    "result_path": None, "result_sha256": None, "result_identity": None,
+    "last_success_path": state["result_path"],
+    "last_success_sha256": state["result_sha256"],
+    "last_success_identity": state["result_identity"],
+    "phase": "repairing", "assurance": "pending",
+})
+module.write_atomic(job, module.STATE_NAME, state)
+PY
+project_orphan_sha="$(PYTHONDONTWRITEBYTECODE=1 python3 - "$PROJECT_ORPHAN_JOB/dispatch-state.json" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)"
+cp "$PROJECT_ORPHAN_JOB/dispatch-state.json" "$TMP/project-orphan-preserve.state-before"
+project_orphan_calls_before="$(wc -l < "$TMP/project-orphan-preserve.worker-calls" | tr -d ' ')"
+project_feedback | control_worker continue project-orphan-preserve \
+    --approve-state-sha "$project_orphan_sha" > /dev/null 2>&1
+project_orphan_continue_rc=$?
+control_worker resume project-orphan-preserve \
+    --approve-state-sha "$project_orphan_sha" > /dev/null 2>&1
+project_orphan_resume_rc=$?
+control_worker restart project-orphan-preserve \
+    --approve-state-sha "$project_orphan_sha" > /dev/null 2>&1
+project_orphan_restart_rc=$?
+project_feedback | control_worker finalize project-orphan-preserve \
+    --approve-state-sha "$project_orphan_sha" --assurance partially_verified > /dev/null 2>&1
+project_orphan_finalize_rc=$?
+control_worker result project-orphan-preserve > /dev/null 2>&1
+project_orphan_result_rc=$?
+project_orphan_calls_after="$(wc -l < "$TMP/project-orphan-preserve.worker-calls" | tr -d ' ')"
+if [[ "$project_orphan_continue_rc" == 64 && "$project_orphan_resume_rc" == 21 \
+        && "$project_orphan_restart_rc" == 64 && "$project_orphan_finalize_rc" == 64 \
+        && "$project_orphan_result_rc" == 20 \
+        && "$project_orphan_calls_after" == "$project_orphan_calls_before" ]] \
+        && cmp -s "$TMP/project-orphan-preserve.state-before" \
+            "$PROJECT_ORPHAN_JOB/dispatch-state.json"; then
+    ok "orphaned project state is preserve-only across continuation, finalization, and result surfaces"
+else
+    bad "orphaned project state must not progress or expose a trusted partial result"
+fi
+
+LEGACY_V1_JOB="$TMP/logs/resume-case"
+PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$LEGACY_V1_JOB" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+spec = importlib.util.spec_from_file_location("agy_dispatch_legacy_v1", sys.argv[1])
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+job = Path(sys.argv[2])
+state, _raw, _sha = module.load_state(job)
+for field in module.STATE_PROJECT_FIELDS:
+    state.pop(field)
+state["schema_version"] = 1
+module.write_atomic(job, module.STATE_NAME, state)
+PY
+legacy_v1_calls_before="$(wc -l < "$TMP/resume-case.worker-calls" | tr -d ' ')"
+control_worker status resume-case > "$TMP/legacy-v1.status"
+legacy_v1_status_rc=$?
+control_worker result resume-case > "$TMP/legacy-v1.result"
+legacy_v1_result_rc=$?
+legacy_v1_sha="$(status_sha "$TMP/legacy-v1.status")"
+control_worker resume resume-case --approve-state-sha "$legacy_v1_sha" > /dev/null 2>&1
+legacy_v1_resume_rc=$?
+control_worker restart resume-case --approve-state-sha "$legacy_v1_sha" > /dev/null 2>&1
+legacy_v1_restart_rc=$?
+legacy_v1_calls_after="$(wc -l < "$TMP/resume-case.worker-calls" | tr -d ' ')"
+if [[ "$legacy_v1_status_rc" == 0 && "$legacy_v1_result_rc" == 0 \
+        && "$legacy_v1_resume_rc" == 21 && "$legacy_v1_restart_rc" == 64 \
+        && "$legacy_v1_calls_after" == "$legacy_v1_calls_before" ]]; then
+    ok "legacy v1 state remains readable across status, result, resume, and restart surfaces"
+else
+    bad "legacy v1 control-state compatibility"
+fi
+
+PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$TMP/logs/project-between-cycle-drift" "$TMP/project-worktree" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+source, job_text, workdir = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("agy_dispatch_rollback", source)
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+job = Path(job_text)
+before = (job / module.STATE_NAME).read_bytes()
+state, _raw, sha = module.load_state(job)
+verification = {"schema_version": 1, "summary": "retryable injected write failure",
+    "passed_checks": ["lint"], "failed_checks": ["unit"],
+    "advisory_checks": 0, "missing_checks": 0}
+original = module.write_atomic
+def fail_state_write(target, name, value):
+    if name == module.STATE_NAME:
+        raise module.DispatchError("injected state write failure")
+    return original(target, name, value)
+module.write_atomic = fail_state_write
+try:
+    module.create_state(job, "conversation-continue", resume=True,
+        approve_sha=sha, verification=verification)
+except module.DispatchError as exc:
+    assert str(exc) == "injected state write failure"
+else:
+    raise AssertionError("injected write unexpectedly succeeded")
+finally:
+    module.write_atomic = original
+assert (job / module.STATE_NAME).read_bytes() == before
+assert not (job / "continue-staged" / "cycle-002.json").exists()
+next_state, _next_sha = module.create_state(job, "conversation-continue", resume=True,
+    approve_sha=sha, verification=verification)
+assert next_state["cycle"] == 2 and next_state["phase"] == "repairing"
+PY
+verification_rollback_rc=$?
+if [[ "$verification_rollback_rc" == 0 ]]; then
+    ok "verification staging rolls back exactly on injected state-write failure and retries cleanly"
+else
+    bad "verification staging rollback and retry"
+fi
+
+PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$TMP/boundary-cap" <<'PY'
+import importlib.util
+import os
+from pathlib import Path
+import sys
+spec = importlib.util.spec_from_file_location("agy_dispatch_boundary_cap", sys.argv[1])
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+root = Path(sys.argv[2]).resolve(); root.mkdir(mode=0o700)
+(root / ".git").write_text("gitdir: bounded\n", encoding="ascii")
+(root / "one").write_text("1", encoding="ascii")
+(root / "two").write_text("2", encoding="ascii")
+module.MAX_BOUNDARY_ENTRIES = 2
+module._project_boundary(str(root))
+(root / "three").write_text("3", encoding="ascii")
+try:
+    module._project_boundary(str(root))
+except module.DispatchError as exc:
+    assert str(exc) == "project worktree boundary scan is too large"
+else:
+    raise AssertionError("over-cap boundary scan unexpectedly succeeded")
+PY
+boundary_cap_rc=$?
+if [[ "$boundary_cap_rc" == 0 ]]; then
+    ok "project boundary accepts the exact entry cap and rejects one entry over it"
+else
+    bad "project boundary entry cap"
+fi
+
+printf 'project concurrent decision fixture\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_HEARTBEAT_COUNT=2 AGY_TEST_WORKDIR="$TMP/project-worktree" \
+    start_worker project-concurrent-decision --workflow project \
+    --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/project-concurrent-decision.start" 2> "$TMP/project-concurrent-decision.err"
+wait_terminal project-concurrent-decision "$TMP/project-concurrent-decision.start"
+control_worker status project-concurrent-decision > "$TMP/project-concurrent-decision.status"
+project_concurrent_sha="$(status_sha "$TMP/project-concurrent-decision.status")"
+( project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    control_worker continue project-concurrent-decision --approve-state-sha "$project_concurrent_sha" \
+    > "$TMP/project-concurrent-decision.continue" 2> /dev/null; \
+    printf '%s\n' "$?" > "$TMP/project-concurrent-decision.continue.rc" ) &
+project_concurrent_continue_pid=$!
+( project_feedback | control_worker finalize project-concurrent-decision \
+    --approve-state-sha "$project_concurrent_sha" --assurance partially_verified \
+    > "$TMP/project-concurrent-decision.finalize" 2> /dev/null; \
+    printf '%s\n' "$?" > "$TMP/project-concurrent-decision.finalize.rc" ) &
+project_concurrent_finalize_pid=$!
+wait "$project_concurrent_continue_pid"
+wait "$project_concurrent_finalize_pid"
+project_concurrent_continue_rc="$(<"$TMP/project-concurrent-decision.continue.rc")"
+project_concurrent_finalize_rc="$(<"$TMP/project-concurrent-decision.finalize.rc")"
+if [[ "$project_concurrent_continue_rc" == 0 ]]; then
+    wait_terminal project-concurrent-decision "$TMP/project-concurrent-decision.continue"
+fi
+project_concurrent_calls="$(wc -l < "$TMP/project-concurrent-decision.worker-calls" | tr -d ' ')"
+if [[ $(( (project_concurrent_continue_rc == 0 ? 1 : 0) \
+        + (project_concurrent_finalize_rc == 0 ? 1 : 0) )) == 1 \
+        && "$project_concurrent_calls" -ge 1 && "$project_concurrent_calls" -le 2 ]]; then
+    ok "concurrent continue and finalize on one approved SHA publish exactly one winner"
+else
+    bad "concurrent project continuation/finalization arbitration"
+fi
+
+printf 'project cancel repair fixture\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_HEARTBEAT_COUNT=2 AGY_TEST_WORKDIR="$TMP/project-worktree" \
+    start_worker project-cancel-repair --workflow project --idle-timeout 1s --hard-timeout 3s --max-runtime 8s \
+    > "$TMP/project-cancel-repair.start" 2> "$TMP/project-cancel-repair.err"
+wait_terminal project-cancel-repair "$TMP/project-cancel-repair.start"
+control_worker status project-cancel-repair > "$TMP/project-cancel-repair.status"
+project_cancel_sha="$(status_sha "$TMP/project-cancel-repair.status")"
+project_cancel_barrier_ready="$TMP/project-cancel-repair.barrier-ready"
+project_cancel_barrier_release="$TMP/project-cancel-repair.barrier-release"
+project_feedback | FAKE_DISPATCH_MODE=heartbeat-forever \
+    FAKE_HEARTBEAT_BARRIER_READY="$project_cancel_barrier_ready" \
+    FAKE_HEARTBEAT_BARRIER_RELEASE="$project_cancel_barrier_release" \
+    control_worker continue project-cancel-repair --approve-state-sha "$project_cancel_sha" \
+    > "$TMP/project-cancel-repair.continue" 2> "$TMP/project-cancel-repair.continue.err"
+project_cancel_barrier_observed=0
+for (( project_cancel_index=0; project_cancel_index<200; project_cancel_index++ )); do
+    if [[ -e "$project_cancel_barrier_ready" ]]; then
+        control_worker status project-cancel-repair > "$TMP/project-cancel-repair.running"
+        if [[ "$(status_field "$TMP/project-cancel-repair.running" progress_count)" -ge 1 ]]; then
+            project_cancel_barrier_observed=1
+            break
+        fi
+    fi
+    sleep 0.01
+done
+project_cancel_rc=64
+project_cancel_wait_rc=64
+project_cancel_finalize_rc=64
+project_cancel_result_rc=64
+if [[ "$project_cancel_barrier_observed" == 1 ]]; then
+    project_cancel_running_sha="$(status_sha "$TMP/project-cancel-repair.running")"
+    control_worker cancel project-cancel-repair --approve-state-sha "$project_cancel_running_sha" \
+        > "$TMP/project-cancel-repair.cancel"
+    project_cancel_rc=$?
+fi
+: > "$project_cancel_barrier_release"
+if [[ "$project_cancel_rc" == 0 ]] \
+        && wait_terminal project-cancel-repair "$TMP/project-cancel-repair.cancel"; then
+    project_cancel_wait_rc=0
+    project_cancel_terminal_sha="$(status_sha "$TMP/project-cancel-repair.cancel")"
+    project_feedback | control_worker finalize project-cancel-repair \
+        --approve-state-sha "$project_cancel_terminal_sha" --assurance partially_verified \
+        > "$TMP/project-cancel-repair.finalize"
+    project_cancel_finalize_rc=$?
+    control_worker result project-cancel-repair > "$TMP/project-cancel-repair.result"
+    project_cancel_result_rc=$?
+fi
+if [[ "$project_cancel_wait_rc" == 0 && "$project_cancel_finalize_rc" == 0 \
+        && "$project_cancel_result_rc" == 0 ]]; then
+    ok "cancelled repair can partially finalize and return the prior bound success"
+else
+    bad "cancelled repair prior-candidate finalization"
 fi
 
 SYMLINK_STATE_DIR="$TMP/logs/resume-unavailable"
