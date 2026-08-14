@@ -1,507 +1,175 @@
 ---
 name: agy-worker
-description: Delegate bulk, mechanical coding work to Google Antigravity CLI (agy) as a bounded worker, then independently verify Git scope and driver-owned acceptance checks before accepting it. Use for test backfills, repeated cross-file edits, mechanical refactors, repository inventories, or a verification-gated agy delegation. Do not use for architecture or judgment-heavy work, or when acceptance criteria cannot be stated before dispatch.
+description: Let Codex use Google Antigravity CLI (agy) for repository exploration, feature work, and project-scale implementation. Codex owns the diff review, verification, repair loop, and transparent delivery assurance; agy is not limited to mechanical edits or predeclared files.
 ---
 
-# Delegate to agy, then verify
+# Use agy to explore, build, and repair
 
-You are the driver. `agy` is a worker whose self-report is a **claim, never evidence**.
-You decide what "done" means, and you prove it yourself.
+`agy-worker` is for making progress on real repository work. Default to the workflow
+that matches the user's request; do not decline merely because files, architecture, or
+verification commands must be discovered during the work.
 
-Resolve the pipeline from this skill's installed location. Set `SKILL_ROOT` to the
-directory containing this `SKILL.md`, then run:
+## Before dispatch
+
+`agy` is an external CLI backed by Google/Gemini services. Before the first dispatch
+for a repository, tell the user which repository/path scope may be read and obtain
+explicit approval to send the task and readable repository content to the provider,
+unless the user has already approved that exact transmission. Do not put credentials,
+private keys, unrelated local files, raw worker logs, or local controller state in the
+prompt.
+
+Resolve the installed skill instead of guessing a checkout path:
 
 ```bash
 PIPELINE="$(bash "$SKILL_ROOT/scripts/resolve-pipeline.sh")" || exit $?
 ```
 
-Do not guess a checkout path. The resolver supports a complete plugin checkout, the
-explicit standalone install created by `install.sh`, and a portable skill-folder copy
-using its bundled `runtime/`. It never downloads a missing runtime; an incomplete
-bundle fails closed.
-
-## Check readiness without dispatching
-
-Before spending provider quota on a repository, run the resolved pipeline's offline
-doctor:
+Optionally inspect offline readiness before spending quota:
 
 ```bash
 "$PIPELINE/doctor.sh" --repo /absolute/path/to/target
-# Machine-readable output, with the same outcome:
-"$PIPELINE/doctor.sh" --repo /absolute/path/to/target --format json
 ```
 
-Exit `0` is `ready`; exit `3` is either `review-required` (semantic agy-version drift
-or a due compatibility review) or `not-ready` (a failed prerequisite, repository,
-bundle, semantic probe, or metadata record); exit `64` is invalid usage. Inspect the
-reported `overall` value when the exit is `3`.
+`ready` covers only offline prerequisites. `review-required` does not prevent the
+agy-owned default or an explicitly approved literal model; it prevents only reviewed
+matrix resolution. `not-ready` is a real dispatch blocker. The doctor never tests
+auth, provider availability, task quality, or a future job.
 
-`not-ready` blocks every dispatch. `review-required` from version drift or review age
-does not lock out ordinary operation: use the no-selector/`--tier default` agy-owned
-default or, only when the caller explicitly accepts the risk, `--literal-model`.
-Reviewed `--model`/`--effort` resolution remains blocked until its exact matrix,
-version, and source are reconciled. Codex drift is observation-only and never gates
-agy dispatch.
+## Choose a workflow
 
-The doctor is read-only and offline. It checks the resolved bundle, Bash 3.2,
-Python 3, git/worktree support, the target Git worktree, exact `agy --version`
-semantics, and portable reviewed metadata. It does not scan personal configuration,
-repair anything, call an auth or unknown subcommand, invoke a provider, dispatch a
-job, run the updater, or access the network. Green means only that offline
-prerequisites passed; it says nothing about authentication, provider availability,
-sandbox permission, task quality, or the next live dispatch. A folder-only copy runs
-the same bundled doctor and metadata without a checkout or fetch. Caller temp paths
-are ignored; HUP, INT, or TERM stops the active probe and descendants, removes the
-private workspace, prints only `doctor: interrupted`, and exits `3` without a report.
-The bundle's `scripts`, `agents`, `schemas`, and `compat` parents must be contained
-real directories; parent-directory symlinks fail closed even when they point inward.
+| User request | Pass | agy mode | Codex must do |
+|---|---|---|---|
+| Explore, inspect, review, understand, or make a plan | `--workflow explore` | `plan` | Report useful findings, spot-check material claims, and state coverage limits. |
+| Add a feature, refactor, write tests, or make a bounded repair | `--workflow task` | `accept-edits` by default | Inspect the diff and run relevant checks; request a bounded repair when they fail. |
+| Build an app, complete a project, make a broad implementation, or audit-and-fix | `--workflow project --max-cycles 5` | `accept-edits` | Let agy work across the disposable worktree; then run build/test/lint and continue the same conversation with driver-owned results. |
 
-To inspect the fixed shipped-persona evidence levels without dispatching anything:
+Personas are optional prompt specializations. Use them only when they help the task;
+they never authorize dispatch, prove quality, or make a broad task inadmissible. A
+plain `explore` job is valid. A broad report is informative, not proof that every
+semantic path was inspected.
 
-```bash
-"$PIPELINE/persona-evidence.sh" validate
-"$PIPELINE/persona-evidence.sh" report
-```
+Do not choose `project` solely to avoid thinking through the request. Ask for product
+intent when it is genuinely missing, but let the worker discover ordinary repository
+structure and test entry points.
 
-All shipped records are currently `offline-only`. The registry binds public contract
-bytes and mode restrictions; it does not execute, trust, rank, route, accept, or
-promote a persona, and target repositories cannot register one dynamically.
+## Prepare an isolated target
 
-To inspect one fixed non-executable workload skeleton without dispatching or reading
-a target repository:
+Run every edit job in a branch-backed disposable worktree. The lifecycle helper binds
+the repository, immutable base, worktree, branch, and job ID in private state:
 
 ```bash
-"$PIPELINE/profile.sh" list
-"$PIPELINE/profile.sh" show bounded-test-backfill
-```
-
-A profile may suggest only one maintained mode, persona, and closed repo-relative
-path-policy shape. It supplies no repository, path, tier/model/effort value, verifier
-or shell command, external root, authorization, route, acceptance, dispatch, or Git
-action. The caller must still provide approval, exact repository, exact path policy,
-selected tier, and verification commands. Never load profiles from a target repo,
-environment variable, home directory, or caller path.
-
-## Data boundary and sandbox requirement (read first)
-
-`agy` is an external CLI backed by Google/Gemini services. A dispatch can transmit
-the task text and repository content that the worker reads from driver-approved
-roots. Before the first dispatch for a repository, tell the user what repository and
-paths will be in scope and obtain explicit approval unless that exact transmission
-was already approved. Never include credentials, private keys, or unrelated files.
-The pipeline stores job prompts, streams, stderr, and envelopes in local `logs/`;
-treat them as private artifacts. See the
-[public privacy disclosure](https://github.com/cagdasyurekli/codex-agy-worker/blob/main/PRIVACY.md)
-for the complete project disclosure.
-
-The following sandbox settings apply to Codex. In another Agent Skills client,
-follow that client's own permission and network controls; do not copy Codex-specific
-configuration into it.
-
-agy starts a local language server and writes state under `~/.gemini`. Under Codex's
-default `workspace-write` sandbox it fails with **exit 5 and empty stderr** — no useful
-error. Verified working invocation:
-
-```bash
-codex exec --sandbox workspace-write \
-    --add-dir ~/.gemini \
-    -c 'sandbox_workspace_write.network_access=true' ...
-```
-
-Both parts are required: `--add-dir ~/.gemini` alone still fails (exit 5), because the
-blocker is the socket bind, not the file write. To make it permanent, put the
-equivalent in `~/.codex/config.toml` instead of passing flags each time.
-
-If you are already running and hit exit 5, the alternative is to let Codex escalate the
-single command via its approval prompt — that also works. Do **not** reach for
-`--dangerously-bypass-approvals-and-sandbox`.
-
-## When this is worth it
-
-Delegate when ALL of these hold:
-- The work is mechanical enough that you can write exact acceptance criteria now.
-- You can name the files in scope and a command that proves success.
-- The volume is high enough to justify tens or sometimes hundreds of thousands of
-  worker tokens per job.
-
-Otherwise just do it yourself. A single-file edit is cheaper direct than delegated.
-
-## Procedure
-
-### 1. Isolate
-
-Never let the worker touch the user's working tree. Use a branch-backed worktree so
-accepted changes can be committed before cleanup. Prefer the lifecycle command: it
-binds the exact repository, worktree, branch, immutable base, and job ID in a private
-external state file and performs no dispatch or external action. Invoke `job.sh` as a
-command/subprocess; its Python `main()` is process-owning for signal-safe termination
-and is not an embedding API.
-It accepts only an exact canonical branch name. Every lifecycle-owned Git command
-uses fixed sanitized Git execution with a private empty hooks directory; `init`
-rejects configured hooks/helpers/filters and effective base-tree or info-attribute
-filters before creating state, a ref, or a worktree. Fatal ref evidence is never
-treated as absence.
-
-```bash
-PIPELINE="$(bash "$SKILL_ROOT/scripts/resolve-pipeline.sh")" || exit $?
 TARGET=/absolute/path/to/target-repo
 BASE="$(git -C "$TARGET" rev-parse HEAD)"
-umask 077
 STATE_DIR="$(mktemp -d -t agyworker-job-state.XXXXXX)"
 WT="$(mktemp -d -t agyworker-job-worktree.XXXXXX)"
 rmdir "$WT"
-JOB_BRANCH=agy/job-12345
-JOB_ID=job-12345
 "$PIPELINE/job.sh" init --state "$STATE_DIR/job.json" \
-    --repo "$TARGET" --worktree "$WT" --branch "$JOB_BRANCH" \
-    --base "$BASE" --job-id "$JOB_ID"
+  --repo "$TARGET" --worktree "$WT" --branch "agy/job-12345" \
+  --base "$BASE" --job-id job-12345
 ```
 
-The manual reference remains `git -C "$TARGET" worktree add -b "$JOB_BRANCH"
-"$WT" "$BASE"`. Do not mix manual mutations into a lifecycle-managed state.
+The worker may write anywhere in that worktree for a project workflow. Do not allow
+writes into `.git`, outside the worktree, through a symlink escape, into local secret
+files, or into user-denied paths. Never ask the worker to run shell commands: under
+agy sandboxing they run in a scratch directory, not the repository. Use absolute
+paths in the prompt and pass `--workdir "$WT" --add-dir "$WT"`.
 
-### 2. Write acceptance criteria BEFORE dispatching
+## Dispatch and measure quality
 
-You must be able to fill in both blanks:
-- Files in scope: ...
-- Command that proves success: ...
-
-If you cannot, the task is not ready to delegate. Scope it further or do it yourself.
-
-### 3. Show the pre-dispatch recommendation, then dispatch unchanged
-
-Record the caller-selected tier and classify the task using driver-owned facts. Print
-the advisory before dispatch; do not assign `TIER` from its output or otherwise apply
-the recommendation automatically.
+For a normal task, dispatch once and keep stdout only when exit status is zero:
 
 ```bash
-TIER=bulk  # caller-selected; keep this value unless the caller explicitly changes it
-"$PIPELINE/model-recommendation.sh" --stage pre-dispatch \
-    --selected-tier "$TIER" --evidence batched-mechanical
+printf '%s\n' "$TASK" | "$PIPELINE/agy-worker.sh" \
+  --workflow task --workdir "$WT" --add-dir "$WT" > "$STATE_DIR/envelope.json"
 ```
 
-The other valid pre-dispatch evidence codes are `bounded-routine`,
-`cross-file-bounded`, and `high-complexity-bounded`. Choose one from the task,
-scope, and acceptance criteria you established—not from worker prose. Every result is
-JSON with `recommendation_only: true` and `applied: false`.
-
-Then dispatch using exactly `TIER`:
+For a project, start the local controller so its state can safely track multiple
+same-conversation repair cycles:
 
 ```bash
-echo "<task>" | "$PIPELINE/agy-worker.sh" --mode accept-edits --tier "$TIER" \
-    --persona bulk-test-writer \
-    --workdir "$WT" --add-dir "$WT" > /tmp/envelope.json
+printf '%s\n' "$TASK" | "$PIPELINE/agy-worker.sh" start \
+  --workflow project --max-cycles 5 --workdir "$WT" --add-dir "$WT"
 ```
 
-For a caller-selected reviewed direct model, keep the user model and effort separate
-in the advisory and dispatch them unchanged:
+Use `status` or bounded `wait` for a deliberately started job. Progress renews only
+the idle lease; it does not prove correctness or grant unlimited runtime. The defaults
+are `10m` idle, `2h` initial hard deadline, and `12h` maximum. `extend` can make a
+bounded, state-SHA-approved extension while fresh progress exists. `cancel` describes
+local process closure, not proven remote-provider cancellation.
+
+Codex owns quality measurement:
+
+1. Inspect the actual diff and identify project-owned build, test, lint, or type-check
+   commands from the repository and its CI configuration.
+2. Run those commands itself. Never execute `commands_run` or `tests_run` from an agy
+   envelope.
+3. Convert only the bounded, driver-owned result into the strict verification JSON
+   required by the controller. Do not pass raw prompts, source, logs, secrets, or
+   worker prose back through this channel.
+4. If a usable candidate fails a check and the cycle budget remains, continue the
+   exact conversation; do not silently start a new provider attempt:
 
 ```bash
-MODEL=gemini-3.6-flash
-EFFORT=high
-"$PIPELINE/model-recommendation.sh" --stage pre-dispatch \
-    --selected-model "$MODEL" --selected-effort "$EFFORT" \
-    --evidence batched-mechanical
-echo "<task>" | "$PIPELINE/agy-worker.sh" --mode accept-edits \
-    --model "$MODEL" --effort "$EFFORT" --workdir "$WT" --add-dir "$WT" \
-    > /tmp/envelope.json
+"$PIPELINE/agy-worker.sh" continue --job-id "$JOB_ID" \
+  --approve-state-sha "$STATE_SHA" < "$STATE_DIR/verification.json"
 ```
 
-Personas: `bulk-test-writer` (tests only), `diff-reviewer` (review, no edits),
-`repo-inventory` (read-only survey). Omit `--persona` for a plain worker.
-The dispatcher rejects `accept-edits` for the read-only personas. Tiers may be passed
-as `--tier cheap|bulk|hard|hardest|default` or through `AGY_WORKER_TIER`.
-Direct selection uses `--model`/`AGY_WORKER_MODEL` and optional
-`--effort`/`AGY_WORKER_EFFORT`. Each component has one source: CLI and its matching
-environment variable conflict even when equal, repeated or empty components fail,
-and any explicit tier conflicts with every model/effort source. Model and effort may
-use different sources. Do not normalize or guess names.
-
-Exact reviewed compound/fixed slugs are model-only. Adjustable Flash 3.7/3.6/3.5 bases
-accept low/medium/high; Gemini 3.7 `minimal` is unsupported; Pro 3.1 accepts low/high
-and rejects medium. Fixed Sonnet,
-Opus thinking-labelled, GPT medium-labelled, and compound slugs reject effort. Custom
-labels remain available only through legacy `--tier CUSTOM`. Direct resolution needs
-the active exact-SHA/version/source-bound portable matrix and exact installed agy
-`1.1.12`; exit 7 needs human compatibility review and exit 8 means evidence is
-unavailable. The dispatcher sends one downstream `--model`, never downstream
-`--effort` or a thinking flag.
-
-With no selector, the dispatcher uses `--tier default` internally and sends no model,
-leaving the default to agy. `--literal-model EXACT_SLUG` is a CLI-only,
-version-independent caller-owned escape hatch. It performs no version/matrix lookup,
-sends the exact lowercase slug once, and records `unreconciled-pass-through`; it
-cannot combine with tier/model/effort/environment selection, inference,
-recommendation, fallback, or thinking flags. Treat the provider result as unreviewed
-until separately reconciled.
-HUP, INT, or TERM during the direct-selection version preflight closes the exact
-probe process group and returns `129`, `130`, or `143` before task read or selection
-publication.
-
-Every job has an owner-private `selection.json`. Direct selection records input
-sources, exact resolved slug, installed version, matrix version/source, and matrix SHA
-before attempt one; a user-authorized `resume` or `restart` cannot re-resolve it. This
-is provenance, not gate evidence or acceptance. Tier selection remains explicit:
-every continuation attempt reuses the same model, and this skill never infers a
-thinking level or silently escalates after a gate failure. Direct advisories are
-unranked, recommendation-only, and never applied.
-Every user-supplied `--add-dir` must resolve inside the audited `--workdir`; do not
-delegate multi-repository mutation in one job.
-
-**Two rules your task text MUST honour** — both are measured behaviour, not caution:
-
-1. **Tell the worker not to run shell commands.** Under agy's sandbox, its shell tools
-   execute in `~/.gemini/antigravity-cli/scratch`, NOT the repo. A worker that runs
-   `ls` will truthfully describe an empty directory. Its *file* tools do reach the
-   real target. You run every shell command.
-2. **Use absolute paths and pass `--add-dir`.** agy has no reliable notion of "the
-   current directory" in print mode. Name the absolute path in the task text AND pass
-   `--add-dir "$WT"`. With only one of the two, the worker surveys the wrong place.
-
-Good task text:
-
-```
-Add tests for /tmp/agy-job-123/src/parser.py covering the error paths.
-Write only to /tmp/agy-job-123/tests/. Do not modify production source.
-Use your file tools on those absolute paths. Do NOT run shell commands —
-they execute in a scratch directory, not this repo, and will mislead you.
-The driver runs every command; report commands_run and tests_run as empty arrays.
-```
-
-If the dispatcher exits nonzero, stop. Its stdout is not an envelope. Inspect only
-the sanitized local terminal state; never feed failed stdout into the gate or wrap
-dispatch in a retry loop.
-
-### 4. Read the worker exit code
-
-| Exit | Meaning | Do |
-|---|---|---|
-| 0 | Envelope produced | Continue to step 5 — you have NOT verified anything yet |
-| 2 | No/empty prompt | Your bug |
-| 3 | Empty output | Read the sanitized terminal reason only; do not inspect raw stderr or infer a permission cause |
-| 4 | No schema-valid envelope | Worker answered in prose; retighten the task |
-| 5 | agy failed, unclassified | Preserve the job; ask for explicit resume, restart, or stop |
-| 6 | Permission gate | Read stderr for the exact rule. **Do not** suggest `--dangerously-skip-permissions` |
-| 9 | Idle timeout | Fresh progress stopped; ask for explicit resume, restart, or stop |
-| 16 | Hard deadline | Terminal: choose explicit resume, restart, or stop; an extension was possible only before expiry with fresh progress |
-| 17–19 | Reserved provider/auth terminal classes | Use only with an exact version-bound reviewed signature; the current 1.1.12 allowlist is empty, so unproven cases remain exit 5 |
-| 20–22 | Local status/resume/cancel terminal result | Read the sanitized reason; never automatically re-dispatch |
-| 23 | Output oversized | Preserve the job and read the sanitized terminal reason; do not treat partial bytes as an envelope |
-
-### 5. Verify — this is the step that matters
+5. When Codex has completed its checks or the budget is exhausted, finalize with the
+   same strict driver-owned verification JSON and one accurate assurance label:
 
 ```bash
-RECEIPT_DIR="$(mktemp -d -t agyworker-receipts.XXXXXX)" || exit 1
-RECEIPT_DIR="$(CDPATH= cd -- "$RECEIPT_DIR" && pwd -P)" || exit 1
-"$PIPELINE/verify-job.sh" --receipt "$RECEIPT_DIR/job.json" \
-    --envelope /tmp/envelope.json --repo "$WT" --base "$BASE" \
-    --only 'tests/**' --expect-edits \
-    --verify "git -C '$WT' diff --check" \
-    --verify "cd '$WT' && <the command from step 2>"
+"$PIPELINE/agy-worker.sh" finalize --job-id "$JOB_ID" \
+  --approve-state-sha "$STATE_SHA" \
+  --assurance verified < "$STATE_DIR/verification.json"
 ```
 
-**Always pass `--verify` for acceptance.** The gate never executes any command from
-the worker envelope. Use `--only` whenever the task has a path policy, especially
-for `bulk-test-writer`; its persona prompt is not enforcement. `--base` must be the
-full commit ID captured before dispatch, never `HEAD` or another mutable ref.
+Use `verified` only when the required checks passed and Codex reviewed the diff. Use
+`partially_verified` for a useful candidate with unresolved, failed, or unavailable
+checks. Use `blocked` only for a genuine authority, repository-boundary, or execution
+blocker. Keep partial work for review; do not delete it simply because a quality check
+failed. `restart` starts a new conversation and needs explicit user direction.
 
-`verify-job.sh` is the receipt-producing wrapper around the same canonical gate. Its
-required `--receipt` must be a new canonical absolute path outside the audited
-repository under an owner-private real parent. It hashes ordered policy and verifier
-commands, publishes mode `0600` without overwrite only after file and parent `fsync`,
-and never stores raw commands, output, source, paths, prompts, logs, or worker prose.
-The lower-level `qa-gate.sh` remains available when no receipt is wanted. Its evidence
-descriptor/capability is an internal `verify-job.sh` handoff, not a supported direct
-interface; direct no-receipt behavior is unchanged.
+For a bounded candidate that needs gate/receipt evidence, run `verify-job.sh` with the
+immutable base, a suitable `--only` policy when one exists, and driver-authored
+`--verify` commands. A passed gate is strong candidate evidence, not a merge, release,
+or claim of general correctness.
 
-One validated dispatcher `selection.json` may be supplied as `--selection FILE`.
-One canonical advisory captured before dispatch may independently be supplied as
-`--pre-recommendation FILE`. Neither is required; neither changes the gate result or
-selected model. Never bind a post-gate advisory or an advisory claiming `applied`.
-There is no implicit artifact discovery.
+## Hard stops
 
-| Exit | Meaning | Do |
-|---|---|---|
-| 0 | Gate passed and receipt was durably published | Review the diff; no merge or commit happened automatically |
-| 10 | Scope mismatch, invalid path, or `--only` violation | Reject |
-| 11 | Worker reported a command or test | Reject; it was not executed |
-| 12 | Envelope failed the checked-in schema | Reject |
-| 13 | `--expect-edits` job changed nothing | Reject |
-| 14 | Verification failed or mutated the worktree | Reject |
-| 15 | Partial/failed/blocked/human-required outcome | Escalate; never accept |
-| 64 | Bad invocation, invalid Git base, or missing `--verify` | Fix the driver command |
-| 70 | Gate evidence missing, malformed, mismatched, unknown, or interrupted | Treat as internal failure; no receipt was published |
-| 74 | Receipt validation or durable publication failed | Treat as publication failure; no receipt was published |
+Do not dispatch or continue when the request requires any of these without the
+necessary authorization or safe scope:
 
-Gate exits `10`–`15` also publish the exact rejected/routed receipt before the wrapper
-returns that exit. A receipt uses only `gate-passed`, `rejected`, or `routed`; it never
-calls a candidate accepted. It is explicitly unsigned and not tamper-evident. Even
-exit 0 still requires human diff review.
+- provider transmission approval is absent;
+- the requested path is outside the approved worktree, `.git`, a credential/secret,
+  a symlink escape, or user denylist;
+- the request would use dangerous permission/approval bypass flags;
+- the request would commit, push, open a PR, submit feedback, publish, install tools,
+  or apply an update without the separate approval required for that external action.
 
-For a lifecycle-managed job, use the exact same verification inputs through its
-wrapper instead of calling `verify-job.sh` directly:
+Do not confuse a hard stop with ordinary uncertainty. Unknown files, missing initial
+test commands, broad architecture, lack of a persona, a partial worker answer, or a
+failed first check should normally lead to discovery, same-conversation repair, or
+transparent partial delivery instead.
 
-```bash
-"$PIPELINE/job.sh" verify --state "$STATE_DIR/job.json" \
-    --receipt "$STATE_DIR/receipt.json" --envelope /tmp/envelope.json \
-    --only 'tests/**' --expect-edits \
-    --verify "git -C '$WT' diff --check" \
-    --verify "cd '$WT' && <the command from step 2>"
-```
+## Selection, failure, and maintenance rules
 
-To read or share the bounded receipt observations without pasting private job
-artifacts, render the validated receipt locally:
+Model and effort selection belong to the caller. Recommendations are advisory only:
+never replace the caller's selection, invent a thinking-level flag, or escalate
+permission, authentication, scope-policy, or human-required outcomes. With no
+selector, leave the provider's default intact. Use `--literal-model` only when the
+caller explicitly selects that unreconciled pass-through surface.
 
-```bash
-"$PIPELINE/evidence-report.sh" --receipt "$RECEIPT_DIR/job.json" --format text
-"$PIPELINE/evidence-report.sh" --receipt "$RECEIPT_DIR/job.json" \
-    --format markdown --output "$RECEIPT_DIR/job.md"
-"$PIPELINE/evidence-report.sh" --receipt "$RECEIPT_DIR/job.json" --format json
-```
+No automatic fresh retry exists. On a terminal worker failure, preserve the job and
+offer exact-conversation `resume`, explicit fresh `restart`, or stop. If an agent or
+implementation attempt makes a repeated semantic mistake, raise independent review
+quality rather than lowering standards or silently changing caller-owned agy settings.
 
-Standard output is the default; an explicit output path must be a new canonical
-absolute path and is published mode `0600` without overwrite. The renderer invokes
-neither agy, git, the gate, routing, nor the network. It reports only the validated
-verdict, gate outcome/exit, hashes, verifier labels, binding presence, and fixed
-unsigned/human-review limits. It does not make `gate-passed` accepted, and malformed,
-inconsistent, injection-shaped, or separately mismatched evidence produces no report.
-`--format github-step-summary` emits CI-safe Markdown only to stdout or the same
-explicit private `--output` path. The renderer never reads `GITHUB_STEP_SUMMARY`;
-workflow code must redirect stdout explicitly, and fork-controlled jobs must receive
-no secrets or private receipt paths.
+For bugs or improvement reports, use the local draft-first `bug-report.sh` flow. It
+requires review of the exact sanitized body and its matching SHA-256 before any GitHub
+submission; never submit feedback automatically.
 
-For provider-independent regression comparisons only, `benchmark.sh prepare|run|report`
-uses the checked-in synthetic manifest and one attempt per ordered caller variant. It
-calls no agy/provider/network path and cannot rank, route, recommend, retry, or change
-a selector. Use a canonical owner-`0700` directory outside the checkout and follow
-`docs/BENCHMARKING.md` in the repository. A complete checkout binds its clean commit;
-a folder-only copy instead binds the reviewed portable source revision and exact
-source manifest without inventing Git provenance. Nested schemas constrain the public
-v1 structures; runtime checks retain cross-field and canonical-byte authority. Live
-benchmarking is not implemented; do not infer authorization for it from an offline
-plan.
-
-The evidence descriptor belongs only to the gate parent. The wrapper strips executable
-shell/Python startup controls from the evidence-mode gate, gate-owned Python runs in
-isolated/no-site mode, and the already-running gate closes the FD with a shell builtin
-before any driver verifier shell, interpreter, or descendant starts. Ordinary verifier
-environment is preserved except for those unsafe startup controls and the internal
-handoff variables. HUP, INT, or TERM anywhere from private input
-snapshot through durable publication and wrapper cleanup returns `70`, terminates and
-reaps an active gate/verifier group, and leaves no wrapper-owned partial receipt.
-
-A `blocked` / `requires_human: true` envelope may be the worker behaving correctly,
-but the gate still checks its diff before returning 15. Read `open_questions`, resolve
-the ambiguity, and re-dispatch only when a concrete correction is available.
-
-After recording the gate exit, print the post-gate advisory with the same selected
-tier. Map independently observed outcomes to controlled evidence: exit 0 to
-`gate-accepted`, 10 to `scope-policy-failed`, 11 to `untrusted-worker-claim`, 12 to
-`invalid-envelope`, and 13 to `expected-edits-missing`. For exit 14, use
-`driver-verification-failed` only when a driver-authored check exposed a bounded
-candidate quality gap; fix a verifier that mutated the worktree instead. For exit 15,
-use `human-required` when a human decision is actually required and otherwise use
-`noncompleted-worker-outcome`. An independent review that finds a bounded quality
-defect may use `driver-quality-review-failed`. Driver-
-classified permission and authentication failures use `permission-failed` and
-`authentication-failed`; neither is escalatable.
-
-```bash
-"$PIPELINE/model-recommendation.sh" --stage post-gate \
-    --selected-tier "$TIER" --evidence driver-verification-failed
-```
-
-Do not pass worker-written rationale as evidence. Do not change `TIER` from this
-output. Default/custom model labels and the highest named tier produce
-`no-escalation` when no ordered higher tier can be proved.
-
-### 6. Progress-aware lifecycle
-
-Use `run` for short work. For an explicitly started long job, use `start`, then
-`status` or bounded `wait`; `result` is valid only after terminal success. Treat
-`init`, `step_update`, and terminal `result` as a local idle-lease heartbeat only.
-Fresh progress does not prove completion or grant unlimited runtime. The defaults are
-`10m` idle, `2h` initial hard deadline, and `12h` caller-owned maximum. At 80% of a
-deadline with fresh progress, Codex may apply one `2h` `extend` within that maximum
-and report a sanitized status every `30m`; it must never reveal progress contents.
-
-On failure or timeout, do not start another provider call automatically. Offer the
-user `resume` (same frozen conversation), explicit `restart` (new conversation,
-frozen task and selection), or preserve-and-stop. `cancel` is local: wait for the
-controller to close/reap its process group and report `remote_cancel_unverified`, not
-provider cancellation. `status`, `wait`, and `cancel` are local-controller facts, not
-an agy status/result/cancel API.
-
-For `plan`, the dispatcher stages the complete prompt privately and gives agy only a
-fixed driver prompt with slash expansion available for the documented plan transform.
-For `accept-edits`, slash expansion remains disabled by default. Neither mode is a
-filesystem isolation claim: use the disposable worktree and post-run no-change gate.
-
-If dispatch failed before a receipt exists, use the separately approved `job.sh abort`
-path only for its exact terminal dispatch residual. It must not be forced through the
-receipt-based cleanup path.
-
-### 7. Preserve or deliberately reject
-
-After exit 0, inspect and commit on the job branch before removing the worktree:
-
-```bash
-git -C "$WT" diff
-git -C "$WT" add <reviewed-paths>
-git -C "$WT" commit -m "<intentional message>"
-git -C "$TARGET" worktree remove "$WT"
-```
-
-Integrate `JOB_BRANCH` only through the user's normal review/merge flow. If the job
-was rejected with gate exit `10`–`14`, run `job.sh status`, inspect its current facts,
-and invoke `job.sh cleanup` only with the exact current job ID, state SHA, and Receipt
-candidate SHA copied into the three approval flags. It rechecks the receipt, digest,
-worktree, branch, deletion domain, and approvals; it never cleans gate-passed or
-routed work. If reconciliation advances state after an interruption, stop and obtain
-fresh approval for the new state SHA before continuing. The manual reference is to
-force-remove only a known disposable rejected worktree and then delete only its exact
-job branch. Never force-remove accepted, uncommitted work.
-
-## Never
-
-- Accept a job on the envelope or receipt alone. Run `verify-job.sh` (or the lower-level
-  `qa-gate.sh`) with driver-owned `--verify`, then perform human diff review every time.
-- Execute `commands_run` or `tests_run` from the envelope. Only driver-authored
-  `--verify` commands are executable evidence.
-- Suggest `--dangerously-skip-permissions` to clear a permission gate — it approves
-  every tool for the whole run. Add a narrow allow-rule, or restructure so the worker
-  uses file tools instead of the shell.
-- Let the worker author or edit agy's own skills. agy misdescribes its own CLI
-  (it invents `agy run`, `--headless`, `agy auth status`). If you author agy skills,
-  run `./ground-truth.sh` first and treat its output as the only source of truth.
-- Delegate work you cannot write an acceptance test for.
-
-## Maintenance and GitHub reporting
-
-- When `$PIPELINE/update.sh` exists, `update.sh check` is read-only and may be run
-  when the user asks for an update/compatibility check. It reports tool releases plus
-  verified agy version, official-upstream drift, and fixed 30-day documentation-review
-  status. Its fixed GitHub REST evidence and installed-version probes are bounded and
-  sanitized; check/watch makes no Git network request. A folder-only install
-  intentionally has no checkout updater: do not fetch or pull code automatically to
-  manufacture one.
-- Run `update.sh apply [TAG]` only on an explicit user request. It refuses dirty or
-  detached checkouts and ignored-file collisions, validates tests plus a temporary
-  skill install, fast-forwards, and reinstalls this skill. If the real install fails
-  after merge, report the partial update and exact recovery command; do not claim an
-  atomic rollback. Its explicit Git fetch still honors the caller's Git transport
-  configuration; the read-only check's transport isolation does not cover apply.
-  Never invoke it during a worker job.
-- After an evidenced agy-worker defect or concrete improvement, offer the local
-  reporting option. Create a draft only after the user separately opts in; diagnosis
-  and drafting do not authorize external submission. Use `draft --kind bug` or
-  `draft --kind improvement`, show the exact body with
-  `preview`, and provide its SHA-256. Run `submit` only after the user explicitly
-  approves both that exact hash and a second public-safety confirmation of the same
-  hash. Use `--kind security` only for a minimal private-only report; it must never
-  submit publicly. A conservative keyword match is an extra private-route barrier,
-  never proof that a draft is public-safe. A folder-only install may direct the user
-  to the public support page but must not fetch reporting tools.
-- Never attach or paste prompts, source code, envelopes, credentials, absolute paths,
-  or raw logs into GitHub. `gh` is optional; if it is absent or fails, keep the draft
-  local and stop.
+Before changing agy-facing behavior, run `./ground-truth.sh` and inspect `agy --help`.
+agy can exit zero with empty output; the answer is `result.structured_output`, not the
+echoed schema. Before delivery, run the relevant offline suite and the project checks
+you selected. Do not claim provider success, completeness, or release status from
+offline evidence alone.

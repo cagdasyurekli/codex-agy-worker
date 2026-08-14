@@ -5,10 +5,11 @@
 
 # codex-agy-worker
 
-Delegate bounded coding work from **Codex CLI** to **Antigravity CLI (`agy`)**, then
-independently check Git scope and run driver-owned verification commands before
-accepting the candidate. The gate verifies those specific conditions; it does not
-prove general correctness or security.
+Let **Codex CLI** delegate repository exploration, features, and project-scale coding
+to **Antigravity CLI (`agy`)**. Codex owns the resulting diff review, build/test/lint
+checks, bounded same-conversation repair loop, and honest delivery status. A worker
+can discover ordinary project structure; it is not limited to mechanical edits or a
+predeclared file list.
 
 Bash + Python 3 + git. No Node and no MCP daemon. A deliberately started job may
 have one private, per-job local controller; it is not a shared service.
@@ -36,9 +37,10 @@ and [antigravity-for-claude-code](https://github.com/VKirill/antigravity-for-cla
 Most are MCP servers; several are more featureful than this one. This project keeps
 one agy backend and does not claim validated native-Windows support.
 
-**This one exists for a single reason: it does not accept the worker's self-report as
-evidence.** The worker's JSON report is treated as a *claim*. The gate independently
-derives a bounded set of facts from the repository:
+**Its differentiator is that Codex does not confuse a worker report with evidence.**
+The worker's JSON report is a *claim*. The gate independently derives bounded facts
+from the repository, while Codex uses those facts and driver-owned checks to decide
+whether the result is verified or needs more work:
 
 | The worker... | Gate | Exit |
 |---|---|---|
@@ -57,6 +59,37 @@ before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
 The twenty-seven offline suites need no agy process, network access, API key, or GitHub login.
+
+### GitHub Actions cost and quota fallback
+
+For a public repository, standard GitHub-hosted Actions runners do not consume the
+owner's included minutes. A private fork or a future visibility change is different:
+macOS runners cost substantially more than Linux runners, so the workflow deliberately
+avoids a second full run after a normal merge.
+
+The required `test` job runs the complete macOS suite on pull requests, uses strict
+up-to-date branch protection, and cancels a superseded run for the same PR. Normal
+squash merges preserve the tested tree; the post-merge commit has a new identity but
+does not need a duplicate full-suite run. The job is also available by explicit manual
+dispatch for an exact release comparison: supply committed `base_sha` and `head_sha`.
+
+If a private fork's quota is unavailable, run the same fail-fast offline suite locally:
+
+```bash
+./scripts/ci-offline.sh
+```
+
+It runs the static checks and all twenty-seven offline suites without requiring a
+network or provider call and without intentionally inspecting account-HOME contents.
+Ambient local tools may still consult their ordinary user configuration. Keep the
+command's exact summaries together with the commit,
+tree, and `git diff --check` evidence. This is local evidence only: it never satisfies
+the protected GitHub `test` check. After availability returns, manually dispatch the
+exact comparison before publishing or releasing unless the repository owner explicitly
+changes the protection policy. The daily compatibility watch remains macOS-specific;
+the weekly metadata-only feedback watch uses Linux because it has no macOS contract.
+See GitHub's [Actions billing guidance](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+and [workflow concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 
 ## See the evidence boundary in under a minute
 
@@ -97,9 +130,12 @@ or chases a moved directory. This is not same-user tamper resistance. See
 ## Roadmap
 
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
-their explicit implemented or deferred status. The **v0.6.0 release scope represented
-by this source** adds the reviewed Gemini 3.7 Flash low/medium/high mappings and hardens
-the capture child mode and dispatch-state snapshot boundaries. The published v0.5.0
+their explicit implemented or deferred status. The published **v0.6.0 release scope**
+added the reviewed Gemini 3.7 Flash low/medium/high mappings and hardened the capture
+child mode and dispatch-state snapshot boundaries. The implemented, offline-verified
+**v0.7.0 release candidate** adds usability-first explore/task/project workflows and
+same-conversation repair; its tag, release, and live-provider gates remain separate
+and are not claimed here. The published v0.5.0
 scope added sanitized bug/improvement drafts with exact double confirmation,
 private-only security drafts, and the bounded metadata-only feedback aggregate and
 weekly/manual watcher. The prior v0.4.0 scope includes daily compatibility observation,
@@ -255,8 +291,28 @@ After `./install.sh`, start a new Codex session and ask in normal language:
 > under `tests/`, verify with `python3 -m pytest -q tests/test_parser.py`, and
 > preserve accepted work on a branch.
 
-Codex should create an isolated worktree, dispatch agy, run the gate, inspect the
-diff, and report evidence. You do not need to remember the shell interface.
+For a larger request, the prompt can be equally direct:
+
+> Use agy-worker to build this application in `/absolute/path/to/project/`. Discover
+> the existing structure and test commands, implement the requested behavior across
+> the project, run the relevant checks, and repair failures in the same conversation.
+
+Codex creates an isolated worktree, selects a workflow, dispatches agy, inspects the
+diff, runs driver-owned checks, and reports what is actually verified. You do not need
+to supply a final file list, a persona, or every test command before starting.
+
+| What you want | Workflow | Minimum input | What Codex delivers |
+|---|---|---|---|
+| Understand, plan, or review a repository | `explore` | Repository and question | A useful read-only report with stated coverage limits; not an exhaustive audit claim. |
+| Implement a feature, refactor, or tests | `task` | Repository and desired behavior | A worktree diff plus Codex-run relevant checks; failed checks can trigger a bounded repair. |
+| Build an app, complete a project, or broadly audit-and-fix | `project` | Repository and outcome | Repo-wide worktree changes, build/test/lint measurement, up to five total provider attempts (the initial attempt plus at most four same-conversation repairs), and an assurance label. |
+| Follow a long job | async lifecycle | Job ID | Local `status`/bounded `wait`, controlled extension, or cancel state; not remote-provider truth. |
+
+Assurance labels are intentionally practical: `verified` means Codex reviewed the
+candidate and its required checks passed; `partially_verified` preserves useful work
+with exact unresolved checks; `blocked` identifies a real authorization, repository
+boundary, or execution blocker. A failed first check is a repair signal, not an
+automatic rejection or deletion.
 
 Before the first dispatch for a repository, the skill identifies the paths in scope
 and requires explicit approval for sending that task and any worker-read repository
@@ -336,11 +392,15 @@ Use `plan` for inventory and independently spot-check the report. Exit 0 can pro
 that no files changed and that the driver command passed; it cannot prove the
 worker's architecture prose is accurate.
 
+An explore result is useful input for planning but does not prove that every semantic
+path was inspected. Codex should spot-check material claims before relying on them;
+that limitation does not make an otherwise useful broad exploration inadmissible.
+
 ```bash
 if ! echo "Read repository-owned files under $WT using absolute paths. Report entry points,
 test commands, and risky areas. Do not run commands. Return files_changed,
 commands_run, and tests_run as empty arrays." |
-  "$PIPELINE/agy-worker.sh" --mode plan --persona repo-inventory \
+  "$PIPELINE/agy-worker.sh" --workflow explore \
     --workdir "$WT" --add-dir "$WT" > /tmp/inventory-envelope.json; then
   echo "Inventory dispatch failed; do not pass its stdout to the gate." >&2
   exit 1
@@ -366,7 +426,7 @@ fi
 
 ### Personas
 
-`--persona repo-inventory|diff-reviewer|bulk-test-writer` inlines a role brief from
+`--persona repo-inventory|diff-reviewer|bulk-test-writer` optionally inlines a role brief from
 `skills/agy-worker/runtime/agents/`. `repo-inventory` measurably changed an
 under-specified job from a false
 survey into an honest escalation. `bulk-test-writer` has now been exercised on a real
@@ -421,14 +481,16 @@ profile sources.
 
 | Worker option | Environment equivalent | Meaning |
 |---|---|---|
-| `--mode plan|accept-edits` | `AGY_WORKER_MODE` | defaults to read-only `plan` |
+| `--workflow explore|task|project` | — | Selects read-only exploration, ordinary implementation, or project-scale iterative work. Omitted input keeps the legacy raw-mode behavior. |
+| `--max-cycles 1..5` | — | Project workflow's total provider-attempt budget; default `5`, valid only with `--workflow project`. |
+| `--mode plan|accept-edits` | `AGY_WORKER_MODE` | Raw agy mode for compatibility. `explore` fixes `plan`; `project` fixes `accept-edits`; `task` uses `accept-edits` unless an explicit raw mode is supplied. |
 | `--tier cheap|bulk|hard|hardest|default` | `AGY_WORKER_TIER` | explicit legacy tier; a model label is also accepted |
 | `--model EXACT_MODEL` | `AGY_WORKER_MODEL` | reviewed exact slug, or adjustable base used with effort |
 | `--effort low|medium|high` | `AGY_WORKER_EFFORT` | requires an adjustable base and resolves to one exact slug |
 | `--literal-model EXACT_SLUG` | — | CLI-only caller-owned pass-through; no matrix/version claim |
 | `--workdir DIR` | — | agy's workspace |
 | `--add-dir DIR` | — | repeatable file-tool root; must resolve inside `--workdir` |
-| `--persona NAME` | — | inline a bounded worker role |
+| `--persona NAME` | — | Optional bounded worker-role prompt; it does not authorize work or prove quality. |
 | `--idle-timeout DURATION` | `AGY_WORKER_IDLE_TIMEOUT` | no valid progress for this long ends the attempt; default `10m` |
 | `--hard-timeout DURATION` | `AGY_WORKER_HARD_TIMEOUT`; `AGY_WORKER_TIMEOUT` (deprecated alias) | initial per-attempt deadline; default `2h` |
 | `--max-runtime DURATION` | `AGY_WORKER_MAX_RUNTIME` | caller-owned absolute cap across extensions; default `12h` |
@@ -486,6 +548,14 @@ a local request before the controller closes and reaps its process group. `resum
 requires a terminal resume-eligible state and its SHA, and uses the exact stored
 conversation with a fixed continuation prompt. `restart` also requires that SHA but
 starts a new conversation and labels its attempt `fresh-restart`.
+
+Project jobs add a driver-owned quality loop. `status` exposes the phase, current and
+maximum cycle count, check summary, and assurance state. Codex supplies strict,
+sanitized verification JSON to `continue` with the current state SHA to ask the exact
+conversation to repair an observed failure. It supplies the same JSON to `finalize`
+with `verified`, `partially_verified`, or `blocked`; a worker cannot self-assign that
+status. The controller never runs a command from that JSON and never starts a fresh
+conversation automatically.
 
 The Codex skill does not split a comprehensive task merely to fit a timer. While
 progress is fresh, it may extend the initial deadline by `2h` at 80% utilization,
@@ -1275,7 +1345,7 @@ tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
-tests/test-agy-worker.sh      257-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-agy-worker.sh      276-case offline dispatcher/installer/routing/lifecycle suite
 tests/test-update.sh          319-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py test-only fixed-endpoint transport adversary harness

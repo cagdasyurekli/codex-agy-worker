@@ -37,6 +37,8 @@ effort_env_seen=0; effort_env_value=""
 if [[ -n "${AGY_WORKER_TIER+x}" ]]; then tier_env_seen=1; tier_env_value="$AGY_WORKER_TIER"; fi
 if [[ -n "${AGY_WORKER_MODEL+x}" ]]; then model_env_seen=1; model_env_value="$AGY_WORKER_MODEL"; fi
 if [[ -n "${AGY_WORKER_EFFORT+x}" ]]; then effort_env_seen=1; effort_env_value="$AGY_WORKER_EFFORT"; fi
+mode_env_seen=0; mode_env_value=""
+if [[ -n "${AGY_WORKER_MODE+x}" ]]; then mode_env_seen=1; mode_env_value="$AGY_WORKER_MODE"; fi
 mode="${AGY_WORKER_MODE:-plan}"               # plan | accept-edits  (rec: plan is the safe default)
 idle_timeout="${AGY_WORKER_IDLE_TIMEOUT:-10m}"
 hard_timeout="${AGY_WORKER_HARD_TIMEOUT:-2h}"
@@ -51,7 +53,7 @@ job_env_seen=0; job_id=""
 if [[ -n "${AGY_WORKER_JOB_ID+x}" ]]; then job_env_seen=1; job_id="$AGY_WORKER_JOB_ID"; fi
 dispatch_action="run"
 case "${1:-}" in
-    run|start|status|wait|result|extend|cancel|resume|restart)
+    run|start|status|wait|result|extend|cancel|resume|restart|continue|finalize)
         dispatch_action="$1"; shift ;;
 esac
 
@@ -79,6 +81,7 @@ PY
 usage() {
     cat >&2 <<'EOF'
 usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
+                     [--workflow explore|task|project] [--max-cycles 1..5]
                      [--tier bulk|cheap|hard|hardest|default|MODEL]
                      [--model REVIEWED_MODEL [--effort low|medium|high]]
                      [--literal-model EXACT_SLUG]
@@ -89,6 +92,9 @@ usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
 
        agy-worker.sh start [run options] ... task prompt on stdin ...
        agy-worker.sh status|result|resume|restart --job-id JOB
+       agy-worker.sh continue --job-id JOB --approve-state-sha SHA < verification.json
+       agy-worker.sh finalize --job-id JOB --approve-state-sha SHA \\
+           --assurance verified|partially_verified|blocked < verification.json
        agy-worker.sh wait --job-id JOB --after-state-sha SHA [--timeout 60s]
        agy-worker.sh cancel --job-id JOB --approve-state-sha SHA
        agy-worker.sh extend --job-id JOB --approve-state-sha SHA --by 2h
@@ -112,6 +118,7 @@ if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
     control_after_sha=""
     control_timeout="60s"
     control_by=""
+    control_assurance=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --job-id)
@@ -129,6 +136,9 @@ if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
             --by)
                 [[ $# -ge 2 && -z "$control_by" ]] || usage
                 control_by="$2"; shift 2 ;;
+            --assurance)
+                [[ $# -ge 2 && -z "$control_assurance" ]] || usage
+                control_assurance="$2"; shift 2 ;;
             -h|--help) usage ;;
             *) echo "agy-worker.sh: invalid $dispatch_action argument: $1" >&2; usage ;;
         esac
@@ -154,15 +164,21 @@ if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
         extend)
             [[ -n "$control_state_sha" && -n "$control_by" ]] || usage
             supervisor+=(--approve-state-sha "$control_state_sha" --by "$control_by") ;;
-        resume|restart)
+        resume|restart|continue)
             [[ -n "$control_state_sha" ]] || usage
             supervisor+=(--approve-state-sha "$control_state_sha") ;;
+        finalize)
+            [[ -n "$control_state_sha" && -n "$control_assurance" ]] || usage
+            supervisor+=(--approve-state-sha "$control_state_sha" --assurance "$control_assurance") ;;
     esac
     exec "${supervisor[@]}"
 fi
 
 workdir="$PWD"
 persona=""
+workflow=""
+max_cycles=5
+workflow_cli_seen=0; max_cycles_cli_seen=0; mode_cli_seen=0
 extra_dirs=()
 tier_cli_seen=0; tier_cli_value=""
 model_cli_seen=0; model_cli_value=""
@@ -185,7 +201,13 @@ while [[ $# -gt 0 ]]; do
         # yields a default worker that believes it is a specialist. Inlining the
         # persona body keeps structured output working.
         --persona) [[ $# -ge 2 ]] || usage; persona="$2"; shift 2 ;;
-        --mode) [[ $# -ge 2 ]] || usage; mode="$2"; shift 2 ;;
+        --mode) [[ $# -ge 2 && $mode_cli_seen -eq 0 ]] || usage; mode_cli_seen=1; mode="$2"; shift 2 ;;
+        --workflow)
+            [[ $# -ge 2 && $workflow_cli_seen -eq 0 ]] || usage
+            workflow_cli_seen=1; workflow="$2"; shift 2 ;;
+        --max-cycles)
+            [[ $# -ge 2 && $max_cycles_cli_seen -eq 0 ]] || usage
+            max_cycles_cli_seen=1; max_cycles="$2"; shift 2 ;;
         --tier)
             [[ $# -ge 2 ]] || usage
             (( tier_cli_seen == 0 )) || { echo "agy-worker.sh: repeated --tier" >&2; exit 64; }
@@ -288,6 +310,37 @@ else
     tier="default"; tier_source="implicit-default"; selection_kind="tier"
 fi
 
+case "$workflow" in
+    ''|explore|task|project) ;;
+    *) echo "agy-worker.sh: invalid workflow: $workflow" >&2; exit 64 ;;
+esac
+case "$workflow" in
+    explore)
+        if (( mode_cli_seen )) && [[ "$mode" != "plan" ]]; then
+            echo "agy-worker.sh: --workflow explore conflicts with --mode $mode" >&2; exit 64
+        fi
+        if (( ! mode_cli_seen && mode_env_seen )) && [[ "$mode_env_value" != "plan" ]]; then
+            echo "agy-worker.sh: --workflow explore conflicts with AGY_WORKER_MODE" >&2; exit 64
+        fi
+        mode="plan" ;;
+    project)
+        if (( mode_cli_seen )) && [[ "$mode" != "accept-edits" ]]; then
+            echo "agy-worker.sh: --workflow project conflicts with --mode $mode" >&2; exit 64
+        fi
+        if (( ! mode_cli_seen && mode_env_seen )) && [[ "$mode_env_value" != "accept-edits" ]]; then
+            echo "agy-worker.sh: --workflow project conflicts with AGY_WORKER_MODE" >&2; exit 64
+        fi
+        mode="accept-edits" ;;
+    task)
+        if (( ! mode_cli_seen && ! mode_env_seen )); then mode="accept-edits"; fi ;;
+esac
+if [[ ! "$max_cycles" =~ ^[1-5]$ ]]; then
+    echo "agy-worker.sh: --max-cycles must be an integer from 1 to 5" >&2; exit 64
+fi
+if (( max_cycles_cli_seen )) && [[ "$workflow" != "project" ]]; then
+    echo "agy-worker.sh: --max-cycles requires --workflow project" >&2; exit 64
+fi
+
 case "$persona" in
     ''|bulk-test-writer|repo-inventory|diff-reviewer) ;;
     *) echo "agy-worker.sh: invalid persona: $persona" >&2; exit 64 ;;
@@ -367,6 +420,50 @@ if (( ${#normalized_dirs[@]} > 0 )); then
     extra_dirs=("${normalized_dirs[@]}")
 fi
 cd "$workdir"
+
+if [[ "$workflow" == "project" ]]; then
+    python3 -I -S -B - "$workdir" <<'PY'
+import os
+import stat
+import sys
+
+root = os.path.realpath(sys.argv[1])
+marker = os.path.join(root, ".git")
+try:
+    marker_info = os.lstat(marker)
+except OSError:
+    raise SystemExit(64)
+if (os.path.islink(marker) or not stat.S_ISREG(marker_info.st_mode)
+        or marker_info.st_uid != os.geteuid() or marker_info.st_size > 4096):
+    raise SystemExit(64)
+pending = [root]
+count = 0
+while pending:
+    current = pending.pop()
+    with os.scandir(current) as entries:
+        for entry in entries:
+            if current == root and entry.name == ".git":
+                continue
+            count += 1
+            if count > 100000:
+                raise SystemExit(64)
+            if entry.is_symlink():
+                resolved = os.path.realpath(entry.path)
+                try:
+                    contained = os.path.commonpath([root, resolved]) == root
+                except ValueError:
+                    contained = False
+                if not contained:
+                    raise SystemExit(64)
+            elif entry.is_dir(follow_symlinks=False):
+                pending.append(entry.path)
+PY
+    boundary_rc=$?
+    if (( boundary_rc != 0 )); then
+        echo "agy-worker.sh: project workflow requires a local Git marker and bounded contained paths" >&2
+        exit 64
+    fi
+fi
 
 job_dir="$LOG_DIR/$job_id"
 if ! mkdir "$job_dir" 2>/dev/null; then
@@ -518,9 +615,11 @@ if (( stage_used )); then
     stage_dir_arg="$staged_dir"; stage_file_arg="$staged_prompt_file"
 fi
 agy_version="$(<"$SCRIPT_DIR/compat/agy-verified-version.txt")"
+command_workflow="${workflow:-legacy}"
 python3 -I -S -B - "$command_file" "$job_id" "$workdir" "$agy_version" \
     "$idle_seconds" "$hard_seconds" "$max_seconds" "$notice_seconds" \
-    "$stage_dir_arg" "$stage_file_arg" "$CALLER_UMASK" "${cmd[@]}" <<'PY'
+    "$stage_dir_arg" "$stage_file_arg" "$CALLER_UMASK" "$command_workflow" "$max_cycles" \
+    "${cmd[@]}" <<'PY'
 import json
 import os
 from pathlib import Path
@@ -528,12 +627,12 @@ import sys
 
 (
     output, job_id, workdir, agy_version, idle, hard, maximum, notice,
-    stage_dir, stage_file, child_umask, *argv
+    stage_dir, stage_file, child_umask, workflow, max_cycles, *argv
 ) = sys.argv[1:]
 if not isinstance(child_umask, str) or len(child_umask) not in (3, 4) or any(ch not in "01234567" for ch in child_umask):
     raise SystemExit(64)
 value = {
-    "schema_version": 1,
+    "schema_version": 2,
     "kind": "agy-worker-dispatch-command",
     "job_id": job_id,
     "workdir": workdir,
@@ -546,9 +645,16 @@ value = {
     "stage_dir": stage_dir or None,
     "stage_file": stage_file or None,
     "child_umask": child_umask,
+    "workflow": workflow,
+    "max_cycles": int(max_cycles) if workflow == "project" else 1,
     "resume_prompt": (
         "Continue the existing bounded task from its retained conversation. "
         "Do not repeat completed work. Return only the final schema-valid envelope."
+    ),
+    "continue_prompt": (
+        "Read the driver-owned verification feedback from the supplied read-only file. "
+        "Address the reported issues using file tools, do not run shell commands, and "
+        "return only the final schema-valid envelope."
     ),
 }
 raw = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"

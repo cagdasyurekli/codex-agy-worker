@@ -1,7 +1,7 @@
 {
   "name": "codex-agy-worker",
-  "version": "0.6.0",
-  "description": "Delegate bounded coding work to Antigravity CLI, then independently verify repository evidence before acceptance.",
+  "version": "0.7.0",
+  "description": "Use Antigravity CLI for exploration, feature work, and project-scale implementation, with Codex independently verifying results.",
   "author": {
     "name": "cagdasyurekli",
     "url": "https://github.com/cagdasyurekli"
@@ -19,8 +19,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Verified agy Worker",
-    "shortDescription": "Delegate to agy, then verify repository evidence.",
-    "longDescription": "Run bounded Antigravity CLI coding jobs in isolated Git worktrees while treating every worker report as an untrusted claim. Driver-owned scope checks and verification commands decide acceptance.",
+    "shortDescription": "Explore, build, and verify with agy.",
+    "longDescription": "Use Antigravity CLI for broad exploration, feature work, and project-scale implementation in isolated Git worktrees. Codex reviews the diff, runs driver-owned checks, and records verified or partial delivery without trusting worker claims.",
     "developerName": "cagdasyurekli",
     "category": "Developer Tools",
     "capabilities": [
@@ -31,9 +31,9 @@
     "privacyPolicyURL": "https://github.com/cagdasyurekli/codex-agy-worker/blob/main/PRIVACY.md",
     "termsOfServiceURL": "https://github.com/cagdasyurekli/codex-agy-worker/blob/main/TERMS.md",
     "defaultPrompt": [
-      "Delegate a bounded test backfill to agy and verify it independently.",
-      "Survey this repository with agy without accepting unverified claims.",
-      "Review this diff through agy, then independently validate every finding."
+      "Build this application with agy across the project, then have Codex run the relevant checks and repair failures in the same conversation.",
+      "Use agy to implement this feature end to end, discovering the files and test commands as needed.",
+      "Explore this repository with agy and report useful findings with clear coverage limits."
     ]
   }
 }

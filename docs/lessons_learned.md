@@ -60,6 +60,32 @@ upstream transformation. Still describe the mode honestly: disposable worktrees 
 post-run no-change gates, not the label itself, provide the enforceable read-only
 boundary.
 
+## Quality evidence must guide work, not prevent useful work
+
+A schema-valid envelope, unchanged diff, and steady progress prove transport and
+bounded execution; they do not prove exhaustive semantic coverage. State that limit
+plainly, spot-check broad reports, and have Codex run the repository's meaningful
+checks. Do not turn the absence of an exhaustive proof into a generic dispatch ban:
+an exploration can be useful, and a project candidate can be valuable even when some
+checks remain unresolved.
+
+Treat assurance as graduated. `verified` requires Codex's diff review and required
+driver-owned checks. `partially_verified` preserves a useful candidate with exact
+unresolved checks. `blocked` is for a genuine authorization, repository-boundary, or
+execution obstacle. A failed check should normally create a bounded same-conversation
+repair request, not an automatic fresh retry, deletion, or refusal.
+
+Security controls protect irreversible boundaries; they are not the product goal.
+Keep provider-transmission approval, worktree containment, credential exclusion,
+dangerous-bypass rejection, and explicit publication authority. Do not require an
+exact file list, a persona, or a prewritten acceptance command merely to start useful
+Codex-guided work.
+
+Test policy text against natural requests such as “build this project”, “discover the
+files”, “review this repository”, and “repair the failed tests”. A policy that only
+passes narrow happy-path wording can silently make the product unusable even while its
+security tests remain green.
+
 ## Updates are explicit and trust official sources
 
 `update.sh check` is read-only. `update.sh apply` is an explicit human-authorized
