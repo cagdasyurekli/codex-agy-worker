@@ -33,6 +33,11 @@ LOCK_NAME = ".dispatch.lock"
 STATE_LOCK_NAME = ".dispatch-state.lock"
 MAX_STATE_BYTES = 128 * 1024
 MAX_COMMAND_BYTES = 512 * 1024
+MAX_VERIFICATION_BYTES = 16 * 1024
+MAX_CHECK_ITEMS = 32
+MAX_CHECK_LABEL = 160
+MAX_CHECK_SUMMARY = 512
+MAX_BOUNDARY_ENTRIES = 100000
 MAX_STREAM_BYTES = 32 * 1024 * 1024
 MAX_EVENT_BYTES = 1024 * 1024
 MAX_STATUS_WAIT = 60.0
@@ -41,6 +46,19 @@ CONTROL_POLL = 0.20
 CONVERSATION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
 SHA_RE = re.compile(r"[0-9a-f]{64}")
+COMMAND_V1_FIELDS = {
+    "schema_version", "kind", "job_id", "workdir", "argv", "agy_version",
+    "idle_seconds", "hard_seconds", "max_seconds", "notice_seconds",
+    "stage_dir", "stage_file", "child_umask", "resume_prompt",
+}
+COMMAND_V2_FIELDS = COMMAND_V1_FIELDS | {"workflow", "max_cycles", "continue_prompt"}
+STATE_PROJECT_FIELDS = {
+    "workflow", "max_cycles", "cycle", "phase", "assurance",
+    "check_summary", "check_counts", "verification_path", "verification_sha256",
+    "verification_identity", "continue_available", "last_success_path",
+    "last_success_sha256", "last_success_identity",
+    "project_boundary",
+}
 TERMINAL = {"succeeded", "failed", "cancelled", "orphaned"}
 REASONS = {
     "provider_timeout", "idle_timeout", "hard_deadline_exceeded",
@@ -263,7 +281,7 @@ def inherited_lifecycle_lock(job: Path, descriptor: int) -> Iterator[int]:
 def load_state(job: Path) -> tuple[dict[str, Any], bytes, str]:
     raw, _info = read_regular(job / STATE_NAME, MAX_STATE_BYTES, "dispatch state")
     value = parse_json(raw, "dispatch state")
-    validate_state(value)
+    value = validate_state(value)
     return value, raw, digest(raw)
 
 
@@ -277,13 +295,19 @@ def read_state_snapshot(job: Path) -> tuple[dict[str, Any], bytes, str]:
 def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int, int, int]]:
     raw, info = read_regular(job / COMMAND_NAME, MAX_COMMAND_BYTES, "dispatch command")
     value = parse_json(raw, "dispatch command")
-    if not isinstance(value, dict) or set(value) != {
-        "schema_version", "kind", "job_id", "workdir", "argv", "agy_version",
-        "idle_seconds", "hard_seconds", "max_seconds", "notice_seconds",
-        "stage_dir", "stage_file", "child_umask", "resume_prompt",
-    }:
+    if not isinstance(value, dict):
         raise DispatchError("dispatch command fields are invalid")
-    if value["schema_version"] != 1 or value["kind"] != "agy-worker-dispatch-command":
+    if set(value) == COMMAND_V1_FIELDS and value.get("schema_version") == 1:
+        if raw != canonical(value):
+            raise DispatchError("legacy dispatch command is not canonical")
+        value = dict(value)
+        value.update({
+            "workflow": "legacy", "max_cycles": 1,
+            "continue_prompt": "legacy commands cannot continue projects",
+        })
+    elif set(value) != COMMAND_V2_FIELDS or value.get("schema_version") != 2:
+        raise DispatchError("dispatch command fields are invalid")
+    if value["kind"] != "agy-worker-dispatch-command":
         raise DispatchError("dispatch command version is invalid")
     if not isinstance(value["job_id"], str) or JOB_RE.fullmatch(value["job_id"]) is None:
         raise DispatchError("dispatch command job ID is invalid")
@@ -309,7 +333,15 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         raise DispatchError("dispatch child umask is invalid")
     if not isinstance(value["resume_prompt"], str) or not value["resume_prompt"]:
         raise DispatchError("dispatch resume prompt is invalid")
-    if raw != canonical(value):
+    if not isinstance(value["continue_prompt"], str) or not value["continue_prompt"]:
+        raise DispatchError("dispatch continue prompt is invalid")
+    if value["workflow"] not in {"legacy", "explore", "task", "project"}:
+        raise DispatchError("dispatch workflow is invalid")
+    if type(value["max_cycles"]) is not int or not (1 <= value["max_cycles"] <= 5):
+        raise DispatchError("dispatch max cycles is invalid")
+    if value["workflow"] != "project" and value["max_cycles"] != 1:
+        raise DispatchError("dispatch max cycles requires project workflow")
+    if value["schema_version"] == 2 and raw != canonical(value):
         raise DispatchError("dispatch command is not canonical")
     return value, raw, _identity(info)
 
@@ -326,10 +358,28 @@ def validate_state(value: Any) -> dict[str, Any]:
         "agy_returncode", "limit_kind", "command_sha256", "command_identity",
         "stage_sha256", "stage_identity", "result_sha256", "result_identity",
         "idle_seconds", "attempt_base_elapsed",
+        "workflow", "max_cycles", "cycle", "phase", "assurance",
+        "check_summary", "check_counts", "verification_path", "verification_sha256",
+        "verification_identity", "continue_available", "last_success_path",
+        "last_success_sha256", "last_success_identity", "project_boundary",
     }
-    if not isinstance(value, dict) or set(value) != fields:
+    legacy_fields = fields - STATE_PROJECT_FIELDS
+    if not isinstance(value, dict):
         raise DispatchError("dispatch state fields are invalid")
-    if value["schema_version"] != 1 or value["kind"] != "agy-worker-dispatch-state":
+    if set(value) == legacy_fields and value.get("schema_version") == 1:
+        value = dict(value)
+        value.update({
+            "workflow": "legacy", "max_cycles": 1, "cycle": value["attempt"],
+            "phase": None, "assurance": None, "check_summary": None,
+            "check_counts": {"passed": 0, "failed": 0, "advisory": 0, "missing": 0},
+            "verification_path": None, "verification_sha256": None,
+            "verification_identity": None, "continue_available": False,
+            "last_success_path": None, "last_success_sha256": None,
+            "last_success_identity": None, "project_boundary": None,
+        })
+    elif set(value) != fields or value.get("schema_version") != 3:
+        raise DispatchError("dispatch state fields are invalid")
+    if value["kind"] != "agy-worker-dispatch-state":
         raise DispatchError("dispatch state version is invalid")
     if type(value["sequence"]) is not int or value["sequence"] < 1:
         raise DispatchError("dispatch sequence is invalid")
@@ -342,10 +392,20 @@ def validate_state(value: Any) -> dict[str, Any]:
         raise DispatchError("dispatch status is invalid")
     if value["reason"] is not None and value["reason"] not in REASONS:
         raise DispatchError("dispatch reason is invalid")
-    if value["attempt_origin"] not in {"initial", "conversation-resume", "fresh-restart"}:
+    if value["attempt_origin"] not in {"initial", "conversation-resume", "fresh-restart", "conversation-continue"}:
         raise DispatchError("dispatch attempt origin is invalid")
     if type(value["attempt"]) is not int or value["attempt"] < 1:
         raise DispatchError("dispatch attempt is invalid")
+    if value["workflow"] not in {"legacy", "explore", "task", "project"}:
+        raise DispatchError("dispatch workflow state is invalid")
+    if type(value["max_cycles"]) is not int or not (1 <= value["max_cycles"] <= 5):
+        raise DispatchError("dispatch max cycles state is invalid")
+    if type(value["cycle"]) is not int or value["cycle"] != value["attempt"] or (
+        value["workflow"] == "project" and value["cycle"] > value["max_cycles"]
+    ):
+        raise DispatchError("dispatch cycle state is invalid")
+    if value["workflow"] != "project" and value["max_cycles"] != 1:
+        raise DispatchError("non-project max cycles state is invalid")
     if not isinstance(value["job_id"], str) or JOB_RE.fullmatch(value["job_id"]) is None:
         raise DispatchError("dispatch job ID is invalid")
     conversation = value["conversation_id"]
@@ -353,7 +413,7 @@ def validate_state(value: Any) -> dict[str, Any]:
         not isinstance(conversation, str) or CONVERSATION_RE.fullmatch(conversation) is None
     ):
         raise DispatchError("dispatch conversation ID is invalid")
-    for key in ("cancel_requested", "resume_available", "remote_cancel_unverified"):
+    for key in ("cancel_requested", "resume_available", "continue_available", "remote_cancel_unverified"):
         if type(value[key]) is not bool:
             raise DispatchError("dispatch boolean is invalid")
     for key in ("progress_count", "notice_count"):
@@ -371,17 +431,17 @@ def validate_state(value: Any) -> dict[str, Any]:
     for key in ("exit_code", "controller_pid", "agy_returncode"):
         if value[key] is not None and type(value[key]) is not int:
             raise DispatchError("dispatch integer is invalid")
-    for key in ("workdir", "result_path", "stream_path", "stderr_path"):
+    for key in ("workdir", "result_path", "stream_path", "stderr_path", "verification_path", "last_success_path"):
         if value[key] is not None and not isinstance(value[key], str):
             raise DispatchError("dispatch path is invalid")
     if value["limit_kind"] not in {None, "idle", "hard", "max-runtime"}:
         raise DispatchError("dispatch limit kind is invalid")
-    for key in ("command_sha256", "stage_sha256", "result_sha256"):
+    for key in ("command_sha256", "stage_sha256", "result_sha256", "verification_sha256", "last_success_sha256"):
         if value[key] is not None and (
             not isinstance(value[key], str) or SHA_RE.fullmatch(value[key]) is None
         ):
             raise DispatchError("dispatch digest is invalid")
-    for key in ("command_identity", "stage_identity", "result_identity"):
+    for key in ("command_identity", "stage_identity", "result_identity", "verification_identity", "last_success_identity"):
         identity = value[key]
         if identity is not None and (
             not isinstance(identity, list) or len(identity) != 5
@@ -391,6 +451,53 @@ def validate_state(value: Any) -> dict[str, Any]:
     if value["status"] in TERMINAL:
         if value["finished_epoch"] is None or value["exit_code"] is None:
             raise DispatchError("terminal dispatch state is incomplete")
+    if value["workflow"] == "project":
+        if value["phase"] not in {"dispatching", "awaiting-verification", "repairing", "completed", "blocked", "provider-failed", "repair-failed"}:
+            raise DispatchError("project phase is invalid")
+        if value["assurance"] not in {"pending", "verified", "partially_verified", "blocked"}:
+            raise DispatchError("project assurance is invalid")
+        if value["continue_available"] and not (
+            value["status"] == "succeeded" and value["phase"] == "awaiting-verification"
+            and value["assurance"] == "pending" and value["cycle"] < value["max_cycles"]
+        ):
+            raise DispatchError("project continuation availability is invalid")
+        if value["assurance"] != "pending" and value["phase"] not in {"completed", "blocked"}:
+            raise DispatchError("terminal project assurance has an invalid phase")
+        if value["status"] == "orphaned" and (
+            value["assurance"] != "pending"
+            or value["phase"] in {"completed", "blocked"}
+            or value["resume_available"] or value["continue_available"]
+        ):
+            raise DispatchError("orphaned project state must remain preserve-only")
+    elif value["phase"] is not None or value["assurance"] is not None or value["continue_available"]:
+        raise DispatchError("non-project state has project status")
+    summary = value["check_summary"]
+    if summary is not None and (
+        not isinstance(summary, str) or not (1 <= len(summary) <= MAX_CHECK_SUMMARY)
+        or any(ch in summary for ch in "\x00\r\n")
+    ):
+        raise DispatchError("dispatch check summary is invalid")
+    counts = value["check_counts"]
+    if not isinstance(counts, dict) or set(counts) != {"passed", "failed", "advisory", "missing"} or any(
+        type(item) is not int or not (0 <= item <= MAX_CHECK_ITEMS) for item in counts.values()
+    ):
+        raise DispatchError("dispatch check counts are invalid")
+    present = [value["verification_path"], value["verification_sha256"], value["verification_identity"]]
+    if any(item is None for item in present) != all(item is None for item in present):
+        raise DispatchError("dispatch verification binding is incomplete")
+    prior = [value["last_success_path"], value["last_success_sha256"], value["last_success_identity"]]
+    if any(item is None for item in prior) != all(item is None for item in prior):
+        raise DispatchError("dispatch prior result binding is incomplete")
+    boundary = value["project_boundary"]
+    if value["workflow"] == "project":
+        if not isinstance(boundary, dict) or set(boundary) != {"kind", "identity", "sha256"}:
+            raise DispatchError("project boundary binding is invalid")
+        if boundary["kind"] != "file" or not isinstance(boundary["identity"], list) or len(boundary["identity"]) != 5:
+            raise DispatchError("project boundary identity is invalid")
+        if not isinstance(boundary["sha256"], str) or SHA_RE.fullmatch(boundary["sha256"]) is None:
+            raise DispatchError("project boundary marker digest is invalid")
+    elif boundary is not None:
+        raise DispatchError("non-project state has a boundary binding")
     return value
 
 
@@ -398,10 +505,13 @@ def initial_state(
     command: dict[str, Any], origin: str, attempt: int, *, command_sha: str,
     command_identity: tuple[int, int, int, int, int], stage_sha: str | None,
     stage_identity: tuple[int, int, int, int, int] | None,
+    project_boundary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = time.time()
+    workflow = command.get("workflow", "legacy")
+    max_cycles = command.get("max_cycles", 1)
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "kind": "agy-worker-dispatch-state",
         "sequence": 1,
         "previous_state_sha256": None,
@@ -440,6 +550,25 @@ def initial_state(
         "stage_identity": None if stage_identity is None else list(stage_identity),
         "result_sha256": None,
         "result_identity": None,
+        "workflow": workflow,
+        "max_cycles": max_cycles,
+        "cycle": attempt,
+        "phase": "dispatching" if workflow == "project" else None,
+        "assurance": "pending" if workflow == "project" else None,
+        "check_summary": None,
+        "check_counts": {"passed": 0, "failed": 0, "advisory": 0, "missing": 0},
+        "verification_path": None,
+        "verification_sha256": None,
+        "verification_identity": None,
+        "continue_available": False,
+        "last_success_path": None,
+        "last_success_sha256": None,
+        "last_success_identity": None,
+        "project_boundary": (
+            project_boundary if project_boundary is not None
+            else _project_boundary(command["workdir"]) if workflow == "project"
+            else None
+        ),
     }
 
 
@@ -449,6 +578,8 @@ def _transition_locked(job: Path, state: dict[str, Any], prior_raw: bytes, updat
         raise DispatchError("dispatch state changed before transition")
     value = dict(state)
     value.update(updates)
+    if value["schema_version"] == 1:
+        value["schema_version"] = 3
     value["sequence"] = state["sequence"] + 1
     value["previous_state_sha256"] = digest(prior_raw)
     value["updated_epoch"] = time.time()
@@ -476,20 +607,29 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
     return {
         "attempt": value["attempt"],
         "attempt_origin": value["attempt_origin"],
+        "assurance": value["assurance"],
+        "check_counts": value["check_counts"],
+        "check_summary": value["check_summary"],
+        "cycle": value["cycle"],
         "elapsed_seconds": round(elapsed, 3),
         "exit_code": value["exit_code"],
         "hard_seconds": value["hard_seconds"],
+        "has_prior_candidate": bool(value["result_path"] or value["last_success_path"]),
         "job_id": value["job_id"],
         "last_progress_age_seconds": None if last_age is None else round(last_age, 3),
         "limit_kind": value["limit_kind"],
         "max_seconds": value["max_seconds"],
+        "max_cycles": value["max_cycles"],
         "notice_count": value["notice_count"],
         "progress_count": value["progress_count"],
+        "phase": value["phase"],
         "reason": value["reason"],
         "remote_cancel_unverified": value["remote_cancel_unverified"],
         "resume_available": value["resume_available"],
+        "continue_available": value["continue_available"],
         "state_sha256": sha,
         "status": value["status"],
+        "workflow": value["workflow"],
     }
 
 
@@ -545,6 +685,250 @@ def _bound_stage(
     ):
         raise DispatchError("staged prompt directory is invalid")
     return digest(raw), _identity(info)
+
+
+def _verification_from_stdin() -> dict[str, Any]:
+    raw = sys.stdin.buffer.read(MAX_VERIFICATION_BYTES + 1)
+    if len(raw) > MAX_VERIFICATION_BYTES:
+        raise DispatchError("verification feedback is oversized")
+    value = parse_json(raw, "verification feedback")
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version", "summary", "passed_checks", "failed_checks",
+        "advisory_checks", "missing_checks",
+    }:
+        raise DispatchError("verification feedback fields are invalid")
+    if value["schema_version"] != 1:
+        raise DispatchError("verification feedback version is invalid")
+    summary = value["summary"]
+    if not isinstance(summary, str) or not (1 <= len(summary) <= MAX_CHECK_SUMMARY) or any(
+        item in summary for item in ("\x00", "\r", "\n")
+    ):
+        raise DispatchError("verification feedback summary is invalid")
+    for key in ("passed_checks", "failed_checks"):
+        checks = value[key]
+        if not isinstance(checks, list) or len(checks) > MAX_CHECK_ITEMS or any(
+            not isinstance(item, str) or not (1 <= len(item) <= MAX_CHECK_LABEL)
+            or any(control in item for control in ("\x00", "\r", "\n"))
+            for item in checks
+        ):
+            raise DispatchError("verification feedback checks are invalid")
+    for key in ("advisory_checks", "missing_checks"):
+        if type(value[key]) is not int or not (0 <= value[key] <= MAX_CHECK_ITEMS):
+            raise DispatchError("verification feedback counts are invalid")
+    if len(canonical(value)) > MAX_VERIFICATION_BYTES:
+        raise DispatchError("verification feedback canonical bytes are oversized")
+    return value
+
+
+def _verification_counts(value: dict[str, Any]) -> dict[str, int]:
+    return {
+        "passed": len(value["passed_checks"]),
+        "failed": len(value["failed_checks"]),
+        "advisory": value["advisory_checks"],
+        "missing": value["missing_checks"],
+    }
+
+
+def _write_verification(job: Path, label: str, value: dict[str, Any]) -> tuple[Path, str, tuple[int, int, int, int, int]]:
+    directory = job / "continue-staged"
+    if directory.exists() or directory.is_symlink():
+        info = directory.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) not in {0o700, 0o555}
+        ):
+            raise DispatchError("verification staging directory is invalid")
+        directory.chmod(0o700)
+    else:
+        directory.mkdir(mode=0o700)
+    path = directory / f"{label}.json"
+    raw = canonical(value)
+    if len(raw) > MAX_VERIFICATION_BYTES:
+        raise DispatchError("verification feedback canonical bytes are oversized")
+    descriptor = -1
+    created_identity: tuple[int, int, int, int, int] | None = None
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        created_info = os.fstat(descriptor)
+        if not stat.S_ISREG(created_info.st_mode) or created_info.st_nlink != 1:
+            raise DispatchError("verification feedback staging identity is invalid")
+        created_identity = _identity(created_info)
+    except DispatchError:
+        raise
+    except OSError as exc:
+        raise DispatchError("verification staging path is unavailable") from exc
+    try:
+        os.fchmod(descriptor, 0o600)
+        offset = 0
+        while offset < len(raw):
+            written = os.write(descriptor, raw[offset:])
+            if written <= 0:
+                raise DispatchError("verification feedback staging write failed")
+            offset += written
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        path.chmod(0o400)
+        directory.chmod(0o700)
+        bound, info = read_regular(path, MAX_VERIFICATION_BYTES, "verification feedback", allowed_modes=(0o400,))
+        if bound != raw:
+            raise DispatchError("verification feedback changed during staging")
+        return path, digest(bound), _identity(info)
+    except (OSError, DispatchError):
+        if descriptor >= 0:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+        if created_identity is None:
+            with contextlib.suppress(OSError):
+                fallback_info = path.lstat()
+                if stat.S_ISREG(fallback_info.st_mode) and fallback_info.st_nlink == 1:
+                    created_identity = _identity(fallback_info)
+        _discard_new_verification(path, created_identity)
+        raise
+
+
+def _discard_new_verification(path: Path | None, identity: tuple[int, int, int, int, int] | None) -> None:
+    if path is None or identity is None:
+        return
+    try:
+        parent = path.parent
+        parent_info = parent.lstat()
+        if (
+            not stat.S_ISDIR(parent_info.st_mode) or stat.S_ISLNK(parent_info.st_mode)
+            or parent_info.st_uid != os.getuid() or stat.S_IMODE(parent_info.st_mode) not in {0o700, 0o555}
+        ):
+            return
+        # A prior runtime used 0555 for this directory.  Recover that exact
+        # owner-private directory, but publish new staging in cleanup-friendly
+        # 0700 mode.
+        parent.chmod(0o700)
+        info = path.lstat()
+        if stat.S_ISREG(info.st_mode) and _identity(info) == identity and info.st_nlink == 1:
+            path.unlink()
+            descriptor = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    except OSError:
+        pass
+
+
+def _bound_verification(job: Path, state: dict[str, Any]) -> Path | None:
+    path_text = state["verification_path"]
+    if path_text is None:
+        return None
+    path = Path(path_text)
+    expected = job / "continue-staged" / f"cycle-{state['cycle']:03d}.json"
+    if state["attempt_origin"] != "conversation-continue" or path != expected:
+        raise DispatchError("verification feedback path is not bound to this continuation")
+    raw, info = read_regular(path, MAX_VERIFICATION_BYTES, "verification feedback", allowed_modes=(0o400,))
+    if digest(raw) != state["verification_sha256"] or list(_identity(info)) != state["verification_identity"]:
+        raise DispatchError("verification feedback binding changed")
+    parent = path.parent.lstat()
+    if (
+        not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode)
+        or parent.st_uid != os.getuid() or stat.S_IMODE(parent.st_mode) != 0o700
+    ):
+        raise DispatchError("verification staging directory changed")
+    return path
+
+
+def _project_boundary(workdir: str) -> dict[str, Any]:
+    root = os.path.realpath(workdir)
+    if root != workdir:
+        raise DispatchError("project worktree is no longer canonical")
+    marker = Path(root) / ".git"
+    descriptor = -1
+    try:
+        descriptor = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise DispatchError("project worktree has no Git marker") from exc
+    try:
+        marker_info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(marker_info.st_mode)
+            or marker_info.st_uid != os.getuid()
+            or marker_info.st_nlink != 1
+        ):
+            raise DispatchError("project Git marker must be one owner-owned linked-worktree file")
+        if marker_info.st_size > 4096:
+            raise DispatchError("project Git marker is oversized")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 4097 - total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > 4096:
+                raise DispatchError("project Git marker is oversized")
+        after = os.fstat(descriptor)
+        if after.st_size > 4096:
+            raise DispatchError("project Git marker is oversized")
+    except DispatchError:
+        raise
+    except OSError as exc:
+        raise DispatchError("project Git marker is unavailable") from exc
+    finally:
+        os.close(descriptor)
+    try:
+        named = marker.lstat()
+    except OSError as exc:
+        raise DispatchError("project Git marker identity changed") from exc
+    raw = b"".join(chunks)
+    if (
+        not stat.S_ISREG(after.st_mode)
+        or after.st_uid != os.getuid()
+        or after.st_nlink != 1
+        or not stat.S_ISREG(named.st_mode)
+        or named.st_uid != os.getuid()
+        or named.st_nlink != 1
+        or _identity(marker_info) != _identity(after)
+        or _identity(after) != _identity(named)
+        or marker_info.st_size != after.st_size
+        or after.st_size != named.st_size
+        or len(raw) != after.st_size
+        or marker_info.st_mtime_ns != after.st_mtime_ns
+        or marker_info.st_ctime_ns != after.st_ctime_ns
+        or after.st_mtime_ns != named.st_mtime_ns
+        or after.st_ctime_ns != named.st_ctime_ns
+    ):
+        raise DispatchError("project Git marker identity changed")
+    marker_record: dict[str, Any] = {
+        "kind": "file", "identity": list(_identity(after)), "sha256": digest(raw),
+    }
+    pending = [root]
+    count = 0
+    while pending:
+        current = pending.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    if current == root and entry.name == ".git":
+                        continue
+                    count += 1
+                    if count > MAX_BOUNDARY_ENTRIES:
+                        raise DispatchError("project worktree boundary scan is too large")
+                    if entry.is_symlink():
+                        # `mktemp` commonly returns /var/... on macOS while
+                        # realpath canonicalizes the worktree to /private/var.
+                        # Resolve before containment so an internal link is not
+                        # falsely treated as an escape; chained escapes remain
+                        # outside the canonical root.
+                        resolved = os.path.realpath(entry.path)
+                        try:
+                            contained = os.path.commonpath([root, resolved]) == root
+                        except ValueError:
+                            contained = False
+                        if not contained:
+                            raise DispatchError("project worktree has an outward symlink")
+                    elif entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+        except OSError as exc:
+            raise DispatchError("project worktree cannot be inspected") from exc
+    return marker_record
 
 
 def _load_bound_command(
@@ -731,8 +1115,16 @@ def controller(job: Path, ownership_fd: int) -> int:
             return EXIT_BY_REASON["cancelled"]
         if state["status"] != "queued" or state["cancel_requested"]:
             raise DispatchError("dispatch is not queued")
+        feedback: Path | None = None
         try:
             command = _load_bound_command(job, state, stage_readonly=False)
+            if state["workflow"] == "project":
+                if _project_boundary(command["workdir"]) != state["project_boundary"]:
+                    raise DispatchError("project worktree boundary changed")
+            if state["attempt_origin"] == "conversation-continue":
+                feedback = _bound_verification(job, state)
+                if feedback is None:
+                    raise DispatchError("project continuation has no verification feedback")
         except (OSError, DispatchError):
             transition(job, state, prior_raw, {
                 "status": "failed", "reason": "status_unavailable",
@@ -767,13 +1159,20 @@ def controller(job: Path, ownership_fd: int) -> int:
             })
             return EXIT_BY_REASON["status_unavailable"]
         argv = list(command["argv"])
-        if state["attempt_origin"] == "conversation-resume":
+        if state["attempt_origin"] in {"conversation-resume", "conversation-continue"}:
             conversation = state["conversation_id"]
             if not isinstance(conversation, str):
                 raise DispatchError("resume has no conversation")
             print_index = argv.index("--print")
-            argv[print_index:print_index] = ["--conversation", conversation]
-            argv[print_index + 3] = command["resume_prompt"]
+            prefix = ["--conversation", conversation]
+            prompt = command["resume_prompt"]
+            if state["attempt_origin"] == "conversation-continue":
+                if feedback is None:
+                    raise DispatchError("project continuation feedback was not prevalidated")
+                prefix.extend(["--add-dir", str(feedback.parent)])
+                prompt = command["continue_prompt"] + f" Feedback file: '{feedback}'."
+            argv[print_index + 1] = prompt
+            argv[print_index:print_index] = prefix
         selector = selectors.DefaultSelector()
         process: subprocess.Popen[bytes] | None = None
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
@@ -939,6 +1338,15 @@ def controller(job: Path, ownership_fd: int) -> int:
                     )
                     if result_binding is None:
                         reason = "invalid_envelope"
+            boundary_failed = False
+            if command["workflow"] == "project":
+                try:
+                    if _project_boundary(command["workdir"]) != state["project_boundary"]:
+                        raise DispatchError("project worktree boundary changed")
+                except DispatchError:
+                    boundary_failed = True
+                    reason = "status_unavailable"
+                    result_binding = None
             # One blocked completion snapshot linearizes terminal state against
             # late HUP/INT/TERM just as the foreground result publisher does.
             watched = tuple(prior_handlers)
@@ -967,6 +1375,8 @@ def controller(job: Path, ownership_fd: int) -> int:
                 os.close(stderr_fd); stderr_fd = -1
                 _stage(command, False)
                 _load_bound_command(job, state, stage_readonly=False)
+                if state["attempt_origin"] == "conversation-continue":
+                    _bound_verification(job, state)
             except (OSError, DispatchError):
                 cleanup_failed = True
             if cleanup_failed:
@@ -983,7 +1393,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if current["cancel_requested"]:
                     reason, final_status, exit_code = "cancelled", "cancelled", EXIT_BY_REASON["cancelled"]
                     result_path = None
-                state, prior_raw, _sha = _transition_locked(job, current, current_raw, {
+                updates = {
                     "status": final_status,
                     "reason": reason,
                     "exit_code": exit_code,
@@ -995,9 +1405,24 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "result_sha256": None if result_binding is None else result_binding[0],
                     "result_identity": None if result_binding is None else list(result_binding[1]),
                     "resume_available": bool(current["conversation_id"]) and final_status != "succeeded",
+                    "continue_available": False,
                     "remote_cancel_unverified": reason in {"cancelled", "interrupted"},
                     "limit_kind": limit_kind,
-                })
+                }
+                if current["workflow"] == "project":
+                    if boundary_failed:
+                        updates.update({"phase": "blocked", "assurance": "blocked"})
+                    elif final_status == "succeeded":
+                        updates.update({
+                            "phase": "awaiting-verification", "assurance": "pending",
+                            "continue_available": bool(current["conversation_id"]) and current["attempt"] < current["max_cycles"] and elapsed < current["max_seconds"],
+                        })
+                    else:
+                        updates.update({
+                            "phase": "repair-failed" if current["attempt"] > 1 else "provider-failed",
+                            "assurance": "pending",
+                        })
+                state, prior_raw, _sha = _transition_locked(job, current, current_raw, updates)
             return exit_code
         finally:
             if process is not None:
@@ -1016,7 +1441,8 @@ def controller(job: Path, ownership_fd: int) -> int:
 
 
 def create_state(
-    job: Path, origin: str, *, resume: bool, approve_sha: str | None = None
+    job: Path, origin: str, *, resume: bool, approve_sha: str | None = None,
+    verification: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     command, command_raw, command_info = load_command(job)
     stage_sha, stage_info = _bound_stage(command, readonly=False)
@@ -1026,36 +1452,79 @@ def create_state(
             state, raw, sha = load_state(job)
             if approve_sha != sha:
                 raise DispatchError("continuation state approval is stale")
-            if state["status"] not in TERMINAL or state["status"] in {"succeeded", "orphaned"}:
-                raise DispatchError("only a terminal unsuccessful dispatch can continue")
-            if origin == "conversation-resume" and not state["resume_available"]:
-                raise DispatchError("dispatch is not resume-eligible")
             _load_bound_command(job, state, stage_readonly=False)
+            if state["workflow"] == "project" and (
+                _project_boundary(command["workdir"]) != state["project_boundary"]
+            ):
+                raise DispatchError("project worktree boundary changed")
+            if origin == "conversation-continue":
+                if (
+                    state["workflow"] != "project" or state["status"] != "succeeded"
+                    or state["phase"] != "awaiting-verification"
+                    or not state["continue_available"] or verification is None
+                ):
+                    raise DispatchError("project continuation is unavailable")
+            else:
+                if state["status"] not in TERMINAL or state["status"] in {"succeeded", "orphaned"}:
+                    raise DispatchError("only a terminal unsuccessful dispatch can continue")
+                if origin == "conversation-resume" and not state["resume_available"]:
+                    raise DispatchError("dispatch is not resume-eligible")
             if float(state["elapsed_seconds"]) >= float(state["max_seconds"]):
                 raise DispatchError("dispatch max runtime is exhausted")
+            if state["workflow"] == "project" and state["attempt"] >= state["max_cycles"]:
+                raise DispatchError("project max cycles is exhausted")
             conversation = state["conversation_id"] if origin == "conversation-resume" else None
-            next_state = initial_state(
-                command, origin, state["attempt"] + 1,
-                command_sha=digest(command_raw), command_identity=command_info,
-                stage_sha=stage_sha, stage_identity=stage_info,
-            )
-            next_state["sequence"] = state["sequence"] + 1
-            next_state["previous_state_sha256"] = sha
-            next_state["conversation_id"] = conversation
-            next_state["resume_available"] = conversation is not None
-            next_state["attempt_base_elapsed"] = float(state["elapsed_seconds"])
-            next_state["elapsed_seconds"] = float(state["elapsed_seconds"])
-            next_state["hard_seconds"] = min(
-                float(state["max_seconds"]),
-                float(state["elapsed_seconds"]) + float(command["hard_seconds"]),
-            )
-            next_state["max_seconds"] = float(state["max_seconds"])
-            validate_state(next_state)
-            current, _info = read_regular(path, MAX_STATE_BYTES, "dispatch state")
-            if current != raw:
-                raise DispatchError("dispatch state changed before continuation")
-            _new_raw, new_sha = write_atomic(job, STATE_NAME, next_state)
-            return next_state, new_sha
+            if origin == "conversation-continue":
+                conversation = state["conversation_id"]
+            verification_path: Path | None = None
+            verification_sha: str | None = None
+            verification_identity: tuple[int, int, int, int, int] | None = None
+            if verification is not None:
+                verification_path, verification_sha, verification_identity = _write_verification(
+                    job, f"cycle-{state['attempt'] + 1:03d}", verification,
+                )
+            try:
+                next_state = initial_state(
+                    command, origin, state["attempt"] + 1,
+                    command_sha=digest(command_raw), command_identity=command_info,
+                    stage_sha=stage_sha, stage_identity=stage_info,
+                    project_boundary=state["project_boundary"],
+                )
+                next_state["sequence"] = state["sequence"] + 1
+                next_state["previous_state_sha256"] = sha
+                next_state["conversation_id"] = conversation
+                next_state["resume_available"] = conversation is not None
+                next_state["attempt_base_elapsed"] = float(state["elapsed_seconds"])
+                next_state["elapsed_seconds"] = float(state["elapsed_seconds"])
+                next_state["hard_seconds"] = min(
+                    float(state["max_seconds"]),
+                    float(state["elapsed_seconds"]) + float(command["hard_seconds"]),
+                )
+                next_state["max_seconds"] = float(state["max_seconds"])
+                if state["workflow"] == "project":
+                    next_state["phase"] = "repairing"
+                    next_state["check_summary"] = state["check_summary"]
+                    next_state["check_counts"] = state["check_counts"]
+                    next_state["last_success_path"] = state["result_path"] or state["last_success_path"]
+                    next_state["last_success_sha256"] = state["result_sha256"] or state["last_success_sha256"]
+                    next_state["last_success_identity"] = state["result_identity"] or state["last_success_identity"]
+                if verification_path is not None:
+                    next_state.update({
+                        "verification_path": str(verification_path),
+                        "verification_sha256": verification_sha,
+                        "verification_identity": list(verification_identity),
+                        "check_summary": verification["summary"],
+                        "check_counts": _verification_counts(verification),
+                    })
+                validate_state(next_state)
+                current, _info = read_regular(path, MAX_STATE_BYTES, "dispatch state")
+                if current != raw:
+                    raise DispatchError("dispatch state changed before continuation")
+                _new_raw, new_sha = write_atomic(job, STATE_NAME, next_state)
+                return next_state, new_sha
+            except Exception:
+                _discard_new_verification(verification_path, verification_identity)
+                raise
         if path.exists() or path.is_symlink():
             raise DispatchError("dispatch state already exists")
         state = initial_state(
@@ -1069,7 +1538,7 @@ def create_state(
 
 def spawn(
     job: Path, origin: str, *, resume: bool, foreground: bool,
-    approve_sha: str | None = None,
+    approve_sha: str | None = None, verification: dict[str, Any] | None = None,
 ) -> int:
     parent_signal: int | None = None
     completion_blocked = False
@@ -1086,7 +1555,9 @@ def spawn(
     controller_process: subprocess.Popen[bytes] | None = None
     try:
       with lifecycle_lock(job, blocking=False) as ownership_fd:
-        state, _sha = create_state(job, origin, resume=resume, approve_sha=approve_sha)
+        state, _sha = create_state(
+            job, origin, resume=resume, approve_sha=approve_sha, verification=verification,
+        )
         if parent_signal is not None:
             _terminalize_queued_signal(job, parent_signal)
             return 128 + parent_signal
@@ -1223,16 +1694,28 @@ def command_wait(job: Path, after: str, timeout: float) -> int:
 
 def command_result(job: Path) -> int:
     state, _raw, _sha = read_state_snapshot(job)
-    if state["status"] != "succeeded" or state["result_path"] is None:
+    if state["status"] == "orphaned":
+        raise DispatchError("orphaned dispatch result is preserve-only")
+    result_path = state["result_path"]
+    result_sha = state["result_sha256"]
+    result_identity = state["result_identity"]
+    if (
+        state["workflow"] == "project" and state["status"] in {"failed", "cancelled"}
+        and state["phase"] == "completed" and state["assurance"] == "partially_verified"
+    ):
+        result_path = state["last_success_path"]
+        result_sha = state["last_success_sha256"]
+        result_identity = state["last_success_identity"]
+    if result_path is None:
         raise DispatchError("dispatch has no successful result")
-    raw, info = read_regular(Path(state["result_path"]), 1024 * 1024, "dispatch result")
-    if digest(raw) != state["result_sha256"] or list(_identity(info)) != state["result_identity"]:
+    raw, info = read_regular(Path(result_path), 1024 * 1024, "dispatch result")
+    if digest(raw) != result_sha or list(_identity(info)) != result_identity:
         raise DispatchError("dispatch result binding changed")
     command = _load_bound_command(job, state, stage_readonly=False)
     schema = command["argv"][command["argv"].index("--json-schema") + 1]
     validator = Path(__file__).with_name("validate-envelope.py")
     checked = subprocess.run(
-        [sys.executable, "-I", "-S", "-B", str(validator), schema, str(state["result_path"])],
+        [sys.executable, "-I", "-S", "-B", str(validator), schema, str(result_path)],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         check=False,
     )
@@ -1240,6 +1723,62 @@ def command_result(job: Path) -> int:
         raise DispatchError("dispatch result is no longer valid")
     sys.stdout.buffer.write(raw)
     sys.stdout.buffer.flush()
+    return 0
+
+
+def command_continue(job: Path, approve_sha: str) -> int:
+    verification = _verification_from_stdin()
+    if not verification["failed_checks"] and verification["missing_checks"] == 0:
+        raise DispatchError("project continuation requires one failed or missing check")
+    return spawn(
+        job, "conversation-continue", resume=True, foreground=False,
+        approve_sha=approve_sha, verification=verification,
+    )
+
+
+def command_finalize(job: Path, approve_sha: str, assurance: str) -> int:
+    if assurance not in {"verified", "partially_verified", "blocked"}:
+        raise DispatchError("project assurance is invalid")
+    verification = _verification_from_stdin()
+    with state_lock(job):
+        state, raw, sha = load_state(job)
+        eligible_success = state["status"] == "succeeded" and state["phase"] == "awaiting-verification"
+        eligible_failure = state["status"] == "failed" and state["phase"] in {"provider-failed", "repair-failed"}
+        eligible_partial = state["status"] in {"failed", "cancelled"} and bool(state["last_success_path"])
+        if sha != approve_sha or state["workflow"] != "project" or not (eligible_success or eligible_failure or eligible_partial):
+            raise DispatchError("project finalization is stale or unavailable")
+        counts = _verification_counts(verification)
+        if assurance == "verified" and (
+            not eligible_success or counts["passed"] < 1 or counts["failed"] or counts["missing"]
+        ):
+            raise DispatchError("verified finalization requires passing complete checks")
+        if assurance == "partially_verified" and not (eligible_success or eligible_partial):
+            raise DispatchError("partial finalization has no candidate")
+        if assurance == "blocked" and (
+            not (eligible_success or eligible_failure) or not (counts["failed"] or counts["missing"])
+        ):
+            raise DispatchError("blocked finalization requires a driver-observed blocker")
+        path: Path | None = None
+        identity: tuple[int, int, int, int, int] | None = None
+        try:
+            path, verification_sha, identity = _write_verification(
+                job, f"final-{state['cycle']:03d}", verification,
+            )
+            phase = "blocked" if assurance == "blocked" else "completed"
+            state, _raw, sha = _transition_locked(job, state, raw, {
+                "phase": phase,
+                "assurance": assurance,
+                "continue_available": False,
+                "check_summary": verification["summary"],
+                "check_counts": counts,
+                "verification_path": str(path),
+                "verification_sha256": verification_sha,
+                "verification_identity": list(identity),
+            })
+        except Exception:
+            _discard_new_verification(path, identity)
+            raise
+    print_json(public_status(state, sha))
     return 0
 
 
@@ -1292,13 +1831,17 @@ def duration(text: str) -> float:
 def parser() -> Parser:
     result = Parser(prog="agy-dispatch")
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
-    for name in ("run", "start", "resume", "restart", "status", "result", "controller"):
+    for name in ("run", "start", "resume", "restart", "continue", "status", "result", "controller"):
         item = commands.add_parser(name)
         item.add_argument("--job-dir", required=True)
         if name == "controller":
             item.add_argument("--ownership-fd", required=True, type=int)
-        if name in {"resume", "restart"}:
+        if name in {"resume", "restart", "continue"}:
             item.add_argument("--approve-state-sha", required=True)
+    finalize = commands.add_parser("finalize")
+    finalize.add_argument("--job-dir", required=True)
+    finalize.add_argument("--approve-state-sha", required=True)
+    finalize.add_argument("--assurance", required=True)
     wait = commands.add_parser("wait")
     wait.add_argument("--job-dir", required=True)
     wait.add_argument("--after-state-sha", required=True)
@@ -1333,12 +1876,16 @@ def main(argv: list[str] | None = None) -> int:
             job, "fresh-restart", resume=True, foreground=False,
             approve_sha=args.approve_state_sha,
         )
+    if args.command == "continue":
+        return command_continue(job, args.approve_state_sha)
     if args.command == "status":
         return command_status(job)
     if args.command == "wait":
         return command_wait(job, args.after_state_sha, args.timeout)
     if args.command == "result":
         return command_result(job)
+    if args.command == "finalize":
+        return command_finalize(job, args.approve_state_sha, args.assurance)
     if args.command in {"cancel", "extend"}:
         return command_control(
             job, args.command, args.approve_state_sha,

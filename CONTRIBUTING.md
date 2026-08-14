@@ -19,7 +19,20 @@ when introducing a new gate check.
 
 ## Verify locally
 
-Run the offline suites and static checks before requesting review:
+Run the canonical offline CI body before requesting review:
+
+```bash
+./scripts/ci-offline.sh
+```
+
+It is fail-fast, requires no network or provider call, does not intentionally inspect
+account-HOME contents, externalizes temporary bytecode, and runs the static checks plus
+all twenty-seven offline suites. Ambient local tools may still consult ordinary user
+configuration. For a quota-unavailable
+private fork this is evidence to attach to review, not a replacement for the protected
+GitHub `test` check; manually dispatch the exact committed range after Actions becomes
+available and before publication. The expanded command inventory is retained below for
+targeted diagnosis:
 
 ```bash
 ./tests/test-qa-gate.sh

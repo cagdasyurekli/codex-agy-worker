@@ -4,6 +4,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$HERE/.."
+CI_OFFLINE="$ROOT/scripts/ci-offline.sh"
 TMP="$(mktemp -d -t agyworker-packaging.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
@@ -73,14 +74,25 @@ import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 required = (
+    "  pull_request:\n",
+    "  workflow_dispatch:\n",
+    "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n",
+    "  cancel-in-progress: true\n",
+    "permissions:\n  contents: read\n",
+    "    timeout-minutes: 30\n",
+    "      base_sha:\n",
+    "      head_sha:\n",
     "      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
+    "          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.ref }}\n",
     "      - name: committed diff hygiene\n",
-    "          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name }}\n",
-    "          AGY_WORKER_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}\n",
-    "          AGY_WORKER_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}\n",
+    "          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name == 'workflow_dispatch' && 'push' || github.event_name }}\n",
+    "          AGY_WORKER_CI_BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}\n",
+    "          AGY_WORKER_CI_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}\n",
     "        run: ./scripts/ci-diff-check.sh\n",
+    "      - name: full offline suite and static checks\n        run: ./scripts/ci-offline.sh\n",
 )
 assert all(text.count(item) == 1 for item in required)
+assert "  push:\n" not in text
 assert "git fetch" not in text
 assert "run: git diff --check\n" not in text
 PY
@@ -125,6 +137,54 @@ assert '"cat-file", "blob"' not in source
 PY
 }
 
+ci_offline_contract() {
+    python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+required = (
+    "set -eu\n",
+    "git diff --check\n",
+    "bash -n \"$file\"\n",
+    'PYTHONPYCACHEPREFIX="$pycache"',
+    "python3 -m py_compile conformance/v1/*.py scripts/*.py",
+    "./tests/test-qa-gate.sh",
+    "./tests/test-evidence-receipt.sh",
+    "./tests/test-evidence-report.sh",
+    "/usr/bin/python3 -I -S -B tests/test-benchmark.py",
+    "/usr/bin/python3 -I -S -B tests/test-persona-evidence.py",
+    "/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py",
+    "/usr/bin/python3 -I -S -B tests/test-workload-profiles.py",
+    "./tests/test-agy-worker.sh",
+    "./tests/test-update.sh",
+    "/usr/bin/python3 -I -S -B tests/test-adoption-measurement.py",
+    "/usr/bin/python3 -I -S -B tests/test-update-notifier.py",
+    "/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py",
+    "./tests/test-reporting.sh",
+    "/usr/bin/python3 -I -S -B tests/test-feedback-triage.py",
+    "./tests/test-packaging.sh",
+    "./tests/test-doctor.sh",
+    "/usr/bin/python3 -I -S -B tests/test-conformance.py",
+    "./tests/test-proof-demo.sh",
+    "repository bytecode hygiene",
+    "find . -type d -name __pycache__ -print -quit",
+)
+assert all(text.count(item) == 1 for item in required)
+assert "HOME" not in text
+assert not any(token in text for token in ("curl ", "wget ", "git fetch", "agy "))
+PY
+}
+
 init_ci_repo() {
     mkdir "$1"
     git -C "$1" init -q
@@ -145,11 +205,13 @@ run_ci_check() {
 if ci_workflow_contract "$ROOT/.github/workflows/test.yml" \
         && ci_helper_contract "$ROOT/scripts/ci-diff-check.sh" \
             "$ROOT/scripts/ci_diff_check.py" \
+        && ci_offline_contract "$CI_OFFLINE" \
         && [[ -x "$ROOT/scripts/ci-diff-check.sh" ]] \
-        && [[ -x "$ROOT/scripts/ci_diff_check.py" ]]; then
-    ok "CI verifies the exact committed event range with full checkout history"
+        && [[ -x "$ROOT/scripts/ci_diff_check.py" ]] \
+        && [[ -x "$ROOT/scripts/ci-offline.sh" ]]; then
+    ok "PR CI verifies the exact committed range, cancels stale runs, and uses the canonical offline runner"
 else
-    bad "CI verifies the exact committed event range with full checkout history"
+    bad "PR CI verifies the exact committed range, cancels stale runs, and uses the canonical offline runner"
 fi
 
 if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-diff-check.py"; then
@@ -722,7 +784,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.6.0"
+assert manifest["version"] == "0.7.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -1144,7 +1206,7 @@ for helper_mode in malformed side-effect exit stale; do
     fi
 done
 
-if grep -Fq 'run: ./tests/test-doctor.sh' "$ROOT/.github/workflows/test.yml" \
+if grep -Fq './tests/test-doctor.sh' "$CI_OFFLINE" \
         && grep -Fq 'runs-on: macos-latest' "$ROOT/.github/workflows/test.yml"; then
     ok "macOS CI runs the dedicated offline doctor suite"
 else
@@ -1160,6 +1222,7 @@ required = (
     'name: feedback-watch\n',
     '    - cron: "23 8 * * 1"\n',
     '  workflow_dispatch:\n',
+    '    runs-on: ubuntu-latest\n',
     '  contents: read\n',
     '  issues: read\n',
     '          persist-credentials: false\n',
@@ -1178,8 +1241,8 @@ else
     bad "weekly feedback watch is fixed, read-only, and metadata-only"
 fi
 
-if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-benchmark.py' \
-        "$ROOT/.github/workflows/test.yml" \
+if grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
+        "$CI_OFFLINE" \
         && grep -Fq '[`benchmark.sh`](docs/BENCHMARKING.md)' "$ROOT/README.md" \
         && grep -Fq 'Live benchmarking is not implemented' "$ROOT/docs/BENCHMARKING.md" \
         && grep -Fq 'no live provider mode' "$ROOT/docs/index.md"; then
@@ -1188,8 +1251,8 @@ else
     bad "CI and public docs expose only provider-independent Benchmark v1"
 fi
 
-if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
-        "$ROOT/.github/workflows/test.yml" \
+if grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
+        "$CI_OFFLINE" \
         && [[ -x "$ROOT/persona-evidence.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/persona-evidence.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/scripts/persona_registry.py" ]] \
@@ -1205,8 +1268,8 @@ else
     bad "CI and public docs expose the non-authoritative persona registry"
 fi
 
-if grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
-        "$ROOT/.github/workflows/test.yml" \
+if grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
+        "$CI_OFFLINE" \
         && [[ -x "$ROOT/profile.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/profile.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/scripts/workload_profiles.py" ]] \
@@ -1219,7 +1282,7 @@ else
     bad "CI and public docs expose only fixed data-only workload profiles"
 fi
 
-if grep -Fq 'run: ./tests/test-evidence-report.sh' "$ROOT/.github/workflows/test.yml" \
+if grep -Fq './tests/test-evidence-report.sh' "$CI_OFFLINE" \
         && grep -Fq 'runs-on: macos-latest' "$ROOT/.github/workflows/test.yml"; then
     ok "macOS CI runs the dedicated offline Evidence Report suite"
 else
@@ -1255,20 +1318,15 @@ cp "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
         python3 -m py_compile conformance/v1/*.py scripts/*.py skills/*/runtime/scripts/*.py
 )
 workflow_compile_rc=$?
-python3 -B - "$ROOT/.github/workflows/test.yml" <<'PY'
+python3 -B - "$CI_OFFLINE" <<'PY'
 from pathlib import Path
 import re
 import sys
 
-workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
-step = re.compile(
-    r"^      - name: Python syntax\n"
-    r"        env:\n"
-    r"          PYTHONPYCACHEPREFIX: \$\{\{ runner\.temp \}\}/codex-agy-worker-pycache\n"
-    r"        run: python3 -m py_compile conformance/v1/\*\.py scripts/\*\.py skills/\*/runtime/scripts/\*\.py$",
-    re.MULTILINE,
-)
-assert len(step.findall(workflow)) == 1
+script = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert script.count('PYTHONPYCACHEPREFIX="$pycache"') == 1
+assert script.count('python3 -m py_compile conformance/v1/*.py scripts/*.py') == 1
+assert 'runner.temp' not in script
 PY
 workflow_contract_rc=$?
 if [[ "$workflow_compile_rc" == 0 ]] \
@@ -1320,20 +1378,20 @@ if [[ -x "$ROOT/conformance/run.sh" ]] \
             "$ROOT/conformance/v1/run.py" \
         && grep -Fq 'fixture compatibility only' "$ROOT/README.md" \
         && grep -Fq 'security certification' "$ROOT/docs/CONFORMANCE.md" \
-        && grep -Fq 'run: /usr/bin/python3 -I -S -B tests/test-conformance.py' \
-            "$ROOT/.github/workflows/test.yml"; then
+        && grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
+            "$CI_OFFLINE"; then
     ok "distribution includes the bounded non-certifying v1 conformance contract"
 else
     bad "distribution includes the bounded non-certifying v1 conformance contract"
 fi
 
-if grep -Fq 'run: ./tests/test-proof-demo.sh' "$ROOT/.github/workflows/test.yml"; then
+if grep -Fq './tests/test-proof-demo.sh' "$CI_OFFLINE"; then
     ok "macOS CI runs the dedicated offline starter-proof suite"
 else
     bad "macOS CI runs the dedicated offline starter-proof suite"
 fi
 
-if grep -Fq 'run: ./tests/test-evidence-receipt.sh' "$ROOT/.github/workflows/test.yml"; then
+if grep -Fq './tests/test-evidence-receipt.sh' "$CI_OFFLINE"; then
     ok "macOS CI runs the dedicated Evidence Receipt v1 suite"
 else
     bad "macOS CI runs the dedicated Evidence Receipt v1 suite"
@@ -1778,7 +1836,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py'
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-version-bootstrap-runner.py' \
-            "$ROOT/.github/workflows/test.yml" \
+            "$CI_OFFLINE" \
         || [[ ! -f "$ROOT/scripts/version_bootstrap_runner.py" ]] \
         || [[ ! -f "$ROOT/tests/test-version-bootstrap-runner.py" ]]; then
     governance_lists_all_suites=0
@@ -1788,7 +1846,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-ru
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-version-initial-bootstrap-runner.py' \
-            "$ROOT/.github/workflows/test.yml" \
+            "$CI_OFFLINE" \
         || [[ ! -f "$ROOT/scripts/version_initial_bootstrap_runner.py" ]] \
         || [[ ! -f "$ROOT/tests/test-version-initial-bootstrap-runner.py" ]]; then
     governance_lists_all_suites=0
@@ -1798,7 +1856,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runn
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-version-recovery-1-1-12-runner.py' \
-            "$ROOT/.github/workflows/test.yml" \
+            "$CI_OFFLINE" \
         || [[ ! -f "$ROOT/scripts/version_recovery_1_1_12_runner.py" ]] \
         || [[ ! -f "$ROOT/tests/test-version-recovery-1-1-12-runner.py" ]]; then
     governance_lists_all_suites=0
@@ -1808,7 +1866,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-models-attestation-runner.py' \
-            "$ROOT/.github/workflows/test.yml" \
+            "$CI_OFFLINE" \
         || [[ ! -f "$ROOT/scripts/models_attestation_runner.py" ]]; then
     governance_lists_all_suites=0
 fi
@@ -1817,7 +1875,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py' \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-models-capture-runner.py' \
-            "$ROOT/.github/workflows/test.yml" \
+            "$CI_OFFLINE" \
         || [[ ! -f "$ROOT/scripts/models_capture_runner.py" ]] \
         || [[ ! -f "$ROOT/tests/test-models-capture-runner.py" ]]; then
     governance_lists_all_suites=0
@@ -1827,7 +1885,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py' \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-models-capture-profile.py' \
-            "$ROOT/.github/workflows/test.yml" \
+            "$CI_OFFLINE" \
         || [[ ! -f "$ROOT/scripts/models_capture_profile.py" ]] \
         || [[ ! -f "$ROOT/tests/test-models-capture-profile.py" ]]; then
     governance_lists_all_suites=0
@@ -1837,7 +1895,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profil
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-models-capture-1-1-12-profile.py' \
-            "$ROOT/.github/workflows/test.yml" \
+            "$CI_OFFLINE" \
         || [[ ! -f "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         || [[ ! -f "$ROOT/tests/test-models-capture-1-1-12-profile.py" ]]; then
     governance_lists_all_suites=0
@@ -1847,7 +1905,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-models-capture-1-1-12-runner.py' \
-            "$ROOT/.github/workflows/test.yml" \
+            "$CI_OFFLINE" \
         || [[ ! -f "$ROOT/scripts/models_capture_1_1_12_runner.py" ]] \
         || [[ ! -f "$ROOT/tests/test-models-capture-1-1-12-runner.py" ]]; then
     governance_lists_all_suites=0
@@ -1857,7 +1915,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-job-lifecycle.py' \
-            "$ROOT/.github/workflows/test.yml"; then
+            "$CI_OFFLINE"; then
     governance_lists_all_suites=0
 fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
@@ -1865,7 +1923,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-conformance.py' \
-            "$ROOT/.github/workflows/test.yml"; then
+            "$CI_OFFLINE"; then
     governance_lists_all_suites=0
 fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
@@ -1873,7 +1931,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-benchmark.py' \
-            "$ROOT/.github/workflows/test.yml"; then
+            "$CI_OFFLINE"; then
     governance_lists_all_suites=0
 fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
@@ -1881,7 +1939,7 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-persona-evidence.py' \
-            "$ROOT/.github/workflows/test.yml"; then
+            "$CI_OFFLINE"; then
     governance_lists_all_suites=0
 fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
@@ -1889,14 +1947,14 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
             "$ROOT/.github/pull_request_template.md" \
         || ! grep -Fq 'tests/test-workload-profiles.py' \
-            "$ROOT/.github/workflows/test.yml"; then
+            "$CI_OFFLINE"; then
     governance_lists_all_suites=0
 fi
 for suite in tests/test-adoption-measurement.py tests/test-update-notifier.py; do
     if ! grep -Fq "/usr/bin/python3 -I -S -B $suite" "$ROOT/CONTRIBUTING.md" \
             || ! grep -Fq "/usr/bin/python3 -I -S -B $suite" \
                 "$ROOT/.github/pull_request_template.md" \
-            || ! grep -Fq "$suite" "$ROOT/.github/workflows/test.yml"; then
+            || ! grep -Fq "$suite" "$CI_OFFLINE"; then
         governance_lists_all_suites=0
     fi
 done
@@ -1919,9 +1977,9 @@ else
 fi
 
 bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
-    "$ROOT/.github/workflows/test.yml" | cut -d: -f1)"
+    "$CI_OFFLINE" | cut -d: -f1)"
 bootstrap_suite_line="$(grep -nF 'repository-only version bootstrap runner' \
-    "$ROOT/.github/workflows/test.yml" | cut -d: -f1)"
+    "$CI_OFFLINE" | cut -d: -f1)"
 if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-version-attestation-runner.py  165-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
@@ -1965,15 +2023,15 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \
         && (( bootstrap_preflight_line < bootstrap_suite_line )) \
-        && grep -Fq '/usr/bin/python3 -I -S -B -' "$ROOT/.github/workflows/test.yml" \
-        && grep -Fq 'sys.implementation.name == "cpython"' "$ROOT/.github/workflows/test.yml" \
-        && grep -Fq 'sys.version_info[:2] == (3, 9)' "$ROOT/.github/workflows/test.yml" \
-        && grep -Fq 'sys.flags.isolated == 1' "$ROOT/.github/workflows/test.yml" \
-        && grep -Fq 'sys.flags.no_site == 1' "$ROOT/.github/workflows/test.yml" \
-        && grep -Fq 'sys.flags.dont_write_bytecode == 1' "$ROOT/.github/workflows/test.yml" \
-        && grep -Fq 'sys.flags.ignore_environment == 1' "$ROOT/.github/workflows/test.yml" \
+        && grep -Fq '/usr/bin/python3 -I -S -B -' "$CI_OFFLINE" \
+        && grep -Fq 'sys.implementation.name == "cpython"' "$CI_OFFLINE" \
+        && grep -Fq 'sys.version_info[:2] == (3, 9)' "$CI_OFFLINE" \
+        && grep -Fq 'sys.flags.isolated == 1' "$CI_OFFLINE" \
+        && grep -Fq 'sys.flags.no_site == 1' "$CI_OFFLINE" \
+        && grep -Fq 'sys.flags.dont_write_bytecode == 1' "$CI_OFFLINE" \
+        && grep -Fq 'sys.flags.ignore_environment == 1' "$CI_OFFLINE" \
         && grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
-            "$ROOT/.github/workflows/test.yml"; then
+            "$CI_OFFLINE"; then
     ok "bootstrap, recovery, and independent capture-bridge measured counts stay synchronized"
 else
     bad "bootstrap, recovery, and independent capture-bridge measured counts stay synchronized"
