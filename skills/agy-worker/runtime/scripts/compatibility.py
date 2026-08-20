@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -14,6 +15,7 @@ from typing import Any, Iterable
 
 VERSION_RE = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
 MODEL_RE = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)+")
 EFFORTS = ("low", "medium", "high")
 ADJUSTABLE_RESOLUTIONS = {
@@ -45,6 +47,35 @@ FIXED_MODELS = {
 }
 ACTIVE_EVIDENCE = ["agy-models", "official-release", "official-source"]
 CANDIDATE_EVIDENCE = ["installed-agy-models"]
+ACTIVE_INVENTORY_BINDING = {
+    "schema_version": 1,
+    "status": "accepted-current-inventory",
+    "agy_version": "1.1.16",
+    "reviewed_source_revision": "efa16f096dc02fb654b7e86958d268195284d014",
+    "source_sha256": "095705beb4e4591c8ee7f8b6261473e15228f0f4b1bec58c62c966a6d4bfab30",
+    "version_binding_sha256": "facf6adc18afc85ed5c232e3e1f9ad0fbcac7d62f1f98866cabb615d43069a57",
+    "capture_record_sha256": "04f9cf2d18c14635689630c7bb50437151f2b0eb1d414d0d943212fe12c7a20e",
+    "capture_stdout_sha256": "b75bd15381574af9ff1d9891dee36cc88a811c2abc86ef202c86c6b79077251c",
+    "capture_response_sha256": "a7463eafad52e693c6d4890ed329f16aa60b1dfa9b058c051a13c0f0553efec1",
+    "inventory_normalized_sha256": "db2a3529568b1ce4bb112d4cb9a0c31a4f3d1b32bd787728d224894ec6db133c",
+    "slug_count": 14,
+    "slugs": [
+        "claude-opus-4-6-thinking",
+        "claude-sonnet-4-6",
+        "gemini-3.1-pro-high",
+        "gemini-3.1-pro-low",
+        "gemini-3.5-flash-high",
+        "gemini-3.5-flash-low",
+        "gemini-3.5-flash-medium",
+        "gemini-3.6-flash-high",
+        "gemini-3.6-flash-low",
+        "gemini-3.6-flash-medium",
+        "gemini-3.7-flash-high",
+        "gemini-3.7-flash-low",
+        "gemini-3.7-flash-medium",
+        "gpt-oss-120b-medium",
+    ],
+}
 
 
 class CompatibilityError(ValueError):
@@ -437,6 +468,48 @@ def matrix_binding_state(matrix: dict[str, Any], version: str, revision: str) ->
     return True, "active and bound"
 
 
+def matrix_slugs(matrix: dict[str, Any]) -> list[str]:
+    slugs = [
+        slug
+        for row in matrix["adjustable_models"]
+        for slug in row["resolutions"].values()
+    ]
+    slugs.extend(row["model_slug"] for row in matrix["fixed_models"])
+    return sorted(slugs)
+
+
+def validate_inventory_binding(
+    binding_path: Path,
+    binding_sha_path: Path,
+    version: str,
+    revision: str,
+    matrix: dict[str, Any],
+) -> None:
+    try:
+        binding_bytes = binding_path.read_bytes()
+    except OSError as exc:
+        raise CompatibilityError(
+            f"cannot read {binding_path.name}: {exc.strerror}"
+        ) from exc
+    expected_sha = read_record(binding_sha_path)
+    if SHA256_RE.fullmatch(expected_sha) is None:
+        raise CompatibilityError("malformed inventory binding digest")
+    actual_sha = hashlib.sha256(binding_bytes).hexdigest()
+    if actual_sha != expected_sha:
+        raise CompatibilityError("inventory binding digest differs from accepted evidence")
+    binding = load_json(binding_path)
+    exact_keys(binding, set(ACTIVE_INVENTORY_BINDING), "inventory binding")
+    for key, expected in ACTIVE_INVENTORY_BINDING.items():
+        if binding[key] != expected:
+            raise CompatibilityError("inventory binding differs from accepted evidence")
+    if binding["agy_version"] != version:
+        raise CompatibilityError("inventory binding agy version differs from the verified baseline")
+    if binding["reviewed_source_revision"] != revision:
+        raise CompatibilityError("inventory binding source differs from the reviewed baseline")
+    if binding["slugs"] != matrix_slugs(matrix):
+        raise CompatibilityError("inventory binding slugs differ from the active matrix")
+
+
 def load_bound_matrix(args: argparse.Namespace) -> tuple[dict[str, Any], bool, str]:
     try:
         version = validate_record("version", read_record(Path(args.verified_version_file)))
@@ -445,6 +518,17 @@ def load_bound_matrix(args: argparse.Namespace) -> tuple[dict[str, Any], bool, s
     except CompatibilityError as exc:
         fail(str(exc))
     active, reason = matrix_binding_state(matrix, version, revision)
+    if active:
+        try:
+            validate_inventory_binding(
+                Path(args.inventory_binding),
+                Path(args.inventory_binding_sha256),
+                version,
+                revision,
+                matrix,
+            )
+        except CompatibilityError as exc:
+            fail(str(exc))
     return matrix, active, reason
 
 
@@ -508,6 +592,8 @@ def build_parser() -> argparse.ArgumentParser:
         matrix.add_argument("--schema", required=True)
         matrix.add_argument("--verified-version-file", required=True)
         matrix.add_argument("--reviewed-revision-file", required=True)
+        matrix.add_argument("--inventory-binding", required=True)
+        matrix.add_argument("--inventory-binding-sha256", required=True)
         if name == "resolve-matrix":
             matrix.add_argument("--model", required=True)
             matrix.add_argument("--effort", required=True)

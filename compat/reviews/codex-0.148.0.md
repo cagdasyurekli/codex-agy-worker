@@ -1,10 +1,10 @@
-# Codex CLI 0.148.0 interface observation (not baseline advancement)
+# Codex CLI 0.148.0 compatibility reconciliation
 
 Reviewed: 2026-08-20
 
-This record preserves the bounded offline release and installed-interface observation
-for Codex CLI `0.148.0`. It is not a release endorsement, an update instruction, or a
-change to agy selection/dispatch policy.
+This record binds the Codex CLI `0.148.0` observational compatibility baseline to
+bounded official-release and installed-interface evidence. It is not a release
+endorsement, an update instruction, or a change to agy selection/dispatch policy.
 
 ## Official and local evidence
 
@@ -20,10 +20,11 @@ interface evidence only; it is not proof of provider, sandbox, or project behavi
 
 ## Decision and limits
 
-`compat/codex-verified-version.txt` remains the accepted `0.147.0` observational
-baseline until the ordinary human reconciliation is accepted. The update checker must
-therefore continue to report `0.148.0` as drift-review rather than silently advancing
-metadata.
+Codex `0.148.0` is accepted as the current observational compatibility baseline.
+`compat/codex-verified-version.txt` and `compat/codex-upstream-head.txt` bind the
+stable tag and exact release commit above, so a later stable tag or a changed exact
+tag reference is reported as drift-review. This activation is limited to compatibility
+metadata; it does not infer future-version behavior.
 
 Codex compatibility is observation-only. This record does not gate agy dispatch,
 resolve a model or effort, alter user-selected options, authenticate, send a request,

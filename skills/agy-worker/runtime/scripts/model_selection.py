@@ -27,6 +27,8 @@ COMPAT_ROOT = RUNTIME_ROOT / "compat"
 MATRIX_PATH = COMPAT_ROOT / "agy-model-effort-matrix.json"
 MATRIX_SCHEMA_PATH = COMPAT_ROOT / "model-effort-matrix.schema.json"
 MATRIX_SHA_PATH = COMPAT_ROOT / "agy-model-effort-matrix.sha256"
+INVENTORY_BINDING_PATH = COMPAT_ROOT / "agy-models-inventory-binding.json"
+INVENTORY_BINDING_SHA_PATH = COMPAT_ROOT / "agy-models-inventory-binding.sha256"
 VERSION_PATH = COMPAT_ROOT / "agy-verified-version.txt"
 SOURCE_PATH = COMPAT_ROOT / "agy-upstream-head.txt"
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
@@ -149,6 +151,16 @@ def load_policy() -> tuple[dict[str, Any], str, str, str]:
     active, reason = compatibility.matrix_binding_state(matrix, version, revision)
     if not active:
         raise ReviewRequired(reason)
+    try:
+        compatibility.validate_inventory_binding(
+            INVENTORY_BINDING_PATH,
+            INVENTORY_BINDING_SHA_PATH,
+            version,
+            revision,
+            matrix,
+        )
+    except compatibility.CompatibilityError as exc:
+        raise EvidenceUnavailable(str(exc)) from exc
     return matrix, actual_sha, version, revision
 
 

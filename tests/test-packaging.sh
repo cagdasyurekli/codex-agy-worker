@@ -92,6 +92,14 @@ paths.update((
     "tests/test-models-capture-1-1-12.py",
     "tests/test-models-capture-1-1-12-profile.py",
     "tests/test-models-capture-1-1-12-runner.py",
+    "scripts/models_capture_1_1_16_version_evidence.py",
+    "scripts/models_capture_1_1_16_profile.py",
+    "scripts/models_capture_1_1_16_runner.py",
+    "tests/test-models-capture-1-1-16.py",
+    "tests/test-models-capture-1-1-16-version-evidence.py",
+    "tests/test-models-capture-1-1-16-profile.py",
+    "tests/test-models-capture-1-1-16-runner.py",
+    "tests/test-agy-1-1-16-activation.py",
 ))
 for relative in sorted(paths):
     path = root / relative
@@ -217,6 +225,10 @@ required = (
     "/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py",
     "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py",
     "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py",
     "./tests/test-reporting.sh",
     "/usr/bin/python3 -I -S -B tests/test-feedback-triage.py",
     "./tests/test-packaging.sh",
@@ -831,7 +843,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.8.0"
+assert manifest["version"] == "0.9.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -1471,8 +1483,12 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
         "$ROOT/skills/agy-worker/runtime/compat/agy-upstream-head.txt" \
         && cmp -s "$ROOT/compat/agy-last-reviewed.txt" \
         "$ROOT/skills/agy-worker/runtime/compat/agy-last-reviewed.txt" \
-        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.12" ]] \
-        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-13" ]]; then
+        && cmp -s "$ROOT/compat/agy-models-inventory-binding.json" \
+            "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.json" \
+        && cmp -s "$ROOT/compat/agy-models-inventory-binding.sha256" \
+            "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.sha256" \
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.16" ]] \
+        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-20" ]]; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
@@ -1717,7 +1733,7 @@ fi
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     '[[ "$*" == "--version" ]] || exit 97' \
-    'printf "1.1.12\n"' > "$TMP/selector-bin/agy"
+    'printf "1.1.16\n"' > "$TMP/selector-bin/agy"
 chmod +x "$TMP/selector-bin/agy"
 PATH="$TMP/selector-bin:$PATH" NETWORK_MARKER="$TMP/network-called" \
     "$copied_pipeline/model-selection.sh" --model gemini-3.6-flash --effort high \
@@ -1726,7 +1742,7 @@ rc=$?
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "7aed92cc79154691407324f6d3bd75f335b67ab8ecc04cad89a60b5d15c03b3d"' \
+        && grep -Fq '"matrix_sha256": "a586927552d90295529f3059989a2a8c36c234d41b8f79d61c1c89edbf829e00"' \
             "$TMP/copied-selection.json" \
         && [[ ! -e "$TMP/network-called" ]]; then
     ok "skill-folder-only copy resolves an exact direct selector offline"
@@ -1958,6 +1974,44 @@ if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner
         || [[ ! -f "$ROOT/tests/test-models-capture-1-1-12-runner.py" ]]; then
     governance_lists_all_suites=0
 fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-models-capture-1-1-16-version-evidence.py' \
+            "$CI_OFFLINE" \
+        || [[ ! -x "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-16-version-evidence.py" ]]; then
+    governance_lists_all_suites=0
+fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-models-capture-1-1-16-profile.py' \
+            "$CI_OFFLINE" \
+        || [[ ! -x "$ROOT/scripts/models_capture_1_1_16_profile.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-16-profile.py" ]]; then
+    governance_lists_all_suites=0
+fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-models-capture-1-1-16-runner.py' \
+            "$CI_OFFLINE" \
+        || [[ ! -x "$ROOT/scripts/models_capture_1_1_16_runner.py" ]] \
+        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-16-runner.py" ]]; then
+    governance_lists_all_suites=0
+fi
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-agy-1-1-16-activation.py' "$CI_OFFLINE" \
+        || [[ ! -f "$ROOT/tests/test-agy-1-1-16-activation.py" ]]; then
+    governance_lists_all_suites=0
+fi
 if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
         "$ROOT/CONTRIBUTING.md" \
         || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
@@ -2008,7 +2062,7 @@ for suite in tests/test-adoption-measurement.py tests/test-update-notifier.py; d
 done
 
 if [[ "$governance_lists_all_suites" == "1" ]] \
-        && grep -Fq 'The twenty-seven offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The thirty-one offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 73 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
@@ -2019,9 +2073,9 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all twenty-seven suites and disclose public policy boundaries"
+    ok "governance docs require all thirty-one suites and disclose public policy boundaries"
 else
-    bad "governance docs require all twenty-seven suites and disclose public policy boundaries"
+    bad "governance docs require all thirty-one suites and disclose public policy boundaries"
 fi
 
 bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
@@ -2068,6 +2122,23 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 56-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (56 offline runner cases' \
             "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Fixed 1.1.16 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; activation binding: 22 offline.' \
+            "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-16-version-evidence.py 45-case' \
+            "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-16-version-evidence.py` (45 offline cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-16-profile.py 30-case' \
+            "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-16-profile.py` (30 offline cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-16-runner.py 58-case' \
+            "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-16-runner.py` (58 offline cases' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-agy-1-1-16-activation.py` (22 cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-agy-1-1-16-activation.py 22-case' "$ROOT/README.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \
         && (( bootstrap_preflight_line < bootstrap_suite_line )) \
@@ -2087,6 +2158,13 @@ fi
 
 if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_12_runner.py" ]] \
+        && [[ -x "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" ]] \
+        && [[ -x "$ROOT/scripts/models_capture_1_1_16_profile.py" ]] \
+        && [[ -x "$ROOT/scripts/models_capture_1_1_16_runner.py" ]] \
+        && grep -Fq 'EXPECTED_VERSION = "1.1.16"' \
+            "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" \
+        && grep -Fq 'private raw `captured` evidence' \
+            "$ROOT/docs/REPO_MAP.md" \
         && [[ -f "$ROOT/compat/reviews/agy-1.1.12.md" ]] \
         && ! [[ -e "$ROOT/compat/reviews/agy-1.1.12-decision.md" ]] \
         && grep -Fq 'agy `1.1.12` baseline' "$ROOT/compat/reviews/agy-1.1.12.md" \
@@ -2107,17 +2185,23 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
             "$ROOT/compat/reviews/agy-1.1.16-interface.md" \
         && grep -Fq 'No `agy models`, `agy agents`, plugin, prompt, authentication, or' \
             "$ROOT/compat/reviews/agy-1.1.16-interface.md" \
-        && grep -Fq 'must not resolve a `1.1.16` model/effort request' \
-            "$ROOT/compat/reviews/agy-1.1.16-interface.md" \
+        && [[ -f "$ROOT/compat/reviews/agy-1.1.16.md" ]] \
+        && grep -Fq '04f9cf2d18c14635689630c7bb50437151f2b0eb1d414d0d943212fe12c7a20e' \
+            "$ROOT/compat/reviews/agy-1.1.16.md" \
+        && grep -Fq '3f34e6f6bfcf7b7e65951e02f92580c2858f32016f115866160f279d2d3a2747' \
+            "$ROOT/compat/reviews/agy-1.1.16.md" \
+        && grep -Fq 'a586927552d90295529f3059989a2a8c36c234d41b8f79d61c1c89edbf829e00' \
+            "$ROOT/compat/reviews/agy-1.1.16.md" \
+        && grep -Fq 'same fourteen exact slugs' "$ROOT/compat/reviews/agy-1.1.16.md" \
         && [[ -f "$ROOT/compat/reviews/codex-0.148.0.md" ]] \
         && grep -Fq '3ba0f711642a888aec92a611a3f3b2211157ff89' \
             "$ROOT/compat/reviews/codex-0.148.0.md" \
-        && grep -Fq '`compat/codex-verified-version.txt` remains the accepted `0.147.0`' \
+        && grep -Fq 'Codex `0.148.0` is accepted as the current observational compatibility baseline.' \
             "$ROOT/compat/reviews/codex-0.148.0.md" \
         && ! grep -Fqr 'models_capture_1_1_12' "$ROOT/skills/agy-worker/runtime"; then
-    ok "historical and pending compatibility records preserve the activation boundary"
+    ok "historical and active compatibility records preserve the activation boundary"
 else
-    bad "historical and pending compatibility records preserve the activation boundary"
+    bad "historical and active compatibility records preserve the activation boundary"
 fi
 
 if [[ -x "$ROOT/scripts/version_bootstrap_runner.py" ]] \

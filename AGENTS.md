@@ -40,6 +40,9 @@ Keep these hard boundaries regardless of workflow:
   tools, or apply updates without the applicable explicit user approval.
 - Do not overstate results: offline tests prove the exercised mechanism, while a green
   gate is stronger verification for a candidate but not a general correctness claim.
+- Do not complete a compatibility goal from a non-activating version observation.
+  If baseline activation needs new evidence or authority, keep the goal active and
+  report that exact blocker instead of silently narrowing the requested outcome.
 
 Before external agy dispatch, confirm repository/path scope and provider transmission
 unless the user already approved that exact transmission.
@@ -94,6 +97,7 @@ not live-provider claims:
 - Repository-only version bootstrap runner: 139 offline; Repository-only version initial-bootstrap runner: 43 offline.
 - Fixed 1.1.12 version recovery runner: 75 offline; Explicit-account models capture profile builder: 121 offline.
 - Fixed 1.1.12 models capture profile builder: 30 offline; Fixed 1.1.12 models capture runner: 56 offline.
+- Fixed 1.1.16 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; activation binding: 22 offline.
 
 Some conformance cleanup controls trust loaded code, the local owner, same-UID
 processes, and OS administrators. They do not establish same-user tamper-resistance or guaranteed hostile-gate cleanup; preserve a residual on identity drift instead of chasing it.

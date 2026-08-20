@@ -116,26 +116,13 @@ git -C "$UPSTREAM_SOURCE" config user.name test
 printf 'reviewed upstream\n' > "$UPSTREAM_SOURCE/README.md"
 git -C "$UPSTREAM_SOURCE" add README.md
 git -C "$UPSTREAM_SOURCE" commit -qm 'reviewed upstream fixture'
-git -C "$UPSTREAM_SOURCE" tag v1.1.12
+git -C "$UPSTREAM_SOURCE" tag v1.1.16
 UPSTREAM_HEAD="$(git -C "$UPSTREAM_SOURCE" rev-parse HEAD)"
 git init -q --bare "$UPSTREAM_REMOTE"
 git -C "$UPSTREAM_SOURCE" remote add publish "$UPSTREAM_REMOTE"
 git -C "$UPSTREAM_SOURCE" push -q publish main --tags
 git --git-dir="$UPSTREAM_REMOTE" symbolic-ref HEAD refs/heads/main
-printf '%s\n' "$UPSTREAM_HEAD" > "$SOURCE/compat/agy-upstream-head.txt"
 python3 -c 'from datetime import date; print(date.today().isoformat())' > "$SOURCE/compat/agy-last-reviewed.txt"
-python3 - "$SOURCE/compat/agy-model-effort-matrix.json" "$UPSTREAM_HEAD" <<'PY'
-import json
-import sys
-
-path, revision = sys.argv[1:]
-with open(path, encoding="utf-8") as handle:
-    matrix = json.load(handle)
-matrix["inventory"]["reviewed_source_revision"] = revision
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(matrix, handle, indent=2)
-    handle.write("\n")
-PY
 
 mkdir -p "$CODEX_UPSTREAM_SOURCE"
 git -C "$CODEX_UPSTREAM_SOURCE" init -q -b main
@@ -144,7 +131,7 @@ git -C "$CODEX_UPSTREAM_SOURCE" config user.name test
 printf 'reviewed Codex upstream\n' > "$CODEX_UPSTREAM_SOURCE/README.md"
 git -C "$CODEX_UPSTREAM_SOURCE" add README.md
 git -C "$CODEX_UPSTREAM_SOURCE" commit -qm 'reviewed Codex upstream fixture'
-git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.147.0
+git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.148.0
 CODEX_UPSTREAM_HEAD="$(git -C "$CODEX_UPSTREAM_SOURCE" rev-parse HEAD)"
 git init -q --bare "$CODEX_UPSTREAM_REMOTE"
 git -C "$CODEX_UPSTREAM_SOURCE" remote add publish "$CODEX_UPSTREAM_REMOTE"
@@ -167,7 +154,7 @@ case "${FAKE_AGY_MODE:-version}" in
   usage) printf 'Usage: agy [options] [command]\n'; exit 0 ;;
   fail) exit 7 ;;
 esac
-printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.1.12}}"
+printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.1.16}}"
 STUB
 cat > "$TMP/bin/codex" <<'STUB'
 #!/usr/bin/env bash
@@ -176,7 +163,7 @@ case "${FAKE_CODEX_MODE:-version}" in
   usage) printf 'Usage: codex [OPTIONS]\n'; exit 0 ;;
   fail) exit 7 ;;
 esac
-printf '%s\n' "${FAKE_CODEX_OUTPUT:-codex-cli ${FAKE_CODEX_VERSION:-0.147.0}}"
+printf '%s\n' "${FAKE_CODEX_OUTPUT:-codex-cli ${FAKE_CODEX_VERSION:-0.148.0}}"
 STUB
 cat > "$TMP/bin/python3" <<'STUB'
 #!/usr/bin/env bash
@@ -213,15 +200,15 @@ case "${1:-}" in
           unavailable) exit 2 ;;
           malformed) printf '%s\n' 'credential-bearing malformed official bytes'; exit 0 ;;
           drift) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.13}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
-          *) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.12}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
+          *) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.16}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
         esac
         ;;
       official-codex)
         case "${FAKE_CODEX_OFFICIAL_MODE:-unchanged}" in
           unavailable) exit 2 ;;
           malformed) printf '%s\n' 'credential-bearing malformed official bytes'; exit 0 ;;
-          drift) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.148.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
-          *) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.147.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
+          drift) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.149.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
+          *) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.148.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
         esac
         ;;
       *) exit 2 ;;
@@ -248,10 +235,10 @@ raise SystemExit(0 if module.MANIFEST_URL == expected else 1)
     fi
     case "${FAKE_MANIFEST_RESULT:-unchanged}" in
       unchanged)
-        printf '%s\n' '  distribution manifest: unchanged (1.1.12)'
+        printf '%s\n' '  distribution manifest: unchanged (1.1.16)'
         exit 0 ;;
       drift)
-        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.1.13; verified 1.1.12)'
+        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.1.17; verified 1.1.16)'
         exit 3 ;;
       unavailable)
         printf '%s\n' '  distribution manifest: evidence-unavailable (network evidence unavailable)'
@@ -292,7 +279,7 @@ git -C "$SOURCE" remote add publish "$REMOTE"
 git -C "$SOURCE" push -q publish main --tags
 git --git-dir="$REMOTE" symbolic-ref HEAD refs/heads/main
 export FAKE_PROJECT_REMOTE="$REMOTE"
-export FAKE_AGY_HEAD="$UPSTREAM_HEAD"
+export FAKE_AGY_HEAD="efa16f096dc02fb654b7e86958d268195284d014"
 export FAKE_CODEX_HEAD="$CODEX_UPSTREAM_HEAD"
 git init -q --bare "$NO_TAG_REMOTE"
 git -C "$SOURCE" push -q "$NO_TAG_REMOTE" main
@@ -631,13 +618,13 @@ expect_exit "future compatibility review date is inconclusive" 2 "$rc"
 if grep -Fq 'evidence-unavailable' "$TMP/future-review.out"; then ok "future review date is identified"; else bad "future review date is identified"; fi
 git -C "$CLIENT" checkout -q -- compat/agy-last-reviewed.txt
 
-git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.148.0
-git -C "$CODEX_UPSTREAM_SOURCE" push -q publish rust-v0.148.0
+git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.149.0
+git -C "$CODEX_UPSTREAM_SOURCE" push -q publish rust-v0.149.0
 PATH="$TMP/bin:$PATH" FAKE_CODEX_OFFICIAL_MODE=drift \
     "$CLIENT/update.sh" check > "$TMP/codex-stable-drift.out" 2> "$TMP/codex-stable-drift.err"
 rc=$?
 expect_exit "Codex stable release drift requires review" 3 "$rc"
-if grep -Fq 'official 0.148.0; verified 0.147.0' "$TMP/codex-stable-drift.out"; then
+if grep -Fq 'official 0.149.0; verified 0.148.0' "$TMP/codex-stable-drift.out"; then
     ok "Codex stable release drift is reported separately"
 else
     bad "Codex stable release drift is reported separately"
@@ -818,6 +805,8 @@ expect_matrix_validation() {
     python3 "$MATRIX_TOOL" validate-matrix --matrix "$matrix" --schema "$schema" \
         --verified-version-file "$version_file" \
         --reviewed-revision-file "$revision_file" \
+        --inventory-binding "$ROOT/compat/agy-models-inventory-binding.json" \
+        --inventory-binding-sha256 "$ROOT/compat/agy-models-inventory-binding.sha256" \
         > "$TMP/$stem.out" 2> "$TMP/$stem.err"
     got=$?
     if [[ "$got" == "$want" ]] && ! grep -Fq 'Traceback' "$TMP/$stem.err"; then
@@ -832,6 +821,8 @@ expect_matrix_resolution() {
         --schema "$MATRIX_SCHEMA" \
         --verified-version-file "$TMP/matrix-version.txt" \
         --reviewed-revision-file "$TMP/matrix-revision.txt" \
+        --inventory-binding "$ROOT/compat/agy-models-inventory-binding.json" \
+        --inventory-binding-sha256 "$ROOT/compat/agy-models-inventory-binding.sha256" \
         --model "$model" --effort "$effort" \
         > "$TMP/$stem.out" 2> "$TMP/$stem.err"
     got=$?
@@ -850,6 +841,8 @@ expect_matrix_reject() {
         --schema "$MATRIX_SCHEMA" \
         --verified-version-file "$version_file" \
         --reviewed-revision-file "$revision_file" \
+        --inventory-binding "$ROOT/compat/agy-models-inventory-binding.json" \
+        --inventory-binding-sha256 "$ROOT/compat/agy-models-inventory-binding.sha256" \
         --model "$model" --effort "$effort" \
         > "$TMP/$stem.out" 2> "$TMP/$stem.err"
     got=$?
@@ -912,6 +905,8 @@ PY
 python3 "$MATRIX_TOOL" validate-matrix --matrix "$MATRIX" --schema "$MATRIX_SCHEMA" \
     --verified-version-file "$ROOT/compat/agy-verified-version.txt" \
     --reviewed-revision-file "$ROOT/compat/agy-upstream-head.txt" \
+    --inventory-binding "$ROOT/compat/agy-models-inventory-binding.json" \
+    --inventory-binding-sha256 "$ROOT/compat/agy-models-inventory-binding.sha256" \
     > "$TMP/reconciled-matrix.out" 2> "$TMP/reconciled-matrix.err"
 rc=$?
 expect_exit "checked-in active matrix is exactly version/source bound" 0 "$rc"
@@ -980,6 +975,8 @@ PY
         --schema "$MATRIX_SCHEMA" \
         --verified-version-file "$TMP/matrix-version.txt" \
         --reviewed-revision-file "$TMP/matrix-revision.txt" \
+        --inventory-binding "$ROOT/compat/agy-models-inventory-binding.json" \
+        --inventory-binding-sha256 "$ROOT/compat/agy-models-inventory-binding.sha256" \
         --model "$fixed_slug" --effort high \
         > "$TMP/fixed-$fixed_slug.out" 2> "$TMP/fixed-$fixed_slug.err"
     rc=$?
