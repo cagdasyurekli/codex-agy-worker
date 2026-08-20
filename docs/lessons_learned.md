@@ -171,6 +171,15 @@ retry the call, or advance metadata from rejected evidence. A later successful,
 version-bound capture still requires strict offline interpretation and a separate
 human reconciliation before it may update an active baseline.
 
+## Observation is not completion of a compatibility goal
+
+A version, help, source, or distribution observation can narrow the next review, but
+it does not satisfy a request to make the product compatible with that version. Keep
+the requested compatibility goal active until the accepted baseline and every coupled
+runtime contract are reconciled and verified. If account evidence, provider work, or
+another authority is missing, return that exact blocker to the user; do not silently
+replace the goal with an observation-only record or mark an adjacent release complete.
+
 The companion process-inert profile builder may fail closed on a reviewed source-byte
 or normalized-AST mismatch before stdin or authority traversal. That is a selected
 reviewed-source drift control under the local-owner, same-UID, interpreter, and OS-

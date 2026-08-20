@@ -3,7 +3,7 @@
 set -uo pipefail
 
 DOCTOR_SCHEMA_VERSION=1
-DOCTOR_EXPECTED_AGY_SOURCE_REVISION='f7519c9084190ed421e89dd81c63970b5177c9ef'
+DOCTOR_EXPECTED_AGY_SOURCE_REVISION='efa16f096dc02fb654b7e86958d268195284d014'
 
 doctor_usage() {
     echo "usage: doctor.sh [--repo DIR] [--format text|json]" >&2
@@ -127,7 +127,9 @@ doctor_runtime_complete() {
         compat/agy-last-reviewed.txt \
         compat/agy-model-effort-matrix.json \
         compat/model-effort-matrix.schema.json \
-        compat/agy-model-effort-matrix.sha256; do
+        compat/agy-model-effort-matrix.sha256 \
+        compat/agy-models-inventory-binding.json \
+        compat/agy-models-inventory-binding.sha256; do
         dependency_parent="${required%/*}"
         parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$dependency_parent" \
             2>/dev/null && pwd -P)" || return 1

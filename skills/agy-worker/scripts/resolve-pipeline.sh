@@ -135,7 +135,9 @@ pipeline_runtime_complete() {
         compat/agy-last-reviewed.txt \
         compat/agy-model-effort-matrix.json \
         compat/model-effort-matrix.schema.json \
-        compat/agy-model-effort-matrix.sha256; do
+        compat/agy-model-effort-matrix.sha256 \
+        compat/agy-models-inventory-binding.json \
+        compat/agy-models-inventory-binding.sha256; do
         dependency_parent="${required%/*}"
         parent_canonical="$(CDPATH= cd -- "$runtime_canonical/$dependency_parent" \
             2>/dev/null && pwd -P)" || return 1

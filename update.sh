@@ -144,6 +144,8 @@ agy_model_matrix_check() {
         --schema "$SCRIPT_DIR/compat/model-effort-matrix.schema.json" \
         --verified-version-file "$SCRIPT_DIR/compat/agy-verified-version.txt" \
         --reviewed-revision-file "$SCRIPT_DIR/compat/agy-upstream-head.txt" \
+        --inventory-binding "$SCRIPT_DIR/compat/agy-models-inventory-binding.json" \
+        --inventory-binding-sha256 "$SCRIPT_DIR/compat/agy-models-inventory-binding.sha256" \
         2>/dev/null)" || status=$?
     case "$status:$output" in
         "0:matrix: unchanged - active and version/source bound")
