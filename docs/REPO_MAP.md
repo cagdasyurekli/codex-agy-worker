@@ -17,7 +17,9 @@ driver task
   -> agy-worker.sh / agy_dispatch.py (private staged prompt, one exact model,
        process-owning per-job controller, idle/hard/max clocks)
   -> agy (untrusted worker; NDJSON is consumed incrementally)
-  -> structured envelope
+  -> provider result (`SUCCESS`, `ERROR`, or `CANCELED`; a valid candidate may survive)
+  -> provider schema (report-only `commands_run`/`tests_run` may be omitted)
+  -> canonical envelope (both arrays restored and required; summary <= 8192)
   -> skills/agy-worker/runtime/scripts/validate-envelope.py (shape and contract only)
   -> one caller-chosen verification path:
        -> verify-job.sh (receipt-producing wrapper)
@@ -49,7 +51,7 @@ The optional local lifecycle wraps that same authority without adding autonomy:
 job.sh init (explicit repo/worktree/branch/full base/job ID -> private state v1)
   -> separately approved agy-worker.sh dispatch in the bound worktree
        -> `run` foreground or one explicit owner-private `start` controller
-       -> local `status|wait|result|extend|cancel|resume|restart` state only
+       -> local v5 `status|wait|result|extend|cancel|resume|restart` state only
   -> job.sh verify -> exact verify-job.sh / qa-gate.sh receipt path
   -> job.sh status (read-only facts and current approval hashes)
   -> gate-passed: preserve-instructions only, never execution
@@ -69,12 +71,32 @@ initialized submodules, special nodes, device/mount changes, and unbound digest 
 The dispatch controller is intentionally not a daemon: one explicitly started job
 owns one local process group and private state. Its status and cancellation do not
 assert remote/provider job state or remote cancellation; a local cancellation retains
-`remote_cancel_unverified`. Valid `init`, `step_update`, and terminal `result` events
-renew only the idle lease; they cannot override the hard deadline or maximum runtime.
-Resume keeps the stored conversation and frozen selection, while restart is visibly a
-new conversation. Plan mode stages the full prompt privately and relies on upstream
-plan transformation plus the disposable worktree/no-change gate, not mode as a
-filesystem isolation guarantee.
+`remote_cancel_unverified`. A candidate-free failure may be SHA-approved for exact
+conversation `resume` or visibly fresh `restart`. A valid `ERROR` candidate (exit 25)
+goes to `result`, driver Verification v2, then `continue`/`finalize`; it is never
+resumed. A valid `CANCELED` candidate (exit 22) is preserved for `result` and
+finalization or explicit fresh restart; it is never resumed or continued. No branch is
+automatic. Only `init`, `step_update`, and terminal `result` update `last_activity` to
+`provider_initialized`, `progress_signal`, or `terminal_received`; that activity is
+nonsemantic and renews only the idle lease. V5 uses `dispatching` for an active
+initial, resume, or restart attempt; `attempt-failed` for a pre-candidate failure;
+`awaiting-verification` for a recognized candidate; `repairing` for an active
+continuation; and `repair-failed` for an actual failed continuation attempt. Final
+disposition uses `completed` or `blocked`. Its additive candidate recognition/source/availability, driver
+disposition, failure stage, `last_activity`, `next_action`, safe current-SHA command,
+and worktree-reconciliation fields are controller facts. `has_prior_candidate` is
+deprecated and does not assert cleanliness. Reconciliation is a bounded snapshot
+comparison, not a clean-worktree, review, or acceptance claim. V1/V3/V4 state remains
+readable; the first approved transition atomically writes v5. `status`, `wait`,
+`result`, `resume`, `continue`, and `finalize` default to public JSON and accept three
+sanitized driver-owned text lines. `result` returns only a bound canonical candidate
+and remains separate from provider or driver acceptance. Every explicit
+`explore`/`task`/`project` workflow consumes candidate-SHA-bound Verification v2 for
+`continue`/`finalize`, never a worker command. For `verified`, explore needs complete
+coverage, zero unresolved gaps, zero failed checks, and zero missing checks;
+task/project need at least one pass, zero failed/missing checks, and completed diff review. Plan mode stages the full prompt
+privately and relies on upstream plan transformation plus the disposable
+worktree/no-change gate, not mode as a filesystem isolation guarantee.
 
 The provider-independent benchmark reuses the Receipt authority without joining the
 delegation or routing path:
@@ -208,10 +230,10 @@ does not establish same-user tamper resistance.
 
 | Path | Responsibility | Owning offline suite |
 |---|---|---|
-| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh`, `skills/agy-worker/runtime/scripts/agy_dispatch.py` | Root compatibility entry plus caller-owned selection, optional personas, `explore`/`task`/`project` workflow resolution, private prompt/log staging, process-owning progress-aware dispatch, at most five total project attempts, strict driver-owned verification JSON, same-conversation `continue`, Codex-owned assurance finalization, explicit resume/restart with no automatic fresh retry, and an exact agy 1.1.13 quota terminal mapped to sanitized exit 24/countdown without raw error disclosure or automatic model/retry action | `tests/test-agy-worker.sh` (282 cases) |
+| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh`, `skills/agy-worker/runtime/scripts/agy_dispatch.py` | Root compatibility entry plus caller-owned selection, optional personas, workflow resolution (`explore`/`task`: 1..2, default 2; `project`: 1..5, default 5), private prompt/log staging, process-owning progress-aware dispatch, v5 candidate/lifecycle state, candidate-SHA-bound Verification v2, same-conversation `continue`, driver-owned assurance finalization, explicit SHA-approved resume/restart with no automatic continuation, preserved valid provider-error/cancelled candidates, and an exact agy 1.1.13 quota terminal mapped to sanitized exit 24/countdown without raw error disclosure or automatic model/retry action | `tests/test-agy-worker.sh` (283 cases) |
 | `model-selection.sh`, `skills/agy-worker/runtime/model-selection.sh`, `skills/agy-worker/runtime/scripts/model_selection.py`, portable matrix/schema/SHA | Root compatibility entry plus exact matrix-bound model/effort resolution, CLI-only version-independent literal records, bounded installed-version preflight for reviewed resolution, a non-gating bounded literal-version observation used only for exact diagnostics, and driver selection provenance | dispatcher, doctor, and packaging suites |
-| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre/post recommendations; direct selections are labelled but unranked and never applied | `tests/test-agy-worker.sh` (282 cases) |
-| `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (246 cases) plus packaging synchronization checks |
+| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre/post recommendations; direct selections are labelled but unranked and never applied | `tests/test-agy-worker.sh` (283 cases) |
+| `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (251 cases) plus packaging synchronization checks |
 | `install.sh`, `skills/agy-worker/`, `skills/agy-worker/scripts/resolve-pipeline.sh` | Install and resolve complete-plugin, explicit-checkout, or folder-only skill layouts without fetching code | dispatcher and packaging suites |
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
 | `qa-gate.sh`, `skills/agy-worker/runtime/qa-gate.sh` | Root compatibility entry plus canonical immutable-base Git audit, bounded envelope intake, path policy, escalation, driver verification, and internal pre-opened structured evidence handoff | `tests/test-qa-gate.sh` (42 cases) plus receipt suite no-FD compatibility checks |
@@ -242,10 +264,10 @@ does not establish same-user tamper resistance.
 | `scripts/models_capture_1_1_16_runner.py` | Fixed 1.1.16 capture-only bridge using logical argv `source --output-format json models`, the retained snapshot as executable, one no-retry process group, 25-second wall and independent 64-KiB streams. It fails closed on group-closure uncertainty and publishes a marker only for private raw `captured` evidence; it never accepts inventory, routes, or advances metadata. | `tests/test-models-capture-1-1-16-runner.py` (58 offline cases; 88 combined with the 30-case profile suite) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact double confirmation for public bug/improvement submission, explicit private-only security drafts, fixed-destination issue submission, and conservative non-proof keyword barrier | `tests/test-reporting.sh` (47 cases) |
 | `feedback-triage.sh`, `scripts/feedback-triage.py`, `.github/workflows/feedback-watch.yml` | Explicit or weekly bounded read-only aggregate over fixed public issue metadata; raw issue content is not requested, surfaced, or agent input; no GitHub writes | `tests/test-feedback-triage.py` (26 cases) plus packaging workflow policy |
-| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (366 cases) plus platform validators |
-| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (366 cases) plus review |
-| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (366 cases) plus rendered review |
-| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (366 cases) plus rendered review |
+| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (367 cases) plus platform validators |
+| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (367 cases) plus review |
+| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (367 cases) plus rendered review |
+| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (367 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
 | `.github/workflows/test.yml`, `scripts/ci-offline.sh`, `scripts/ci-diff-check.sh`, `scripts/ci_diff_check.py` | Required `test` runs the exact full macOS offline suite for PRs (and explicit exact-SHA manual dispatch), cancels stale same-PR runs, and does not repeat the suite after a normal merge. The controller keeps committed-range hygiene separate; the canonical local runner performs static/worktree diff checks and all thirty-one offline suites without requiring network/provider calls or intentionally inspecting account-HOME contents; ambient local tools may consult ordinary user configuration. Local quota fallback evidence never satisfies branch protection. | packaging policy tests plus GitHub Actions |
 | `.github/workflows/compatibility-watch.yml` | Daily/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |

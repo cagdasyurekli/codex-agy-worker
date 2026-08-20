@@ -319,9 +319,10 @@ to supply a final file list, a persona, or every test command before starting.
 
 Assurance labels are intentionally practical: `verified` means Codex reviewed the
 candidate and its required checks passed; `partially_verified` preserves useful work
-with exact unresolved checks; `blocked` identifies a real authorization, repository
-boundary, or execution blocker. A failed first check is a repair signal, not an
-automatic rejection or deletion.
+with exact unresolved checks; `rejected` records a driver-observed failed or missing
+check; and `blocked` identifies a real authorization, repository boundary, or
+execution blocker. A failed first check is a repair signal, not an automatic rejection
+or deletion.
 
 Before the first dispatch for a repository, the skill identifies the paths in scope
 and requires explicit approval for sending that task and any worker-read repository
@@ -352,9 +353,9 @@ Edit ONLY files under $WT/tests/. Use file tools on absolute paths.
 Do NOT run shell commands — they execute in a scratch directory, not this repo.
 The driver runs every command. Return commands_run and tests_run as empty arrays." |
   AGY_WORKER_JOB_ID="$JOB_ID" "$PIPELINE/agy-worker.sh" \
-    --mode accept-edits --tier bulk --persona bulk-test-writer \
+    --workflow task --mode accept-edits --tier bulk --persona bulk-test-writer \
     --workdir "$WT" --add-dir "$WT" > "$ENVELOPE"; then
-  echo "Dispatch failed; inspect the sanitized terminal state and choose explicit resume, restart, or stop." >&2
+  echo "Dispatch failed; inspect the sanitized terminal state/result. Resume only a candidate-free failure; handle an ERROR candidate with Verification v2, and preserve/finalize or freshly restart a CANCELED candidate." >&2
   exit 1
 fi
 
@@ -392,8 +393,11 @@ git -C "$TARGET" branch -D "$JOB_BRANCH"
 Gate failure handling is deliberately small: exits 10–14 reject the candidate, exit
 15 routes its questions to a human, and exit 64 means the driver invocation is wrong.
 A dispatch error starts no further provider call automatically; do not add a shell
-retry loop. Preserve the job or choose an explicit, hash-bound `resume` or `restart`
-through the lifecycle controller.
+retry loop. A candidate-free failed state may be eligible for SHA-approved exact
+`resume` or explicit fresh `restart`. A terminal `ERROR` with a valid candidate goes
+to `result`, driver Verification v2, then `continue` or `finalize`. A terminal
+`CANCELED` candidate goes to `result` and preservation/finalization or an explicit
+fresh `restart`; it is never resumed or continued.
 
 ### Read-only inventory example
 
@@ -491,7 +495,8 @@ profile sources.
 | Worker option | Environment equivalent | Meaning |
 |---|---|---|
 | `--workflow explore|task|project` | — | Selects read-only exploration, ordinary implementation, or project-scale iterative work. Omitted input keeps the legacy raw-mode behavior. |
-| `--max-cycles 1..5` | — | Project workflow's total provider-attempt budget; default `5`, valid only with `--workflow project`. |
+| `--max-cycles 1..2` | — | `explore` or `task` total provider-attempt budget; default `2`. |
+| `--max-cycles 1..5` | — | `project` total provider-attempt budget; default `5`. Legacy raw mode is exactly one attempt; `--max-cycles` requires an explicit workflow. |
 | `--mode plan|accept-edits` | `AGY_WORKER_MODE` | Raw agy mode for compatibility. `explore` fixes `plan`; `project` fixes `accept-edits`; `task` uses `accept-edits` unless an explicit raw mode is supplied. |
 | `--tier cheap|bulk|hard|hardest|default` | `AGY_WORKER_TIER` | explicit legacy tier; a model label is also accepted |
 | `--model EXACT_MODEL` | `AGY_WORKER_MODEL` | reviewed exact slug, or adjustable base used with effort |
@@ -511,7 +516,8 @@ Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid 
 `17` provider timeout (reserved) · `18` authentication failure (reserved) ·
 `19` provider unavailable (reserved) ·
 `20` local status unavailable · `21` resume failure · `22` cancelled ·
-`23` output oversized · `24` provider quota exhausted · `64` invalid usage.
+`23` output oversized · `24` provider quota exhausted · `25` provider terminal error
+with a preserved valid candidate · `64` invalid usage.
 
 The reserved `17`–`19` exits require an exact, version-bound reviewed signature.
 The current agy `1.1.16` signature allowlist is intentionally empty, so an unproven
@@ -527,19 +533,24 @@ worker does not sleep, retry, restart, or change the caller's model automaticall
 Other versions, altered prose, generic `429`/`RESOURCE_EXHAUSTED` text, malformed
 events, and unknown terminal errors remain `agy_failed_unclassified`.
 
-`init`, `step_update`, and terminal `result` events renew only an idle lease. They
-never prove success and never extend the hard deadline or the caller-owned maximum.
+Only provider `init`, `step_update`, and terminal `result` events can update v5
+`last_activity` to `provider_initialized`, `progress_signal`, or
+`terminal_received`. They renew only an idle lease; they never prove success or
+extend the hard deadline or the caller-owned maximum.
 The supervisor forwards the maximum as agy's `--print-timeout`, owns the shorter
 local clocks and process group, and records only sanitized elapsed/progress-age/count,
 attempt origin, terminal reason, and resume availability. It never prints progress,
 prompts, raw stderr, or a conversation ID.
 
-There is no automatic fresh retry. On a terminal dispatch failure, choose exactly one
-explicit action: `resume` from the frozen conversation when eligible, `restart` as a
-new conversation with the frozen task/selection, or preserve the job and stop.
-`status`, `wait`, `result`, `extend`, and `cancel` describe the local controller,
-not an agy/provider status or a proven remote cancellation. A locally cancelled job
-therefore reports `remote_cancel_unverified`.
+There is no automatic fresh retry or continuation. A candidate-free failed state may
+offer SHA-approved `resume` for the exact stored conversation or SHA-approved fresh
+`restart`. A valid provider `ERROR` (exit `25`) candidate is `unreviewed`: obtain it
+with `result`, supply driver Verification v2, then `continue` or `finalize`. A valid
+provider `CANCELED`/`CANCELLED` (exit `22`) candidate is preserved for `result` and
+finalization, or an explicit fresh `restart`; it is never resume- or continue-eligible.
+None of those outcomes is provider success. `status`, `wait`, `result`, `extend`, and
+`cancel` describe the local controller, not agy/provider status or proven remote
+cancellation. A locally cancelled job therefore reports `remote_cancel_unverified`.
 
 The dispatcher creates each job directory and its task, full prompt, stream, stderr,
 staged prompt, and envelope under an owner-only mask, even when the caller's mask is
@@ -558,21 +569,47 @@ race.
 ### Progress-aware local jobs
 
 `run` remains synchronous. For a long explicitly approved job, `start` returns an
-opaque job ID after the local controller handshake; `status` and bounded `wait` read
-its private state, `result` emits an envelope only after terminal success, `extend`
-requires the current state SHA and cannot exceed `--max-runtime`, and `cancel` writes
-a local request before the controller closes and reaps its process group. `resume`
-requires a terminal resume-eligible state and its SHA, and uses the exact stored
-conversation with a fixed continuation prompt. `restart` also requires that SHA but
-starts a new conversation and labels its attempt `fresh-restart`.
+opaque job ID after the local controller handshake. `status`, `wait`, `result`,
+`resume`, `continue`, and `finalize` each default to machine-readable JSON and accept
+`--format text`; text is exactly three sanitized, driver-owned lines and excludes
+prompts, worker prose, conversation IDs, paths, and raw logs. `result` returns a
+bound schema-valid candidate only when `result_available` is true; it is not a success
+or acceptance claim. `extend` and `cancel` require the current state SHA; eligible
+`resume` uses the exact stored conversation and its current approval SHA, while
+`restart` uses that SHA but labels a new attempt `fresh-restart`.
 
-Project jobs add a driver-owned quality loop. `status` exposes the phase, current and
-maximum cycle count, check summary, and assurance state. Codex supplies strict,
-sanitized verification JSON to `continue` with the current state SHA to ask the exact
-conversation to repair an observed failure. It supplies the same JSON to `finalize`
-with `verified`, `partially_verified`, or `blocked`; a worker cannot self-assign that
-status. The controller never runs a command from that JSON and never starts a fresh
+Lifecycle state v5 uses `dispatching` for an active initial, resume, or restart
+attempt; `attempt-failed` for a pre-candidate failure; `awaiting-verification` for a
+recognized candidate; `repairing` for an active continuation; and `repair-failed` for
+an actual failed continuation attempt. Final disposition uses `completed` or `blocked`.
+Its additive public fields include candidate recognition/source/availability, driver
+disposition, failure stage, `last_activity`, `next_action`, a safe current-SHA command,
+and privacy-bounded worktree reconciliation (`available`, `unavailable`, or
+`not_applicable`). `has_prior_candidate` is a deprecated compatibility hint, not a
+cleanliness signal. Reconciliation says only whether the controller compared the
+registered worktree snapshot; its changed flags are not a clean-worktree, review, or
+acceptance decision. V1/V3/V4 state remains readable; its first approved transition
+atomically writes v5.
+
+Every explicit `explore`, `task`, or `project` workflow has the driver-owned quality
+loop. `status` exposes the phase, current and maximum cycle count, check summary,
+assurance, candidate availability, and next safe action. `continue` and `finalize`
+require Verification v2 JSON bound to the current candidate SHA. It records bounded
+passed/failed/advisory/missing checks plus coverage, verified-findings,
+unresolved-gaps, and whether the driver completed diff review. `continue` is only for
+a failed or missing driver check and asks the exact conversation for a repair.
+`verified` is strict: `explore` needs complete coverage, zero unresolved gaps, zero
+failed checks, and zero missing checks; `task`/`project` need at least one passed check,
+zero failed/missing checks, and completed diff review. `finalize` also accepts constrained
+`partially_verified`, `rejected`, or `blocked`; a worker cannot self-assign any
+disposition. The controller never executes a command from this JSON or starts a fresh
 conversation automatically.
+
+The provider-facing envelope permits omission of report-only `commands_run` and
+`tests_run`; the controller restores omitted fields to empty arrays before requiring
+the canonical envelope, where both fields are mandatory. The worker summary is capped
+at 8,192 characters. These fields are provider claims only: non-empty command/test
+arrays are rejected by the gate and never executed.
 
 The Codex skill does not split a comprehensive task merely to fit a timer. While
 progress is fresh, it may extend the initial deadline by `2h` at 80% utilization,
@@ -1390,7 +1427,7 @@ tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
-tests/test-agy-worker.sh      282-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-agy-worker.sh      283-case offline dispatcher/installer/routing/lifecycle suite
 tests/test-update.sh          324-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py 65-case fixed-endpoint transport adversary harness
@@ -1414,8 +1451,8 @@ tests/test-update-notifier.py 73-case offline local notifier lifecycle/signal/ma
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite
-tests/test-packaging.sh       366-case offline Codex package/CI-policy/relocation/landing suite
-tests/test-doctor.sh          246-case offline fake-tool/read-only doctor suite
+tests/test-packaging.sh       367-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-doctor.sh          251-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational daily/manual fixed-source watch
