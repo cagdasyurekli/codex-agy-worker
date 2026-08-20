@@ -14,6 +14,7 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -52,6 +53,7 @@ COMMAND_V1_FIELDS = {
     "stage_dir", "stage_file", "child_umask", "resume_prompt",
 }
 COMMAND_V2_FIELDS = COMMAND_V1_FIELDS | {"workflow", "max_cycles", "continue_prompt"}
+COMMAND_V3_FIELDS = COMMAND_V2_FIELDS | {"agy_version_observed"}
 STATE_PROJECT_FIELDS = {
     "workflow", "max_cycles", "cycle", "phase", "assurance",
     "check_summary", "check_counts", "verification_path", "verification_sha256",
@@ -65,7 +67,7 @@ REASONS = {
     "authentication_failed", "provider_unavailable", "status_unavailable",
     "resume_failed", "cancelled", "agy_failed_unclassified",
     "permission_required", "empty_output", "invalid_envelope",
-    "output_oversized", "interrupted",
+    "output_oversized", "interrupted", "provider_quota_exhausted",
 }
 EXIT_BY_REASON = {
     "empty_output": 3,
@@ -81,6 +83,7 @@ EXIT_BY_REASON = {
     "resume_failed": 21,
     "cancelled": 22,
     "output_oversized": 23,
+    "provider_quota_exhausted": 24,
     "interrupted": 143,
 }
 
@@ -90,6 +93,21 @@ EXIT_BY_REASON = {
 # reviewed 1.1.12 stderr evidence in the repository, so every provider diagnostic
 # remains deliberately unclassified.
 EXACT_FAILURE_LINES: dict[str, dict[bytes, str]] = {"1.1.12": {}}
+
+# agy 1.1.13 emitted this exact provider-owned terminal error shape in three
+# retained same-conversation observations. The reset duration is the only
+# variable part. Do not broaden this to free-form quota/message matching or to
+# another agy version without separately reviewed evidence.
+QUOTA_ERROR_1_1_13_RE = re.compile(
+    r"rpc error: Individual quota reached\. Contact your administrator to enable "
+    r"overages\. Resets in (?P<hours>[0-9]{1,3})h"
+    r"(?P<minutes>[0-9]{2})m(?P<seconds>[0-9]{2})s\."
+)
+QUOTA_RESULT_FIELDS = {
+    "conversation_id", "status", "response", "error", "duration_seconds",
+    "num_turns", "json_schema", "usage",
+}
+MAX_PROVIDER_RETRY_SECONDS = 30 * 24 * 3600
 
 
 class DispatchError(ValueError):
@@ -304,11 +322,28 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         value.update({
             "workflow": "legacy", "max_cycles": 1,
             "continue_prompt": "legacy commands cannot continue projects",
+            "agy_version_observed": False,
         })
-    elif set(value) != COMMAND_V2_FIELDS or value.get("schema_version") != 2:
+    elif set(value) == COMMAND_V2_FIELDS and value.get("schema_version") == 2:
+        if raw != canonical(value):
+            raise DispatchError("dispatch command is not canonical")
+        value = dict(value)
+        value["agy_version_observed"] = False
+    elif set(value) != COMMAND_V3_FIELDS or value.get("schema_version") != 3:
         raise DispatchError("dispatch command fields are invalid")
+    elif raw != canonical(value):
+        raise DispatchError("dispatch command is not canonical")
     if value["kind"] != "agy-worker-dispatch-command":
         raise DispatchError("dispatch command version is invalid")
+    if (
+        not isinstance(value["agy_version"], str)
+        or re.fullmatch(
+            r"(?:0|[1-9][0-9]{0,4})\.(?:0|[1-9][0-9]{0,4})\."
+            r"(?:0|[1-9][0-9]{0,4})",
+            value["agy_version"],
+        ) is None
+    ):
+        raise DispatchError("dispatch agy version is invalid")
     if not isinstance(value["job_id"], str) or JOB_RE.fullmatch(value["job_id"]) is None:
         raise DispatchError("dispatch command job ID is invalid")
     if not isinstance(value["argv"], list) or not value["argv"] or any(
@@ -341,8 +376,8 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         raise DispatchError("dispatch max cycles is invalid")
     if value["workflow"] != "project" and value["max_cycles"] != 1:
         raise DispatchError("dispatch max cycles requires project workflow")
-    if value["schema_version"] == 2 and raw != canonical(value):
-        raise DispatchError("dispatch command is not canonical")
+    if type(value["agy_version_observed"]) is not bool:
+        raise DispatchError("dispatch agy version evidence is invalid")
     return value, raw, _identity(info)
 
 
@@ -362,8 +397,11 @@ def validate_state(value: Any) -> dict[str, Any]:
         "check_summary", "check_counts", "verification_path", "verification_sha256",
         "verification_identity", "continue_available", "last_success_path",
         "last_success_sha256", "last_success_identity", "project_boundary",
+        "provider_retry_after_seconds", "provider_retry_observed_epoch",
     }
-    legacy_fields = fields - STATE_PROJECT_FIELDS
+    retry_fields = {"provider_retry_after_seconds", "provider_retry_observed_epoch"}
+    legacy_fields = fields - STATE_PROJECT_FIELDS - retry_fields
+    version_three_fields = fields - retry_fields
     if not isinstance(value, dict):
         raise DispatchError("dispatch state fields are invalid")
     if set(value) == legacy_fields and value.get("schema_version") == 1:
@@ -376,8 +414,16 @@ def validate_state(value: Any) -> dict[str, Any]:
             "verification_identity": None, "continue_available": False,
             "last_success_path": None, "last_success_sha256": None,
             "last_success_identity": None, "project_boundary": None,
+            "provider_retry_after_seconds": None,
+            "provider_retry_observed_epoch": None,
         })
-    elif set(value) != fields or value.get("schema_version") != 3:
+    elif set(value) == version_three_fields and value.get("schema_version") == 3:
+        value = dict(value)
+        value.update({
+            "provider_retry_after_seconds": None,
+            "provider_retry_observed_epoch": None,
+        })
+    elif set(value) != fields or value.get("schema_version") != 4:
         raise DispatchError("dispatch state fields are invalid")
     if value["kind"] != "agy-worker-dispatch-state":
         raise DispatchError("dispatch state version is invalid")
@@ -428,6 +474,18 @@ def validate_state(value: Any) -> dict[str, Any]:
     for key in ("started_epoch", "finished_epoch", "last_progress_epoch"):
         if value[key] is not None and (type(value[key]) not in (int, float) or value[key] < 0):
             raise DispatchError("dispatch optional time is invalid")
+    retry_after = value["provider_retry_after_seconds"]
+    retry_observed = value["provider_retry_observed_epoch"]
+    if (retry_after is None) != (retry_observed is None):
+        raise DispatchError("dispatch provider retry binding is incomplete")
+    if retry_after is not None and (
+        type(retry_after) is not int or not (1 <= retry_after <= MAX_PROVIDER_RETRY_SECONDS)
+        or type(retry_observed) not in (int, float)
+        or not math.isfinite(retry_observed) or retry_observed < 0
+    ):
+        raise DispatchError("dispatch provider retry binding is invalid")
+    if value["reason"] != "provider_quota_exhausted" and retry_after is not None:
+        raise DispatchError("dispatch provider retry reason is inconsistent")
     for key in ("exit_code", "controller_pid", "agy_returncode"):
         if value[key] is not None and type(value[key]) is not int:
             raise DispatchError("dispatch integer is invalid")
@@ -511,7 +569,7 @@ def initial_state(
     workflow = command.get("workflow", "legacy")
     max_cycles = command.get("max_cycles", 1)
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "kind": "agy-worker-dispatch-state",
         "sequence": 1,
         "previous_state_sha256": None,
@@ -569,6 +627,8 @@ def initial_state(
             else _project_boundary(command["workdir"]) if workflow == "project"
             else None
         ),
+        "provider_retry_after_seconds": None,
+        "provider_retry_observed_epoch": None,
     }
 
 
@@ -578,8 +638,8 @@ def _transition_locked(job: Path, state: dict[str, Any], prior_raw: bytes, updat
         raise DispatchError("dispatch state changed before transition")
     value = dict(state)
     value.update(updates)
-    if value["schema_version"] == 1:
-        value["schema_version"] = 3
+    if value["schema_version"] in {1, 3}:
+        value["schema_version"] = 4
     value["sequence"] = state["sequence"] + 1
     value["previous_state_sha256"] = digest(prior_raw)
     value["updated_epoch"] = time.time()
@@ -604,6 +664,15 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
     last_age = None
     if value["last_progress_epoch"] is not None:
         last_age = max(0.0, now - value["last_progress_epoch"])
+    retry_remaining = None
+    if value["provider_retry_after_seconds"] is not None:
+        retry_remaining = max(
+            0,
+            int(math.ceil(
+                value["provider_retry_after_seconds"]
+                - max(0.0, now - value["provider_retry_observed_epoch"])
+            )),
+        )
     return {
         "attempt": value["attempt"],
         "attempt_origin": value["attempt_origin"],
@@ -624,6 +693,7 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
         "progress_count": value["progress_count"],
         "phase": value["phase"],
         "reason": value["reason"],
+        "retry_after_seconds": retry_remaining,
         "remote_cancel_unverified": value["remote_cancel_unverified"],
         "resume_available": value["resume_available"],
         "continue_available": value["continue_available"],
@@ -1019,10 +1089,9 @@ def _classify_stderr(path: Path, version: str, returncode: int) -> str:
     return matches.pop() if len(matches) == 1 else "agy_failed_unclassified"
 
 
-def _validate_terminal_envelope(
-    stream: Path, envelope: Path, schema: str,
-) -> tuple[str, tuple[int, int, int, int, int]] | None:
+def _terminal_result(stream: Path, *, strict: bool = False) -> dict[str, Any] | None:
     result: dict[str, Any] | None = None
+    init_conversation: str | None = None
     saw_init = False
     saw_terminal = False
     try:
@@ -1033,8 +1102,12 @@ def _validate_terminal_envelope(
                 try:
                     event = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
                 except (UnicodeError, json.JSONDecodeError, DispatchError):
+                    if strict:
+                        return None
                     continue
                 if not isinstance(event, dict):
+                    if strict:
+                        return None
                     continue
                 kind = event.get("event")
                 structurally_valid = (
@@ -1043,21 +1116,76 @@ def _validate_terminal_envelope(
                     or (kind == "result" and isinstance(event.get("result"), dict))
                 )
                 if not structurally_valid:
+                    if strict:
+                        return None
                     continue
                 if saw_terminal:
                     return None
                 if kind == "init":
                     if saw_init:
                         return None
+                    init_conversation = event.get("conversation_id")
+                    if strict and (
+                        not isinstance(init_conversation, str)
+                        or CONVERSATION_RE.fullmatch(init_conversation) is None
+                    ):
+                        return None
                     saw_init = True
                 elif not saw_init:
                     return None
                 if kind == "result":
+                    if strict and event["result"].get("conversation_id") != init_conversation:
+                        return None
                     saw_terminal = True
                     result = event["result"]
     except OSError:
         return None
-    if not saw_terminal or not isinstance(result, dict) or str(result.get("status", "")).upper() != "SUCCESS":
+    if not saw_terminal or not isinstance(result, dict):
+        return None
+    return result
+
+
+def _quota_terminal_failure(stream: Path, version: str) -> tuple[str, int | None] | None:
+    if version != "1.1.13":
+        return None
+    result = _terminal_result(stream, strict=True)
+    if result is None or set(result) != QUOTA_RESULT_FIELDS:
+        return None
+    if result.get("status") != "ERROR" or result.get("response") != "":
+        return None
+    conversation = result.get("conversation_id")
+    if not isinstance(conversation, str) or CONVERSATION_RE.fullmatch(conversation) is None:
+        return None
+    if (
+        type(result.get("duration_seconds")) not in (int, float)
+        or not math.isfinite(result["duration_seconds"])
+        or result["duration_seconds"] < 0
+    ):
+        return None
+    if type(result.get("num_turns")) is not int or result["num_turns"] < 0:
+        return None
+    if not isinstance(result.get("usage"), dict) or not isinstance(result.get("json_schema"), dict):
+        return None
+    error = result.get("error")
+    if not isinstance(error, str) or len(error) > 256:
+        return None
+    match = QUOTA_ERROR_1_1_13_RE.fullmatch(error)
+    if match is None:
+        return None
+    hours = int(match.group("hours") or 0)
+    minutes = int(match.group("minutes") or 0)
+    seconds = int(match.group("seconds") or 0)
+    retry = hours * 3600 + minutes * 60 + seconds
+    if minutes >= 60 or seconds >= 60 or not (1 <= retry <= MAX_PROVIDER_RETRY_SECONDS):
+        retry = None
+    return "provider_quota_exhausted", retry
+
+
+def _validate_terminal_envelope(
+    stream: Path, envelope: Path, schema: str,
+) -> tuple[str, tuple[int, int, int, int, int]] | None:
+    result = _terminal_result(stream)
+    if result is None or str(result.get("status", "")).upper() != "SUCCESS":
         return None
     value = result.get("structured_output")
     if not isinstance(value, dict):
@@ -1327,8 +1455,18 @@ def controller(job: Path, ownership_fd: int) -> int:
             os.fsync(stderr_fd)
             elapsed = float(state["attempt_base_elapsed"]) + time.monotonic() - started_mono
             result_binding: tuple[str, tuple[int, int, int, int, int]] | None = None
+            provider_retry_after: int | None = None
+            provider_retry_observed: float | None = None
             if reason is None:
-                if returncode != 0:
+                terminal_failure = _quota_terminal_failure(
+                    stream_path,
+                    command["agy_version"] if command["agy_version_observed"] else "",
+                )
+                if terminal_failure is not None:
+                    reason, provider_retry_after = terminal_failure
+                    if provider_retry_after is not None:
+                        provider_retry_observed = time.time()
+                elif returncode != 0:
                     reason = _classify_stderr(stderr_path, command["agy_version"], returncode)
                 elif sizes["stdout"] == 0:
                     reason = "empty_output"
@@ -1393,6 +1531,9 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if current["cancel_requested"]:
                     reason, final_status, exit_code = "cancelled", "cancelled", EXIT_BY_REASON["cancelled"]
                     result_path = None
+                if reason != "provider_quota_exhausted":
+                    provider_retry_after = None
+                    provider_retry_observed = None
                 updates = {
                     "status": final_status,
                     "reason": reason,
@@ -1408,6 +1549,8 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "continue_available": False,
                     "remote_cancel_unverified": reason in {"cancelled", "interrupted"},
                     "limit_kind": limit_kind,
+                    "provider_retry_after_seconds": provider_retry_after,
+                    "provider_retry_observed_epoch": provider_retry_observed,
                 }
                 if current["workflow"] == "project":
                     if boundary_failed:

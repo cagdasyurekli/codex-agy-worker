@@ -1081,10 +1081,10 @@ official_github_rc=$?
 printf '%s\n' "$OFFICIAL_GITHUB_TEST_OUTPUT"
 OFFICIAL_GITHUB_RESULT="$(printf '%s\n' "$OFFICIAL_GITHUB_TEST_OUTPUT" | tail -1)"
 if [[ "$official_github_rc" == 0 \
-        && "$OFFICIAL_GITHUB_RESULT" == "OFFICIAL_GITHUB_TEST_RESULT passed=60 failed=0" ]]; then
-    pass=$((pass+60))
+        && "$OFFICIAL_GITHUB_RESULT" == "OFFICIAL_GITHUB_TEST_RESULT passed=65 failed=0" ]]; then
+    pass=$((pass+65))
 else
-    bad "fixed official GitHub transport tests (expected 60 controlled passes)"
+    bad "fixed official GitHub transport tests (expected 65 controlled passes)"
 fi
 
 COMPATIBILITY_PROBE_TEST_OUTPUT="$($REAL_PYTHON_REAL -B "$ROOT/tests/test-compatibility-probe.py" 2>&1)"

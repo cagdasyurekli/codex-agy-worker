@@ -645,8 +645,9 @@ local-Git TCB, not human identity or a cryptographic signature.
 Fast upstream release cadence must not turn review drift into a total product
 lockout. Keep matrix-derived model/effort resolution exact-version/source bound, but
 let the no-selector path defer to agy's own default. If the caller explicitly accepts
-the risk, a separate CLI-only literal slug may pass through once without a version
-probe; its artifact must say unreconciled and carry no matrix, provider, cost,
+the risk, a separate CLI-only literal slug may pass through once without a matrix
+lookup; its bounded version observation is diagnostic and non-gating. Its artifact
+must say unreconciled and carry no matrix, provider, cost,
 recommendation, fallback, or routing authority.
 
 A local notifier is a process supervisor, not a cron-shaped shell shortcut. Bind the
@@ -679,6 +680,14 @@ size and bytes actually read, parse direct inputs through the same ceiling, and 
 child stdout incrementally before it can exhaust memory. CI checkout credentials are
 another ambient capability: disable persistence unless a later reviewed step needs
 them, even when repository workflow permissions are read-only.
+
+A provider failure label needs two independent bindings: a structurally exact terminal
+event and the observed CLI version that emitted it. Baseline compatibility metadata is
+not proof of the runtime version for an unreconciled literal model. Observe that version
+through the same bounded process-owning probe, let probe failure remain non-gating, and
+classify only an exact reviewed shape. Publish a sanitized countdown, never the error
+string, and never turn retry metadata into an automatic sleep, retry, restart, or model
+change.
 
 Untrusted feedback prose is agent input, even when it arrives through a familiar
 GitHub issue form. A prompt-injection blacklist or a security-keyword classifier is

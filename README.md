@@ -132,10 +132,12 @@ or chases a moved directory. This is not same-user tamper resistance. See
 [The product roadmap](docs/ROADMAP.md) records dependency-ordered feature slices and
 their explicit implemented or deferred status. The published **v0.6.0 release scope**
 added the reviewed Gemini 3.7 Flash low/medium/high mappings and hardened the capture
-child mode and dispatch-state snapshot boundaries. The implemented, offline-verified
-**v0.7.0 release candidate** adds usability-first explore/task/project workflows and
-same-conversation repair; its tag, release, and live-provider gates remain separate
-and are not claimed here. The published v0.5.0
+child mode and dispatch-state snapshot boundaries. The published **v0.7.0** scope adds
+usability-first explore/task/project workflows and same-conversation repair. The
+implemented, offline-verified **v0.8.0 release candidate** adds explicit notifier
+maintenance/rebind handling, bounded annotated-tag resolution, version-drift
+observations, and the exact agy 1.1.13 quota-terminal classification; its tag and
+release gates remain separate and are not claimed here. The published v0.5.0
 scope added sanitized bug/improvement drafts with exact double confirmation,
 private-only security drafts, and the bounded metadata-only feedback aggregate and
 weekly/manual watcher. The prior v0.4.0 scope includes daily compatibility observation,
@@ -181,8 +183,12 @@ release/source, retained snapshot, separately authorized 14-slug account capture
 (the earlier eleven retained plus Gemini 3.7 Flash low/medium/high), and reviewed
 pair-to-compound-slug mappings are reconciled in
 [`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md). The agy-owned default
-and explicit literal pass-through remain version-independent. Codex CLI `0.147.0` is
-the current observational baseline.
+and explicit literal pass-through remain version-independent. The checked-in
+`1.1.16` agy and `0.148.0` Codex interface observations are deliberately not promoted
+to those baselines: they preserve update evidence while `--model`/effort resolution
+remains unavailable for agy `1.1.16` until a separately authorized account capture and
+review. See [`compat/reviews/agy-1.1.16-interface.md`](compat/reviews/agy-1.1.16-interface.md)
+and [`compat/reviews/codex-0.148.0.md`](compat/reviews/codex-0.148.0.md).
 
 Before spending provider quota, run the offline doctor against the repository you
 plan to delegate:
@@ -487,7 +493,7 @@ profile sources.
 | `--tier cheap|bulk|hard|hardest|default` | `AGY_WORKER_TIER` | explicit legacy tier; a model label is also accepted |
 | `--model EXACT_MODEL` | `AGY_WORKER_MODEL` | reviewed exact slug, or adjustable base used with effort |
 | `--effort low|medium|high` | `AGY_WORKER_EFFORT` | requires an adjustable base and resolves to one exact slug |
-| `--literal-model EXACT_SLUG` | — | CLI-only caller-owned pass-through; no matrix/version claim |
+| `--literal-model EXACT_SLUG` | — | CLI-only caller-owned pass-through; no matrix claim. A bounded non-gating version observation may support exact diagnostics without changing the selected model. |
 | `--workdir DIR` | — | agy's workspace |
 | `--add-dir DIR` | — | repeatable file-tool root; must resolve inside `--workdir` |
 | `--persona NAME` | — | Optional bounded worker-role prompt; it does not authorize work or prove quality. |
@@ -502,13 +508,21 @@ Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid 
 `17` provider timeout (reserved) · `18` authentication failure (reserved) ·
 `19` provider unavailable (reserved) ·
 `20` local status unavailable · `21` resume failure · `22` cancelled ·
-`23` output oversized · `64` invalid usage.
+`23` output oversized · `24` provider quota exhausted · `64` invalid usage.
 
 The reserved `17`–`19` exits require an exact, version-bound reviewed signature.
 The current agy `1.1.12` signature allowlist is intentionally empty, so an unproven
 provider timeout, authentication error, or provider outage remains
 `agy_failed_unclassified` with exit `5`; the supervisor does not infer a reason from
 free-form stderr.
+
+Exit `24` is narrower than a general rate-limit classifier. It currently recognizes
+only the exact, structurally valid agy `1.1.13` terminal quota shape reviewed for
+Issue #59. Status exposes only a bounded, decreasing `retry_after_seconds`; it never
+prints the error text, conversation, prompt, model, path, envelope, or raw log. The
+worker does not sleep, retry, restart, or change the caller's model automatically.
+Other versions, altered prose, generic `429`/`RESOURCE_EXHAUSTED` text, malformed
+events, and unknown terminal errors remain `agy_failed_unclassified`.
 
 `init`, `step_update`, and terminal `result` events renew only an idle lease. They
 never prove success and never extend the hard deadline or the caller-owned maximum.
@@ -954,6 +968,7 @@ check once per day and displays a notification only when a drift fingerprint cha
 ./update-notifier.sh install
 ./update-notifier.sh status
 ./update-notifier.sh run       # manual one-shot check
+./update-notifier.sh refresh   # explicit rebind after a maintenance-required status
 ./update-notifier.sh uninstall
 ```
 
@@ -963,13 +978,18 @@ fixed bounded read-only HTTPS observations and read-only local Git inspection. I
 never applies an update, edits a baseline, invokes agy/Codex/provider work, or reads
 personal configuration. Installation binds the complete behavior-bearing source
 manifest, canonical account HOME, exact launchd label, private state, and an
-authenticated resumable uninstall ledger. Source drift requires uninstall/install.
+authenticated resumable uninstall ledger. Source drift enters an explicit maintenance
+state rather than silently rebinding the installed snapshot.
 Signals, overlapping operations, ambiguous launchctl outcomes, nested process groups,
 and replacement files fail closed. A completed uninstall intentionally retains an
 authenticated inert ledger/tombstone, prior result, and lock so recovery and
 notification deduplication remain resumable across reinstall; additional private
-residuals may remain on drift or failure. A
-notification attempt is the final irreversible UI side effect and cannot be retracted.
+residuals may remain on drift or failure. A valid loaded notifier now reports source
+drift as `maintenance-required`, sends at most one sanitized maintenance notification,
+and pauses ordinary monitoring until the owner explicitly runs `refresh`; refresh
+rebinds only through the existing serialized uninstall/install lifecycle and never
+updates code, metadata, or a tool. A notification attempt is the final irreversible
+UI side effect and cannot be retracted.
 
 The separate optional [measurement ledger](docs/MEASUREMENT.md) records only explicit
 sanitized public evidence and renders fixed 30/60/90-day reports. Neither watcher nor
@@ -1224,6 +1244,9 @@ to GitHub or feeds issue text to an agent.
 Most facts below were measured on macOS with agy 1.1.9 on 2026-08-01. The current
 1.1.12 model reconciliation is recorded separately. Run `./ground-truth.sh` against
 your own install rather than treating historical observations as a current contract.
+Its default interface phase calls only `agy --version` and `agy --help`; use
+`./ground-truth.sh --account` only when you explicitly authorize inspection of
+account-owned agy state such as models, agents, plugins, and local permissions.
 
 - **`--print` must be built last.** The prompt is its argument value; agy ignores stdin
   in print mode and will read the next flag as the message. `agy --print --sandbox "x"`
@@ -1300,7 +1323,7 @@ conformance/v1/               pinned manifest, envelopes, and repository content
 model-recommendation.sh       repository compatibility wrapper for the advisory
 model-selection.sh            repository compatibility wrapper for explicit resolution
 doctor.sh                     repository wrapper for offline read-only diagnostics
-ground-truth.sh               dump live agy facts for skill authoring
+ground-truth.sh               safe live agy version/help facts; --account explicitly adds account-state inventory
 update.sh                     explicit release + agy/Codex compatibility check/apply
 bug-report.sh                 sanitized local draft/preview/optional submission
 feedback-triage.sh            bounded metadata-only feedback aggregate
@@ -1345,10 +1368,10 @@ tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
-tests/test-agy-worker.sh      276-case offline dispatcher/installer/routing/lifecycle suite
-tests/test-update.sh          319-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
+tests/test-agy-worker.sh      281-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-update.sh          324-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
-tests/test-official-github.py test-only fixed-endpoint transport adversary harness
+tests/test-official-github.py 65-case fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
 tests/test-version-attestation-runner.py  165-case offline canonical fixed-profile runner suite
 tests/test-version-bootstrap-runner.py  139-case offline retained-recovery bootstrap suite
@@ -1361,11 +1384,11 @@ tests/test-models-capture-profile.py 121-case offline canonical capture-profile 
 tests/test-models-capture-1-1-12-profile.py 30-case offline fixed 1.1.12 capture-profile suite
 tests/test-models-capture-1-1-12-runner.py 56-case offline fixed 1.1.12 capture-runner suite (86 combined with profile)
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
-tests/test-update-notifier.py 60-case offline local notifier lifecycle/signal suite
+tests/test-update-notifier.py 73-case offline local notifier lifecycle/signal/maintenance suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite
-tests/test-packaging.sh       365-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       366-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite

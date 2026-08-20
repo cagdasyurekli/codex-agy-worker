@@ -164,6 +164,11 @@ offer exact-conversation `resume`, explicit fresh `restart`, or stop. If an agen
 implementation attempt makes a repeated semantic mistake, raise independent review
 quality rather than lowering standards or silently changing caller-owned agy settings.
 
+An exact agy `1.1.13` terminal quota response may appear as exit `24` with a sanitized
+`retry_after_seconds` countdown. Treat it as a stop/explicit-resume decision: never
+sleep, retry, restart, or change the selected model automatically. The classifier is
+version- and byte-shape-bound; other quota/rate-limit prose remains unclassified.
+
 For bugs or improvement reports, use the local draft-first `bug-report.sh` flow. It
 requires review of the exact sanitized body and its matching SHA-256 before any GitHub
 submission; never submit feedback automatically.

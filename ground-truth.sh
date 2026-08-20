@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ground-truth.sh — emit live, verified facts about this agy install.
+# ground-truth.sh — emit bounded live interface facts about this agy install.
 #
 # WHY THIS EXISTS (the core finding of the 2026-08-01 research):
 # When agy was asked to research its own CLI, it confidently invented `agy run`,
@@ -9,29 +9,56 @@
 # unreliable, so any agent AUTHORING agy skills must read this output first and
 # treat it — not its own recollection — as ground truth.
 #
-# Feed the output of this script into the skill-authoring prompt.
+# The default interface phase is deliberately safe to run before a provider or
+# account review: it invokes only `agy --version` and `agy --help`. The optional
+# account phase is a separate explicit action because `models`, `agents`, plugin
+# discovery, and the local settings file may inspect account-owned state.
+#
+# Feed only the phase you intentionally ran into a skill-authoring prompt.
 set -euo pipefail
 
+phase="interface"
+case "$#" in
+    0) ;;
+    1)
+        if [[ "${1:-}" == "--account" ]]; then
+            phase="account"
+        else
+            printf '%s\n' 'usage: ground-truth.sh [--account]' >&2
+            exit 64
+        fi
+        ;;
+    *)
+        printf '%s\n' 'usage: ground-truth.sh [--account]' >&2
+        exit 64
+        ;;
+esac
+
 echo "# agy ground truth — generated $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo
+echo "## phase"
+printf '%s\n' "$phase"
 echo
 echo "## version"
 agy --version 2>&1 || echo "(agy --version failed)"
 echo
 echo "## documented installed flags and subcommands"
 agy --help 2>&1 || echo "(agy --help failed)"
-echo
-echo "## models available to --model"
-agy models 2>&1 || echo "(agy models failed)"
-echo
-echo "## agents available to --agent"
-agy agents 2>&1 || echo "(agy agents failed)"
-echo
-echo "## installed plugins"
-agy plugin list 2>&1 || echo "(agy plugin list failed)"
-echo
-echo "## headless permission allowlist"
-echo "Commands NOT in this list are auto-denied under 'agy -p' with no prompt."
-python3 - <<'PY' 2>&1 || echo "(could not read settings.json)"
+
+if [[ "$phase" == "account" ]]; then
+    echo
+    echo "## models available to --model (account phase)"
+    agy models 2>&1 || echo "(agy models failed)"
+    echo
+    echo "## agents available to --agent (account phase)"
+    agy agents 2>&1 || echo "(agy agents failed)"
+    echo
+    echo "## installed plugins (account phase)"
+    agy plugin list 2>&1 || echo "(agy plugin list failed)"
+    echo
+    echo "## headless permission allowlist (account phase)"
+    echo "Commands NOT in this list are auto-denied under 'agy -p' with no prompt."
+    python3 - <<'PY' 2>&1 || echo "(could not read settings.json)"
 import json, os
 p = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
 d = json.load(open(p))
@@ -39,6 +66,7 @@ perms = d.get("permissions", {})
 for key in ("allow", "ask", "deny"):
     print(f"{key}: {perms.get(key)}")
 PY
+fi
 echo
 cat <<'EOF'
 ## verified behavioural facts (empirical, 2026-08-01, agy 1.1.9)
