@@ -667,6 +667,16 @@ notification needs an acknowledgement that nested groups actually closed. A desk
 notification is an irreversible final side effect; record only an attempt and never
 claim it can be rolled back.
 
+Expanding a closed notifier source manifest is also a state-schema migration. Exact
+key equality is appropriate for new installs, but applying the new key set before an
+old authenticated installation can exercise its uninstall authority makes `refresh`
+unusable precisely when it is needed. Preserve a narrowly versioned legacy-ledger
+decoder for supported immediately-prior releases: validate the historical key set,
+digests, source/Git identity, tombstone, replacements, and launchd state under the old
+contract, then cross the boundary through uninstall plus a fresh current install.
+Never solve this by accepting arbitrary subsets, rewriting private authority in place,
+or deleting a malformed ledger without historical authentication.
+
 An accumulating measurement ledger must age records out per reporting horizon rather
 than become invalid when the first record expires. Store only closed aggregate
 metrics, opaque observation IDs, exact revisions, and explicitly public evidence.

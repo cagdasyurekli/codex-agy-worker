@@ -136,10 +136,10 @@ child mode and dispatch-state snapshot boundaries. The published **v0.7.0** scop
 usability-first explore/task/project workflows and same-conversation repair. The
 published **v0.8.0** scope adds explicit notifier
 maintenance/rebind handling, bounded annotated-tag resolution, version-drift
-observations, and the exact agy 1.1.13 quota-terminal classification. The **v0.9.0
-release candidate** activates the exact agy 1.1.16 version/source/distribution and
+observations, and the exact agy 1.1.13 quota-terminal classification. The published
+**v0.9.0** scope activates the exact agy 1.1.16 version/source/distribution and
 unchanged 14-slug inventory binding, and accepts Codex 0.148.0 as an observational
-baseline. Tag and GitHub release state remain separate publication gates. The published v0.5.0
+baseline. The published v0.5.0
 scope added sanitized bug/improvement drafts with exact double confirmation,
 private-only security drafts, and the bounded metadata-only feedback aggregate and
 weekly/manual watcher. The prior v0.4.0 scope includes daily compatibility observation,
