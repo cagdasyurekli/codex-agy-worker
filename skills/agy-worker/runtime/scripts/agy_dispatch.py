@@ -683,7 +683,8 @@ def validate_state(value: Any) -> dict[str, Any]:
     if value["status"] in TERMINAL:
         if value["finished_epoch"] is None or value["exit_code"] is None:
             raise DispatchError("terminal dispatch state is incomplete")
-    if value["schema_version"] == 5 and value["workflow"] != "legacy":
+    lifecycle_enabled = value["schema_version"] == 5
+    if lifecycle_enabled:
         if value["phase"] not in LIFECYCLE_PHASES:
             raise DispatchError("dispatch lifecycle phase is invalid")
         if value["assurance"] not in {"pending", "verified", "partially_verified", "rejected", "blocked"}:
@@ -709,6 +710,30 @@ def validate_state(value: Any) -> dict[str, Any]:
             or value["resume_available"] or value["continue_available"]
         ):
             raise DispatchError("orphaned dispatch state must remain preserve-only")
+        if value["workflow"] == "legacy":
+            active = value["status"] in {"queued", "running", "cancel-requested"}
+            if value["continue_available"]:
+                raise DispatchError("legacy lifecycle cannot continue as repair")
+            if active and (
+                value["phase"] != "dispatching"
+                or value["assurance"] != "pending"
+                or value["driver_disposition"] != "not_applicable"
+            ):
+                raise DispatchError("active legacy lifecycle is invalid")
+            if not active and inaccessible_candidate and (
+                value["phase"] != "blocked" or value["assurance"] != "blocked"
+            ):
+                raise DispatchError("blocked legacy candidate lifecycle is invalid")
+            if not active and value["candidate_recognized"] and not inaccessible_candidate and (
+                value["phase"] != "awaiting-verification"
+                or value["assurance"] != "pending"
+                or value["driver_disposition"] != "unreviewed"
+            ):
+                raise DispatchError("legacy candidate lifecycle is invalid")
+            if not active and not value["candidate_recognized"] and (
+                value["phase"] != "attempt-failed" or value["assurance"] != "pending"
+            ):
+                raise DispatchError("failed legacy lifecycle is invalid")
     elif value["schema_version"] == 5 and (value["phase"] is not None or value["assurance"] is not None or value["continue_available"]):
         raise DispatchError("legacy state has lifecycle status")
     elif value["schema_version"] != 5 and value["workflow"] == "project":
@@ -804,8 +829,8 @@ def initial_state(
         "workflow": workflow,
         "max_cycles": max_cycles,
         "cycle": attempt,
-        "phase": "dispatching" if workflow != "legacy" else None,
-        "assurance": "pending" if workflow != "legacy" else None,
+        "phase": "dispatching",
+        "assurance": "pending",
         "check_summary": None,
         "check_counts": {"passed": 0, "failed": 0, "advisory": 0, "missing": 0},
         "verification_path": None,
@@ -852,7 +877,15 @@ def _upgrade_legacy_state(
     value = dict(state)
     if value["phase"] == "provider-failed":
         value["phase"] = "attempt-failed"
-    if value["workflow"] != "legacy":
+    if value["workflow"] == "legacy":
+        if value["candidate_recognized"]:
+            value["phase"] = "awaiting-verification"
+        elif value["status"] in TERMINAL:
+            value["phase"] = "attempt-failed"
+        else:
+            value["phase"] = "dispatching"
+        value["assurance"] = "pending"
+    else:
         if value["attempt_origin"] == "conversation-continue" and value["status"] == "failed":
             value["phase"] = "repair-failed"
         elif value["candidate_recognized"]:
@@ -962,7 +995,10 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
         "failure_stage": value["failure_stage"],
         "last_activity": value["last_activity"],
         "next_action": value["next_action"],
-        "next_action_command": value["next_action_command"],
+        # Stored state records only the semantic action.  Commands are derived
+        # from the current public snapshot so their approval SHA cannot go stale
+        # inside an otherwise unchanged state file.
+        "next_action_command": _safe_next_action(value, sha),
         "job_id": value["job_id"],
         "last_progress_age_seconds": None if last_age is None else round(last_age, 3),
         "limit_kind": value["limit_kind"],
@@ -985,6 +1021,65 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
 def print_json(value: Any) -> None:
     sys.stdout.buffer.write(canonical(value))
     sys.stdout.buffer.flush()
+
+
+def _safe_next_action(value: dict[str, Any], sha: str) -> str | None:
+    """Build a copy/pasteable command from public controller data only."""
+    job = value["job_id"]
+    action = value["next_action"]
+    if action == "wait":
+        return f"agy-worker.sh wait --job-id {job} --after-state-sha {sha} --format text"
+    if action == "resume":
+        return f"agy-worker.sh resume --job-id {job} --approve-state-sha {sha} --format text"
+    if action == "driver_review":
+        return f"agy-worker.sh result --job-id {job} --format json"
+    # Final assurance and its bound verification input are driver-owned.  A
+    # blocked or completed state likewise has no safe executable suggestion.
+    return None
+
+
+def print_text_status(value: dict[str, Any], sha: str) -> None:
+    """Print exactly three private-data-free lines for the human CLI surface."""
+    completed = value["driver_disposition"] in {"verified", "partially_verified"}
+    outcome = "completed" if completed else "not completed"
+    counts = value["check_counts"]
+    present = value["worktree_changes_present"]
+    changed = value["worktree_changed_since_dispatch"]
+    present_text = "unknown" if present is None else str(present).lower()
+    changed_text = "unknown" if changed is None else str(changed).lower()
+    safe_action = _safe_next_action(value, sha)
+    next_action = safe_action or f"{value['next_action']} (no automatic command)"
+    lines = (
+        f"Outcome: {value['status']} ({outcome}); driver disposition: {value['driver_disposition']}.",
+        f"Driver evidence: {counts['passed']} passed, {counts['failed']} failed, "
+        f"{counts['advisory']} advisory, {counts['missing']} missing; limits: cycle "
+        f"{value['cycle']}/{value['max_cycles']}, worktree reconciliation "
+        f"{value['worktree_reconciliation']}, worktree changes present {present_text}, "
+        f"changed since dispatch {changed_text}.",
+        f"Next action: {next_action}",
+    )
+    sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+
+def print_control_status(value: dict[str, Any], sha: str, output_format: str) -> None:
+    if output_format == "text":
+        print_text_status(value, sha)
+    else:
+        print_json(public_status(value, sha))
+
+
+def _state_approval_error(state: dict[str, Any], sha: str, action: str) -> DispatchError:
+    """Keep stale approval recovery useful without exposing private controller data."""
+    return DispatchError(
+        "state approval is missing or stale; rerun: "
+        f"agy-worker.sh {action} --job-id {state['job_id']} --approve-state-sha {sha}"
+    )
+
+
+def _missing_state_approval(job: Path, action: str) -> DispatchError:
+    state, _raw, sha = read_state_snapshot(job)
+    return _state_approval_error(state, sha, action)
 
 
 def _attempt_paths(job: Path, attempt: int) -> tuple[Path, Path, Path]:
@@ -2212,7 +2307,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "provider_retry_after_seconds": provider_retry_after,
                     "provider_retry_observed_epoch": provider_retry_observed,
                 }
-                if current["workflow"] != "legacy":
+                if current["schema_version"] == 5:
                     if boundary_failed or candidate_unavailable:
                         updates.update({"phase": "blocked", "assurance": "blocked"})
                     elif candidate_recognized:
@@ -2271,7 +2366,12 @@ def create_state(
         if resume:
             state, raw, sha = load_state(job)
             if approve_sha != sha:
-                raise DispatchError("continuation state approval is stale")
+                action = {
+                    "conversation-resume": "resume",
+                    "fresh-restart": "restart",
+                    "conversation-continue": "continue",
+                }[origin]
+                raise _state_approval_error(state, sha, action)
             _load_bound_command(job, state, stage_readonly=False)
             if state["schema_version"] != 5:
                 state = _upgrade_legacy_state(state, command)
@@ -2377,6 +2477,7 @@ def create_state(
 def spawn(
     job: Path, origin: str, *, resume: bool, foreground: bool,
     approve_sha: str | None = None, verification: dict[str, Any] | None = None,
+    output_format: str = "json",
 ) -> int:
     parent_signal: int | None = None
     completion_blocked = False
@@ -2434,7 +2535,7 @@ def spawn(
             _terminate(controller_process)
         return 128 + parent_signal
       if not foreground:
-        print_json(public_status(current, sha))
+        print_control_status(current, sha, output_format)
         return 0
       while controller_process.poll() is None:
         if parent_signal is not None and not forwarded:
@@ -2526,7 +2627,7 @@ def _terminal_projection(
             "next_action": "resume" if resume_eligible else "blocked",
             "next_action_command": None,
         })
-    if state["workflow"] != "legacy":
+    if state["schema_version"] == 5:
         updates.update({
             "phase": "blocked" if candidate_unavailable else ("awaiting-verification" if candidate else "attempt-failed"),
             "assurance": "blocked" if candidate_unavailable else "pending",
@@ -2568,7 +2669,7 @@ def _terminalize_queued_signal(job: Path, number: int) -> None:
         ))
 
 
-def command_status(job: Path) -> int:
+def command_status(job: Path, output_format: str = "json") -> int:
     state, _raw, sha = read_state_snapshot(job)
     if state["status"] in {"queued", "running", "cancel-requested"}:
         try:
@@ -2582,27 +2683,27 @@ def command_status(job: Path) -> int:
         except DispatchError as exc:
             if str(exc) != "dispatch controller is active":
                 raise
-    print_json(public_status(state, sha))
+    print_control_status(state, sha, output_format)
     return 0
 
 
-def command_wait(job: Path, after: str, timeout: float) -> int:
+def command_wait(job: Path, after: str, timeout: float, output_format: str = "json") -> int:
     if SHA_RE.fullmatch(after) is None or not (0 <= timeout <= MAX_STATUS_WAIT):
         raise DispatchError("wait arguments are invalid")
     deadline = time.monotonic() + timeout
     while True:
         state, _raw, sha = read_state_snapshot(job)
         if sha != after or state["status"] in TERMINAL:
-            print_json(public_status(state, sha))
+            print_control_status(state, sha, output_format)
             return 0
         if time.monotonic() >= deadline:
-            print_json(public_status(state, sha))
+            print_control_status(state, sha, output_format)
             return 0
         time.sleep(min(0.20, max(0.0, deadline - time.monotonic())))
 
 
-def command_result(job: Path) -> int:
-    state, _raw, _sha = read_state_snapshot(job)
+def command_result(job: Path, output_format: str = "json") -> int:
+    state, _raw, sha = read_state_snapshot(job)
     result_path = state["result_path"]
     result_sha = state["result_sha256"]
     result_identity = state["result_identity"]
@@ -2637,29 +2738,32 @@ def command_result(job: Path) -> int:
     ]
     if any(item.returncode != 0 for item in checked):
         raise DispatchError("dispatch result is no longer valid")
-    sys.stdout.buffer.write(raw)
-    sys.stdout.buffer.flush()
+    if output_format == "text":
+        print_text_status(state, sha)
+    else:
+        sys.stdout.buffer.write(raw)
+        sys.stdout.buffer.flush()
     return 0
 
 
-def command_continue(job: Path, approve_sha: str) -> int:
+def command_continue(job: Path, approve_sha: str, output_format: str = "json") -> int:
     verification = _verification_from_stdin()
     if not verification["failed_checks"] and verification["missing_checks"] == 0:
         raise DispatchError("project continuation requires one failed or missing check")
     return spawn(
         job, "conversation-continue", resume=True, foreground=False,
-        approve_sha=approve_sha, verification=verification,
+        approve_sha=approve_sha, verification=verification, output_format=output_format,
     )
 
 
-def command_finalize(job: Path, approve_sha: str, assurance: str) -> int:
+def command_finalize(job: Path, approve_sha: str, assurance: str, output_format: str = "json") -> int:
     if assurance not in {"verified", "partially_verified", "rejected", "blocked"}:
         raise DispatchError("project assurance is invalid")
     verification = _verification_from_stdin()
     with state_lock(job):
         state, raw, sha = load_state(job)
         if sha != approve_sha:
-            raise DispatchError("dispatch finalization is stale or unavailable")
+            raise _state_approval_error(state, sha, "finalize")
         command = _load_bound_command(job, state, stage_readonly=False)
         if state["schema_version"] != 5:
             state = _upgrade_legacy_state(state, command)
@@ -2706,7 +2810,7 @@ def command_finalize(job: Path, approve_sha: str, assurance: str) -> int:
         except Exception:
             _discard_new_verification(path, identity)
             raise
-    print_json(public_status(state, sha))
+    print_control_status(state, sha, output_format)
     return 0
 
 
@@ -2715,7 +2819,9 @@ def command_control(job: Path, action: str, approve_sha: str, seconds: float | N
         raise DispatchError("state approval is invalid")
     with state_lock(job):
         state, raw, sha = load_state(job)
-        if sha != approve_sha or state["status"] not in {"queued", "running", "cancel-requested"}:
+        if sha != approve_sha:
+            raise _state_approval_error(state, sha, action)
+        if state["status"] not in {"queued", "running", "cancel-requested"}:
             raise DispatchError("state approval is stale or dispatch is terminal")
         if action == "cancel":
             if state["cancel_requested"]:
@@ -2765,15 +2871,19 @@ def parser() -> Parser:
         if name == "controller":
             item.add_argument("--ownership-fd", required=True, type=int)
         if name in {"resume", "restart", "continue"}:
-            item.add_argument("--approve-state-sha", required=True)
+            item.add_argument("--approve-state-sha", required=name != "resume")
+        if name in {"resume", "restart", "continue", "status", "result"}:
+            item.add_argument("--format", choices=("json", "text"), default="json")
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--job-dir", required=True)
     finalize.add_argument("--approve-state-sha", required=True)
     finalize.add_argument("--assurance", required=True)
+    finalize.add_argument("--format", choices=("json", "text"), default="json")
     wait = commands.add_parser("wait")
     wait.add_argument("--job-dir", required=True)
     wait.add_argument("--after-state-sha", required=True)
     wait.add_argument("--timeout", type=duration, default=60.0)
+    wait.add_argument("--format", choices=("json", "text"), default="json")
     for name in ("cancel", "extend"):
         item = commands.add_parser(name)
         item.add_argument("--job-dir", required=True)
@@ -2795,25 +2905,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "start":
         return spawn(job, "initial", resume=False, foreground=False)
     if args.command == "resume":
+        if args.approve_state_sha is None:
+            raise _missing_state_approval(job, "resume")
         return spawn(
             job, "conversation-resume", resume=True, foreground=False,
-            approve_sha=args.approve_state_sha,
+            approve_sha=args.approve_state_sha, output_format=args.format,
         )
     if args.command == "restart":
         return spawn(
             job, "fresh-restart", resume=True, foreground=False,
-            approve_sha=args.approve_state_sha,
+            approve_sha=args.approve_state_sha, output_format=args.format,
         )
     if args.command == "continue":
-        return command_continue(job, args.approve_state_sha)
+        return command_continue(job, args.approve_state_sha, args.format)
     if args.command == "status":
-        return command_status(job)
+        return command_status(job, args.format)
     if args.command == "wait":
-        return command_wait(job, args.after_state_sha, args.timeout)
+        return command_wait(job, args.after_state_sha, args.timeout, args.format)
     if args.command == "result":
-        return command_result(job)
+        return command_result(job, args.format)
     if args.command == "finalize":
-        return command_finalize(job, args.approve_state_sha, args.assurance)
+        return command_finalize(job, args.approve_state_sha, args.assurance, args.format)
     if args.command in {"cancel", "extend"}:
         return command_control(
             job, args.command, args.approve_state_sha,

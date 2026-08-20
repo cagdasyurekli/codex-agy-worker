@@ -96,6 +96,7 @@ pipeline_runtime_complete() {
 
     for required in \
         schemas/worker-result.schema.json \
+        schemas/worker-result.provider.schema.json \
         schemas/evidence-receipt.schema.json \
         schemas/model-selection.schema.json \
         schemas/model-recommendation.schema.json \

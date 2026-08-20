@@ -357,6 +357,13 @@ case "${FAKE_DISPATCH_MODE:-result}" in
         ;;
     heartbeat-success)
         printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+        if [[ -n "${FAKE_HEARTBEAT_BARRIER_READY:-}" \
+                && -n "${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" ]]; then
+            : > "$FAKE_HEARTBEAT_BARRIER_READY"
+            while [[ ! -e "$FAKE_HEARTBEAT_BARRIER_RELEASE" ]]; do
+                sleep 0.01
+            done
+        fi
         heartbeat_count="${FAKE_HEARTBEAT_COUNT:-8}"
         heartbeat_delay="${FAKE_HEARTBEAT_DELAY:-0.10}"
         heartbeat_index=0
@@ -404,6 +411,8 @@ if [[ "${FAKE_DISPATCH_MODE:-result}" == "result" ]]; then
 fi
 if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
+elif [[ "${FAKE_WORKER_VERIFIED:-0}" == "1" ]]; then
+    envelope='{"status":"completed","summary":"Verified private-worker-prose-sentinel","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 else
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 fi
@@ -443,6 +452,7 @@ run_worker() {
     FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
     FAKE_ERROR_LINE="${FAKE_ERROR_LINE:-}" \
     FAKE_QUOTA_ERROR="${FAKE_QUOTA_ERROR:-}" \
+    FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
@@ -451,6 +461,18 @@ run_worker() {
 
 echo "agy-worker.sh offline test suite"
 echo
+
+"$WORKER" --help > "$TMP/help.out" 2> "$TMP/help.err"
+help_rc=$?
+if [[ "$help_rc" == 64 && ! -s "$TMP/help.out" ]] \
+        && grep -Fqx 'Workflow cycle limits: explore/task 1..2 (default 2); project 1..5 (default 5).' \
+            "$TMP/help.err" \
+        && grep -Fqx -- '--max-cycles requires an explicit workflow; legacy raw mode remains one attempt.' \
+            "$TMP/help.err"; then
+    ok "help states workflow-specific cycle limits"
+else
+    bad "help workflow-specific cycle limits"
+fi
 
 printf 'small task\n' | run_worker tier --tier cheap > "$TMP/tier.out" 2> "$TMP/tier.err"
 rc=$?
@@ -1668,6 +1690,7 @@ control_worker() {
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
         FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
+        FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
         "$WORKER" "$action" --job-id "$job" "$@"
 }
 start_worker() {
@@ -1684,6 +1707,7 @@ start_worker() {
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
         FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
+        FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
         "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$workdir" "$@"
 }
 
@@ -1832,9 +1856,9 @@ printf 'same text wrong version\n' | FAKE_DISPATCH_MODE=quota-error FAKE_EXIT_CO
     run_worker quota-wrong-version > "$TMP/quota-wrong-version.out" \
     2> "$TMP/quota-wrong-version.err"
 quota_wrong_version_rc=$?
-if [[ "$quota_wrong_version_rc" == 5 \
-        && "$(status_field "$TMP/quota-wrong-version.err" reason)" == agy_failed_unclassified ]]; then
-    ok "quota terminal is not inferred for an unreviewed agy version"
+if [[ "$quota_wrong_version_rc" == 4 \
+        && "$(status_field "$TMP/quota-wrong-version.err" reason)" == invalid_envelope ]]; then
+    ok "unreviewed quota terminal without a report is an invalid-envelope failure"
 else
     bad "version-bound quota terminal classification"
 fi
@@ -1845,9 +1869,9 @@ printf 'altered quota prose\n' | FAKE_VERSION_MODE=quota113 \
     run_worker quota-altered --literal-model claude-opus-4-6-thinking \
     > "$TMP/quota-altered.out" 2> "$TMP/quota-altered.err"
 quota_altered_rc=$?
-if [[ "$quota_altered_rc" == 5 \
-        && "$(status_field "$TMP/quota-altered.err" reason)" == agy_failed_unclassified ]]; then
-    ok "free-form quota prose remains unclassified"
+if [[ "$quota_altered_rc" == 4 \
+        && "$(status_field "$TMP/quota-altered.err" reason)" == invalid_envelope ]]; then
+    ok "free-form quota prose without a report is an invalid-envelope failure"
 else
     bad "free-form quota prose classification boundary"
 fi
@@ -1988,7 +2012,11 @@ for bad_version in ([], {}, "01.1.13", "1.1", "1.1.123456"):
 state = json.loads((root / "logs" / "quota-terminal" / module.STATE_NAME).read_text(encoding="utf-8"))
 state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
+for field in module.STATE_V5_FIELDS:
+    state.pop(field)
 state["schema_version"] = 3
+state["phase"] = None
+state["assurance"] = None
 migrated = module.validate_state(state)
 assert migrated["provider_retry_after_seconds"] is None
 assert migrated["provider_retry_observed_epoch"] is None
@@ -2061,7 +2089,8 @@ else
     bad "foreground signal ownership/process-group cleanup"
 fi
 
-printf 'async status wait result\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+printf 'private-task-prompt-sentinel\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_WORKER_VERIFIED=1 \
     FAKE_HEARTBEAT_COUNT=12 FAKE_HEARTBEAT_DELAY=0.10 \
     start_worker async-success --idle-timeout 1s --hard-timeout 3s --max-runtime 3s \
     > "$TMP/async-success.start" 2> "$TMP/async-success.start.err"
@@ -2074,25 +2103,68 @@ control_worker wait async-success --after-state-sha "$async_sha" --timeout 1s \
 wait_rc=$?
 terminal_wait_rc=64
 result_rc=64
+result_json_rc=64
+result_text_rc=64
+status_text_rc=64
+wait_text_rc=64
 if [[ "$wait_rc" == 0 ]] && wait_terminal async-success "$TMP/async-success.wait"; then
     terminal_wait_rc=0
     control_worker result async-success > "$TMP/async-success.result"
     result_rc=$?
+    control_worker result async-success --format json > "$TMP/async-success.result-json"
+    result_json_rc=$?
+    control_worker result async-success --format text > "$TMP/async-success.result-text"
+    result_text_rc=$?
+    control_worker status async-success --format text > "$TMP/async-success.status-text"
+    status_text_rc=$?
+    async_terminal_sha="$(status_sha "$TMP/async-success.wait")"
+    control_worker wait async-success --after-state-sha "$async_terminal_sha" \
+        --timeout 1s --format text > "$TMP/async-success.wait-text"
+    wait_text_rc=$?
 fi
 if [[ "$rc" == 0 && "$status_rc" == 0 && "$wait_rc" == 0 \
-        && "$terminal_wait_rc" == 0 && "$result_rc" == 0 ]] \
-        && python3 - "$TMP/async-success.status" "$TMP/async-success.wait" "$TMP/async-success.result" <<'PY'
+        && "$terminal_wait_rc" == 0 && "$result_rc" == 0 \
+        && "$result_json_rc" == 0 && "$result_text_rc" == 0 \
+        && "$status_text_rc" == 0 && "$wait_text_rc" == 0 ]] \
+        && cmp -s "$TMP/async-success.result" "$TMP/async-success.result-json" \
+        && python3 - "$TMP/async-success.status" "$TMP/async-success.wait" \
+            "$TMP/async-success.result" "$TMP/async-success.result-text" \
+            "$TMP/async-success.status-text" "$TMP/async-success.wait-text" "$TMP" <<'PY'
 import json
 import sys
-first, changed, result = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
+first = json.load(open(sys.argv[1], encoding="utf-8"))
+changed = json.load(open(sys.argv[2], encoding="utf-8"))
+result = json.load(open(sys.argv[3], encoding="utf-8"))
 assert first["status"] in {"queued", "running"}
+assert first["next_action"] == "wait"
+assert first["next_action_command"] == (
+    "agy-worker.sh wait --job-id async-success --after-state-sha "
+    + first["state_sha256"] + " --format text"
+)
 assert changed["state_sha256"] != first["state_sha256"] or changed["status"] == "succeeded"
+assert changed["next_action"] == "driver_review"
+assert changed["next_action_command"] == "agy-worker.sh result --job-id async-success --format json"
 assert result["status"] == "completed"
+for path in sys.argv[4:7]:
+    lines = open(path, encoding="utf-8").read().splitlines()
+    assert len(lines) == 3
+    assert lines[0] == "Outcome: succeeded (not completed); driver disposition: unreviewed."
+    assert "0 passed, 0 failed, 0 advisory, 0 missing" in lines[1]
+    assert "cycle 1/1" in lines[1]
+    assert "worktree reconciliation available" in lines[1]
+    assert "worktree changes present false, changed since dispatch false" in lines[1]
+    assert lines[2] == "Next action: agy-worker.sh result --job-id async-success --format json"
+    text = "\n".join(lines)
+    for sentinel in (
+        "private-task-prompt-sentinel", "Verified private-worker-prose-sentinel",
+        "fake-conversation-01", sys.argv[7],
+    ):
+        assert sentinel not in text
 PY
 then
-    ok "start/status/wait/result expose only bounded local controller state and a terminal valid envelope"
+    ok "status/wait/result formats preserve JSON and expose three sanitized driver-owned text lines"
 else
-    bad "async start/status/wait/result lifecycle"
+    bad "async status/wait/result format and privacy lifecycle"
 fi
 
 startup_stress=0
@@ -2479,21 +2551,23 @@ else
     bad "orphaned dispatch continuation boundary"
 fi
 
-printf 'resume conversation\n' | FAKE_DISPATCH_MODE=conversation-fail \
+printf 'private-resume-task-sentinel\n' | FAKE_DISPATCH_MODE=conversation-fail \
     run_worker resume-case --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
     > "$TMP/resume-case.out" 2> "$TMP/resume-case.err"
 rc=$?
 resume_sha="$(status_sha "$TMP/resume-case.err")"
 FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
-    control_worker resume resume-case --approve-state-sha "$resume_sha" \
+    control_worker resume resume-case --approve-state-sha "$resume_sha" --format text \
     > "$TMP/resume-case.resume"
 resume_rc=$?
-wait_terminal resume-case "$TMP/resume-case.resume"
+control_worker status resume-case > "$TMP/resume-case.resume-status"
+wait_terminal resume-case "$TMP/resume-case.resume-status"
 resume_wait_rc=$?
 control_worker result resume-case > "$TMP/resume-case.result"
 result_rc=$?
-if [[ "$rc" == 5 && "$resume_rc" == 0 && "$resume_wait_rc" == 0 && "$result_rc" == 0 ]] && python3 - \
-        "$TMP/resume-case.argv" "$TMP/resume-case.resume" <<'PY'
+if [[ "$rc" == 4 && "$resume_rc" == 0 && "$resume_wait_rc" == 0 && "$result_rc" == 0 ]] && python3 - \
+        "$TMP/resume-case.argv" "$TMP/resume-case.resume-status" \
+        "$TMP/resume-case.resume" "$TMP/resume-case.err" "$TMP" <<'PY'
 import json
 import sys
 argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
@@ -2503,11 +2577,23 @@ assert argv[argv.index(b"--conversation") + 1] == b"fake-conversation-01"
 assert b"Continue the existing bounded task" in argv[-1]
 assert state["attempt_origin"] == "conversation-resume"
 assert state["attempt"] == 2
+assert state["next_action"] == "driver_review"
+assert state["next_action_command"] == "agy-worker.sh result --job-id resume-case --format json"
+text = open(sys.argv[3], encoding="utf-8").read()
+assert len(text.splitlines()) == 3
+failed = json.load(open(sys.argv[4], encoding="utf-8"))
+assert failed["next_action"] == "resume"
+assert failed["next_action_command"] == (
+    "agy-worker.sh resume --job-id resume-case --approve-state-sha "
+    + failed["state_sha256"] + " --format text"
+)
+for sentinel in ("private-resume-task-sentinel", "fake-conversation-01", sys.argv[5]):
+    assert sentinel not in text
 PY
 then
-    ok "resume uses the exact private conversation and fixed continuation prompt without re-resolving selection"
+    ok "resume text succeeds with the exact private conversation and no private output"
 else
-    bad "conversation resume contract"
+    bad "conversation resume format and privacy contract"
 fi
 
 printf 'restart without conversation\n' | FAKE_DISPATCH_MODE=conversation-fail \
@@ -2553,13 +2639,34 @@ else
 fi
 
 project_feedback() {
-    printf '%s\n' '{"schema_version":1,"summary":"driver checks found one repairable failure","passed_checks":["lint"],"failed_checks":["unit-tests"],"advisory_checks":0,"missing_checks":0}'
+    python3 - "$TMP/logs/$1/dispatch-state.json" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({"schema_version": 2, "summary": "driver checks found one repairable failure",
+    "passed_checks": ["lint"], "failed_checks": ["unit-tests"], "advisory_checks": 0,
+    "missing_checks": 0, "candidate_sha256": state["result_sha256"], "coverage": "partial",
+    "verified_findings": 0, "unresolved_gaps": 1, "diff_review_complete": True}, separators=(",", ":")))
+PY
 }
 project_verified_feedback() {
-    printf '%s\n' '{"schema_version":1,"summary":"driver checks passed","passed_checks":["lint","unit-tests"],"failed_checks":[],"advisory_checks":0,"missing_checks":0}'
+    python3 - "$TMP/logs/$1/dispatch-state.json" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({"schema_version": 2, "summary": "driver checks passed",
+    "passed_checks": ["lint", "unit-tests"], "failed_checks": [], "advisory_checks": 0,
+    "missing_checks": 0, "candidate_sha256": state["result_sha256"], "coverage": "complete",
+    "verified_findings": 0, "unresolved_gaps": 0, "diff_review_complete": True}, separators=(",", ":")))
+PY
 }
 project_missing_feedback() {
-    printf '%s\n' '{"schema_version":1,"summary":"one required driver check is missing","passed_checks":["lint"],"failed_checks":[],"advisory_checks":0,"missing_checks":1}'
+    python3 - "$TMP/logs/$1/dispatch-state.json" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({"schema_version": 2, "summary": "one required driver check is missing",
+    "passed_checks": ["lint"], "failed_checks": [], "advisory_checks": 0,
+    "missing_checks": 1, "candidate_sha256": state["result_sha256"], "coverage": "partial",
+    "verified_findings": 0, "unresolved_gaps": 1, "diff_review_complete": True}, separators=(",", ":")))
+PY
 }
 
 printf 'project workflow initial implementation\n' | FAKE_DISPATCH_MODE=heartbeat-success \
@@ -2595,58 +2702,75 @@ printf 'project missing verification repair\n' | FAKE_DISPATCH_MODE=heartbeat-su
 wait_terminal project-missing-check "$TMP/project-missing-check.start"
 control_worker status project-missing-check > "$TMP/project-missing-check.status"
 project_missing_sha="$(status_sha "$TMP/project-missing-check.status")"
-project_missing_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
-    control_worker continue project-missing-check --approve-state-sha "$project_missing_sha" \
+project_missing_feedback project-missing-check | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    control_worker continue project-missing-check --approve-state-sha "$project_missing_sha" --format text \
     > "$TMP/project-missing-check.continue" 2> "$TMP/project-missing-check.continue.err"
 project_missing_rc=$?
-wait_terminal project-missing-check "$TMP/project-missing-check.continue"
-project_missing_wait_rc=$?
 control_worker status project-missing-check > "$TMP/project-missing-check.status"
+wait_terminal project-missing-check "$TMP/project-missing-check.status"
+project_missing_wait_rc=$?
 project_missing_calls="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
 if [[ "$project_missing_rc" == 0 && "$project_missing_wait_rc" == 0 \
         && "$project_missing_calls" == 2 ]] \
-        && python3 - "$TMP/project-missing-check.status" <<'PY'
+        && python3 - "$TMP/project-missing-check.status" \
+            "$TMP/project-missing-check.continue" "$TMP" <<'PY'
 import json, sys
 value = json.load(open(sys.argv[1], encoding="utf-8"))
 assert value["cycle"] == 2
 assert value["attempt_origin"] == "conversation-continue"
 assert value["check_counts"] == {"passed": 1, "failed": 0, "advisory": 0, "missing": 1}
+assert value["next_action"] == "driver_review"
+assert value["next_action_command"] == "agy-worker.sh result --job-id project-missing-check --format json"
+text = open(sys.argv[2], encoding="utf-8").read()
+assert len(text.splitlines()) == 3
+for sentinel in ("one required driver check is missing", "lint", "fake-conversation-01", sys.argv[3]):
+    assert sentinel not in text
 PY
 then
-    ok "project continuation treats a missing required check as repairable verification feedback"
+    ok "project continuation text is three-line, private, and keeps driver evidence bound"
 else
-    bad "project continuation missing-check repair contract"
+    bad "project continuation format and privacy contract"
 fi
 
 project_missing_sha="$(status_sha "$TMP/project-missing-check.status")"
 project_missing_calls_before_finalize="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
-project_missing_feedback | control_worker finalize project-missing-check \
+project_missing_feedback project-missing-check | control_worker finalize project-missing-check \
     --approve-state-sha "$project_missing_sha" --assurance partially-verified \
     > /dev/null 2>&1
 project_hyphen_assurance_rc=$?
-project_missing_feedback | control_worker finalize project-missing-check \
-    --approve-state-sha "$project_missing_sha" --assurance partially_verified \
+project_missing_feedback project-missing-check | control_worker finalize project-missing-check \
+    --approve-state-sha "$project_missing_sha" --assurance partially_verified --format text \
     > "$TMP/project-missing-check.finalize" 2> "$TMP/project-missing-check.finalize.err"
 project_partial_assurance_rc=$?
+control_worker status project-missing-check > "$TMP/project-missing-check.finalized-status"
 project_missing_calls_after_finalize="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
 if [[ "$project_hyphen_assurance_rc" == 64 && "$project_partial_assurance_rc" == 0 \
         && "$project_missing_calls_after_finalize" == "$project_missing_calls_before_finalize" ]] \
-        && python3 - "$TMP/project-missing-check.finalize" <<'PY'
+        && python3 - "$TMP/project-missing-check.finalized-status" \
+            "$TMP/project-missing-check.finalize" "$TMP" <<'PY'
 import json, sys
 value = json.load(open(sys.argv[1], encoding="utf-8"))
 assert value["phase"] == "completed"
 assert value["assurance"] == "partially_verified"
 assert value["check_counts"] == {"passed": 1, "failed": 0, "advisory": 0, "missing": 1}
+assert value["next_action"] == "none" and value["next_action_command"] is None
+lines = open(sys.argv[2], encoding="utf-8").read().splitlines()
+assert len(lines) == 3
+assert lines[0] == "Outcome: succeeded (completed); driver disposition: partially_verified."
+assert "cycle 2/5" in lines[1]
+assert lines[2] == "Next action: none (no automatic command)"
+for sentinel in ("one required driver check is missing", "lint", "fake-conversation-01", sys.argv[3]):
+    assert sentinel not in "\n".join(lines)
 PY
 then
-    ok "project partial assurance uses the exact underscore contract without a provider call"
+    ok "project finalization text is three-line, driver-owned, and invokes no provider"
 else
-    bad "project partial assurance underscore contract"
+    bad "project finalization format and assurance contract"
 fi
 
 project_cycle_ok=1
 for project_cycle in 2 3 4 5; do
-    project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    project_feedback project-cycles | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
         control_worker continue project-cycles --approve-state-sha "$project_sha" \
         > "$TMP/project-cycles.$project_cycle" 2> "$TMP/project-cycles.$project_cycle.err"
     project_continue_rc=$?
@@ -2655,7 +2779,7 @@ for project_cycle in 2 3 4 5; do
     project_sha="$(status_sha "$TMP/project-cycles.status")"
     [[ "$project_continue_rc" == 0 ]] || project_cycle_ok=0
 done
-project_feedback | control_worker continue project-cycles --approve-state-sha "$project_sha" \
+project_feedback project-cycles | control_worker continue project-cycles --approve-state-sha "$project_sha" \
     > "$TMP/project-cycles.exhausted" 2> "$TMP/project-cycles.exhausted.err"
 project_exhausted_rc=$?
 project_calls="$(wc -l < "$TMP/project-cycles.calls" | tr -d ' ')"
@@ -2682,10 +2806,10 @@ wait_terminal project-final "$TMP/project-final.start"
 control_worker status project-final > "$TMP/project-final.status"
 project_final_sha="$(status_sha "$TMP/project-final.status")"
 project_final_calls_before="$(wc -l < "$TMP/project-final.calls" | tr -d ' ')"
-project_verified_feedback | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
+project_verified_feedback project-final | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
     --assurance verified > "$TMP/project-final.finalize" 2> "$TMP/project-final.finalize.err"
 project_finalize_rc=$?
-project_verified_feedback | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
+project_verified_feedback project-final | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
     --assurance verified > /dev/null 2>&1
 project_finalize_stale_rc=$?
 project_final_calls_after="$(wc -l < "$TMP/project-final.calls" | tr -d ' ')"
@@ -2787,7 +2911,7 @@ cp "$TMP/logs/project-between-cycle-drift/dispatch-state.json" \
 mv "$TMP/project-worktree/.git" "$TMP/project-between-cycle-drift.marker"
 printf 'gitdir: between-cycle-tamper\n' > "$TMP/project-worktree/.git"
 project_between_calls_before="$(wc -l < "$TMP/project-between-cycle-drift.worker-calls" | tr -d ' ')"
-project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+project_feedback project-between-cycle-drift | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
     control_worker continue project-between-cycle-drift --approve-state-sha "$project_between_sha" \
     > "$TMP/project-between-cycle-drift.continue" 2> "$TMP/project-between-cycle-drift.continue.err"
 project_between_rc=$?
@@ -2836,7 +2960,7 @@ finally:
 PY
     fi
     calls_before="$(wc -l < "$TMP/$job.worker-calls" | tr -d ' ')"
-    project_feedback | control_worker continue "$job" --approve-state-sha "$approved_sha" \
+    project_feedback "$job" | control_worker continue "$job" --approve-state-sha "$approved_sha" \
         > "$TMP/$job.continue" 2> "$TMP/$job.continue.err"
     continue_rc=$?
     calls_after="$(wc -l < "$TMP/$job.worker-calls" | tr -d ' ')"
@@ -2894,7 +3018,7 @@ PY
 )"
 cp "$PROJECT_ORPHAN_JOB/dispatch-state.json" "$TMP/project-orphan-preserve.state-before"
 project_orphan_calls_before="$(wc -l < "$TMP/project-orphan-preserve.worker-calls" | tr -d ' ')"
-project_feedback | control_worker continue project-orphan-preserve \
+project_feedback project-orphan-preserve | control_worker continue project-orphan-preserve \
     --approve-state-sha "$project_orphan_sha" > /dev/null 2>&1
 project_orphan_continue_rc=$?
 control_worker resume project-orphan-preserve \
@@ -2903,7 +3027,7 @@ project_orphan_resume_rc=$?
 control_worker restart project-orphan-preserve \
     --approve-state-sha "$project_orphan_sha" > /dev/null 2>&1
 project_orphan_restart_rc=$?
-project_feedback | control_worker finalize project-orphan-preserve \
+project_feedback project-orphan-preserve | control_worker finalize project-orphan-preserve \
     --approve-state-sha "$project_orphan_sha" --assurance partially_verified > /dev/null 2>&1
 project_orphan_finalize_rc=$?
 control_worker result project-orphan-preserve > /dev/null 2>&1
@@ -2932,6 +3056,8 @@ job = Path(sys.argv[2])
 state, _raw, _sha = module.load_state(job)
 for field in module.STATE_PROJECT_FIELDS:
     state.pop(field)
+for field in module.STATE_V5_FIELDS:
+    state.pop(field)
 state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
 state["schema_version"] = 1
@@ -2943,15 +3069,66 @@ legacy_v1_status_rc=$?
 control_worker result resume-case > "$TMP/legacy-v1.result"
 legacy_v1_result_rc=$?
 legacy_v1_sha="$(status_sha "$TMP/legacy-v1.status")"
+cp "$LEGACY_V1_JOB/dispatch-state.json" "$TMP/legacy-v1.state-before"
 control_worker resume resume-case --approve-state-sha "$legacy_v1_sha" > /dev/null 2>&1
 legacy_v1_resume_rc=$?
-control_worker restart resume-case --approve-state-sha "$legacy_v1_sha" > /dev/null 2>&1
+legacy_v1_resume_unchanged=1
+cmp -s "$TMP/legacy-v1.state-before" "$LEGACY_V1_JOB/dispatch-state.json" \
+    || legacy_v1_resume_unchanged=0
+legacy_v1_barrier_ready="$TMP/legacy-v1.barrier-ready"
+legacy_v1_barrier_release="$TMP/legacy-v1.barrier-release"
+FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    FAKE_HEARTBEAT_BARRIER_READY="$legacy_v1_barrier_ready" \
+    FAKE_HEARTBEAT_BARRIER_RELEASE="$legacy_v1_barrier_release" \
+    control_worker restart resume-case --approve-state-sha "$legacy_v1_sha" --format json \
+    > "$TMP/legacy-v1.restart" 2> "$TMP/legacy-v1.restart.err" &
+legacy_v1_restart_pid=$!
+for (( legacy_v1_barrier_wait=0; legacy_v1_barrier_wait<200; legacy_v1_barrier_wait++ )); do
+    [[ -e "$legacy_v1_barrier_ready" ]] && break
+    kill -0 "$legacy_v1_restart_pid" 2>/dev/null || break
+    sleep 0.01
+done
+control_worker status resume-case > "$TMP/legacy-v1.dispatching"
+legacy_v1_dispatching_rc=$?
+: > "$legacy_v1_barrier_release"
+wait "$legacy_v1_restart_pid"
 legacy_v1_restart_rc=$?
+legacy_v1_wait_rc=64
+if [[ "$legacy_v1_restart_rc" == 0 && -e "$legacy_v1_barrier_ready" ]] \
+        && wait_terminal resume-case "$TMP/legacy-v1.restart"; then
+    legacy_v1_wait_rc=0
+fi
 legacy_v1_calls_after="$(wc -l < "$TMP/resume-case.worker-calls" | tr -d ' ')"
 if [[ "$legacy_v1_status_rc" == 0 && "$legacy_v1_result_rc" == 0 \
-        && "$legacy_v1_resume_rc" == 21 && "$legacy_v1_restart_rc" == 64 \
-        && "$legacy_v1_calls_after" == "$legacy_v1_calls_before" ]]; then
-    ok "legacy v1 state remains readable across status, result, resume, and restart surfaces"
+        && "$legacy_v1_resume_rc" == 21 && "$legacy_v1_resume_unchanged" == 1 \
+        && "$legacy_v1_dispatching_rc" == 0 && -e "$legacy_v1_barrier_ready" \
+        && "$legacy_v1_restart_rc" == 0 && "$legacy_v1_wait_rc" == 0 \
+        && "$legacy_v1_calls_after" == $((legacy_v1_calls_before + 1)) ]] \
+        && python3 - "$TMP/legacy-v1.status" "$TMP/legacy-v1.dispatching" \
+            "$LEGACY_V1_JOB/dispatch-state.json" "$TMP/resume-case.argv" <<'PY'
+import json, sys
+old = json.load(open(sys.argv[1], encoding="utf-8"))
+published = json.load(open(sys.argv[2], encoding="utf-8"))
+stored = json.load(open(sys.argv[3], encoding="utf-8"))
+argv = [item for item in open(sys.argv[4], "rb").read().split(b"\0") if item]
+assert old["next_action"] == "driver_review"
+assert old["next_action_command"] == "agy-worker.sh result --job-id resume-case --format json"
+assert old["phase"] is None and old["assurance"] is None
+assert published["status"] == "running"
+assert published["phase"] == "dispatching" and published["assurance"] == "pending"
+assert published["attempt_origin"] == "fresh-restart"
+assert stored["schema_version"] == 5
+assert stored["attempt"] == old["attempt"] + 1 == 3
+assert stored["attempt_origin"] == published["attempt_origin"] == "fresh-restart"
+assert stored["workflow"] == "legacy"
+assert stored["phase"] == "awaiting-verification" and stored["assurance"] == "pending"
+assert stored["candidate_recognized"] and stored["result_available"]
+assert stored["driver_disposition"] == "unreviewed"
+assert stored["verification_path"] is None and stored["check_summary"] is None
+assert b"--conversation" not in argv
+PY
+then
+    ok "legacy v1 reads safely and approved fresh restart atomically dispatches one v5 non-repair attempt"
 else
     bad "legacy v1 control-state compatibility"
 fi
@@ -2967,9 +3144,11 @@ module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 job = Path(job_text)
 before = (job / module.STATE_NAME).read_bytes()
 state, _raw, sha = module.load_state(job)
-verification = {"schema_version": 1, "summary": "retryable injected write failure",
+verification = {"schema_version": 2, "summary": "retryable injected write failure",
     "passed_checks": ["lint"], "failed_checks": ["unit"],
-    "advisory_checks": 0, "missing_checks": 0}
+    "advisory_checks": 0, "missing_checks": 0,
+    "candidate_sha256": state["result_sha256"], "coverage": "partial",
+    "verified_findings": 0, "unresolved_gaps": 1, "diff_review_complete": True}
 original = module.write_atomic
 def fail_state_write(target, name, value):
     if name == module.STATE_NAME:
@@ -3035,12 +3214,12 @@ printf 'project concurrent decision fixture\n' | FAKE_DISPATCH_MODE=heartbeat-su
 wait_terminal project-concurrent-decision "$TMP/project-concurrent-decision.start"
 control_worker status project-concurrent-decision > "$TMP/project-concurrent-decision.status"
 project_concurrent_sha="$(status_sha "$TMP/project-concurrent-decision.status")"
-( project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+( project_feedback project-concurrent-decision | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
     control_worker continue project-concurrent-decision --approve-state-sha "$project_concurrent_sha" \
     > "$TMP/project-concurrent-decision.continue" 2> /dev/null; \
     printf '%s\n' "$?" > "$TMP/project-concurrent-decision.continue.rc" ) &
 project_concurrent_continue_pid=$!
-( project_feedback | control_worker finalize project-concurrent-decision \
+( project_feedback project-concurrent-decision | control_worker finalize project-concurrent-decision \
     --approve-state-sha "$project_concurrent_sha" --assurance partially_verified \
     > "$TMP/project-concurrent-decision.finalize" 2> /dev/null; \
     printf '%s\n' "$?" > "$TMP/project-concurrent-decision.finalize.rc" ) &
@@ -3070,7 +3249,7 @@ control_worker status project-cancel-repair > "$TMP/project-cancel-repair.status
 project_cancel_sha="$(status_sha "$TMP/project-cancel-repair.status")"
 project_cancel_barrier_ready="$TMP/project-cancel-repair.barrier-ready"
 project_cancel_barrier_release="$TMP/project-cancel-repair.barrier-release"
-project_feedback | FAKE_DISPATCH_MODE=heartbeat-forever \
+project_feedback project-cancel-repair | FAKE_DISPATCH_MODE=heartbeat-forever \
     FAKE_HEARTBEAT_BARRIER_READY="$project_cancel_barrier_ready" \
     FAKE_HEARTBEAT_BARRIER_RELEASE="$project_cancel_barrier_release" \
     control_worker continue project-cancel-repair --approve-state-sha "$project_cancel_sha" \
@@ -3101,7 +3280,7 @@ if [[ "$project_cancel_rc" == 0 ]] \
         && wait_terminal project-cancel-repair "$TMP/project-cancel-repair.cancel"; then
     project_cancel_wait_rc=0
     project_cancel_terminal_sha="$(status_sha "$TMP/project-cancel-repair.cancel")"
-    project_feedback | control_worker finalize project-cancel-repair \
+    project_feedback project-cancel-repair | control_worker finalize project-cancel-repair \
         --approve-state-sha "$project_cancel_terminal_sha" --assurance partially_verified \
         > "$TMP/project-cancel-repair.finalize"
     project_cancel_finalize_rc=$?

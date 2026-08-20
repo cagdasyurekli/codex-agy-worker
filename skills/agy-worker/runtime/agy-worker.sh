@@ -26,7 +26,9 @@ CALLER_UMASK="$(umask)"
 umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCHEMA="${AGY_WORKER_SCHEMA:-$SCRIPT_DIR/schemas/worker-result.schema.json}"
+# agy receives the ergonomic provider schema. The controller restores its only
+# optional report arrays before independently validating the canonical schema.
+SCHEMA="${AGY_WORKER_SCHEMA:-$SCRIPT_DIR/schemas/worker-result.provider.schema.json}"
 LOG_DIR="${AGY_WORKER_LOG_DIR:-$SCRIPT_DIR/logs}"
 
 # Selector values are presence-sensitive. An explicitly empty environment variable
@@ -81,7 +83,7 @@ PY
 usage() {
     cat >&2 <<'EOF'
 usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
-                     [--workflow explore|task|project] [--max-cycles 1..5]
+                     [--workflow explore|task|project] [--max-cycles N]
                      [--tier bulk|cheap|hard|hardest|default|MODEL]
                      [--model REVIEWED_MODEL [--effort low|medium|high]]
                      [--literal-model EXACT_SLUG]
@@ -91,13 +93,16 @@ usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
        ... task prompt on stdin ...
 
        agy-worker.sh start [run options] ... task prompt on stdin ...
-       agy-worker.sh status|result|resume|restart --job-id JOB
-       agy-worker.sh continue --job-id JOB --approve-state-sha SHA < verification.json
+       agy-worker.sh status|result|resume|restart --job-id JOB [--format json|text]
+       agy-worker.sh continue --job-id JOB --approve-state-sha SHA [--format json|text] < driver-verification-input
        agy-worker.sh finalize --job-id JOB --approve-state-sha SHA \\
-           --assurance verified|partially_verified|blocked < verification.json
-       agy-worker.sh wait --job-id JOB --after-state-sha SHA [--timeout 60s]
+           --assurance verified|partially_verified|rejected|blocked [--format json|text] < driver-verification-input
+       agy-worker.sh wait --job-id JOB --after-state-sha SHA [--timeout 60s] [--format json|text]
        agy-worker.sh cancel --job-id JOB --approve-state-sha SHA
        agy-worker.sh extend --job-id JOB --approve-state-sha SHA --by 2h
+
+Workflow cycle limits: explore/task 1..2 (default 2); project 1..5 (default 5).
+--max-cycles requires an explicit workflow; legacy raw mode remains one attempt.
 
 Emits the schema-valid result envelope on stdout. Non-zero exit means the job failed;
 stdout is then NOT a valid envelope. Artifacts land in $AGY_WORKER_LOG_DIR.
@@ -106,7 +111,11 @@ Exit codes: 0 ok · 2 no prompt · 3 empty output · 4 schema invalid · 5 uncla
             6 permission gate · 7 compatibility review · 8 compatibility evidence unavailable
             9 idle timeout · 16 hard deadline · 17-19 reserved for version-bound
             provider/auth evidence · 20 status unavailable · 21 resume failed
-            22 cancelled · 23 output oversized · 24 quota exhausted · 64 invalid usage
+            22 cancelled · 23 output oversized · 24 quota exhausted · 25 provider error with preserved report
+            64 invalid usage
+
+Resume requires the current state approval before any provider call:
+  agy-worker.sh resume --job-id JOB --approve-state-sha STATE_SHA
 EOF
     exit 64
 }
@@ -117,6 +126,7 @@ if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
     control_state_sha=""
     control_after_sha=""
     control_timeout="60s"
+    control_format="json"
     control_by=""
     control_assurance=""
     while [[ $# -gt 0 ]]; do
@@ -133,6 +143,9 @@ if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
             --timeout)
                 [[ $# -ge 2 && "$control_timeout" == "60s" ]] || usage
                 control_timeout="$2"; shift 2 ;;
+            --format)
+                [[ $# -ge 2 && "$control_format" == "json" ]] || usage
+                control_format="$2"; shift 2 ;;
             --by)
                 [[ $# -ge 2 && -z "$control_by" ]] || usage
                 control_by="$2"; shift 2 ;;
@@ -146,6 +159,7 @@ if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
     case "$control_job" in
         ''|.|..|*[!A-Za-z0-9._-]*) echo "agy-worker.sh: invalid job ID" >&2; exit 64 ;;
     esac
+    case "$control_format" in json|text) ;; *) usage ;; esac
     [[ -d "$LOG_DIR" ]] || { echo "agy-worker.sh: log root is unavailable" >&2; exit 64; }
     validate_log_root "$LOG_DIR" || {
         echo "agy-worker.sh: log root must be an owner-owned, non-writable real directory" >&2
@@ -154,6 +168,7 @@ if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
     LOG_DIR="$(CDPATH= cd -- "$LOG_DIR" 2>/dev/null && pwd -P)" || exit 64
     job_dir="$LOG_DIR/$control_job"
     supervisor=(python3 -I -S -B "$SCRIPT_DIR/scripts/agy_dispatch.py" "$dispatch_action" --job-dir "$job_dir")
+    case "$dispatch_action" in status|wait|result|resume|restart|continue|finalize) supervisor+=(--format "$control_format") ;; esac
     case "$dispatch_action" in
         wait)
             [[ -n "$control_after_sha" ]] || usage
@@ -164,9 +179,13 @@ if [[ "$dispatch_action" != "run" && "$dispatch_action" != "start" ]]; then
         extend)
             [[ -n "$control_state_sha" && -n "$control_by" ]] || usage
             supervisor+=(--approve-state-sha "$control_state_sha" --by "$control_by") ;;
-        resume|restart|continue)
+        restart|continue)
             [[ -n "$control_state_sha" ]] || usage
             supervisor+=(--approve-state-sha "$control_state_sha") ;;
+        resume)
+            # Let the controller read the current safe snapshot so an omitted
+            # approval can return its exact actionable replacement, not usage.
+            [[ -z "$control_state_sha" ]] || supervisor+=(--approve-state-sha "$control_state_sha") ;;
         finalize)
             [[ -n "$control_state_sha" && -n "$control_assurance" ]] || usage
             supervisor+=(--approve-state-sha "$control_state_sha" --assurance "$control_assurance") ;;
@@ -177,7 +196,7 @@ fi
 workdir="$PWD"
 persona=""
 workflow=""
-max_cycles=5
+max_cycles=""
 workflow_cli_seen=0; max_cycles_cli_seen=0; mode_cli_seen=0
 extra_dirs=()
 tier_cli_seen=0; tier_cli_value=""
@@ -334,12 +353,19 @@ case "$workflow" in
     task)
         if (( ! mode_cli_seen && ! mode_env_seen )); then mode="accept-edits"; fi ;;
 esac
-if [[ ! "$max_cycles" =~ ^[1-5]$ ]]; then
-    echo "agy-worker.sh: --max-cycles must be an integer from 1 to 5" >&2; exit 64
-fi
-if (( max_cycles_cli_seen )) && [[ "$workflow" != "project" ]]; then
-    echo "agy-worker.sh: --max-cycles requires --workflow project" >&2; exit 64
-fi
+case "$workflow" in
+    explore|task)
+        if (( max_cycles_cli_seen )); then
+            [[ "$max_cycles" =~ ^[1-2]$ ]] || { echo "agy-worker.sh: --max-cycles for $workflow must be 1 or 2" >&2; exit 64; }
+        else max_cycles=2; fi ;;
+    project)
+        if (( max_cycles_cli_seen )); then
+            [[ "$max_cycles" =~ ^[1-5]$ ]] || { echo "agy-worker.sh: --max-cycles for project must be 1 through 5" >&2; exit 64; }
+        else max_cycles=5; fi ;;
+    '')
+        (( ! max_cycles_cli_seen )) || { echo "agy-worker.sh: --max-cycles requires an explicit workflow" >&2; exit 64; }
+        max_cycles=1 ;;
+esac
 
 case "$persona" in
     ''|bulk-test-writer|repo-inventory|diff-reviewer) ;;
@@ -679,7 +705,7 @@ value = {
     "stage_file": stage_file or None,
     "child_umask": child_umask,
     "workflow": workflow,
-    "max_cycles": int(max_cycles) if workflow == "project" else 1,
+    "max_cycles": int(max_cycles),
     "resume_prompt": (
         "Continue the existing bounded task from its retained conversation. "
         "Do not repeat completed work. Return only the final schema-valid envelope."

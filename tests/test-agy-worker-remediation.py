@@ -18,6 +18,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "skills/agy-worker/runtime/scripts/agy_dispatch.py"
 SCHEMA = ROOT / "skills/agy-worker/runtime/schemas/worker-result.schema.json"
+PROVIDER_SCHEMA = ROOT / "skills/agy-worker/runtime/schemas/worker-result.provider.schema.json"
 spec = importlib.util.spec_from_file_location("agy_dispatch_remediation", SOURCE)
 MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -33,9 +34,7 @@ def check(label: str, action) -> None:
 
 
 def provider_schema(path: Path) -> None:
-    value = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    value["required"] = [item for item in value["required"] if item not in {"commands_run", "tests_run"}]
-    path.write_text(json.dumps(value), encoding="utf-8")
+    path.write_bytes(PROVIDER_SCHEMA.read_bytes())
 
 
 def stream(path: Path, status: str, report: dict | None) -> None:
@@ -127,12 +126,166 @@ with tempfile.TemporaryDirectory() as temporary:
 
     check("only commands and tests arrays normalize", only_two_optional_arrays_normalize)
 
+    def provider_and_canonical_schema_boundaries() -> None:
+        provider_value = json.loads(PROVIDER_SCHEMA.read_text(encoding="utf-8"))
+        canonical_value = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        assert provider_value["properties"]["summary"]["maxLength"] == 8192
+        assert canonical_value["properties"]["summary"]["maxLength"] == 8192
+        assert set(canonical_value["required"]) - set(provider_value["required"]) == {
+            "commands_run", "tests_run",
+        }
+        assert set(provider_value["required"]) - set(canonical_value["required"]) == set()
+
+        accepted = root / "summary-8192.ndjson"
+        stream(accepted, "SUCCESS", report(summary="x" * 8192))
+        binding, outer, stage = MODULE._validate_terminal_envelope(accepted, root / "summary-8192.json", provider, SCHEMA)
+        assert binding is not None and outer == "SUCCESS" and stage is None
+        rejected = root / "summary-8193.ndjson"
+        stream(rejected, "SUCCESS", report(summary="x" * 8193))
+        binding, outer, stage = MODULE._validate_terminal_envelope(rejected, root / "summary-8193.json", provider, SCHEMA)
+        assert binding is None and outer == "SUCCESS" and stage == "schema_rejection"
+
+    check("provider schema permits only bounded command/test ergonomics", provider_and_canonical_schema_boundaries)
+
+    def invalid_report_encodings_types_and_size_fail_closed() -> None:
+        wrong_type = root / "wrong-type.ndjson"
+        stream(wrong_type, "SUCCESS", report(confidence="0.5"))
+        binding, outer, stage = MODULE._validate_terminal_envelope(wrong_type, root / "wrong-type.json", provider, SCHEMA)
+        assert binding is None and outer == "SUCCESS" and stage == "schema_rejection"
+
+        nonfinite = root / "nonfinite.ndjson"
+        nonfinite.write_bytes(
+            b'{"event":"init","init":{},"conversation_id":"conversation-1"}\n'
+            b'{"event":"result","result":{"conversation_id":"conversation-1","status":"SUCCESS","structured_output":'
+            b'{"status":"completed","summary":"candidate","files_changed":[],"risks":[],"open_questions":[],"confidence":NaN,"requires_human":false}}}\n'
+        )
+        binding, outer, stage = MODULE._validate_terminal_envelope(nonfinite, root / "nonfinite.json", provider, SCHEMA)
+        assert binding is None and outer is None and stage == "framing"
+
+        invalid_utf8 = root / "invalid-utf8.ndjson"
+        invalid_utf8.write_bytes(b'\xff\n')
+        binding, outer, stage = MODULE._validate_terminal_envelope(invalid_utf8, root / "invalid-utf8.json", provider, SCHEMA)
+        assert binding is None and outer is None and stage == "framing"
+
+        oversized = root / "oversized.ndjson"
+        stream(oversized, "SUCCESS", report(summary="x" * (1024 * 1024)))
+        binding, outer, stage = MODULE._validate_terminal_envelope(oversized, root / "oversized.json", provider, SCHEMA)
+        assert binding is None and stage in {"framing", "schema_rejection"}
+
+    check("wrong type NaN invalid UTF-8 and oversized reports fail closed", invalid_report_encodings_types_and_size_fail_closed)
+
+    def text_projection_is_three_line_private_and_driver_owned() -> None:
+        command = {
+            "workdir": str(root), "job_id": "text-job", "idle_seconds": 1,
+            "hard_seconds": 2, "max_seconds": 3, "workflow": "task", "max_cycles": 2,
+        }
+        state = MODULE.initial_state(
+            command, "initial", 1, command_sha="a" * 64,
+            command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None,
+        )
+        state.update({
+            "status": "failed", "reason": "provider_terminal_error", "exit_code": 25,
+            "workdir": "/private/repo-path", "conversation_id": "conversation-secret",
+            "result_path": "/private/worker-prose.json", "check_summary": "raw worker prose secret",
+            "driver_disposition": "unreviewed", "next_action": "driver_review",
+            "worktree_reconciliation": "available", "worktree_changes_present": True,
+            "worktree_changed_since_dispatch": False,
+        })
+        def render_text() -> str:
+            captured = io.BytesIO()
+            original_stdout = MODULE.sys.stdout
+            wrapper = io.TextIOWrapper(captured, encoding="utf-8")
+            MODULE.sys.stdout = wrapper
+            try:
+                MODULE.print_text_status(state, "b" * 64)
+                wrapper.flush()
+            finally:
+                MODULE.sys.stdout = original_stdout
+            return captured.getvalue().decode("utf-8")
+
+        text = render_text()
+        assert len(text.splitlines()) == 3
+        assert "driver disposition: unreviewed" in text
+        assert "0 passed, 0 failed, 0 advisory, 0 missing" in text
+        assert "cycle 1/2" in text
+        assert (
+            "worktree reconciliation available, worktree changes present true, "
+            "changed since dispatch false" in text
+        )
+        state["worktree_changes_present"] = False
+        clean_text = render_text()
+        assert "worktree changes present false, changed since dispatch false" in clean_text
+        assert clean_text != text
+        for disposition, completed in (
+            ("verified", True), ("partially_verified", True),
+            ("rejected", False), ("blocked", False),
+        ):
+            state["driver_disposition"] = disposition
+            first_line = render_text().splitlines()[0]
+            completion = "completed" if completed else "not completed"
+            assert first_line == (
+                f"Outcome: failed ({completion}); driver disposition: {disposition}."
+            )
+        state["driver_disposition"] = "unreviewed"
+        public = MODULE.public_status(state, "b" * 64)
+        assert public["next_action_command"] == "agy-worker.sh result --job-id text-job --format json"
+        for action in ("driver_finalize", "blocked", "none"):
+            state["next_action"] = action
+            assert MODULE.public_status(state, "b" * 64)["next_action_command"] is None
+        for secret in ("/private/repo-path", "conversation-secret", "worker-prose.json", "raw worker prose secret"):
+            assert secret not in text
+        parsed = MODULE.parser().parse_args([
+            "status", "--job-dir", str(root), "--format", "text",
+        ])
+        assert parsed.format == "text"
+
+    check("text status is private and never promotes worker completion prose", text_projection_is_three_line_private_and_driver_owned)
+
+    def control_formats_and_resume_approval_are_private_and_pre_dispatch() -> None:
+        log_root = root / "control-logs"; log_root.mkdir(mode=0o700)
+        job = log_root / "format-job"; job.mkdir(mode=0o700)
+        command = {
+            "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": "format-job",
+            "workdir": str(root), "argv": ["agy", "--json-schema", str(PROVIDER_SCHEMA), "--print", "task"],
+            "agy_version": "1.1.16", "agy_version_observed": True,
+            "idle_seconds": 1, "hard_seconds": 2, "max_seconds": 3, "notice_seconds": 1,
+            "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+            "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+        }
+        MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+        _state, _initial_sha = MODULE.create_state(job, "initial", resume=False)
+        worker = ROOT / "skills/agy-worker/runtime/agy-worker.sh"
+        environment = {**os.environ, "AGY_WORKER_LOG_DIR": str(log_root)}
+        def invoke(*arguments: str) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run([str(worker), *arguments], env=environment, input=b"", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        default = invoke("status", "--job-id", "format-job")
+        explicit = invoke("status", "--job-id", "format-job", "--format", "json")
+        assert default.returncode == explicit.returncode == 0 and default.stdout == explicit.stdout
+        public = json.loads(default.stdout)
+        sha = public["state_sha256"]
+        assert public["status"] == "orphaned"
+        assert public["next_action"] == "blocked" and public["next_action_command"] is None
+        text = invoke("status", "--job-id", "format-job", "--format", "text")
+        assert text.returncode == 0 and len(text.stdout.decode("utf-8").splitlines()) == 3
+        waited = invoke("wait", "--job-id", "format-job", "--after-state-sha", sha, "--timeout", "1s", "--format", "text")
+        assert waited.returncode == 0 and len(waited.stdout.decode("utf-8").splitlines()) == 3
+        missing = invoke("resume", "--job-id", "format-job")
+        stale = invoke("resume", "--job-id", "format-job", "--approve-state-sha", "0" * 64)
+        expected = f"agy-worker.sh resume --job-id format-job --approve-state-sha {sha}".encode("ascii")
+        for outcome in (missing, stale):
+            assert outcome.returncode == 21 and outcome.stdout == b"" and expected in outcome.stderr, (outcome.returncode, outcome.stdout, outcome.stderr)
+            assert b"usage:" not in outcome.stderr and str(root).encode() not in outcome.stderr
+        assert not (job / "stream.ndjson").exists()
+
+    check("control formats and missing/stale resume approval stop before provider", control_formats_and_resume_approval_are_private_and_pre_dispatch)
+
     def state_v4_migrates_additively() -> None:
         command = {
             "workdir": str(root), "workflow": "legacy", "max_cycles": 1, "job_id": "legacy",
             "hard_seconds": 2, "max_seconds": 4, "idle_seconds": 1,
         }
         state = MODULE.initial_state(command, "initial", 1, command_sha="0" * 64, command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None)
+        state.update({"phase": None, "assurance": None})
         state["schema_version"] = 4
         for key in MODULE.STATE_V5_FIELDS:
             state.pop(key)
@@ -152,16 +305,71 @@ with tempfile.TemporaryDirectory() as temporary:
             command, "initial", 1, command_sha="0" * 64,
             command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None,
         )
+        original.update({"phase": None, "assurance": None})
         v3 = copy.deepcopy(original); v3["schema_version"] = 3
         for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS}:
             v3.pop(key)
-        assert MODULE.validate_state(v3)["schema_version"] == 3
+        validated_v3 = MODULE.validate_state(v3)
+        assert validated_v3["schema_version"] == 3
+        assert validated_v3["phase"] is None and validated_v3["assurance"] is None
         v1 = copy.deepcopy(v3); v1["schema_version"] = 1
         for key in MODULE.STATE_PROJECT_FIELDS:
             v1.pop(key)
-        assert MODULE.validate_state(v1)["schema_version"] == 1
+        validated_v1 = MODULE.validate_state(v1)
+        assert validated_v1["schema_version"] == 1
+        assert validated_v1["phase"] is None and validated_v1["assurance"] is None
 
     check("v1 v3 and v4 state snapshots remain read compatible", v1_v3_v4_remain_read_compatible)
+
+    def new_v5_legacy_attempts_have_nonrepair_lifecycle() -> None:
+        command = {
+            "workdir": str(root), "workflow": "legacy", "max_cycles": 1,
+            "job_id": "legacy-lifecycle", "hard_seconds": 2,
+            "max_seconds": 4, "idle_seconds": 1,
+        }
+        for origin in ("initial", "conversation-resume", "fresh-restart"):
+            state = MODULE.initial_state(
+                command, origin, 2, command_sha="0" * 64,
+                command_identity=(1, 2, 3, 4, 5), stage_sha=None,
+                stage_identity=None,
+            )
+            validated = MODULE.validate_state(copy.deepcopy(state))
+            assert validated["phase"] == "dispatching"
+            assert validated["assurance"] == "pending"
+
+        restarted = MODULE.initial_state(
+            command, "fresh-restart", 2, command_sha="0" * 64,
+            command_identity=(1, 2, 3, 4, 5), stage_sha=None,
+            stage_identity=None,
+        )
+        invalid = copy.deepcopy(restarted)
+        invalid["phase"] = "repairing"
+        try:
+            MODULE.validate_state(invalid)
+        except MODULE.DispatchError as exc:
+            assert str(exc) == "legacy lifecycle cannot continue as repair" or str(exc) == "active legacy lifecycle is invalid"
+        else:
+            raise AssertionError("legacy restart accepted a repair phase")
+
+        terminal = copy.deepcopy(restarted)
+        terminal.update({
+            "status": "succeeded", "finished_epoch": 1.0, "exit_code": 0,
+            "result_path": "/private/result.json", "result_sha256": "1" * 64,
+            "result_identity": [1, 2, 3, 4, 5], "candidate_recognized": True,
+            "candidate_source": "provider_success", "result_available": True,
+            "driver_disposition": "unreviewed", "phase": "awaiting-verification",
+            "assurance": "pending", "next_action": "driver_review",
+        })
+        MODULE.validate_state(copy.deepcopy(terminal))
+        terminal["phase"] = "dispatching"
+        try:
+            MODULE.validate_state(terminal)
+        except MODULE.DispatchError as exc:
+            assert str(exc) == "legacy candidate lifecycle is invalid"
+        else:
+            raise AssertionError("terminal legacy candidate retained dispatching phase")
+
+    check("new v5 legacy attempts expose a strict nonrepair lifecycle", new_v5_legacy_attempts_have_nonrepair_lifecycle)
 
     def reconciliation_never_follows_outward_symlink() -> None:
         repo = root / "repo"; repo.mkdir()

@@ -666,6 +666,7 @@ for specification in \
     'scripts/workload_profiles.py:executable' \
     'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \
+    'schemas/worker-result.provider.schema.json:data' \
     'schemas/evidence-receipt.schema.json:data' \
     'schemas/persona-run-manifest.schema.json:data' \
     'schemas/persona-transition-approval.schema.json:data' \
