@@ -12,6 +12,53 @@ pass=0; fail=0
 ok() { printf '  ok   %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail+1)); }
 
+ground_truth_phase_contract() {
+    local fixture="$TMP/ground-truth-phase" rc
+    mkdir -p "$fixture/bin" "$fixture/home/.gemini/antigravity-cli"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'printf "%s\\n" "$*" >> "$GROUND_TRUTH_LOG"' \
+        'case "$*" in' \
+        '  --version) printf "%s\\n" "1.1.16" ;;' \
+        '  --help) printf "%s\\n" "usage: agy [--output-format] [--print]" ;;' \
+        '  models) printf "%s\\n" "model-a" ;;' \
+        '  agents) printf "%s\\n" "agent-a" ;;' \
+        '  "plugin list") printf "%s\\n" "plugin-a" ;;' \
+        '  *) exit 97 ;;' \
+        'esac' > "$fixture/bin/agy"
+    chmod +x "$fixture/bin/agy"
+    printf '%s\n' '{"permissions":{"allow":["command(git)"],"ask":[],"deny":[]}}' \
+        > "$fixture/home/.gemini/antigravity-cli/settings.json"
+
+    HOME="$fixture/home" PATH="$fixture/bin:$PATH" \
+    GROUND_TRUTH_LOG="$fixture/interface.log" "$ROOT/ground-truth.sh" \
+        > "$fixture/interface.out" 2> "$fixture/interface.err" || return 1
+    [[ ! -s "$fixture/interface.err" ]] \
+        && grep -Fxq 'interface' "$fixture/interface.out" \
+        && ! grep -Fq 'account phase' "$fixture/interface.out" \
+        && [[ "$(cat "$fixture/interface.log")" == $'--version\n--help' ]] \
+        || return 1
+
+    HOME="$fixture/home" PATH="$fixture/bin:$PATH" \
+    GROUND_TRUTH_LOG="$fixture/account.log" "$ROOT/ground-truth.sh" --account \
+        > "$fixture/account.out" 2> "$fixture/account.err" || return 1
+    [[ ! -s "$fixture/account.err" ]] \
+        && grep -Fxq 'account' "$fixture/account.out" \
+        && grep -Fq 'models available to --model (account phase)' "$fixture/account.out" \
+        && grep -Fq 'allow: [' "$fixture/account.out" \
+        && [[ "$(cat "$fixture/account.log")" == $'--version\n--help\nmodels\nagents\nplugin list' ]] \
+        || return 1
+
+    HOME="$fixture/home" PATH="$fixture/bin:$PATH" \
+    GROUND_TRUTH_LOG="$fixture/invalid.log" "$ROOT/ground-truth.sh" --invalid \
+        > "$fixture/invalid.out" 2> "$fixture/invalid.err"
+    rc=$?
+    [[ "$rc" == 64 ]] \
+        && [[ ! -s "$fixture/invalid.out" ]] \
+        && grep -Fxq 'usage: ground-truth.sh [--account]' "$fixture/invalid.err" \
+        && [[ ! -e "$fixture/invalid.log" ]]
+}
+
 echo "Codex distribution offline test suite"
 echo
 
@@ -784,7 +831,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.7.0"
+assert manifest["version"] == "0.8.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -827,10 +874,11 @@ fi
 
 if [[ -x "$ROOT/doctor.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/doctor.sh" ]] \
-        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/doctor-metadata.py" ]]; then
-    ok "root and portable packages include the canonical read-only doctor"
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/doctor-metadata.py" ]] \
+        && ground_truth_phase_contract; then
+    ok "root/portable doctor and ground-truth phases preserve their read-only boundary"
 else
-    bad "root and portable packages include the canonical read-only doctor"
+    bad "root/portable doctor and ground-truth phases preserve their read-only boundary"
 fi
 
 if [[ -x "$ROOT/feedback-triage.sh" ]] \
@@ -1962,9 +2010,9 @@ done
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'The twenty-seven offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'Local update notifier: 60 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 73 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-update-notifier.py 60-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-update-notifier.py 73-case' "$ROOT/README.md" \
         && [[ -f "$ROOT/docs/MEASUREMENT.md" ]] \
         && [[ -x "$ROOT/update-notifier.sh" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
@@ -2054,10 +2102,22 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
             "$ROOT/compat/reviews/agy-1.1.12.md" \
         && grep -Fq '7aed92cc79154691407324f6d3bd75f335b67ab8ecc04cad89a60b5d15c03b3d' \
             "$ROOT/compat/reviews/agy-1.1.12.md" \
+        && [[ -f "$ROOT/compat/reviews/agy-1.1.16-interface.md" ]] \
+        && grep -Fq 'efa16f096dc02fb654b7e86958d268195284d014' \
+            "$ROOT/compat/reviews/agy-1.1.16-interface.md" \
+        && grep -Fq 'No `agy models`, `agy agents`, plugin, prompt, authentication, or' \
+            "$ROOT/compat/reviews/agy-1.1.16-interface.md" \
+        && grep -Fq 'must not resolve a `1.1.16` model/effort request' \
+            "$ROOT/compat/reviews/agy-1.1.16-interface.md" \
+        && [[ -f "$ROOT/compat/reviews/codex-0.148.0.md" ]] \
+        && grep -Fq '3ba0f711642a888aec92a611a3f3b2211157ff89' \
+            "$ROOT/compat/reviews/codex-0.148.0.md" \
+        && grep -Fq '`compat/codex-verified-version.txt` remains the accepted `0.147.0`' \
+            "$ROOT/compat/reviews/codex-0.148.0.md" \
         && ! grep -Fqr 'models_capture_1_1_12' "$ROOT/skills/agy-worker/runtime"; then
-    ok "fixed 1.1.12 capture bridge stays independent and outside the skill runtime"
+    ok "historical and pending compatibility records preserve the activation boundary"
 else
-    bad "fixed 1.1.12 capture bridge stays independent and outside the skill runtime"
+    bad "historical and pending compatibility records preserve the activation boundary"
 fi
 
 if [[ -x "$ROOT/scripts/version_bootstrap_runner.py" ]] \
@@ -2348,6 +2408,18 @@ if [[ ! -e "$ROOT/codex-skill/SKILL.md" ]] \
     ok "repository has one canonical skill source"
 else
     bad "repository has one canonical skill source"
+fi
+
+if grep -Fq '24 quota exhausted' "$ROOT/skills/agy-worker/runtime/agy-worker.sh" \
+        && grep -Fq '`24` provider quota exhausted' "$ROOT/README.md" \
+        && grep -Fq 'exact agy `1.1.13` terminal quota response' \
+            "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq 'bounded non-gating version observation' "$ROOT/README.md" \
+        && grep -Fq 'provider_quota_exhausted' \
+            "$ROOT/compat/reviews/agy-1.1.13-quota-terminal.md"; then
+    ok "package documents the narrow version-bound quota terminal contract"
+else
+    bad "package quota terminal documentation contract"
 fi
 
 echo

@@ -106,7 +106,7 @@ Exit codes: 0 ok · 2 no prompt · 3 empty output · 4 schema invalid · 5 uncla
             6 permission gate · 7 compatibility review · 8 compatibility evidence unavailable
             9 idle timeout · 16 hard deadline · 17-19 reserved for version-bound
             provider/auth evidence · 20 status unavailable · 21 resume failed
-            22 cancelled · 23 output oversized · 64 invalid usage
+            22 cancelled · 23 output oversized · 24 quota exhausted · 64 invalid usage
 EOF
     exit 64
 }
@@ -499,6 +499,39 @@ set -e
 if (( selection_rc != 0 )); then
     exit "$selection_rc"
 fi
+IFS=$'\t' read -r agy_version agy_version_observed agy_selection_mode < <(python3 -I -S -B - "$selection_file" \
+    "$SCRIPT_DIR/compat/agy-verified-version.txt" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    value = json.load(handle)
+with open(sys.argv[2], "r", encoding="ascii") as handle:
+    baseline = handle.read().strip()
+version = value.get("installed_agy_version", baseline) if isinstance(value, dict) else None
+if not isinstance(version, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+    raise SystemExit(7)
+print("\t".join((
+    version,
+    "true" if "installed_agy_version" in value else "false",
+    value.get("selection_mode", ""),
+)))
+PY
+) || exit $?
+if [[ "$agy_selection_mode" == "literal-model" ]]; then
+    set +e
+    observed_version="$(python3 -B "$SCRIPT_DIR/scripts/model_selection.py" \
+        --observe-installed-version 2>/dev/null)"
+    observe_rc=$?
+    set -e
+    if (( observe_rc == 0 )); then
+        agy_version="$observed_version"
+        agy_version_observed=true
+    elif (( observe_rc >= 128 )); then
+        exit "$observe_rc"
+    fi
+fi
 
 restore_staged_permissions() {
     if [[ -d "$staged_dir" ]]; then
@@ -614,9 +647,8 @@ stage_dir_arg=""; stage_file_arg=""
 if (( stage_used )); then
     stage_dir_arg="$staged_dir"; stage_file_arg="$staged_prompt_file"
 fi
-agy_version="$(<"$SCRIPT_DIR/compat/agy-verified-version.txt")"
 command_workflow="${workflow:-legacy}"
-python3 -I -S -B - "$command_file" "$job_id" "$workdir" "$agy_version" \
+python3 -I -S -B - "$command_file" "$job_id" "$workdir" "$agy_version" "$agy_version_observed" \
     "$idle_seconds" "$hard_seconds" "$max_seconds" "$notice_seconds" \
     "$stage_dir_arg" "$stage_file_arg" "$CALLER_UMASK" "$command_workflow" "$max_cycles" \
     "${cmd[@]}" <<'PY'
@@ -626,18 +658,19 @@ from pathlib import Path
 import sys
 
 (
-    output, job_id, workdir, agy_version, idle, hard, maximum, notice,
+    output, job_id, workdir, agy_version, agy_version_observed, idle, hard, maximum, notice,
     stage_dir, stage_file, child_umask, workflow, max_cycles, *argv
 ) = sys.argv[1:]
 if not isinstance(child_umask, str) or len(child_umask) not in (3, 4) or any(ch not in "01234567" for ch in child_umask):
     raise SystemExit(64)
 value = {
-    "schema_version": 2,
+    "schema_version": 3,
     "kind": "agy-worker-dispatch-command",
     "job_id": job_id,
     "workdir": workdir,
     "argv": argv,
     "agy_version": agy_version,
+    "agy_version_observed": agy_version_observed == "true",
     "idle_seconds": int(idle),
     "hard_seconds": int(hard),
     "max_seconds": int(maximum),

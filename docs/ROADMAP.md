@@ -153,9 +153,9 @@ implemented and offline-verified in the published v0.4.0 release. This remains a
 offline and bounded-lifecycle claim, not a live-provider guarantee.
 The published v0.6.0 release scope added the human-reconciled Gemini 3.7 Flash
 low/medium/high mappings plus capture-child mode and dispatch-state snapshot hardening.
-The v0.7.0 usability-first project workflow is implemented and offline-verified as a
-release candidate; tag, release, and live-provider gates remain separate and are not
-claimed by this source tree.
+The v0.7.0 usability-first project workflow is published. The v0.8.0 maintenance and
+diagnostics slice is implemented and offline-verified as a release candidate; tag and
+release gates remain separate and are not claimed by this source tree.
 Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
@@ -181,8 +181,7 @@ labels, or state.
 
 ### Usability-first project workflow
 
-**Current status:** Implemented and offline-verified as the v0.7.0 release candidate;
-not published. Tag/release readback and live-provider gates remain separate.
+**Current status:** Implemented, offline-verified, and published in v0.7.0.
 The product is moving from a mechanical-task admission model to three explicit Codex
 workflows: read-only `explore`, implementation `task`, and repo-wide iterative
 `project`. Unknown final file lists, broad architecture work, missing initial test
@@ -195,6 +194,20 @@ an observed check failure. `finalize` will record only Codex's `verified`,
 as a command or allow agy to self-assign quality. A useful unresolved candidate is
 preserved for review instead of being silently retried, discarded, or presented as
 complete. Personas remain optional prompt specializations.
+
+### Maintenance, version drift, and quota diagnostics
+
+**Current status:** Implemented and offline-verified as the v0.8.0 release candidate;
+not published. Tag/release readback remains separate.
+
+The project updater resolves one bounded annotated project tag to a commit. A valid
+notifier snapshot whose source bytes changed reports `maintenance-required` and waits
+for an explicit owner `refresh`; malformed or unsafe state remains inert. Safe
+interface observations record agy 1.1.16 and Codex 0.148.0 without activating a model
+matrix or compatibility baseline. For Issue #59, only the exact reviewed agy 1.1.13
+quota terminal is classified as exit 24 with a bounded countdown. No raw error text is
+public, and no retry, restart, model change, provider call, or metadata activation is
+automatic.
 
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the
@@ -549,8 +562,10 @@ approval-gated.
   fails before dispatch with no fallback, slug surgery, normalization, or base-model
   guess.
 - **Version-independent literal boundary:** `--literal-model` accepts one exact
-  lowercase CLI slug, performs no version probe or matrix lookup, and sends that slug
-  exactly once with `compatibility_status: unreconciled-pass-through`. It has no
+  lowercase CLI slug, performs no matrix lookup, and sends that slug exactly once with
+  `compatibility_status: unreconciled-pass-through`. A bounded non-gating runtime
+  version observation may support exact diagnostics but never changes or rejects the
+  literal selection. It has no
   environment source and conflicts with tier/model/effort. It carries no compatibility,
   provider, cost, routing, recommendation, or fallback authority.
 - **Dual-selector evidence gate:** G1 never forwards agy's `--effort`. Passing both
@@ -573,8 +588,8 @@ approval-gated.
   parsing/model assembly, advisory recommender, and the schema/report surfaces present
   when G1 starts. No new dependency or provider lookup.
 - **Minimum accept tests:** Legacy named tiers and raw `--tier` labels remain explicit;
-  implicit default emits no model; a literal slug remains exact without a version
-  probe; each reviewed advertised slug reaches agy as one exact
+  implicit default emits no model; a literal slug remains exact when its bounded
+  version observation is available or unavailable; each reviewed advertised slug reaches agy as one exact
   `--model`; every matrix-admitted base/effort pair has its own test and reaches agy as
   one exact resolved compound `--model`; fixed Sonnet/Opus/GPT choices remain exact and
   non-adjustable; explicit continuation attempts preserve the same matrix revision and resolved slug;

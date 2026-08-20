@@ -25,7 +25,7 @@ REVISION_RE = re.compile(r"[0-9a-f]{40}")
 FIXED_PATH_RE = re.compile(
     rf"(?:"
     rf"/repos/cagdasyurekli/codex-agy-worker/"
-    rf"(?:releases/latest|git/ref/tags/v{SEMVER_PATTERN})"
+    rf"(?:releases/latest|git/ref/tags/v{SEMVER_PATTERN}|git/tags/[0-9a-f]{{40}})"
     rf"|/repos/google-antigravity/antigravity-cli/"
     rf"(?:releases/latest|git/ref/heads/main)"
     rf"|/repos/openai/codex/"
@@ -299,7 +299,7 @@ def _tag_ref(value: Any, tag: str) -> str:
     return revision
 
 
-def _codex_tag_target(value: Any, tag: str) -> tuple[str, str]:
+def _tag_target(value: Any, tag: str) -> tuple[str, str]:
     document = _object(value, "release tag")
     target = _object(document.get("object"), "release tag")
     revision = target.get("sha")
@@ -329,6 +329,23 @@ def _annotated_tag_commit(value: Any, tag: str, tag_revision: str) -> str:
     return revision
 
 
+def _resolved_tag_commit(fixed_opener: Any, policy: ToolPolicy, tag: str) -> str:
+    """Resolve one lightweight or one-level annotated release tag to a commit."""
+
+    kind, target_revision = _tag_target(
+        fetch_json(fixed_opener, _repository_url(policy, f"git/ref/tags/{tag}")), tag
+    )
+    if kind == "commit":
+        return target_revision
+    # A tag object may point directly to one commit.  Further tag indirection is
+    # deliberately rejected by _annotated_tag_commit rather than followed.
+    return _annotated_tag_commit(
+        fetch_json(fixed_opener, _repository_url(policy, f"git/tags/{target_revision}")),
+        tag,
+        target_revision,
+    )
+
+
 def _repository_url(policy: ToolPolicy, suffix: str) -> str:
     return f"{API_ORIGIN}/repos/{policy.owner}/{policy.repository}/{suffix}"
 
@@ -348,27 +365,9 @@ def latest_evidence(tool: str, *, opener: Optional[Any] = None) -> tuple[str, st
         ),
         policy,
     )
-    if tool == "codex":
-        kind, target_revision = _codex_tag_target(
-            fetch_json(fixed_opener, _repository_url(policy, f"git/ref/tags/{tag}")), tag
-        )
-        if kind == "commit":
-            revision = target_revision
-        else:
-            revision = _annotated_tag_commit(
-                fetch_json(
-                    fixed_opener, _repository_url(policy, f"git/tags/{target_revision}")
-                ),
-                tag,
-                target_revision,
-            )
-        return tool, version, revision
     if policy.main_branch is None:
-        revision = _tag_ref(
-            fetch_json(fixed_opener, _repository_url(policy, f"git/ref/tags/{tag}")),
-            tag,
-        )
-        return tool, tag, revision
+        revision = _resolved_tag_commit(fixed_opener, policy, tag)
+        return tool, version if tool == "codex" else tag, revision
     revision = _source_ref(
         fetch_json(
             fixed_opener,
@@ -386,10 +385,7 @@ def project_release_evidence(tag: str, *, opener: Optional[Any] = None) -> tuple
     if policy.tag_pattern.fullmatch(tag) is None:
         raise OfficialEvidenceError("invalid project release tag")
     fixed_opener = opener if opener is not None else build_fixed_opener()
-    revision = _tag_ref(
-        fetch_json(fixed_opener, _repository_url(policy, f"git/ref/tags/{tag}")),
-        tag,
-    )
+    revision = _resolved_tag_commit(fixed_opener, policy, tag)
     return "project", tag, revision
 
 

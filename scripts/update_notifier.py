@@ -31,6 +31,11 @@ STATE_RELATIVE = Path("Library/Application Support/codex-agy-worker/update-notif
 PLIST_RELATIVE = Path("Library/LaunchAgents") / f"{LABEL}.plist"
 MAX_LEDGER = 128 * 1024
 MAX_RESULT = 128 * 1024
+RESULT_EXIT_STATUS = {
+    0: "unchanged",
+    2: "evidence-unavailable",
+    3: "drift-review",
+}
 SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 SIGNAL_EXIT = {signal.SIGHUP: 129, signal.SIGINT: 130, signal.SIGTERM: 143}
 SOURCE_FILES = (
@@ -425,15 +430,36 @@ def _validate_ledger_shape(value: dict[str, object]) -> dict[str, object]:
 
 
 def _validate_ledger(value: dict[str, object], paths: Layout) -> dict[str, object]:
+    _validate_ledger_binding(value, paths)
+    manifest = value.get("manifest")
+    if not isinstance(manifest, dict) or manifest != source_manifest(paths.source):
+        raise NotifierError("notifier behavior source drifted")
+    return value
+
+
+def _validate_ledger_binding(value: dict[str, object], paths: Layout) -> dict[str, object]:
+    """Validate installed authority without requiring live source byte equality."""
     _validate_ledger_shape(value)
     if value.get("uid") != os.getuid() or value.get("source") != str(paths.source):
         raise NotifierError("installed state does not bind this account and source")
     if value.get("git_dir") != str(resolve_git_dir(paths.source)):
         raise NotifierError("installed state does not bind this Git authority")
-    manifest = value.get("manifest")
-    if not isinstance(manifest, dict) or manifest != source_manifest(paths.source):
-        raise NotifierError("notifier behavior source drifted")
     return value
+
+
+def _live_source_state(ledger: dict[str, object], paths: Layout) -> str:
+    """Classify only a safe, complete live-source digest mismatch as maintenance."""
+    state, _current = _live_source_manifest_state(ledger, paths)
+    return state
+
+
+def _live_source_manifest_state(
+    ledger: dict[str, object], paths: Layout
+) -> tuple[str, dict[str, str]]:
+    _validate_ledger_binding(ledger, paths)
+    current = source_manifest(paths.source)
+    state = "unchanged" if current == ledger.get("manifest") else "maintenance-required"
+    return state, current
 
 
 def _validate_plist(paths: Layout, ledger: dict[str, object]) -> bool:
@@ -459,75 +485,79 @@ def _validate_installed_sources(paths: Layout, ledger: dict[str, object]) -> Non
 
 def install(paths: Layout) -> None:
     with lifecycle_lock(paths):
-        if paths.ledger.exists():
-            ledger = _load_json(paths.ledger, MAX_LEDGER)
-            _validate_ledger_shape(ledger)
-            state = loaded_state(os.getuid())
-            if ledger.get("phase") == "uninstalled":
-                if ledger.get("source") != str(paths.source) or ledger.get("git_dir") != str(resolve_git_dir(paths.source)):
-                    raise NotifierError("installed state does not bind this source and Git authority")
-                if state != "unloaded":
-                    raise NotifierError("prior uninstall cannot be reconciled with launchd")
-                tombstone = _load_json(paths.tombstone, MAX_LEDGER)
-                _validate_tombstone(tombstone, ledger)
-                if tombstone.get("phase") != "completed":
-                    raise NotifierError("prior uninstall recovery is incomplete")
-                os.unlink(paths.tombstone)
-                _fsync_dir(paths.state)
-            else:
-                _validate_ledger(ledger, paths)
-            if ledger.get("phase") != "uninstalled" and state == "loaded" and _validate_plist(paths, ledger):
-                _validate_installed_sources(paths, ledger)
-                print("update notifier: already installed and loaded")
-                return
-            elif ledger.get("phase") != "uninstalled" and state != "unloaded":
-                raise NotifierError("launchd state is loaded or unknown; retained installed state")
-            elif ledger.get("phase") != "uninstalled":
-                raise NotifierError("an incomplete notifier installation requires uninstall")
-        manifest = source_manifest(paths.source)
-        plist_payload = _plist(paths)
-        launcher_payload = (paths.source / "scripts/update_notifier_child.py").read_bytes()
-        shim_digest = hashlib.sha256(_shim_payload(launcher_payload)).hexdigest()
-        ledger = {
-            "schema": 1,
-            "label": LABEL,
-            "uid": os.getuid(),
-            "source": str(paths.source),
-            "git_dir": str(resolve_git_dir(paths.source)),
-            "manifest": manifest,
-            "plist_sha256": hashlib.sha256(plist_payload).hexdigest(),
-            "shim_sha256": shim_digest,
-            "secret": secrets.token_hex(32),
-            "phase": "preparing",
-        }
-        # Ledger authority exists before the first installed-source write, making
-        # every later install failure removable through authenticated uninstall.
-        _atomic_write(paths.ledger, _canonical_json(ledger))
-        if _copy_snapshot(paths, manifest) != shim_digest:
-            raise NotifierError("installed shim binding changed during installation")
-        _mkdir_private(paths.plist.parent, paths.home)
-        descriptor = os.open(paths.plist, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(plist_payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        _fsync_dir(paths.plist.parent)
-        ledger["phase"] = "bootstrapping"
-        _atomic_write(paths.ledger, _canonical_json(ledger))
-        if source_manifest(paths.source) != manifest:
-            raise NotifierError("behavior source changed before bootstrap")
-        _validate_installed_sources(paths, ledger)
-        completed = _launchctl(["bootstrap", f"gui/{os.getuid()}", str(paths.plist)])
+        _install_locked(paths)
+
+
+def _install_locked(paths: Layout) -> None:
+    if paths.ledger.exists():
+        ledger = _load_json(paths.ledger, MAX_LEDGER)
+        _validate_ledger_shape(ledger)
         state = loaded_state(os.getuid())
-        if state == "loaded":
-            ledger["phase"] = "loaded"
-            _atomic_write(paths.ledger, _canonical_json(ledger))
-            print("update notifier: installed and loaded")
+        if ledger.get("phase") == "uninstalled":
+            if ledger.get("source") != str(paths.source) or ledger.get("git_dir") != str(resolve_git_dir(paths.source)):
+                raise NotifierError("installed state does not bind this source and Git authority")
+            if state != "unloaded":
+                raise NotifierError("prior uninstall cannot be reconciled with launchd")
+            tombstone = _load_json(paths.tombstone, MAX_LEDGER)
+            _validate_tombstone(tombstone, ledger)
+            if tombstone.get("phase") != "completed":
+                raise NotifierError("prior uninstall recovery is incomplete")
+            os.unlink(paths.tombstone)
+            _fsync_dir(paths.state)
+        else:
+            _validate_ledger(ledger, paths)
+        if ledger.get("phase") != "uninstalled" and state == "loaded" and _validate_plist(paths, ledger):
+            _validate_installed_sources(paths, ledger)
+            print("update notifier: already installed and loaded")
             return
-        if state == "unknown":
-            raise NotifierError("launchctl bootstrap outcome is unknown; retained recovery state")
-        detail = "bootstrap failed" if completed.returncode else "bootstrap side effect was not observed"
-        raise NotifierError(f"launchctl {detail}; retained recovery state")
+        if ledger.get("phase") != "uninstalled" and state != "unloaded":
+            raise NotifierError("launchd state is loaded or unknown; retained installed state")
+        if ledger.get("phase") != "uninstalled":
+            raise NotifierError("an incomplete notifier installation requires uninstall")
+    manifest = source_manifest(paths.source)
+    plist_payload = _plist(paths)
+    launcher_payload = (paths.source / "scripts/update_notifier_child.py").read_bytes()
+    shim_digest = hashlib.sha256(_shim_payload(launcher_payload)).hexdigest()
+    ledger = {
+        "schema": 1,
+        "label": LABEL,
+        "uid": os.getuid(),
+        "source": str(paths.source),
+        "git_dir": str(resolve_git_dir(paths.source)),
+        "manifest": manifest,
+        "plist_sha256": hashlib.sha256(plist_payload).hexdigest(),
+        "shim_sha256": shim_digest,
+        "secret": secrets.token_hex(32),
+        "phase": "preparing",
+    }
+    # Ledger authority exists before the first installed-source write, making
+    # every later install failure removable through authenticated uninstall.
+    _atomic_write(paths.ledger, _canonical_json(ledger))
+    if _copy_snapshot(paths, manifest) != shim_digest:
+        raise NotifierError("installed shim binding changed during installation")
+    _mkdir_private(paths.plist.parent, paths.home)
+    descriptor = os.open(paths.plist, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(plist_payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    _fsync_dir(paths.plist.parent)
+    ledger["phase"] = "bootstrapping"
+    _atomic_write(paths.ledger, _canonical_json(ledger))
+    if source_manifest(paths.source) != manifest:
+        raise NotifierError("behavior source changed before bootstrap")
+    _validate_installed_sources(paths, ledger)
+    completed = _launchctl(["bootstrap", f"gui/{os.getuid()}", str(paths.plist)])
+    state = loaded_state(os.getuid())
+    if state == "loaded":
+        ledger["phase"] = "loaded"
+        _atomic_write(paths.ledger, _canonical_json(ledger))
+        print("update notifier: installed and loaded")
+        return
+    if state == "unknown":
+        raise NotifierError("launchctl bootstrap outcome is unknown; retained recovery state")
+    detail = "bootstrap failed" if completed.returncode else "bootstrap side effect was not observed"
+    raise NotifierError(f"launchctl {detail}; retained recovery state")
 
 
 def status(paths: Layout) -> None:
@@ -548,11 +578,11 @@ def status(paths: Layout) -> None:
             print("update notifier: not installed; authenticated recovery record retained")
             return
         try:
-            _validate_ledger(ledger, paths)
+            _validate_ledger_binding(ledger, paths)
             if not _validate_plist(paths, ledger):
                 raise NotifierError("installed plist drifted")
             _validate_installed_sources(paths, ledger)
-            source = "unchanged"
+            source = _live_source_state(ledger, paths)
         except (NotifierError, OSError):
             source = "drifted-or-invalid"
         print(f"update notifier: {loaded_state(os.getuid())}; source {source}")
@@ -600,62 +630,88 @@ def _unlink_if_exact(path: Path, digest: str, replacements: list[str], label: st
 
 def uninstall(paths: Layout) -> None:
     with lifecycle_lock(paths):
-        if not paths.ledger.exists():
-            print("update notifier: not installed")
-            return
-        ledger = _load_json(paths.ledger, MAX_LEDGER)
-        _validate_ledger_shape(ledger)
-        replacements: list[str] = []
-        phase = "started"
-        if paths.tombstone.exists():
-            tombstone = _load_json(paths.tombstone, MAX_LEDGER)
-            _validate_tombstone(tombstone, ledger)
-            phase = str(tombstone.get("phase"))
-            stored = tombstone.get("replacements")
-            replacements = list(stored) if isinstance(stored, list) and all(isinstance(x, str) for x in stored) else []
-        else:
-            _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
-        state = loaded_state(os.getuid())
-        # A previously unloaded label may be loaded again after login/reboot.
-        # Reconcile it before every resumed deletion phase, not only on the first
-        # invocation that created the tombstone.
-        if state == "loaded":
-            _launchctl(["bootout", f"gui/{os.getuid()}/{LABEL}"])
-            state = loaded_state(os.getuid())
-        if state != "unloaded":
-            raise NotifierError("launchd state is loaded or unknown; uninstall remains resumable")
-        if phase == "started":
-            phase = "unloaded"
-            _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
-        if phase == "unloaded":
-            _unlink_if_exact(paths.plist, str(ledger["plist_sha256"]), replacements, "plist")
-            phase = "plist-processed"
-            _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
-        if phase == "plist-processed":
-            manifest = ledger.get("manifest")
-            if not isinstance(manifest, dict):
-                raise NotifierError("installed state is malformed")
-            for relative, digest in manifest.items():
-                if isinstance(relative, str) and isinstance(digest, str):
-                    _unlink_if_exact(paths.snapshot / relative, digest, replacements, f"source:{relative}")
-            child_digest = str(manifest.get("scripts/update_notifier_child.py", ""))
-            _unlink_if_exact(paths.launcher, child_digest, replacements, "launcher")
-            _unlink_if_exact(paths.shim, str(ledger.get("shim_sha256", "")), replacements, "shim")
-            phase = "files-processed"
-            _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
-        # Installed authority changes only after launchd absence and all durable
-        # phases.  Keep an authenticated completed tombstone and inert ledger so a
-        # directory-fsync failure never destroys the only resumable authority.
-        if loaded_state(os.getuid()) != "unloaded":
-            raise NotifierError("launchd absence could not be reconfirmed; retained recovery state")
-        phase = "completed"
+        _uninstall_locked(paths)
+
+
+def _uninstall_locked(paths: Layout) -> None:
+    if not paths.ledger.exists():
+        print("update notifier: not installed")
+        return
+    ledger = _load_json(paths.ledger, MAX_LEDGER)
+    _validate_ledger_shape(ledger)
+    replacements: list[str] = []
+    phase = "started"
+    if paths.tombstone.exists():
+        tombstone = _load_json(paths.tombstone, MAX_LEDGER)
+        _validate_tombstone(tombstone, ledger)
+        phase = str(tombstone.get("phase"))
+        stored = tombstone.get("replacements")
+        replacements = list(stored) if isinstance(stored, list) and all(isinstance(x, str) for x in stored) else []
+    else:
         _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
-        ledger["phase"] = "uninstalled"
-        _atomic_write(paths.ledger, _canonical_json(ledger))
+    state = loaded_state(os.getuid())
+    # A previously unloaded label may be loaded again after login/reboot.
+    # Reconcile it before every resumed deletion phase, not only on the first
+    # invocation that created the tombstone.
+    if state == "loaded":
+        _launchctl(["bootout", f"gui/{os.getuid()}/{LABEL}"])
+        state = loaded_state(os.getuid())
+    if state != "unloaded":
+        raise NotifierError("launchd state is loaded or unknown; uninstall remains resumable")
+    if phase == "started":
+        phase = "unloaded"
+        _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
+    if phase == "unloaded":
+        _unlink_if_exact(paths.plist, str(ledger["plist_sha256"]), replacements, "plist")
+        phase = "plist-processed"
+        _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
+    if phase == "plist-processed":
+        manifest = ledger.get("manifest")
+        if not isinstance(manifest, dict):
+            raise NotifierError("installed state is malformed")
+        for relative, digest in manifest.items():
+            if isinstance(relative, str) and isinstance(digest, str):
+                _unlink_if_exact(paths.snapshot / relative, digest, replacements, f"source:{relative}")
+        child_digest = str(manifest.get("scripts/update_notifier_child.py", ""))
+        _unlink_if_exact(paths.launcher, child_digest, replacements, "launcher")
+        _unlink_if_exact(paths.shim, str(ledger.get("shim_sha256", "")), replacements, "shim")
+        phase = "files-processed"
+        _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
+    # Installed authority changes only after launchd absence and all durable
+    # phases.  Keep an authenticated completed tombstone and inert ledger so a
+    # directory-fsync failure never destroys the only resumable authority.
+    if loaded_state(os.getuid()) != "unloaded":
+        raise NotifierError("launchd absence could not be reconfirmed; retained recovery state")
+    phase = "completed"
+    _atomic_write(paths.tombstone, _canonical_json(_tombstone_payload(ledger, phase, replacements)))
+    ledger["phase"] = "uninstalled"
+    _atomic_write(paths.ledger, _canonical_json(ledger))
+    if replacements:
+        print("update notifier: uninstalled; preserved replacement files")
+    else:
+        print("update notifier: uninstalled")
+
+
+def refresh(paths: Layout) -> None:
+    """Explicitly replace a bound installation from the current reviewed source."""
+    with lifecycle_lock(paths):
+        if not paths.ledger.exists():
+            raise NotifierError("notifier is not installed; use install")
+        prior = _load_json(paths.ledger, MAX_LEDGER)
+        _validate_ledger_binding(prior, paths)
+        # A digest mismatch is expected here, but every current source component
+        # must still pass the normal ownership, mode, size, and no-symlink checks.
+        source_manifest(paths.source)
+        _uninstall_locked(paths)
+        retained = _load_json(paths.tombstone, MAX_LEDGER)
+        _validate_tombstone(retained, prior)
+        replacements = retained.get("replacements")
         if replacements:
-            print("update notifier: uninstalled; preserved replacement files")
-        else:
-            print("update notifier: uninstalled")
+            raise NotifierError(
+                "refresh stopped after uninstall; preserved replacement files require review"
+            )
+        _install_locked(paths)
+        print("update notifier: refreshed from current source")
 
 
 def _timestamp() -> str:
@@ -667,14 +723,16 @@ def _prior_result(paths: Layout) -> Optional[dict[str, object]]:
         return None
     value = _load_json(paths.result, MAX_RESULT)
     required = {"schema", "timestamp", "status", "update_exit", "fingerprint", "notification_attempted"}
+    update_exit = value.get("update_exit")
     if (
         set(value) != required
         or value.get("schema") != 1
         or not isinstance(value.get("timestamp"), str)
         or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value["timestamp"]) is None
-        or value.get("status") not in {"unchanged", "evidence-unavailable", "drift-review"}
-        or value.get("update_exit") not in {0, 2, 3}
-        or {0: "unchanged", 2: "evidence-unavailable", 3: "drift-review"}[value["update_exit"]] != value["status"]
+        or value.get("status") not in set(RESULT_EXIT_STATUS.values())
+        or type(update_exit) is not int
+        or update_exit not in RESULT_EXIT_STATUS
+        or RESULT_EXIT_STATUS[update_exit] != value["status"]
         or not isinstance(value.get("fingerprint"), str)
         or re.fullmatch(r"[0-9a-f]{64}", value["fingerprint"]) is None
         or not isinstance(value.get("notification_attempted"), bool)
@@ -809,17 +867,36 @@ def _run_child(paths: Layout) -> tuple[int, bytes, bytes]:
 
 def run(paths: Layout) -> None:
     with lifecycle_lock(paths):
-        ledger = _validate_ledger(_load_json(paths.ledger, MAX_LEDGER), paths)
+        ledger = _validate_ledger_binding(_load_json(paths.ledger, MAX_LEDGER), paths)
         if ledger.get("phase") != "loaded" or loaded_state(os.getuid()) != "loaded":
             raise NotifierError("notifier is not proven loaded")
+        if not _validate_plist(paths, ledger):
+            raise NotifierError("installed plist drifted")
         _validate_installed_sources(paths, ledger)
         prior = _prior_result(paths)
-        update_exit, stdout, acknowledgements = _run_child(paths)
-        if b"\x00" in stdout or len(stdout) > 64 * 1024:
-            raise NotifierError("update result is malformed")
-        status_name = {0: "unchanged", 2: "evidence-unavailable", 3: "drift-review"}[update_exit]
-        fingerprint = hashlib.sha256(str(update_exit).encode("ascii") + b"\0" + stdout).hexdigest()
-        attempted = status_name == "drift-review" and not (
+        source_state, current_manifest = _live_source_manifest_state(ledger, paths)
+        if source_state == "maintenance-required":
+            # Preserve the v1 result vocabulary for downgrade-safe dedup state.
+            # The public run/status output and fixed notification carry the more
+            # precise maintenance classification without migrating private state.
+            update_exit = 3
+            status_name = "maintenance-required"
+            result_status = "drift-review"
+            fingerprint = hashlib.sha256(
+                b"maintenance-required\0"
+                + _canonical_json(
+                    {"installed": ledger.get("manifest"), "current": current_manifest}
+                )
+            ).hexdigest()
+            acknowledgements = b""
+        else:
+            update_exit, stdout, acknowledgements = _run_child(paths)
+            if b"\x00" in stdout or len(stdout) > 64 * 1024:
+                raise NotifierError("update result is malformed")
+            status_name = RESULT_EXIT_STATUS[update_exit]
+            result_status = status_name
+            fingerprint = hashlib.sha256(str(update_exit).encode("ascii") + b"\0" + stdout).hexdigest()
+        attempted = status_name in {"drift-review", "maintenance-required"} and not (
             prior is not None
             and prior.get("fingerprint") == fingerprint
             and prior.get("notification_attempted") is True
@@ -827,7 +904,7 @@ def run(paths: Layout) -> None:
         result = {
             "schema": 1,
             "timestamp": _timestamp(),
-            "status": status_name,
+            "status": result_status,
             "update_exit": update_exit,
             "fingerprint": fingerprint,
             "notification_attempted": attempted,
@@ -836,18 +913,30 @@ def run(paths: Layout) -> None:
         # conservatively suppresses duplicates; this records an attempt, not delivery.
         _atomic_write(paths.result, _canonical_json(result))
         if attempted:
-            if _run_notification(paths) != 0:
+            if _run_notification(paths, status_name) != 0:
                 raise NotifierError("notification request failed; its side effect cannot be retracted")
         del acknowledgements
         print(f"update notifier: {status_name}; notification {'attempted' if attempted else 'suppressed'}")
 
 
-def _run_notification(paths: Layout) -> int:
+def _run_notification(paths: Layout, status_name: str) -> int:
+    messages = {
+        "drift-review": (
+            "codex-agy-worker update review",
+            "Update or compatibility drift changed; run update.sh check.",
+        ),
+        "maintenance-required": (
+            "codex-agy-worker notifier maintenance",
+            "Monitoring paused after the bound source changed; run update-notifier.sh refresh.",
+        ),
+    }
+    if status_name not in messages:
+        raise NotifierError("notification status is invalid")
+    title, message = messages[status_name]
     process = subprocess.Popen(
         [
             "/usr/bin/python3", "-I", "-S", "-B", str(paths.launcher),
-            "--notify", "codex-agy-worker update review",
-            "Update or compatibility drift changed; run update.sh check.",
+            "--notify", title, message,
         ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -865,7 +954,7 @@ def _run_notification(paths: Layout) -> int:
 
 
 def usage() -> int:
-    print("usage: update-notifier.sh {install|uninstall|status|run}", file=sys.stderr)
+    print("usage: update-notifier.sh {install|refresh|uninstall|status|run}", file=sys.stderr)
     return 64
 
 
@@ -883,7 +972,7 @@ def main(argv: list[str]) -> int:
     if len(argv) == 4 and argv[1:3] == ["run", "--source"] and Path(argv[3]).is_absolute():
         command = "run"
         internal_source = Path(argv[3])
-    elif len(argv) == 2 and argv[1] in {"install", "uninstall", "status", "run"}:
+    elif len(argv) == 2 and argv[1] in {"install", "refresh", "uninstall", "status", "run"}:
         command = argv[1]
     else:
         return usage()
@@ -896,7 +985,13 @@ def main(argv: list[str]) -> int:
         for number in SIGNALS:
             signal.signal(number, handle)
         paths = layout(source=internal_source)
-        {"install": install, "uninstall": uninstall, "status": status, "run": run}[command](paths)
+        {
+            "install": install,
+            "refresh": refresh,
+            "uninstall": uninstall,
+            "status": status,
+            "run": run,
+        }[command](paths)
         if latched:
             raise Interrupted(next(number for number in SIGNALS if number in latched))
         # One process-owned completion snapshot for both success and failure.

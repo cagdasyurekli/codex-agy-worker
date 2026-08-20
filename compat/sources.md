@@ -10,8 +10,11 @@ under `https://api.github.com/repos/`. The Python standard-library client ignore
 ambient proxies, rejects redirects, requires strict bounded JSON response metadata,
 and exposes only validated version/tag and revision fields through a bounded
 process-group supervisor. Project release commits bind through the compact exact
-`git/ref/tags/<tag>` document; annotated tag objects fail closed. Release documents
-have a 512-KiB ceiling while ref/source documents retain a 256-KiB ceiling. Installed
+`git/ref/tags/<tag>` document: a direct commit is accepted, or exactly one validated
+annotated-tag object is resolved to a commit through the fixed `git/tags/<sha>`
+endpoint. Nested, malformed, mismatched, or non-commit targets fail closed. Release
+documents have a 512-KiB ceiling while ref/source and tag-object documents retain a
+256-KiB ceiling. Installed
 `agy --version` and `codex --version` probes use the same supervisor with smaller time
 and byte limits. Read-only check/watch performs no Git network operation, so Git URL
 rewrites, credential helpers, and Git proxy configuration are not evidence inputs.
@@ -46,6 +49,19 @@ adjustable pair to one exact advertised compound slug and records fixed choices 
 non-adjustable. It neither forwards `--effort` nor attests the effective provider
 backend; silent fallback could not be independently excluded.
 
+The later `1.1.16` interface observation is retained in
+[`reviews/agy-1.1.16-interface.md`](reviews/agy-1.1.16-interface.md). It records
+the official release/source/distribution tuple and a safe local version/help review,
+plus the observed print-mode JSON boundary: agy emits terminal failure detail as a
+string `error`, not separate machine-code or typed-retry fields. It contains no
+account inventory, provider call, or model/effort decision. It is therefore a
+drift-review record, not a replacement for the `1.1.12` verified baseline or matrix.
+
+The narrow agy `1.1.13` structured quota-terminal evidence for Issue #59 is retained
+in [`reviews/agy-1.1.13-quota-terminal.md`](reviews/agy-1.1.13-quota-terminal.md).
+It authorizes only the exact version/shape classifier and sanitized countdown; it is
+not a general quota/rate-limit signature, baseline update, or retry authority.
+
 `agy-distribution-manifest.json` records the observed `1.1.12` version, exact Google
 Storage archive URL, and lowercase SHA-512 tuple. It is an observational snapshot,
 not an authoritative baseline, signature, or permission to download the archive.
@@ -73,6 +89,11 @@ the maintained `exec`, sandbox, and `--add-dir` surfaces were reconciled in
 [`reviews/codex-0.147.0.md`](reviews/codex-0.147.0.md). Codex compatibility
 metadata is observation-only and never gates agy dispatch, resolves an agy model,
 or changes a caller selection.
+
+The later `0.148.0` observation is retained in
+[`reviews/codex-0.148.0.md`](reviews/codex-0.148.0.md). It is an offline stable-tag
+and safe installed-interface record, not a replacement for the `0.147.0` observational
+baseline until the normal human reconciliation is accepted.
 
 ## Advancing a baseline
 

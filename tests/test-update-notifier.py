@@ -192,9 +192,17 @@ class InstallStatusTests(Fixture):
         with self.assertRaisesRegex(notifier.NotifierError, "installed state is malformed"):
             notifier.status(self.paths)
 
-    def test_status_reports_source_drift_without_repair(self) -> None:
+    def test_status_reports_safe_source_drift_as_maintenance_required(self) -> None:
         self.installed()
         path = self.source / "scripts/compatibility_probe.py"; os.chmod(path, 0o600); path.write_text("changed\n"); os.chmod(path, 0o400)
+        with mock.patch.object(notifier, "loaded_state", return_value="loaded"), mock.patch("builtins.print") as output:
+            notifier.status(self.paths)
+        output.assert_called_with("update notifier: loaded; source maintenance-required")
+
+    def test_status_keeps_unsafe_live_source_invalid(self) -> None:
+        self.installed()
+        path = self.source / "scripts/compatibility_probe.py"
+        os.chmod(path, 0o620)
         with mock.patch.object(notifier, "loaded_state", return_value="loaded"), mock.patch("builtins.print") as output:
             notifier.status(self.paths)
         output.assert_called_with("update notifier: loaded; source drifted-or-invalid")
@@ -220,6 +228,20 @@ class PrivateStateAndLockTests(Fixture):
         self.paths.state.mkdir(parents=True, mode=0o700)
         self.paths.result.write_bytes(b"x" * (notifier.MAX_RESULT + 1)); os.chmod(self.paths.result, 0o600)
         with self.assertRaisesRegex(notifier.NotifierError, "exceeds"):
+            notifier._prior_result(self.paths)
+
+    def test_prior_result_non_integer_exit_is_malformed(self) -> None:
+        self.paths.state.mkdir(parents=True, mode=0o700)
+        value = {
+            "schema": 1,
+            "timestamp": "2026-08-20T00:00:00Z",
+            "status": "drift-review",
+            "update_exit": [3],
+            "fingerprint": "0" * 64,
+            "notification_attempted": True,
+        }
+        self.paths.result.write_bytes(notifier._canonical_json(value)); os.chmod(self.paths.result, 0o600)
+        with self.assertRaisesRegex(notifier.NotifierError, "malformed"):
             notifier._prior_result(self.paths)
 
     def test_lock_serializes_overlapping_run_and_uninstall(self) -> None:
@@ -368,6 +390,62 @@ class NotificationTests(Fixture):
         self.prepare(); notification = self.invoke(2, b"unavailable\n")
         self.assertEqual(notification.call_count, 0)
 
+    def test_safe_source_drift_notifies_for_maintenance_without_update_child(self) -> None:
+        self.prepare()
+        target = self.source / "update.sh"
+        os.chmod(target, 0o600); target.write_bytes(target.read_bytes() + b"\n# reviewed update\n"); os.chmod(target, 0o500)
+        notification = mock.Mock(return_value=0)
+        with mock.patch.object(notifier, "loaded_state", return_value="loaded"), mock.patch.object(
+            notifier, "_run_child", side_effect=AssertionError("external update child must not run")
+        ), mock.patch.object(notifier, "_run_notification", notification):
+            notifier.run(self.paths)
+        value = notifier._load_json(self.paths.result, notifier.MAX_RESULT)
+        self.assertEqual((value["status"], value["update_exit"]), ("drift-review", 3))
+        ledger = notifier._load_json(self.paths.ledger, notifier.MAX_LEDGER)
+        self.assertNotEqual(ledger["manifest"], notifier.source_manifest(self.source))
+        notification.assert_called_once_with(self.paths, "maintenance-required")
+
+    def test_same_maintenance_fingerprint_is_suppressed(self) -> None:
+        self.prepare()
+        target = self.source / "update.sh"
+        os.chmod(target, 0o600); target.write_bytes(target.read_bytes() + b"\n# reviewed update\n"); os.chmod(target, 0o500)
+        with mock.patch.object(notifier, "loaded_state", return_value="loaded"), mock.patch.object(
+            notifier, "_run_child", side_effect=AssertionError("external update child must not run")
+        ), mock.patch.object(notifier, "_run_notification", return_value=0):
+            notifier.run(self.paths)
+        notification = mock.Mock(return_value=0)
+        with mock.patch.object(notifier, "loaded_state", return_value="loaded"), mock.patch.object(
+            notifier, "_run_child", side_effect=AssertionError("external update child must not run")
+        ), mock.patch.object(notifier, "_run_notification", notification):
+            notifier.run(self.paths)
+        self.assertEqual(notification.call_count, 0)
+
+    def test_unsafe_source_change_neither_runs_child_nor_notifies(self) -> None:
+        self.prepare()
+        target = self.source / "update.sh"; os.chmod(target, 0o520)
+        with mock.patch.object(notifier, "loaded_state", return_value="loaded"), mock.patch.object(
+            notifier, "_run_child"
+        ) as child, mock.patch.object(notifier, "_run_notification") as notification:
+            with self.assertRaisesRegex(notifier.NotifierError, "behavior source"):
+                notifier.run(self.paths)
+        child.assert_not_called(); notification.assert_not_called()
+
+    def test_maintenance_notification_uses_only_fixed_sanitized_text(self) -> None:
+        process = mock.Mock(); process.wait.return_value = 0
+        with mock.patch.object(notifier.subprocess, "Popen", return_value=process) as popen:
+            self.assertEqual(notifier._run_notification(self.paths, "maintenance-required"), 0)
+        argv = popen.call_args.args[0]
+        self.assertEqual(argv[-3], "--notify")
+        self.assertEqual(argv[-2], "codex-agy-worker notifier maintenance")
+        self.assertEqual(argv[-1], "Monitoring paused after the bound source changed; run update-notifier.sh refresh.")
+        self.assertNotIn(str(self.source), " ".join(argv[-2:]))
+
+    def test_unknown_notification_status_is_rejected_before_process(self) -> None:
+        with mock.patch.object(notifier.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(notifier.NotifierError, "status is invalid"):
+                notifier._run_notification(self.paths, "unknown")
+        popen.assert_not_called()
+
     def test_notification_failure_records_attempt_without_delivery_claim(self) -> None:
         self.prepare()
         with mock.patch.object(notifier, "loaded_state", return_value="loaded"), mock.patch.object(
@@ -381,6 +459,77 @@ class NotificationTests(Fixture):
 
     def test_timestamp_is_canonical_utc_seconds(self) -> None:
         self.assertRegex(notifier._timestamp(), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+class RefreshTests(Fixture):
+    def test_refresh_rebinds_safe_current_source_through_uninstall_install(self) -> None:
+        self.installed()
+        target = self.source / "update.sh"
+        os.chmod(target, 0o600); target.write_bytes(target.read_bytes() + b"\n# reviewed update\n"); os.chmod(target, 0o500)
+        states = iter(["loaded", "unloaded", "unloaded", "unloaded", "loaded"])
+        with mock.patch.object(notifier, "loaded_state", side_effect=lambda _uid: next(states)), mock.patch.object(
+            notifier, "_launchctl", return_value=subprocess.CompletedProcess([], 0, b"", b"")
+        ) as launchctl:
+            notifier.refresh(self.paths)
+        ledger = notifier._load_json(self.paths.ledger, notifier.MAX_LEDGER)
+        self.assertEqual(ledger["phase"], "loaded")
+        self.assertEqual(ledger["manifest"]["update.sh"], notifier._hash_file(target))
+        self.assertEqual(notifier._hash_file(self.paths.snapshot / "update.sh"), notifier._hash_file(target))
+        self.assertEqual(launchctl.call_args_list[0].args[0][0], "bootout")
+        self.assertEqual(launchctl.call_args_list[-1].args[0][0], "bootstrap")
+
+    def test_refresh_requires_existing_authenticated_installation(self) -> None:
+        with mock.patch.object(notifier, "_launchctl") as launchctl:
+            with self.assertRaisesRegex(notifier.NotifierError, "not installed"):
+                notifier.refresh(self.paths)
+        launchctl.assert_not_called()
+
+    def test_refresh_refuses_unsafe_current_source_before_uninstall(self) -> None:
+        self.installed()
+        target = self.source / "update.sh"; os.chmod(target, 0o520)
+        with mock.patch.object(notifier, "_launchctl") as launchctl:
+            with self.assertRaisesRegex(notifier.NotifierError, "behavior source"):
+                notifier.refresh(self.paths)
+        launchctl.assert_not_called()
+        self.assertEqual(notifier._load_json(self.paths.ledger, notifier.MAX_LEDGER)["phase"], "loaded")
+
+    def test_refresh_stops_after_preserving_replaced_installed_file(self) -> None:
+        self.installed()
+        replacement = self.paths.snapshot / "update.sh"
+        os.chmod(replacement, 0o600); replacement.write_bytes(b"replacement"); os.chmod(replacement, 0o500)
+        with mock.patch.object(notifier, "loaded_state", side_effect=["unloaded", "unloaded"]):
+            with self.assertRaisesRegex(notifier.NotifierError, "preserved replacement files"):
+                notifier.refresh(self.paths)
+        self.assertEqual(replacement.read_bytes(), b"replacement")
+        self.assertEqual(notifier._load_json(self.paths.ledger, notifier.MAX_LEDGER)["phase"], "uninstalled")
+
+    def test_refresh_rejects_unauthenticated_uninstall_record(self) -> None:
+        self.installed()
+        self.paths.tombstone.write_bytes(notifier._canonical_json({
+            "schema": 1,
+            "label": notifier.LABEL,
+            "phase": "started",
+            "replacements": [],
+            "authentication": "0" * 64,
+        }))
+        os.chmod(self.paths.tombstone, 0o600)
+        with self.assertRaisesRegex(notifier.NotifierError, "unauthenticated"):
+            notifier.refresh(self.paths)
+        self.assertEqual(notifier._load_json(self.paths.ledger, notifier.MAX_LEDGER)["phase"], "loaded")
+
+    def test_refresh_install_failure_retains_recoverable_authority(self) -> None:
+        self.installed()
+        with mock.patch.object(notifier, "loaded_state", side_effect=["unloaded", "unloaded", "unloaded"]), mock.patch.object(
+            notifier, "_copy_snapshot", side_effect=OSError("injected refresh copy failure")
+        ):
+            with self.assertRaisesRegex(OSError, "refresh copy failure"):
+                notifier.refresh(self.paths)
+        self.assertEqual(notifier._load_json(self.paths.ledger, notifier.MAX_LEDGER)["phase"], "preparing")
+        with mock.patch.object(notifier, "loaded_state", side_effect=["unloaded", "unloaded", "unloaded", "loaded"]), mock.patch.object(
+            notifier, "_launchctl", return_value=subprocess.CompletedProcess([], 0, b"", b"")
+        ):
+            notifier.refresh(self.paths)
+        self.assertEqual(notifier._load_json(self.paths.ledger, notifier.MAX_LEDGER)["phase"], "loaded")
 
 
 class UninstallTests(Fixture):

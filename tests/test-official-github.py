@@ -254,6 +254,62 @@ check(
     )
     == ("project", "v1.2.3", "d" * 40),
 )
+
+
+def project_annotated_tag_resolution_is_bounded() -> bool:
+    tag = "v1.2.3"
+    tag_revision = "d" * 40
+    opener = Opener(
+        response(release(tag)),
+        response(tag_ref(tag_revision, tag=tag, kind="tag")),
+        response(annotated_tag("e" * 40, tag=tag, tag_revision=tag_revision)),
+    )
+    return (
+        MODULE.latest_evidence("project", opener=opener) == ("project", tag, "e" * 40)
+        and [call[0] for call in opener.calls]
+        == [
+            "https://api.github.com/repos/cagdasyurekli/codex-agy-worker/releases/latest",
+            "https://api.github.com/repos/cagdasyurekli/codex-agy-worker/git/ref/tags/" + tag,
+            "https://api.github.com/repos/cagdasyurekli/codex-agy-worker/git/tags/" + tag_revision,
+        ]
+    )
+
+
+check("project latest resolves one-level annotated tags only", project_annotated_tag_resolution_is_bounded)
+check(
+    "explicit project release resolves one-level annotated tags",
+    lambda: MODULE.project_release_evidence(
+        "v1.2.3",
+        opener=Opener(
+            response(tag_ref("d" * 40, tag="v1.2.3", kind="tag")),
+            response(annotated_tag("e" * 40, tag="v1.2.3")),
+        ),
+    )
+    == ("project", "v1.2.3", "e" * 40),
+)
+
+
+def project_annotated_tag_rejections_are_bounded() -> bool:
+    tag = "v1.2.3"
+    tag_revision = "d" * 40
+    cases = [
+        annotated_tag(tag="v9.9.9", tag_revision=tag_revision),
+        annotated_tag(tag=tag, tag_revision="e" * 40),
+        annotated_tag(tag=tag, tag_revision=tag_revision, kind="tag"),
+    ]
+    return all(
+        rejects(
+            "invalid annotated tag evidence",
+            lambda value=value: MODULE.project_release_evidence(
+                tag,
+                opener=Opener(response(tag_ref(tag_revision, tag=tag, kind="tag")), response(value)),
+            ),
+        )
+        for value in cases
+    )
+
+
+check("project annotated tags reject mismatch and chaining", project_annotated_tag_rejections_are_bounded)
 check(
     "inert extra API keys cannot change selected evidence",
     lambda: collect(
@@ -343,6 +399,8 @@ fixed_url_rejections = [
     "https://api.github.com/repos/attacker/codex/releases/latest",
     "https://api.github.com/repos/openai/codex/%72eleases/latest",
     "https://api.github.com/repos/openai\\codex/releases/latest",
+    "https://api.github.com/repos/cagdasyurekli/codex-agy-worker/git/tags/" + "A" * 40,
+    "https://api.github.com/repos/cagdasyurekli/codex-agy-worker/git/tags/" + "a" * 39,
 ]
 for index, url in enumerate(fixed_url_rejections, 1):
     check(
