@@ -90,6 +90,38 @@ with tempfile.TemporaryDirectory() as temporary:
 
     check("ERROR plus valid provider report is preserved and normalized", error_candidate_is_preserved)
 
+    def outer_status_requires_exact_provider_token() -> None:
+        accepted = {
+            "SUCCESS": "SUCCESS",
+            "ERROR": "ERROR",
+            "CANCELED": "CANCELLED",
+            "CANCELLED": "CANCELLED",
+        }
+        for provided, expected in accepted.items():
+            source = root / f"outer-status-{provided}.ndjson"
+            envelope = root / f"outer-status-{provided}.json"
+            stream(source, provided, report())
+            binding, outer, stage = MODULE._validate_terminal_envelope(source, envelope, provider, SCHEMA)
+            assert binding is not None and outer == expected and stage is None
+
+        rejected = []
+        for status in accepted:
+            rejected.extend((
+                (f"lowercase-{status}", status.lower()),
+                (f"mixed-{status}", status.title()),
+                (f"leading-whitespace-{status}", f" {status}"),
+                (f"trailing-whitespace-{status}", f"{status} "),
+            ))
+        for label, provided in rejected:
+            source = root / f"outer-status-rejected-{label}.ndjson"
+            envelope = root / f"outer-status-rejected-{label}.json"
+            stream(source, provided, report())
+            binding, outer, stage = MODULE._validate_terminal_envelope(source, envelope, provider, SCHEMA)
+            assert binding is None and outer is None and stage == "outer_status"
+            assert not envelope.exists(), "an invalid status must not create a success candidate"
+
+    check("outer status accepts only exact provider tokens", outer_status_requires_exact_provider_token)
+
     def critical_missing_is_canonical_failure() -> None:
         source = root / "missing.ndjson"; envelope = root / "missing.json"
         stream(source, "SUCCESS", report(summary=""))
@@ -523,6 +555,7 @@ with tempfile.TemporaryDirectory() as temporary:
     def invalid_error_and_cancelled_candidate_are_separate() -> None:
         cases = [
             ("error-missing", "ERROR", None, 4, "failed", "invalid_envelope", "none", "structured_output"),
+            ("lowercase-success", "success", report(), 4, "failed", "invalid_envelope", "none", "outer_status"),
             ("cancelled", "CANCELED", report(), 22, "cancelled", "provider_terminal_cancelled", "provider_cancelled", None),
         ]
         for label, outer_status, candidate, expected_exit, status, reason, source_name, stage_name in cases:
@@ -565,7 +598,7 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 assert not state["result_available"] and state["exit_code"] == 4
 
-    check("ERROR missing report is invalid while CANCELED report is preserved without continuation", invalid_error_and_cancelled_candidate_are_separate)
+    check("invalid outer status cannot become success while CANCELED report is preserved", invalid_error_and_cancelled_candidate_are_separate)
 
     def nonfinite_and_incomplete_framing_are_rejected() -> None:
         for constant in (b"NaN", b"Infinity", b"-Infinity"):

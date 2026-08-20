@@ -1847,9 +1847,9 @@ def _validate_terminal_envelope(
     if result is None:
         return None, None, "framing"
     outer_status = result.get("status")
-    if not isinstance(outer_status, str) or outer_status.upper() not in {"SUCCESS", "ERROR", "CANCELED", "CANCELLED"}:
+    if not isinstance(outer_status, str) or outer_status not in {"SUCCESS", "ERROR", "CANCELED", "CANCELLED"}:
         return None, None, "outer_status"
-    outer_status = "CANCELLED" if outer_status.upper() in {"CANCELED", "CANCELLED"} else outer_status.upper()
+    outer_status = "CANCELLED" if outer_status in {"CANCELED", "CANCELLED"} else outer_status
     value = result.get("structured_output")
     if not isinstance(value, dict):
         return None, outer_status, "structured_output"
