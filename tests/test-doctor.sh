@@ -47,7 +47,7 @@ make_fixture() {
         "$destination/tmp"
     cp -R "$ROOT/skills/agy-worker/runtime" "$destination/runtime"
     rm -rf "$destination/runtime/__pycache__" "$destination/runtime/scripts/__pycache__"
-    printf '1.1.12\n' > "$destination/runtime/compat/agy-verified-version.txt"
+    printf '1.1.16\n' > "$destination/runtime/compat/agy-verified-version.txt"
     "$HOST_PYTHON" -B -c 'from datetime import date; print(date.today().isoformat())' \
         > "$destination/runtime/compat/agy-last-reviewed.txt"
     printf 'CONFIG_SECRET_DO_NOT_READ\n' > "$destination/home/.codex/config.toml"
@@ -61,8 +61,8 @@ make_fixture() {
         '[[ "${FAKE_PYTHON_MODE:-ready}" == "fail" ]] && exit 7' \
         'if [[ "${2:-}" == *doctor-metadata.py && "${3:-}" == "capture-agy-version" ]]; then' \
         '  case "${FAKE_PYTHON_CAPTURE_MODE:-real}" in' \
-        '    no-newline) printf "1.1.12"; exit 0 ;;' \
-        '    multiline) printf "1.1.12\\nextra\\n"; exit 0 ;;' \
+        '    no-newline) printf "1.1.16"; exit 0 ;;' \
+        '    multiline) printf "1.1.16\\nextra\\n"; exit 0 ;;' \
         '    short-write) exec 1>&-; exit 0 ;;' \
         '    disk-full) exit 74 ;;' \
         '  esac' \
@@ -94,14 +94,14 @@ make_fixture() {
         'printf "%s\\n" "$*" >> "$DOCTOR_AGY_CALLS"' \
         '"$DOCTOR_TEST_PYTHON" -B -c '"'"'import os,stat,sys; p=sys.argv[1]; c=os.path.join(p,"agy-version"); open(sys.argv[2],"a").write(f"agy:{p}:{stat.S_IMODE(os.stat(p).st_mode):03o}:{stat.S_IMODE(os.stat(c).st_mode):03o}\\n")'"'"' "$TMPDIR" "${DOCTOR_TMP_OBSERVATIONS:-/dev/null}"' \
         'case "${FAKE_AGY_MODE:-ready}" in' \
-        '  ready) printf "agy 1.1.12\\n" ;;' \
-        '  bare) printf "1.1.12\\n" ;;' \
-        '  no-newline) printf "agy 1.1.12" ;;' \
-        '  two-newlines) printf "agy 1.1.12\\n\\n" ;;' \
-        '  carriage-return) printf "agy 1.1.12\\r\\n" ;;' \
-        '  control) printf "agy 1.1.12\\t" ;;' \
-        '  nul) printf "agy 1.1.12\\0" ;;' \
-        '  prefix-junk) printf "version: agy 1.1.12\\n" ;;' \
+        '  ready) printf "agy 1.1.16\\n" ;;' \
+        '  bare) printf "1.1.16\\n" ;;' \
+        '  no-newline) printf "agy 1.1.16" ;;' \
+        '  two-newlines) printf "agy 1.1.16\\n\\n" ;;' \
+        '  carriage-return) printf "agy 1.1.16\\r\\n" ;;' \
+        '  control) printf "agy 1.1.16\\t" ;;' \
+        '  nul) printf "agy 1.1.16\\0" ;;' \
+        '  prefix-junk) printf "version: agy 1.1.16\\n" ;;' \
         '  oversize) printf "agy "; i=0; while [[ $i -lt 140 ]]; do printf "1"; i=$((i+1)); done ;;' \
         '  huge) printf "agy "; i=0; while [[ $i -lt 4096 ]]; do printf "1"; i=$((i+1)); done ;;' \
         '  signal) kill -TERM "$PPID"; exit 7 ;;' \
@@ -116,7 +116,7 @@ make_fixture() {
         '  drift) printf "agy 1.1.11\\n" ;;' \
         '  empty) : ;;' \
         '  usage) printf "usage: agy [options]\\n" ;;' \
-        '  multiline) printf "agy 1.1.12\\nextra\\n" ;;' \
+        '  multiline) printf "agy 1.1.16\\nextra\\n" ;;' \
         '  fail) exit 7 ;;' \
         'esac' > "$destination/bin/agy"
     printf '%s\n' '#!/usr/bin/env bash' \
@@ -675,7 +675,8 @@ for specification in \
     'profiles/v1/manifest.json:data' \
     'agents/repo-inventory.md:data' \
     'compat/agy-verified-version.txt:data' \
-    'compat/agy-model-effort-matrix.json:data'; do
+    'compat/agy-model-effort-matrix.json:data' \
+    'compat/agy-models-inventory-binding.json:data'; do
     dependency_path="${specification%:*}"
     dependency_class="${specification##*:}"
     for wrong_type in directory symlink-directory symlink-foreign fifo wrong-mode; do
@@ -778,7 +779,9 @@ for dependency in \
     'compat/agy-verified-version.txt:compat-record' \
     'compat/agy-model-effort-matrix.json:model-matrix' \
     'compat/model-effort-matrix.schema.json:matrix-schema' \
-    'compat/agy-model-effort-matrix.sha256:matrix-hash'; do
+    'compat/agy-model-effort-matrix.sha256:matrix-hash' \
+    'compat/agy-models-inventory-binding.json:inventory-binding' \
+    'compat/agy-models-inventory-binding.sha256:inventory-binding-hash'; do
     dependency_path="${dependency%:*}"
     dependency_class="${dependency##*:}"
     dependency_label="${dependency_path//\//-}"

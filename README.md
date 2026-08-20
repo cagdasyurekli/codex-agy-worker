@@ -58,7 +58,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The twenty-seven offline suites need no agy process, network access, API key, or GitHub login.
+The thirty-one offline suites need no agy provider call, network access, API key, or GitHub login.
 
 ### GitHub Actions cost and quota fallback
 
@@ -79,7 +79,7 @@ If a private fork's quota is unavailable, run the same fail-fast offline suite l
 ./scripts/ci-offline.sh
 ```
 
-It runs the static checks and all twenty-seven offline suites without requiring a
+It runs the static checks and all thirty-one offline suites without requiring a
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
@@ -134,10 +134,12 @@ their explicit implemented or deferred status. The published **v0.6.0 release sc
 added the reviewed Gemini 3.7 Flash low/medium/high mappings and hardened the capture
 child mode and dispatch-state snapshot boundaries. The published **v0.7.0** scope adds
 usability-first explore/task/project workflows and same-conversation repair. The
-implemented, offline-verified **v0.8.0 release candidate** adds explicit notifier
+published **v0.8.0** scope adds explicit notifier
 maintenance/rebind handling, bounded annotated-tag resolution, version-drift
-observations, and the exact agy 1.1.13 quota-terminal classification; its tag and
-release gates remain separate and are not claimed here. The published v0.5.0
+observations, and the exact agy 1.1.13 quota-terminal classification. The **v0.9.0
+release candidate** activates the exact agy 1.1.16 version/source/distribution and
+unchanged 14-slug inventory binding, and accepts Codex 0.148.0 as an observational
+baseline. Tag and GitHub release state remain separate publication gates. The published v0.5.0
 scope added sanitized bug/improvement drafts with exact double confirmation,
 private-only security drafts, and the bounded metadata-only feedback aggregate and
 weekly/manual watcher. The prior v0.4.0 scope includes daily compatibility observation,
@@ -178,17 +180,18 @@ POSIX-compatible Bash/Python/Git environment and some canonical evidence command
 fixed POSIX paths. Native Windows is untested; WSL or another compatible environment
 may work on a best-effort basis. The optional daily notifier is specifically a macOS
 LaunchAgent.
-The active reviewed model/effort matrix is bound to agy `1.1.12`. Its exact official
-release/source, retained snapshot, separately authorized 14-slug account capture
-(the earlier eleven retained plus Gemini 3.7 Flash low/medium/high), and reviewed
-pair-to-compound-slug mappings are reconciled in
-[`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md). The agy-owned default
-and explicit literal pass-through remain version-independent. The checked-in
-`1.1.16` agy and `0.148.0` Codex interface observations are deliberately not promoted
-to those baselines: they preserve update evidence while `--model`/effort resolution
-remains unavailable for agy `1.1.16` until a separately authorized account capture and
-review. See [`compat/reviews/agy-1.1.16-interface.md`](compat/reviews/agy-1.1.16-interface.md)
-and [`compat/reviews/codex-0.148.0.md`](compat/reviews/codex-0.148.0.md).
+The active reviewed model/effort matrix is bound to agy `1.1.16`. Its exact official
+release/source, retained snapshot, separately authorized single-call account capture,
+unchanged 14-slug inventory, and pair-to-compound-slug mappings are reconciled in
+[`compat/reviews/agy-1.1.16.md`](compat/reviews/agy-1.1.16.md). The complete
+[`1.1.12` reconciliation](compat/reviews/agy-1.1.12.md) remains historical evidence,
+and the earlier
+[`1.1.16` interface observation](compat/reviews/agy-1.1.16-interface.md) records the
+non-activating evidence that triggered the later capture and review. The agy-owned
+default and explicit literal pass-through remain version-independent.
+Codex `0.148.0` is the accepted observational Codex baseline; it does not grant agy
+dispatch or model-selection authority. See
+[`compat/reviews/codex-0.148.0.md`](compat/reviews/codex-0.148.0.md).
 
 Before spending provider quota, run the offline doctor against the repository you
 plan to delegate:
@@ -511,7 +514,7 @@ Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid 
 `23` output oversized · `24` provider quota exhausted · `64` invalid usage.
 
 The reserved `17`–`19` exits require an exact, version-bound reviewed signature.
-The current agy `1.1.12` signature allowlist is intentionally empty, so an unproven
+The current agy `1.1.16` signature allowlist is intentionally empty, so an unproven
 provider timeout, authentication error, or provider outage remains
 `agy_failed_unclassified` with exit `5`; the supervisor does not infer a reason from
 free-form stderr.
@@ -630,7 +633,7 @@ explicit empty values, tier plus any model/effort source, effort without a model
 unknown models, and unsupported pairs fail before the task is read or a worker is
 dispatched. Model and effort may come from different sources when each has exactly
 one source. Reviewed `--model` selectors run one bounded local `agy --version`
-preflight and require the reviewed `1.1.12`; tier/default and literal behavior perform
+preflight and require the reviewed `1.1.16`; tier/default and literal behavior perform
 no such probe.
 HUP, INT, or TERM during that preflight closes its exact process group and returns
 `129`, `130`, or `143` before the task is read or a selection record is published.
@@ -1119,6 +1122,19 @@ path-through-held-parent identity and exact internal inventory are rechecked bef
 the child starts. The bridge cannot enumerate HOME, accept inventory, update
 metadata, route, retry, or authorize a call.
 
+The post-v0.8.0 `1.1.16` reconciliation used a new, independent chain rather than
+relabelling either historical runner. `models_capture_1_1_16_version_evidence.py`
+retains an exact private source/snapshot binding from one empty-HOME `--version`
+observation. The process-inert `models_capture_1_1_16_profile.py` can prepare one
+explicit account profile, and `models_capture_1_1_16_runner.py` can make exactly one
+separately authorized, no-retry `source --output-format json models` capture with a
+25-second wall and independent 64-KiB streams. Its reserved process group must close
+before the sole leader reap; uncertainty fails closed. These files and their synthetic
+tests did not authorize an account call, interpret inventory, or activate the 1.1.16
+baseline/matrix. One separately authorized no-retry capture succeeded; its raw marker
+became input to strict offline normalization and human reconciliation, never activation
+authority by itself.
+
 After process-group closure, every capture-owned TMP/XDG/cwd directory must again be
 the same empty directory or publication fails closed. Successful bounded exit-zero
 execution publishes otherwise uninterpreted private mode-`0600` stdout/stderr, exact
@@ -1143,12 +1159,14 @@ authorized no-retry capture completed with exit `0`, one Popen, empty capture sc
 an exact completion marker, and a strict 14-model JSON shape. Offline normalization
 retained the earlier eleven slugs and added Gemini 3.7 Flash low/medium/high; `minimal`
 is unsupported. An earlier failed attempt remains non-authoritative; it was not
-retried or reconstructed. The sanitized hashes, official source binding, and claim
-limits are recorded in
-[`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md).
+retried or reconstructed. Its historical hashes and claim limits remain recorded in
+[`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md). The separately
+authorized 1.1.16 capture normalized to the same fourteen slugs; its exact bindings
+and activation decision are recorded in
+[`compat/reviews/agy-1.1.16.md`](compat/reviews/agy-1.1.16.md).
 
-The human-reviewed agy baseline is `1.1.12` at source revision
-`f7519c9084190ed421e89dd81c63970b5177c9ef`. The checked-in distribution tuple
+The human-reviewed agy baseline is `1.1.16` at source revision
+`efa16f096dc02fb654b7e86958d268195284d014`. The checked-in distribution tuple
 remains an observational change detector rather than a trust root: a same-version
 archive build, URL, or SHA-512 change requires review and cannot itself activate or
 advance compatibility metadata.
@@ -1242,7 +1260,8 @@ to GitHub or feeds issue text to an agent.
 ## agy behaviour worth knowing
 
 Most facts below were measured on macOS with agy 1.1.9 on 2026-08-01. The current
-1.1.12 model reconciliation is recorded separately. Run `./ground-truth.sh` against
+1.1.16 model reconciliation and historical 1.1.12 record are separate. Run
+`./ground-truth.sh` against
 your own install rather than treating historical observations as a current contract.
 Its default interface phase calls only `agy --version` and `agy --help`; use
 `./ground-truth.sh --account` only when you explicitly authorize inspection of
@@ -1340,6 +1359,9 @@ scripts/models_capture_runner.py explicit-account capture-only models runner; ne
 scripts/models_capture_profile.py process-inert canonical profile builder; never reads ambient account state
 scripts/models_capture_1_1_12_profile.py fixed 1.1.12 process-inert capture profile bridge
 scripts/models_capture_1_1_12_runner.py fixed 1.1.12 explicit-account capture-only bridge
+scripts/models_capture_1_1_16_version_evidence.py fixed 1.1.16 source/snapshot version-only evidence bridge
+scripts/models_capture_1_1_16_profile.py fixed 1.1.16 process-inert capture profile bridge
+scripts/models_capture_1_1_16_runner.py fixed 1.1.16 explicit-account capture-only bridge
 scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
 scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
@@ -1368,7 +1390,7 @@ tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
-tests/test-agy-worker.sh      281-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-agy-worker.sh      282-case offline dispatcher/installer/routing/lifecycle suite
 tests/test-update.sh          324-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py 65-case fixed-endpoint transport adversary harness
@@ -1383,13 +1405,17 @@ tests/test-models-capture-runner.py  84-case offline fake-account capture-only s
 tests/test-models-capture-profile.py 121-case offline canonical capture-profile builder suite
 tests/test-models-capture-1-1-12-profile.py 30-case offline fixed 1.1.12 capture-profile suite
 tests/test-models-capture-1-1-12-runner.py 56-case offline fixed 1.1.12 capture-runner suite (86 combined with profile)
+tests/test-models-capture-1-1-16-version-evidence.py 45-case offline fixed 1.1.16 version-evidence suite
+tests/test-models-capture-1-1-16-profile.py 30-case offline fixed 1.1.16 capture-profile suite
+tests/test-models-capture-1-1-16-runner.py 58-case offline fixed 1.1.16 capture-runner suite (88 combined with profile)
+tests/test-agy-1-1-16-activation.py 22-case offline active-baseline/inventory-binding suite
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
 tests/test-update-notifier.py 73-case offline local notifier lifecycle/signal/maintenance suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite
 tests/test-packaging.sh       366-case offline Codex package/CI-policy/relocation/landing suite
-tests/test-doctor.sh          239-case offline fake-tool/read-only doctor suite
+tests/test-doctor.sh          246-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational daily/manual fixed-source watch

@@ -94,6 +94,14 @@ announce 'fixed 1.1.12 models capture profile builder'
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py
 announce 'fixed 1.1.12 models capture runner'
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py
+announce 'fixed 1.1.16 models capture version evidence'
+/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py
+announce 'fixed 1.1.16 models capture profile builder'
+/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py
+announce 'fixed 1.1.16 models capture runner'
+/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py
+announce '1.1.16 activation binding'
+/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py
 announce 'reporting suite'
 ./tests/test-reporting.sh
 announce 'feedback triage suite'

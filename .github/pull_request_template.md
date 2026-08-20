@@ -34,6 +34,10 @@
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py`
 - [ ] `./tests/test-reporting.sh`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-feedback-triage.py`
 - [ ] `./tests/test-packaging.sh`

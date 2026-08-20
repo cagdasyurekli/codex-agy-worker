@@ -104,7 +104,7 @@ assert value["user_model"] == model
 assert value.get("user_effort", "") == effort
 assert value["resolved_agy_model"] == resolved
 assert len(value["matrix_sha256"]) == 64
-assert value["matrix_agy_version"] == "1.1.12"
+assert value["matrix_agy_version"] == "1.1.16"
 assert len(value["matrix_source_revision"]) == 40
 assert value["recommendation_only"] is True
 assert value["applied"] is False
@@ -203,12 +203,12 @@ FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-/dev/null}"
 if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
     printf 'version\n' >> "$FAKE_CALLS_FILE"
     case "${FAKE_VERSION_MODE:-ready}" in
-        ready) printf '1.1.12\n' ;;
+        ready) printf '1.1.16\n' ;;
         quota113) printf '1.1.13\n' ;;
-        prefixed) printf 'agy 1.1.12\n' ;;
+        prefixed) printf 'agy 1.1.16\n' ;;
         drift) printf '1.1.11\n' ;;
         empty) : ;;
-        malformed) printf 'version 1.1.12\n' ;;
+        malformed) printf 'version 1.1.16\n' ;;
         oversize) i=0; while [[ $i -lt 140 ]]; do printf x; i=$((i+1)); done; printf '\n' ;;
         stream) while :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done ;;
         child-stream)
@@ -606,8 +606,8 @@ assert record.get("user_effort", "") == user_effort
 assert record["user_model_source"] == model_source
 assert record.get("user_effort_source", "") == effort_source
 assert record["resolved_agy_model"] == expected
-assert record["installed_agy_version"] == "1.1.12"
-assert record["matrix_agy_version"] == "1.1.12"
+assert record["installed_agy_version"] == "1.1.16"
+assert record["matrix_agy_version"] == "1.1.16"
 assert len(record["matrix_sha256"]) == 64
 assert len(record["matrix_source_revision"]) == 40
 assert stat.S_IMODE(os.stat(selection_path).st_mode) & 0o077 == 0
@@ -836,6 +836,31 @@ digest = hashlib.sha256(path.read_bytes()).hexdigest()
 PY
             ;;
         source-drift) printf '%040d\n' 0 > "$destination/runtime/compat/agy-upstream-head.txt" ;;
+        coordinated-source-drift)
+            python3 - "$destination/runtime/compat" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+revision = "0" * 40
+(root / "agy-upstream-head.txt").write_text(revision + "\n", encoding="ascii")
+for name in ("agy-model-effort-matrix", "agy-models-inventory-binding"):
+    path = root / f"{name}.json"
+    value = json.loads(path.read_text())
+    value["inventory" if name.endswith("matrix") else "reviewed_source_revision"] = (
+        {**value["inventory"], "reviewed_source_revision": revision}
+        if name.endswith("matrix")
+        else revision
+    )
+    path.write_text(json.dumps(value, indent=2) + "\n")
+    (root / f"{name}.sha256").write_text(
+        hashlib.sha256(path.read_bytes()).hexdigest() + "\n",
+        encoding="ascii",
+    )
+PY
+            ;;
         version-drift) printf '9.9.9\n' > "$destination/runtime/compat/agy-verified-version.txt" ;;
         sha-mismatch) printf '%064d\n' 0 > "$destination/runtime/compat/agy-model-effort-matrix.sha256" ;;
         missing-matrix) rm -f "$destination/runtime/compat/agy-model-effort-matrix.json" ;;
@@ -860,7 +885,7 @@ expect_compat_reject() {
     fi
 }
 
-for compat_mode in disabled source-drift version-drift sha-mismatch missing-matrix \
+for compat_mode in disabled source-drift coordinated-source-drift version-drift sha-mismatch missing-matrix \
     malformed-schema missing-output; do
     compat_fixture="$TMP/selector-$compat_mode"
     make_selector_fixture "$compat_fixture" "$compat_mode"
@@ -2270,7 +2295,7 @@ command = {
     "argv": ["agy", "--sandbox", "--mode", "plan", "--print-timeout", "4s",
              "--output-format", "stream-json", "--json-schema", str(Path(source).parent.parent / "schemas/worker-result.schema.json"),
              "--print", "must not dispatch"],
-    "agy_version": "1.1.12", "idle_seconds": 1, "hard_seconds": 2,
+    "agy_version": "1.1.16", "idle_seconds": 1, "hard_seconds": 2,
     "max_seconds": 4, "notice_seconds": 3, "stage_dir": None,
     "stage_file": None, "child_umask": "022", "resume_prompt": "continue",
 }

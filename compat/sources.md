@@ -39,30 +39,31 @@ separately authorized mutation path.
 - Fixed `darwin_arm64` distribution manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
 - Installed interface evidence: `./ground-truth.sh`
 
-The verified baseline is agy `1.1.12` at reviewed source revision
-`f7519c9084190ed421e89dd81c63970b5177c9ef`. The official release/tag/source,
-retained version binding, separately authorized JSON captures, strict fourteen-slug
-inventory (the prior eleven retained plus Gemini 3.7 Flash low/medium/high), and
-existing representative single-selector behavior were
-human-reconciled in [`reviews/agy-1.1.12.md`](reviews/agy-1.1.12.md). The active matrix binds every
+The verified baseline is agy `1.1.16` at reviewed source revision
+`efa16f096dc02fb654b7e86958d268195284d014`. The official release/tag/source,
+retained version binding, separately authorized single-call JSON capture, strict
+fourteen-slug inventory, and existing representative single-selector behavior were
+human-reconciled in [`reviews/agy-1.1.16.md`](reviews/agy-1.1.16.md). The active matrix binds every
 adjustable pair to one exact advertised compound slug and records fixed choices as
 non-adjustable. It neither forwards `--effort` nor attests the effective provider
 backend; silent fallback could not be independently excluded.
 
-The later `1.1.16` interface observation is retained in
+The complete `1.1.12` reconciliation remains historical evidence in
+[`reviews/agy-1.1.12.md`](reviews/agy-1.1.12.md). The earlier `1.1.16` interface
+observation is retained in
 [`reviews/agy-1.1.16-interface.md`](reviews/agy-1.1.16-interface.md). It records
 the official release/source/distribution tuple and a safe local version/help review,
 plus the observed print-mode JSON boundary: agy emits terminal failure detail as a
 string `error`, not separate machine-code or typed-retry fields. It contains no
-account inventory, provider call, or model/effort decision. It is therefore a
-drift-review record, not a replacement for the `1.1.12` verified baseline or matrix.
+account inventory, provider call, or model/effort decision. It remains a historical
+drift-review record and did not activate the current baseline or matrix by itself.
 
 The narrow agy `1.1.13` structured quota-terminal evidence for Issue #59 is retained
 in [`reviews/agy-1.1.13-quota-terminal.md`](reviews/agy-1.1.13-quota-terminal.md).
 It authorizes only the exact version/shape classifier and sanitized countdown; it is
 not a general quota/rate-limit signature, baseline update, or retry authority.
 
-`agy-distribution-manifest.json` records the observed `1.1.12` version, exact Google
+`agy-distribution-manifest.json` records the observed `1.1.16` version, exact Google
 Storage archive URL, and lowercase SHA-512 tuple. It is an observational snapshot,
 not an authoritative baseline, signature, or permission to download the archive.
 The checker fetches only the fixed small manifest, rejects redirects and malformed
@@ -79,21 +80,14 @@ evidence is inconclusive.
 - Official changelog: https://developers.openai.com/codex/changelog
 - Official CLI reference: https://developers.openai.com/codex/cli/reference
 
-The verified baseline is Codex CLI `0.147.0`. Its official stable tag
-`rust-v0.147.0` resolves to release commit
-`be6e8eac029b183056b7e4402879f15d2c85f61b`; the separately observed official
-stable-tag source revision recorded by the drift watcher is
-`be6e8eac029b183056b7e4402879f15d2c85f61b`. The moving official `main` branch is
-review context, not a daily compatibility fingerprint. The installed macOS arm64 CLI and
-the maintained `exec`, sandbox, and `--add-dir` surfaces were reconciled in
-[`reviews/codex-0.147.0.md`](reviews/codex-0.147.0.md). Codex compatibility
+The verified baseline is Codex CLI `0.148.0`. Its official stable tag
+`rust-v0.148.0` resolves to release commit
+`3ba0f711642a888aec92a611a3f3b2211157ff89`. The moving official `main` branch is
+review context, not a daily compatibility fingerprint. The installed macOS arm64 CLI
+and the maintained `exec`, sandbox, and `--add-dir` surfaces were reconciled in
+[`reviews/codex-0.148.0.md`](reviews/codex-0.148.0.md). Codex compatibility
 metadata is observation-only and never gates agy dispatch, resolves an agy model,
 or changes a caller selection.
-
-The later `0.148.0` observation is retained in
-[`reviews/codex-0.148.0.md`](reviews/codex-0.148.0.md). It is an offline stable-tag
-and safe installed-interface record, not a replacement for the `0.147.0` observational
-baseline until the normal human reconciliation is accepted.
 
 ## Advancing a baseline
 
@@ -106,7 +100,7 @@ baseline. For agy, a future version or source change disables reviewed pair
 resolution until another human reconciliation is accepted. Codex drift remains
 observation-only and never disables agy dispatch.
 
-agy `1.1.12` is reconciled in the checked-in metadata. Its successful captures remain
+agy `1.1.16` is reconciled in the checked-in metadata. Its successful capture remains
 `captured` evidence rather than self-authorizing output: the active update follows
 from the separate human review of exact official release/source, retained
 version/executable binding, strict reconciled inventory, and canonical matrix bytes.

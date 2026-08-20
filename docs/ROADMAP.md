@@ -100,15 +100,17 @@ Every roadmap slice must preserve all of these rules:
 
 ## Current agy inventory correction
 
-The accepted agy `1.1.12` reconciliation combines documented `--effort` and
-machine-readable `models` surfaces with separately authorized, version-bound JSON
-model captures. The exact 14-slug list (the historical eleven plus Gemini 3.7 Flash
-low/medium/high), its SHA-256, reviewed source revision, and bounded behavior limits live in
-[`../compat/reviews/agy-1.1.12.md`](../compat/reviews/agy-1.1.12.md). Agent and plugin
+The accepted agy `1.1.16` reconciliation combines documented `--effort` and
+machine-readable `models` surfaces with one separately authorized, version-bound JSON
+model capture. The exact unchanged 14-slug list, its SHA-256, reviewed source
+revision, inventory binding, and bounded behavior limits live in
+[`../compat/reviews/agy-1.1.16.md`](../compat/reviews/agy-1.1.16.md). The complete
+[`1.1.12` reconciliation](../compat/reviews/agy-1.1.12.md) remains historical evidence.
+Agent and plugin
 catalogs were not part of that bounded review and remain outside this contract.
 
-This corrects the inventory without turning advertised flags or historical failure
-behavior into broader agy `1.1.12` promises:
+This advances the binding without turning advertised flags or historical failure
+behavior into broader agy `1.1.16` promises:
 
 - Do not expose `--effort` before G0 reconciles official releases/source/docs with a
   sandbox-correct inventory and bounded behavior tests. G1 may then expose the same
@@ -119,8 +121,8 @@ behavior into broader agy `1.1.12` promises:
   documented commands and validate their expected semantic output; neither an unknown
   subcommand's exit code nor generic usage text is compatibility evidence.
 - Do not assume agy's separate `--model` and `--effort` flags compose safely.
-  The current bounded `1.1.12` JSON inventory advertises the same compound slugs.
-  Official `1.1.12` source and documentation were human-reconciled, but
+  The current bounded `1.1.16` JSON inventory advertises the same compound slugs.
+  Official `1.1.16` source and documentation were human-reconciled, but
   this repository has not yet completed evidence that establishes dual-selector
   composition or precedence. G1 therefore resolves a verified base/effort pair to
   one exact advertised slug and sends one `--model`.
@@ -146,25 +148,26 @@ behavior.
 ### G0 — Compatibility Reconciliation & Watch
 
 **Current status:** Daily hosted observation, the optional local notifier, privacy-
-limited 30/60/90 measurement tooling, Codex `0.147.0` reconciliation, bounded GitHub
-transport hardening, the agy `1.1.12` reconciliation, gate-envelope intake, lifecycle
+limited 30/60/90 measurement tooling, Codex `0.148.0` reconciliation, bounded GitHub
+transport hardening, the historical agy `1.1.12` reconciliation, gate-envelope intake, lifecycle
 Git stdout, Actions checkout credentials, and the progress-aware per-job lifecycle are
 implemented and offline-verified in the published v0.4.0 release. This remains an
 offline and bounded-lifecycle claim, not a live-provider guarantee.
 The published v0.6.0 release scope added the human-reconciled Gemini 3.7 Flash
 low/medium/high mappings plus capture-child mode and dispatch-state snapshot hardening.
-The v0.7.0 usability-first project workflow is published. The v0.8.0 maintenance and
-diagnostics slice is implemented and offline-verified as a release candidate; tag and
-release gates remain separate and are not claimed by this source tree.
+The v0.7.0 usability-first project workflow and v0.8.0 maintenance/diagnostics slice
+are published. The v0.9.0 release scope represented by this source activates the
+post-v0.8.0 agy 1.1.16 compatibility work; tag and GitHub release state still require
+separate readback before publication is claimed.
 Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
 ambient-Git transport path and is not claimed hardened by this slice. The agy
-`1.1.12` reconciliation advances only the exact version/source/distribution and
-14-slug matrix bindings after successful separately authorized JSON captures and
-offline review; the former eleven remain unchanged and only Gemini 3.7 Flash
-low/medium/high was added. P2-B/P2-C remain deferred. Ordinary agy-owned default
+`1.1.16` reconciliation advances the exact version/source/distribution, inventory,
+and matrix bindings after one separately authorized no-retry JSON capture and human
+offline review; all fourteen slugs remain unchanged from the accepted 1.1.12
+inventory. P2-B/P2-C remain deferred. Ordinary agy-owned default
 dispatch and explicitly approved literal pass-through remain operational during
 future version drift; reviewed model/effort resolution stays fail-closed.
 
@@ -197,14 +200,18 @@ complete. Personas remain optional prompt specializations.
 
 ### Maintenance, version drift, and quota diagnostics
 
-**Current status:** Implemented and offline-verified as the v0.8.0 release candidate;
-not published. Tag/release readback remains separate.
+**Current status:** The maintenance/notifier and quota-diagnostic work was published
+in v0.8.0. The agy 1.1.16 active-baseline reconciliation is in the v0.9.0 release
+scope represented by this source; tag and GitHub release state are separate gates.
 
 The project updater resolves one bounded annotated project tag to a commit. A valid
 notifier snapshot whose source bytes changed reports `maintenance-required` and waits
-for an explicit owner `refresh`; malformed or unsafe state remains inert. Safe
-interface observations record agy 1.1.16 and Codex 0.148.0 without activating a model
-matrix or compatibility baseline. For Issue #59, only the exact reviewed agy 1.1.13
+for an explicit owner `refresh`; malformed or unsafe state remains inert. The earlier
+agy 1.1.16 interface observation remains a historical non-activating record; the later
+exact capture, inventory binding, and human reconciliation activate the 1.1.16
+baseline and unchanged 14-slug matrix. Codex 0.148.0 remains an observational baseline
+with no agy authority. For Issue #59, only the exact
+reviewed agy 1.1.13
 quota terminal is classified as exit 24 with a bounded countdown. No raw error text is
 public, and no retry, restart, model change, provider call, or metadata activation is
 automatic.
@@ -216,7 +223,7 @@ generic-regex aliases, or prefix matches. In
 particular, `gpt-oss` is accepted only as display text on the same line as
 `gpt-oss-120b-medium`. Synthetic tests pin the corrected canonical-slug hash without
 checking provider output into the repository. The parser alone cannot activate
-metadata; the accepted `1.1.12` version/source, capture, and human reconciliation
+metadata; the accepted `1.1.16` version/source, capture, and human reconciliation
 provide that separate binding.
 
 The provider-independent version-attestation prerequisite now has one canonical
@@ -329,6 +336,15 @@ its runner records one bounded, separately authorized call as `captured` evidenc
 It cannot accept inventory, update metadata, route, retry, or inspect account-HOME
 contents.
 
+The separate post-v0.8.0 `1.1.16` chain is implemented, offline-tested, and was used
+for one separately authorized no-retry capture: a
+version-only source/snapshot evidence runner, a process-inert profile builder, and a
+capture-only runner with one no-retry process group, a 25-second wall, independent
+64-KiB streams, and fail-closed descendant cleanup. It preserves the 1.1.12 evidence
+history. The runner cannot authorize an account call, accept inventory, or advance
+metadata; strict offline normalization and the separate human reconciliation accepted
+the unchanged fourteen-slug inventory and activated the 1.1.16 bindings.
+
 The historical authorized no-retry `1.1.12` capture established eleven slugs. A later
 separately authorized no-retry capture completed with child exit `0`, one Popen,
 empty post-child scratch, and an exact marker/record digest chain. Strict offline
@@ -425,16 +441,16 @@ provenance, code-signing verification, or OS attestation.
   version/archive URL/SHA-512 tuple, and never requests the archive. Its checked-in
   tuple is an observational same-version change detector, not a verified release,
   source revision, signature, or baseline. Official release, source, documentation,
-  and distribution evidence expose `1.1.12`. They were inputs to the separately
+  and distribution evidence expose `1.1.16`. They were inputs to the separately
   accepted human reconciliation; the canary alone did not advance the reviewed
-  `1.1.12` baseline or activate G1.
+  `1.1.16` baseline or activate G1.
 - **Baseline advancement:** A maintainer may advance either verified baseline only
   after reconciling official docs, release notes, and source; regenerating the local
   `./ground-truth.sh` evidence for agy and equivalent documented Codex CLI inventory;
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. agy `1.1.12` was advanced only after
+  The watch never performs this reconciliation. agy `1.1.16` was advanced only after
   its official evidence, retained version binding, successful account capture,
   strict reconciled inventory, and offline gates were human-reviewed. Any later
   version or source movement returns the result to
@@ -444,7 +460,7 @@ provenance, code-signing verification, or OS attestation.
   bounded CLI behavior—not from a provider API table or a model-name guess. The
   matrix records its agy version and source revision. Any agy version/source drift
   makes it stale and keeps effort resolution disabled until human reconciliation.
-  The verified `1.1.12` inventory exposes compound slugs: Gemini 3.7 Flash, Gemini 3.6
+  The verified `1.1.16` inventory exposes compound slugs: Gemini 3.7 Flash, Gemini 3.6
   Flash, and Gemini 3.5 Flash have low/medium/high; Gemini 3.7 `minimal` is unsupported;
   Gemini 3.1 Pro has low/high but **not medium**.
   Sonnet is no-level; the advertised Opus thinking slug and GPT medium-labelled slug
@@ -454,7 +470,7 @@ provenance, code-signing verification, or OS attestation.
   to say that probes must validate documented commands and expected semantic content,
   never an unknown subcommand's exit or usage output. It also records that agy has a
   real `--effort`, while this wrapper exposes no effort control until G1. Official
-  `1.1.12` source was reviewed, but the reconciliation did not prove dual-selector
+  `1.1.16` source was reviewed, but the reconciliation did not prove dual-selector
   composition: production code sends one resolved model slug and cannot combine an
   effort-bearing slug with agy's separate effort flag without a later, separately
   approved evidence gate.
@@ -482,7 +498,7 @@ provenance, code-signing verification, or OS attestation.
 - **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
   versus verified differences and stale review dates are reported separately and
   return `3`; unavailable network returns `2` with an inconclusive label; absent
-  absent future-version evidence retains `1.1.12` and AMBER; version-bound resolution
+  absent future-version evidence retains `1.1.16` and AMBER; version-bound resolution
   fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,
@@ -527,7 +543,7 @@ approval-gated.
 - **User job:** Select an exact advertised agy model or a verified base-model/effort
   pair directly, without disguising the choice as a tier or allowing a recommendation
   to change it.
-- **Sequence gate:** Start only after G0 has reconciled the exact agy `1.1.12` (or
+- **Sequence gate:** Start only after G0 has reconciled the exact agy `1.1.16` (or
   later explicitly verified) CLI/source behavior. G1 precedes any `flash-high` alias,
   performance ranking, or default/recommendation remap and must be its own pull request.
 - **Intended surface:** Add wrapper CLI `--model MODEL` and

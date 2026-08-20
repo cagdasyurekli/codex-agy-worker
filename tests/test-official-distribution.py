@@ -29,11 +29,11 @@ if SPEC is None or SPEC.loader is None:
 distribution = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(distribution)
 
-VERSION = "1.1.12"
-SHA512 = "a" * 128
+VERSION = "1.1.16"
+SHA512 = "fa3a94a7d9d96cb367bf643ecf0da3b4d6b45f3e390ec6db1d699fdac4f7750894617152fc3c1695712a36eee926fff4f00ff4a44d372b3f604cfc9ec6fdbea6"
 ARCHIVE_URL = (
     "https://storage.googleapis.com/antigravity-public/antigravity-cli/"
-    "1.1.12-5877618327814144/darwin-arm/cli_mac_arm64.tar.gz"
+    "1.1.16-6607970839166976/darwin-arm/cli_mac_arm64.tar.gz"
 )
 
 
@@ -526,7 +526,7 @@ def _() -> None:
 def _() -> None:
     expect_error(
         "invalid archive policy",
-        lambda: parse(url=replace_url("1.1.12-", "1.1.9-")),
+        lambda: parse(url=replace_url("1.1.16-", "1.1.9-")),
     )
 
 
@@ -534,7 +534,7 @@ def _() -> None:
 def _() -> None:
     expect_error(
         "invalid archive policy",
-        lambda: parse(url=replace_url("5877618327814144", "build-secret")),
+        lambda: parse(url=replace_url("6607970839166976", "build-secret")),
     )
 
 
@@ -564,13 +564,13 @@ def _() -> None:
 def _() -> None:
     value = parse()
     status, detail = distribution.evaluate_manifest(value, "1.1.9", value)
-    assert status == 3 and "1.1.12" in detail and "1.1.9" in detail
+    assert status == 3 and "1.1.16" in detail and "1.1.9" in detail
 
 
 @test("same-version archive build drift is drift-review")
 def _() -> None:
     observed = parse()
-    snapshot = parse(url=replace_url("5877618327814144", "5877618327814143"))
+    snapshot = parse(url=replace_url("6607970839166976", "6607970839166975"))
     assert distribution.evaluate_manifest(observed, VERSION, snapshot)[0] == 3
 
 
