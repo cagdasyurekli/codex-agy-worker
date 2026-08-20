@@ -61,6 +61,23 @@ STATE_PROJECT_FIELDS = {
     "last_success_sha256", "last_success_identity",
     "project_boundary",
 }
+STATE_V5_FIELDS = {
+    "candidate_recognized", "candidate_source", "result_available",
+    "worktree_reconciliation", "worktree_changes_present",
+    "worktree_changed_since_dispatch", "driver_disposition", "failure_stage",
+    "last_activity", "next_action", "next_action_command", "worktree_baseline",
+    "provider_schema_sha256", "provider_schema_identity",
+    "canonical_schema_sha256", "canonical_schema_identity",
+    "candidate_worktree_sha256", "candidate_worktree_entries",
+}
+FAILURE_STAGES = {
+    "framing", "outer_status", "structured_output", "schema_rejection",
+    "binding_failure",
+}
+LIFECYCLE_PHASES = {
+    "dispatching", "awaiting-verification", "repairing", "completed",
+    "blocked", "attempt-failed", "repair-failed",
+}
 TERMINAL = {"succeeded", "failed", "cancelled", "orphaned"}
 REASONS = {
     "provider_timeout", "idle_timeout", "hard_deadline_exceeded",
@@ -68,6 +85,7 @@ REASONS = {
     "resume_failed", "cancelled", "agy_failed_unclassified",
     "permission_required", "empty_output", "invalid_envelope",
     "output_oversized", "interrupted", "provider_quota_exhausted",
+    "provider_terminal_error", "provider_terminal_cancelled",
 }
 EXIT_BY_REASON = {
     "empty_output": 3,
@@ -84,6 +102,8 @@ EXIT_BY_REASON = {
     "cancelled": 22,
     "output_oversized": 23,
     "provider_quota_exhausted": 24,
+    "provider_terminal_error": 25,
+    "provider_terminal_cancelled": 22,
     "interrupted": 143,
 }
 
@@ -140,11 +160,28 @@ def _duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _invalid_json_constant(_value: str) -> None:
+    raise DispatchError("JSON contains a non-finite number")
+
+
 def parse_json(raw: bytes, label: str) -> Any:
     try:
-        return json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        return json.loads(
+            raw.decode("utf-8", "strict"), object_pairs_hook=_duplicates,
+            parse_constant=_invalid_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, DispatchError) as exc:
         raise DispatchError(f"{label} is invalid") from exc
+
+
+def _valid_max_cycles(workflow: str, value: Any) -> bool:
+    if type(value) is not int:
+        return False
+    if workflow == "legacy":
+        return value == 1
+    if workflow in {"explore", "task"}:
+        return 1 <= value <= 2
+    return workflow == "project" and 1 <= value <= 5
 
 
 def _identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
@@ -372,10 +409,8 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         raise DispatchError("dispatch continue prompt is invalid")
     if value["workflow"] not in {"legacy", "explore", "task", "project"}:
         raise DispatchError("dispatch workflow is invalid")
-    if type(value["max_cycles"]) is not int or not (1 <= value["max_cycles"] <= 5):
-        raise DispatchError("dispatch max cycles is invalid")
-    if value["workflow"] != "project" and value["max_cycles"] != 1:
-        raise DispatchError("dispatch max cycles requires project workflow")
+    if not _valid_max_cycles(value["workflow"], value["max_cycles"]):
+        raise DispatchError("dispatch max cycles is invalid for workflow")
     if type(value["agy_version_observed"]) is not bool:
         raise DispatchError("dispatch agy version evidence is invalid")
     return value, raw, _identity(info)
@@ -398,14 +433,23 @@ def validate_state(value: Any) -> dict[str, Any]:
         "verification_identity", "continue_available", "last_success_path",
         "last_success_sha256", "last_success_identity", "project_boundary",
         "provider_retry_after_seconds", "provider_retry_observed_epoch",
+        "candidate_recognized", "candidate_source", "result_available",
+        "worktree_reconciliation", "worktree_changes_present",
+        "worktree_changed_since_dispatch", "driver_disposition", "failure_stage",
+        "last_activity", "next_action", "next_action_command", "worktree_baseline",
+        "provider_schema_sha256", "provider_schema_identity",
+        "canonical_schema_sha256", "canonical_schema_identity",
+        "candidate_worktree_sha256", "candidate_worktree_entries",
     }
     retry_fields = {"provider_retry_after_seconds", "provider_retry_observed_epoch"}
-    legacy_fields = fields - STATE_PROJECT_FIELDS - retry_fields
-    version_three_fields = fields - retry_fields
+    legacy_fields = fields - STATE_PROJECT_FIELDS - retry_fields - STATE_V5_FIELDS
+    version_three_fields = fields - retry_fields - STATE_V5_FIELDS
+    version_four_fields = fields - STATE_V5_FIELDS
     if not isinstance(value, dict):
         raise DispatchError("dispatch state fields are invalid")
     if set(value) == legacy_fields and value.get("schema_version") == 1:
         value = dict(value)
+        recognized = value["result_path"] is not None
         value.update({
             "workflow": "legacy", "max_cycles": 1, "cycle": value["attempt"],
             "phase": None, "assurance": None, "check_summary": None,
@@ -416,14 +460,62 @@ def validate_state(value: Any) -> dict[str, Any]:
             "last_success_identity": None, "project_boundary": None,
             "provider_retry_after_seconds": None,
             "provider_retry_observed_epoch": None,
+            "candidate_recognized": recognized,
+            "candidate_source": "provider_success" if recognized else "none",
+            "result_available": recognized, "worktree_reconciliation": "not_applicable",
+            "worktree_changes_present": None, "worktree_changed_since_dispatch": None,
+            "driver_disposition": "unreviewed" if recognized else "not_applicable",
+            "failure_stage": None, "last_activity": None,
+            "next_action": "driver_review" if recognized else "none",
+            "next_action_command": None,
+            "worktree_baseline": None,
+            "provider_schema_sha256": None, "provider_schema_identity": None,
+            "canonical_schema_sha256": None, "canonical_schema_identity": None,
+            "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
         })
     elif set(value) == version_three_fields and value.get("schema_version") == 3:
         value = dict(value)
+        if value["result_path"] is None and value["last_success_path"] is not None:
+            value["result_path"] = value["last_success_path"]
+            value["result_sha256"] = value["last_success_sha256"]
+            value["result_identity"] = value["last_success_identity"]
         value.update({
             "provider_retry_after_seconds": None,
             "provider_retry_observed_epoch": None,
+            "candidate_recognized": bool(value["result_path"]),
+            "candidate_source": "provider_success" if value["result_path"] else "none",
+            "result_available": bool(value["result_path"]),
+            "worktree_reconciliation": "not_applicable",
+            "worktree_changes_present": None, "worktree_changed_since_dispatch": None,
+            "driver_disposition": "unreviewed" if value["result_path"] else "not_applicable",
+            "failure_stage": None, "last_activity": None,
+            "next_action": "driver_review" if value["result_path"] else "none",
+            "next_action_command": None, "worktree_baseline": None,
+            "provider_schema_sha256": None, "provider_schema_identity": None,
+            "canonical_schema_sha256": None, "canonical_schema_identity": None,
+            "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
         })
-    elif set(value) != fields or value.get("schema_version") != 4:
+    elif set(value) == version_four_fields and value.get("schema_version") == 4:
+        value = dict(value)
+        if value["result_path"] is None and value["last_success_path"] is not None:
+            value["result_path"] = value["last_success_path"]
+            value["result_sha256"] = value["last_success_sha256"]
+            value["result_identity"] = value["last_success_identity"]
+        value.update({
+            "candidate_recognized": bool(value["result_path"]),
+            "candidate_source": "provider_success" if value["result_path"] else "none",
+            "result_available": bool(value["result_path"]),
+            "worktree_reconciliation": "not_applicable",
+            "worktree_changes_present": None, "worktree_changed_since_dispatch": None,
+            "driver_disposition": "unreviewed" if value["result_path"] else "not_applicable",
+            "failure_stage": None, "last_activity": None,
+            "next_action": "driver_review" if value["result_path"] else "none",
+            "next_action_command": None, "worktree_baseline": None,
+            "provider_schema_sha256": None, "provider_schema_identity": None,
+            "canonical_schema_sha256": None, "canonical_schema_identity": None,
+            "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
+        })
+    elif set(value) != fields or value.get("schema_version") != 5:
         raise DispatchError("dispatch state fields are invalid")
     if value["kind"] != "agy-worker-dispatch-state":
         raise DispatchError("dispatch state version is invalid")
@@ -438,20 +530,81 @@ def validate_state(value: Any) -> dict[str, Any]:
         raise DispatchError("dispatch status is invalid")
     if value["reason"] is not None and value["reason"] not in REASONS:
         raise DispatchError("dispatch reason is invalid")
+    if type(value["candidate_recognized"]) is not bool or type(value["result_available"]) is not bool:
+        raise DispatchError("dispatch candidate flags are invalid")
+    if value["candidate_source"] not in {"none", "provider_success", "provider_error", "provider_cancelled"}:
+        raise DispatchError("dispatch candidate source is invalid")
+    if (
+        value["candidate_recognized"] != (value["candidate_source"] != "none")
+        or (value["result_available"] and not value["candidate_recognized"])
+    ):
+        raise DispatchError("dispatch candidate state is inconsistent")
+    if value["worktree_reconciliation"] not in {"available", "unavailable", "not_applicable"}:
+        raise DispatchError("dispatch worktree reconciliation is invalid")
+    for key in ("worktree_changes_present", "worktree_changed_since_dispatch"):
+        if value[key] is not None and type(value[key]) is not bool:
+            raise DispatchError("dispatch worktree observation is invalid")
+    if value["worktree_reconciliation"] == "available" and (
+        value["worktree_changes_present"] is None or value["worktree_changed_since_dispatch"] is None
+    ):
+        raise DispatchError("dispatch worktree reconciliation is incomplete")
+    if value["worktree_reconciliation"] != "available" and (
+        value["worktree_changes_present"] is not None or value["worktree_changed_since_dispatch"] is not None
+    ):
+        raise DispatchError("dispatch unavailable worktree reconciliation has observations")
+    if value["driver_disposition"] not in {"not_applicable", "unreviewed", "verified", "partially_verified", "rejected", "blocked"}:
+        raise DispatchError("dispatch driver disposition is invalid")
+    if value["failure_stage"] not in {None, *FAILURE_STAGES}:
+        raise DispatchError("dispatch failure stage is invalid")
+    if value["last_activity"] not in {None, "provider_initialized", "progress_signal", "terminal_received"}:
+        raise DispatchError("dispatch activity is invalid")
+    if value["next_action"] not in {"none", "wait", "resume", "driver_review", "driver_finalize", "blocked"}:
+        raise DispatchError("dispatch next action is invalid")
+    if value["next_action_command"] is not None and (not isinstance(value["next_action_command"], str) or not value["next_action_command"]):
+        raise DispatchError("dispatch next action command is invalid")
+    baseline = value["worktree_baseline"]
+    if baseline is not None and (
+        not isinstance(baseline, dict) or set(baseline) != {"sha256", "entries"}
+        or not isinstance(baseline["sha256"], str) or SHA_RE.fullmatch(baseline["sha256"]) is None
+        or type(baseline["entries"]) is not int or not (0 <= baseline["entries"] <= MAX_BOUNDARY_ENTRIES)
+    ):
+        raise DispatchError("dispatch worktree baseline is invalid")
+    candidate_worktree_sha = value["candidate_worktree_sha256"]
+    candidate_worktree_entries = value["candidate_worktree_entries"]
+    if (candidate_worktree_sha is None) != (candidate_worktree_entries is None):
+        raise DispatchError("dispatch candidate worktree binding is incomplete")
+    if candidate_worktree_sha is not None and (
+        not isinstance(candidate_worktree_sha, str)
+        or SHA_RE.fullmatch(candidate_worktree_sha) is None
+        or type(candidate_worktree_entries) is not int
+        or not (0 <= candidate_worktree_entries <= MAX_BOUNDARY_ENTRIES)
+    ):
+        raise DispatchError("dispatch candidate worktree binding is invalid")
+    for digest_key, identity_key in (
+        ("provider_schema_sha256", "provider_schema_identity"),
+        ("canonical_schema_sha256", "canonical_schema_identity"),
+    ):
+        bound_digest, bound_identity = value[digest_key], value[identity_key]
+        if (bound_digest is None) != (bound_identity is None):
+            raise DispatchError("dispatch schema binding is incomplete")
+        if bound_digest is not None and (
+            not isinstance(bound_digest, str) or SHA_RE.fullmatch(bound_digest) is None
+            or not isinstance(bound_identity, list) or len(bound_identity) != 5
+            or any(type(item) is not int or item < 0 for item in bound_identity)
+        ):
+            raise DispatchError("dispatch schema binding is invalid")
     if value["attempt_origin"] not in {"initial", "conversation-resume", "fresh-restart", "conversation-continue"}:
         raise DispatchError("dispatch attempt origin is invalid")
     if type(value["attempt"]) is not int or value["attempt"] < 1:
         raise DispatchError("dispatch attempt is invalid")
     if value["workflow"] not in {"legacy", "explore", "task", "project"}:
         raise DispatchError("dispatch workflow state is invalid")
-    if type(value["max_cycles"]) is not int or not (1 <= value["max_cycles"] <= 5):
+    if not _valid_max_cycles(value["workflow"], value["max_cycles"]):
         raise DispatchError("dispatch max cycles state is invalid")
     if type(value["cycle"]) is not int or value["cycle"] != value["attempt"] or (
-        value["workflow"] == "project" and value["cycle"] > value["max_cycles"]
+        value["workflow"] != "legacy" and value["cycle"] > value["max_cycles"]
     ):
         raise DispatchError("dispatch cycle state is invalid")
-    if value["workflow"] != "project" and value["max_cycles"] != 1:
-        raise DispatchError("non-project max cycles state is invalid")
     if not isinstance(value["job_id"], str) or JOB_RE.fullmatch(value["job_id"]) is None:
         raise DispatchError("dispatch job ID is invalid")
     conversation = value["conversation_id"]
@@ -506,29 +659,68 @@ def validate_state(value: Any) -> dict[str, Any]:
             or any(type(item) is not int or item < 0 for item in identity)
         ):
             raise DispatchError("dispatch identity is invalid")
+    current_result = [value["result_path"], value["result_sha256"], value["result_identity"]]
+    if any(item is None for item in current_result) != all(item is None for item in current_result):
+        raise DispatchError("dispatch result binding is incomplete")
+    if value["candidate_recognized"] != all(item is not None for item in current_result):
+        raise DispatchError("dispatch candidate result binding is inconsistent")
+    inaccessible_candidate = bool(
+        value["candidate_recognized"] and not value["result_available"]
+    )
+    if value["candidate_recognized"] and value["failure_stage"] == "binding_failure" and value["result_available"]:
+        raise DispatchError("dispatch binding failure cannot advertise a result")
+    if inaccessible_candidate and not (
+        value["failure_stage"] == "binding_failure"
+        and value["status"] == "failed"
+        and value["reason"] == "status_unavailable"
+        and not value["resume_available"]
+        and not value["continue_available"]
+        and value["driver_disposition"] == "unreviewed"
+        and value["next_action"] == "blocked"
+        and value["next_action_command"] is None
+    ):
+        raise DispatchError("dispatch inaccessible candidate state is inconsistent")
     if value["status"] in TERMINAL:
         if value["finished_epoch"] is None or value["exit_code"] is None:
             raise DispatchError("terminal dispatch state is incomplete")
-    if value["workflow"] == "project":
-        if value["phase"] not in {"dispatching", "awaiting-verification", "repairing", "completed", "blocked", "provider-failed", "repair-failed"}:
-            raise DispatchError("project phase is invalid")
-        if value["assurance"] not in {"pending", "verified", "partially_verified", "blocked"}:
-            raise DispatchError("project assurance is invalid")
-        if value["continue_available"] and not (
-            value["status"] == "succeeded" and value["phase"] == "awaiting-verification"
-            and value["assurance"] == "pending" and value["cycle"] < value["max_cycles"]
+    if value["schema_version"] == 5 and value["workflow"] != "legacy":
+        if value["phase"] not in LIFECYCLE_PHASES:
+            raise DispatchError("dispatch lifecycle phase is invalid")
+        if value["assurance"] not in {"pending", "verified", "partially_verified", "rejected", "blocked"}:
+            raise DispatchError("dispatch lifecycle assurance is invalid")
+        if inaccessible_candidate and (
+            value["phase"] != "blocked" or value["assurance"] != "blocked"
         ):
-            raise DispatchError("project continuation availability is invalid")
+            raise DispatchError("dispatch inaccessible candidate lifecycle is invalid")
+        if value["continue_available"] and not (
+            value["assurance"] == "pending"
+            and value["candidate_recognized"]
+            and value["candidate_source"] != "provider_cancelled"
+            and value["cycle"] < value["max_cycles"]
+            and value["status"] in {"succeeded", "failed"}
+            and value["phase"] in {"awaiting-verification", "repair-failed"}
+        ):
+            raise DispatchError("dispatch continuation availability is invalid")
         if value["assurance"] != "pending" and value["phase"] not in {"completed", "blocked"}:
-            raise DispatchError("terminal project assurance has an invalid phase")
+            raise DispatchError("terminal dispatch assurance has an invalid phase")
         if value["status"] == "orphaned" and (
             value["assurance"] != "pending"
             or value["phase"] in {"completed", "blocked"}
             or value["resume_available"] or value["continue_available"]
         ):
-            raise DispatchError("orphaned project state must remain preserve-only")
-    elif value["phase"] is not None or value["assurance"] is not None or value["continue_available"]:
-        raise DispatchError("non-project state has project status")
+            raise DispatchError("orphaned dispatch state must remain preserve-only")
+    elif value["schema_version"] == 5 and (value["phase"] is not None or value["assurance"] is not None or value["continue_available"]):
+        raise DispatchError("legacy state has lifecycle status")
+    elif value["schema_version"] != 5 and value["workflow"] == "project":
+        if value["phase"] not in {
+            "dispatching", "awaiting-verification", "repairing", "completed",
+            "blocked", "provider-failed", "repair-failed",
+        } or value["assurance"] not in {"pending", "verified", "partially_verified", "blocked"}:
+            raise DispatchError("legacy project lifecycle state is invalid")
+    elif value["schema_version"] != 5 and (
+        value["phase"] is not None or value["assurance"] is not None or value["continue_available"]
+    ):
+        raise DispatchError("legacy non-project state has lifecycle status")
     summary = value["check_summary"]
     if summary is not None and (
         not isinstance(summary, str) or not (1 <= len(summary) <= MAX_CHECK_SUMMARY)
@@ -564,12 +756,13 @@ def initial_state(
     command_identity: tuple[int, int, int, int, int], stage_sha: str | None,
     stage_identity: tuple[int, int, int, int, int] | None,
     project_boundary: dict[str, Any] | None = None,
+    schema_bindings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = time.time()
     workflow = command.get("workflow", "legacy")
     max_cycles = command.get("max_cycles", 1)
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "kind": "agy-worker-dispatch-state",
         "sequence": 1,
         "previous_state_sha256": None,
@@ -611,8 +804,8 @@ def initial_state(
         "workflow": workflow,
         "max_cycles": max_cycles,
         "cycle": attempt,
-        "phase": "dispatching" if workflow == "project" else None,
-        "assurance": "pending" if workflow == "project" else None,
+        "phase": "dispatching" if workflow != "legacy" else None,
+        "assurance": "pending" if workflow != "legacy" else None,
         "check_summary": None,
         "check_counts": {"passed": 0, "failed": 0, "advisory": 0, "missing": 0},
         "verification_path": None,
@@ -629,7 +822,79 @@ def initial_state(
         ),
         "provider_retry_after_seconds": None,
         "provider_retry_observed_epoch": None,
+        "candidate_recognized": False,
+        "candidate_source": "none",
+        "result_available": False,
+        "worktree_reconciliation": "not_applicable",
+        "worktree_changes_present": None,
+        "worktree_changed_since_dispatch": None,
+        "driver_disposition": "not_applicable",
+        "failure_stage": None,
+        "last_activity": None,
+        "next_action": "wait",
+        "next_action_command": None,
+        "worktree_baseline": _worktree_snapshot(command["workdir"]),
+        "provider_schema_sha256": None if schema_bindings is None else schema_bindings["provider_schema_sha256"],
+        "provider_schema_identity": None if schema_bindings is None else schema_bindings["provider_schema_identity"],
+        "canonical_schema_sha256": None if schema_bindings is None else schema_bindings["canonical_schema_sha256"],
+        "canonical_schema_identity": None if schema_bindings is None else schema_bindings["canonical_schema_identity"],
+        "candidate_worktree_sha256": None,
+        "candidate_worktree_entries": None,
     }
+
+
+def _upgrade_legacy_state(
+    state: dict[str, Any], command: dict[str, Any],
+) -> dict[str, Any]:
+    """Prepare an old readable snapshot for one atomic, approved v5 write."""
+    if state["schema_version"] == 5:
+        return state
+    value = dict(state)
+    if value["phase"] == "provider-failed":
+        value["phase"] = "attempt-failed"
+    if value["workflow"] != "legacy":
+        if value["attempt_origin"] == "conversation-continue" and value["status"] == "failed":
+            value["phase"] = "repair-failed"
+        elif value["candidate_recognized"]:
+            value["phase"] = "awaiting-verification"
+        elif value["status"] == "failed":
+            value["phase"] = "attempt-failed"
+        elif value["phase"] is None:
+            value["phase"] = "dispatching"
+        if value["assurance"] is None:
+            value["assurance"] = "pending"
+    snapshot = _worktree_snapshot(command["workdir"])
+    if snapshot is None:
+        raise DispatchError("legacy worktree cannot be bound")
+    value.update(_schema_bindings(command))
+    value.update({
+        "schema_version": 5,
+        "worktree_baseline": snapshot,
+        "worktree_reconciliation": "available",
+        "worktree_changes_present": snapshot["entries"] > 0,
+        "worktree_changed_since_dispatch": False,
+        "resume_available": bool(
+            value["conversation_id"] and not value["candidate_recognized"]
+            and value["status"] == "failed"
+        ),
+    })
+    if value["candidate_recognized"]:
+        value["candidate_worktree_sha256"] = snapshot["sha256"]
+        value["candidate_worktree_entries"] = snapshot["entries"]
+        value["driver_disposition"] = "unreviewed"
+        value["next_action"] = "driver_review"
+    value["continue_available"] = bool(
+        value["workflow"] != "legacy"
+        and value["candidate_recognized"]
+        and value["candidate_source"] != "provider_cancelled"
+        and value["conversation_id"]
+        and value["status"] in {"succeeded", "failed"}
+        and value["phase"] in {"awaiting-verification", "repair-failed"}
+        and value["attempt"] < value["max_cycles"]
+        and float(value["elapsed_seconds"]) < float(value["max_seconds"])
+    )
+    validate_state(value)
+    return value
 
 
 def _transition_locked(job: Path, state: dict[str, Any], prior_raw: bytes, updates: dict[str, Any]) -> tuple[dict[str, Any], bytes, str]:
@@ -638,8 +903,9 @@ def _transition_locked(job: Path, state: dict[str, Any], prior_raw: bytes, updat
         raise DispatchError("dispatch state changed before transition")
     value = dict(state)
     value.update(updates)
-    if value["schema_version"] in {1, 3}:
-        value["schema_version"] = 4
+    if value["schema_version"] in {1, 3, 4}:
+        command = _load_bound_command(job, state, stage_readonly=False)
+        value = _upgrade_legacy_state(value, command)
     value["sequence"] = state["sequence"] + 1
     value["previous_state_sha256"] = digest(prior_raw)
     value["updated_epoch"] = time.time()
@@ -683,7 +949,20 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
         "elapsed_seconds": round(elapsed, 3),
         "exit_code": value["exit_code"],
         "hard_seconds": value["hard_seconds"],
+        # Kept as a deprecated compatibility hint.  It says nothing about a clean
+        # worktree and must not be used as an acceptance decision.
         "has_prior_candidate": bool(value["result_path"] or value["last_success_path"]),
+        "candidate_recognized": value["candidate_recognized"],
+        "candidate_source": value["candidate_source"],
+        "result_available": value["result_available"],
+        "worktree_reconciliation": value["worktree_reconciliation"],
+        "worktree_changes_present": value["worktree_changes_present"],
+        "worktree_changed_since_dispatch": value["worktree_changed_since_dispatch"],
+        "driver_disposition": value["driver_disposition"],
+        "failure_stage": value["failure_stage"],
+        "last_activity": value["last_activity"],
+        "next_action": value["next_action"],
+        "next_action_command": value["next_action_command"],
         "job_id": value["job_id"],
         "last_progress_age_seconds": None if last_age is None else round(last_age, 3),
         "limit_kind": value["limit_kind"],
@@ -757,17 +1036,15 @@ def _bound_stage(
     return digest(raw), _identity(info)
 
 
-def _verification_from_stdin() -> dict[str, Any]:
-    raw = sys.stdin.buffer.read(MAX_VERIFICATION_BYTES + 1)
-    if len(raw) > MAX_VERIFICATION_BYTES:
-        raise DispatchError("verification feedback is oversized")
-    value = parse_json(raw, "verification feedback")
-    if not isinstance(value, dict) or set(value) != {
-        "schema_version", "summary", "passed_checks", "failed_checks",
-        "advisory_checks", "missing_checks",
-    }:
+def _validate_verification(value: Any) -> dict[str, Any]:
+    v1_fields = {"schema_version", "summary", "passed_checks", "failed_checks", "advisory_checks", "missing_checks"}
+    v2_fields = v1_fields | {
+        "candidate_sha256", "coverage", "verified_findings", "unresolved_gaps",
+        "diff_review_complete",
+    }
+    if not isinstance(value, dict) or set(value) not in (v1_fields, v2_fields):
         raise DispatchError("verification feedback fields are invalid")
-    if value["schema_version"] != 1:
+    if value["schema_version"] not in {1, 2} or (value["schema_version"] == 1) != (set(value) == v1_fields):
         raise DispatchError("verification feedback version is invalid")
     summary = value["summary"]
     if not isinstance(summary, str) or not (1 <= len(summary) <= MAX_CHECK_SUMMARY) or any(
@@ -785,9 +1062,26 @@ def _verification_from_stdin() -> dict[str, Any]:
     for key in ("advisory_checks", "missing_checks"):
         if type(value[key]) is not int or not (0 <= value[key] <= MAX_CHECK_ITEMS):
             raise DispatchError("verification feedback counts are invalid")
+    if value["schema_version"] == 2:
+        if not isinstance(value["candidate_sha256"], str) or SHA_RE.fullmatch(value["candidate_sha256"]) is None:
+            raise DispatchError("verification feedback candidate binding is invalid")
+        if value["coverage"] not in {"complete", "partial", "not_assessed", "not_applicable"}:
+            raise DispatchError("verification feedback coverage is invalid")
+        for key in ("verified_findings", "unresolved_gaps"):
+            if type(value[key]) is not int or not (0 <= value[key] <= MAX_CHECK_ITEMS):
+                raise DispatchError("verification feedback evidence counts are invalid")
+        if type(value["diff_review_complete"]) is not bool:
+            raise DispatchError("verification feedback diff review is invalid")
     if len(canonical(value)) > MAX_VERIFICATION_BYTES:
         raise DispatchError("verification feedback canonical bytes are oversized")
     return value
+
+
+def _verification_from_stdin() -> dict[str, Any]:
+    raw = sys.stdin.buffer.read(MAX_VERIFICATION_BYTES + 1)
+    if len(raw) > MAX_VERIFICATION_BYTES:
+        raise DispatchError("verification feedback is oversized")
+    return _validate_verification(parse_json(raw, "verification feedback"))
 
 
 def _verification_counts(value: dict[str, Any]) -> dict[str, int]:
@@ -797,6 +1091,28 @@ def _verification_counts(value: dict[str, Any]) -> dict[str, int]:
         "advisory": value["advisory_checks"],
         "missing": value["missing_checks"],
     }
+
+
+def _verification_is_verified(value: dict[str, Any], workflow: str) -> bool:
+    counts = _verification_counts(value)
+    if value["schema_version"] != 2 or counts["failed"] or counts["missing"]:
+        return False
+    if workflow == "explore":
+        return value["coverage"] == "complete" and value["unresolved_gaps"] == 0
+    return counts["passed"] >= 1 and value["diff_review_complete"]
+
+
+def _require_current_candidate_verification(value: dict[str, Any], state: dict[str, Any]) -> None:
+    """V1 is readable for compatibility, but never authorizes a lifecycle write."""
+    if value["schema_version"] != 2:
+        raise DispatchError("verification v2 is required for candidate disposition")
+    if (
+        not state["candidate_recognized"] or not state["result_available"]
+        or state["result_sha256"] is None
+    ):
+        raise DispatchError("verification has no current recognized candidate")
+    if value["candidate_sha256"] != state["result_sha256"]:
+        raise DispatchError("verification candidate binding is stale")
 
 
 def _write_verification(job: Path, label: str, value: dict[str, Any]) -> tuple[Path, str, tuple[int, int, int, int, int]]:
@@ -895,6 +1211,9 @@ def _bound_verification(job: Path, state: dict[str, Any]) -> Path | None:
     raw, info = read_regular(path, MAX_VERIFICATION_BYTES, "verification feedback", allowed_modes=(0o400,))
     if digest(raw) != state["verification_sha256"] or list(_identity(info)) != state["verification_identity"]:
         raise DispatchError("verification feedback binding changed")
+    _require_current_candidate_verification(
+        _validate_verification(parse_json(raw, "verification feedback")), state,
+    )
     parent = path.parent.lstat()
     if (
         not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode)
@@ -1001,6 +1320,238 @@ def _project_boundary(workdir: str) -> dict[str, Any]:
     return marker_record
 
 
+def _worktree_snapshot(workdir: str) -> dict[str, Any] | None:
+    """Hash bounded Git-visible artefacts without retaining or publishing names.
+
+    Git supplies the tracked, deleted, untracked, and ignored path set.  Every
+    component is then opened relative to a no-follow root descriptor, so a
+    symlink contributes its own lstat and target bytes but is never traversed.
+    """
+    root_fd = -1
+    try:
+        root_fd = os.open(
+            os.fsencode(workdir),
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        root_info = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_info.st_mode):
+            return None
+        commands = (
+            ["git", "-C", workdir, "status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=all"],
+            ["git", "-C", workdir, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            ["git", "-C", workdir, "ls-files", "-z", "--others", "--ignored", "--exclude-standard"],
+        )
+        outputs: list[bytes] = []
+        total = 0
+        for argv in commands:
+            completed = subprocess.run(
+                argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, check=False, timeout=5.0,
+            )
+            if completed.returncode != 0:
+                return None
+            total += len(completed.stdout)
+            if total > MAX_STREAM_BYTES:
+                return None
+            outputs.append(completed.stdout)
+        status_raw, visible_raw, ignored_raw = outputs
+        if any(raw and not raw.endswith(b"\0") for raw in outputs):
+            return None
+        dirty_entries = status_raw.count(b"\0")
+        paths = set(visible_raw.split(b"\0")[:-1]) | set(ignored_raw.split(b"\0")[:-1])
+        if dirty_entries > MAX_BOUNDARY_ENTRIES or len(paths) > MAX_BOUNDARY_ENTRIES:
+            return None
+        observation = hashlib.sha256()
+        observation.update(b"agy-worker-worktree-v2\0")
+        observation.update(len(status_raw).to_bytes(8, "big"))
+        observation.update(status_raw)
+        content_bytes = 0
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        directory = getattr(os, "O_DIRECTORY", 0)
+        for relative in sorted(paths):
+            parts = relative.split(b"/")
+            if (
+                not relative or relative.startswith(b"/")
+                or any(part in {b"", b".", b".."} for part in parts)
+                or parts[0] == b".git"
+            ):
+                return None
+            observation.update(len(relative).to_bytes(8, "big"))
+            observation.update(relative)
+            parent_fd = os.dup(root_fd)
+            try:
+                for component in parts[:-1]:
+                    next_fd = os.open(
+                        component, os.O_RDONLY | directory | nofollow,
+                        dir_fd=parent_fd,
+                    )
+                    os.close(parent_fd)
+                    parent_fd = next_fd
+                name = parts[-1]
+                try:
+                    before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    observation.update(b"missing\0")
+                    continue
+                metadata = (
+                    before.st_dev, before.st_ino, before.st_mode, before.st_nlink,
+                    before.st_uid, before.st_gid, before.st_size,
+                    before.st_mtime_ns, before.st_ctime_ns,
+                )
+                observation.update(canonical(list(metadata)))
+                if stat.S_ISLNK(before.st_mode):
+                    target = os.readlink(name, dir_fd=parent_fd)
+                    target_raw = os.fsencode(target)
+                    content_bytes += len(target_raw)
+                    if content_bytes > MAX_STREAM_BYTES:
+                        return None
+                    after = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                    if metadata != (
+                        after.st_dev, after.st_ino, after.st_mode, after.st_nlink,
+                        after.st_uid, after.st_gid, after.st_size,
+                        after.st_mtime_ns, after.st_ctime_ns,
+                    ):
+                        return None
+                    observation.update(b"symlink\0")
+                    observation.update(len(target_raw).to_bytes(8, "big"))
+                    observation.update(target_raw)
+                elif stat.S_ISREG(before.st_mode):
+                    file_fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=parent_fd)
+                    try:
+                        opened = os.fstat(file_fd)
+                        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                            return None
+                        content = hashlib.sha256()
+                        while True:
+                            piece = os.read(file_fd, 65536)
+                            if not piece:
+                                break
+                            content_bytes += len(piece)
+                            if content_bytes > MAX_STREAM_BYTES:
+                                return None
+                            content.update(piece)
+                        after = os.fstat(file_fd)
+                    finally:
+                        os.close(file_fd)
+                    named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                    after_metadata = (
+                        after.st_dev, after.st_ino, after.st_mode, after.st_nlink,
+                        after.st_uid, after.st_gid, after.st_size,
+                        after.st_mtime_ns, after.st_ctime_ns,
+                    )
+                    named_metadata = (
+                        named.st_dev, named.st_ino, named.st_mode, named.st_nlink,
+                        named.st_uid, named.st_gid, named.st_size,
+                        named.st_mtime_ns, named.st_ctime_ns,
+                    )
+                    if metadata != after_metadata or after_metadata != named_metadata:
+                        return None
+                    observation.update(b"file\0")
+                    observation.update(content.digest())
+                else:
+                    observation.update(b"special\0")
+            finally:
+                os.close(parent_fd)
+        return {"sha256": observation.hexdigest(), "entries": dirty_entries}
+    except (OSError, subprocess.TimeoutExpired, OverflowError):
+        return None
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+
+
+def _reconcile_worktree(workdir: str, baseline: dict[str, Any] | None) -> dict[str, Any]:
+    current = _worktree_snapshot(workdir)
+    if current is None or baseline is None:
+        return {
+            "worktree_reconciliation": "unavailable",
+            "worktree_changes_present": None,
+            "worktree_changed_since_dispatch": None,
+        }
+    return {
+        "worktree_reconciliation": "available",
+        "worktree_changes_present": current["entries"] > 0,
+        "worktree_changed_since_dispatch": current["sha256"] != baseline["sha256"],
+    }
+
+
+def _schema_binding(path: Path) -> tuple[str, tuple[int, int, int, int, int]]:
+    """Bind a schema as dispatch input without accepting a symlink swap."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise DispatchError("dispatch schema is unavailable") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode) or before.st_size > 1024 * 1024:
+            raise DispatchError("dispatch schema is invalid")
+        raw = b""
+        while len(raw) <= 1024 * 1024:
+            piece = os.read(descriptor, 65536)
+            if not piece:
+                break
+            raw += piece
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        named = path.lstat()
+    except OSError as exc:
+        raise DispatchError("dispatch schema identity changed") from exc
+    if len(raw) > 1024 * 1024 or _identity(before) != _identity(after) or _identity(after) != _identity(named):
+        raise DispatchError("dispatch schema identity changed")
+    return digest(raw), _identity(after)
+
+
+def _schema_paths(command: dict[str, Any]) -> tuple[Path, Path] | None:
+    argv = command["argv"]
+    if "--json-schema" not in argv:
+        return None
+    if argv.count("--json-schema") != 1:
+        raise DispatchError("dispatch schema argument is invalid")
+    index = argv.index("--json-schema")
+    if index + 1 >= len(argv):
+        raise DispatchError("dispatch schema argument is invalid")
+    return Path(argv[index + 1]), Path(__file__).parent.parent / "schemas" / "worker-result.schema.json"
+
+
+def _schema_bindings(command: dict[str, Any]) -> dict[str, Any]:
+    paths = _schema_paths(command)
+    if paths is None:
+        return {
+            "provider_schema_sha256": None, "provider_schema_identity": None,
+            "canonical_schema_sha256": None, "canonical_schema_identity": None,
+        }
+    provider_sha, provider_identity = _schema_binding(paths[0])
+    canonical_sha, canonical_identity = _schema_binding(paths[1])
+    return {
+        "provider_schema_sha256": provider_sha, "provider_schema_identity": list(provider_identity),
+        "canonical_schema_sha256": canonical_sha, "canonical_schema_identity": list(canonical_identity),
+    }
+
+
+def _bound_schemas(command: dict[str, Any], state: dict[str, Any]) -> tuple[Path, Path]:
+    paths = _schema_paths(command)
+    if paths is None:
+        raise DispatchError("dispatch schema argument is unavailable")
+    expected = _schema_bindings(command)
+    for key, value in expected.items():
+        if state[key] != value:
+            raise DispatchError("dispatch schema binding changed")
+    return paths
+
+
+def _bound_candidate_worktree(state: dict[str, Any], command: dict[str, Any]) -> None:
+    """Reject post-review worktree drift before a continuation or final disposition."""
+    expected_sha = state["candidate_worktree_sha256"]
+    expected_entries = state["candidate_worktree_entries"]
+    current = _worktree_snapshot(command["workdir"])
+    if current is None or expected_sha is None or expected_entries is None:
+        raise DispatchError("candidate worktree reconciliation is unavailable")
+    if current["sha256"] != expected_sha or current["entries"] != expected_entries:
+        raise DispatchError("candidate worktree binding changed")
+
+
 def _load_bound_command(
     job: Path, state: dict[str, Any], *, stage_readonly: bool,
 ) -> dict[str, Any]:
@@ -1050,7 +1601,10 @@ def _event(line: bytes) -> tuple[bool, str | None, str | None]:
     if not line or len(line) > MAX_EVENT_BYTES:
         return False, None, None
     try:
-        value = json.loads(line.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
+        value = json.loads(
+            line.decode("utf-8", "strict"), object_pairs_hook=_duplicates,
+            parse_constant=_invalid_json_constant,
+        )
     except (UnicodeError, json.JSONDecodeError, DispatchError):
         return False, None, None
     if not isinstance(value, dict):
@@ -1097,10 +1651,13 @@ def _terminal_result(stream: Path, *, strict: bool = False) -> dict[str, Any] | 
     try:
         with stream.open("rb") as handle:
             for raw in handle:
-                if len(raw) > MAX_EVENT_BYTES:
+                if len(raw) > MAX_EVENT_BYTES or not raw.endswith(b"\n"):
                     return None
                 try:
-                    event = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
+                    event = json.loads(
+                        raw.decode("utf-8", "strict"), object_pairs_hook=_duplicates,
+                        parse_constant=_invalid_json_constant,
+                    )
                 except (UnicodeError, json.JSONDecodeError, DispatchError):
                     if strict:
                         return None
@@ -1125,7 +1682,7 @@ def _terminal_result(stream: Path, *, strict: bool = False) -> dict[str, Any] | 
                     if saw_init:
                         return None
                     init_conversation = event.get("conversation_id")
-                    if strict and (
+                    if strict and init_conversation is not None and (
                         not isinstance(init_conversation, str)
                         or CONVERSATION_RE.fullmatch(init_conversation) is None
                     ):
@@ -1134,7 +1691,13 @@ def _terminal_result(stream: Path, *, strict: bool = False) -> dict[str, Any] | 
                 elif not saw_init:
                     return None
                 if kind == "result":
-                    if strict and event["result"].get("conversation_id") != init_conversation:
+                    result_conversation = event["result"].get("conversation_id")
+                    if strict and result_conversation is not None and (
+                        not isinstance(result_conversation, str)
+                        or CONVERSATION_RE.fullmatch(result_conversation) is None
+                    ):
+                        return None
+                    if strict and init_conversation is not None and result_conversation is not None and result_conversation != init_conversation:
                         return None
                     saw_terminal = True
                     result = event["result"]
@@ -1182,17 +1745,27 @@ def _quota_terminal_failure(stream: Path, version: str) -> tuple[str, int | None
 
 
 def _validate_terminal_envelope(
-    stream: Path, envelope: Path, schema: str,
-) -> tuple[str, tuple[int, int, int, int, int]] | None:
-    result = _terminal_result(stream)
-    if result is None or str(result.get("status", "")).upper() != "SUCCESS":
-        return None
+    stream: Path, envelope: Path, provider_schema: Path, canonical_schema: Path,
+) -> tuple[tuple[str, tuple[int, int, int, int, int]] | None, str | None, str | None]:
+    """Keep framing, provider status, extraction, and canonical validation distinct."""
+    result = _terminal_result(stream, strict=True)
+    if result is None:
+        return None, None, "framing"
+    outer_status = result.get("status")
+    if not isinstance(outer_status, str) or outer_status.upper() not in {"SUCCESS", "ERROR", "CANCELED", "CANCELLED"}:
+        return None, None, "outer_status"
+    outer_status = "CANCELLED" if outer_status.upper() in {"CANCELED", "CANCELLED"} else outer_status.upper()
     value = result.get("structured_output")
     if not isinstance(value, dict):
-        return None
+        return None, outer_status, "structured_output"
+    # The provider may omit exactly these ergonomic report-only arrays.  Every
+    # other required field and every extra field remain schema failures.
+    value = dict(value)
+    for field in ("commands_run", "tests_run"):
+        value.setdefault(field, [])
     raw = json.dumps(value, ensure_ascii=True, indent=2).encode("ascii") + b"\n"
     if len(raw) > 1024 * 1024:
-        return None
+        return None, outer_status, "schema_rejection"
     descriptor = _ensure_new_private(envelope)
     try:
         os.write(descriptor, raw)
@@ -1200,20 +1773,27 @@ def _validate_terminal_envelope(
     finally:
         os.close(descriptor)
     validator = Path(__file__).with_name("validate-envelope.py")
-    completed = subprocess.run(
-        [sys.executable, "-I", "-S", "-B", str(validator), schema, str(envelope)],
+    provider_checked = subprocess.run(
+        [sys.executable, "-I", "-S", "-B", str(validator), str(provider_schema), str(envelope)],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         check=False,
     )
-    if completed.returncode != 0:
-        return None
+    canonical_checked = subprocess.run(
+        [sys.executable, "-I", "-S", "-B", str(validator), str(canonical_schema), str(envelope)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if provider_checked.returncode != 0 or canonical_checked.returncode != 0:
+        with contextlib.suppress(OSError):
+            envelope.unlink()
+        return None, outer_status, "schema_rejection"
     try:
         rebound, info = read_regular(envelope, 1024 * 1024, "dispatch result")
     except DispatchError:
-        return None
+        return None, outer_status, "binding_failure"
     if rebound != raw:
-        return None
-    return digest(raw), _identity(info)
+        return None, outer_status, "binding_failure"
+    return (digest(raw), _identity(info)), outer_status, None
 
 
 def controller(job: Path, ownership_fd: int) -> int:
@@ -1234,18 +1814,21 @@ def controller(job: Path, ownership_fd: int) -> int:
       with inherited_lifecycle_lock(job, ownership_fd):
         state, prior_raw, _sha = read_state_snapshot(job)
         if state["status"] == "cancel-requested" and state["cancel_requested"]:
-            transition(job, state, prior_raw, {
-                "status": "cancelled", "reason": "cancelled",
-                "exit_code": EXIT_BY_REASON["cancelled"], "controller_pid": None,
-                "finished_epoch": time.time(), "remote_cancel_unverified": False,
-                "resume_available": bool(state["conversation_id"]),
-            })
+            transition(job, state, prior_raw, _terminal_projection(
+                state, status="cancelled", reason="cancelled",
+                exit_code=EXIT_BY_REASON["cancelled"],
+                # This SHA-approved local cancellation occurs before provider
+                # startup; it is not an unverified remote cancellation.
+                remote_cancel_unverified=False,
+            ))
             return EXIT_BY_REASON["cancelled"]
         if state["status"] != "queued" or state["cancel_requested"]:
             raise DispatchError("dispatch is not queued")
         feedback: Path | None = None
+        schema_paths: tuple[Path, Path] | None = None
         try:
             command = _load_bound_command(job, state, stage_readonly=False)
+            schema_paths = _bound_schemas(command, state)
             if state["workflow"] == "project":
                 if _project_boundary(command["workdir"]) != state["project_boundary"]:
                     raise DispatchError("project worktree boundary changed")
@@ -1253,12 +1836,14 @@ def controller(job: Path, ownership_fd: int) -> int:
                 feedback = _bound_verification(job, state)
                 if feedback is None:
                     raise DispatchError("project continuation has no verification feedback")
+                _bound_candidate_worktree(state, command)
         except (OSError, DispatchError):
-            transition(job, state, prior_raw, {
-                "status": "failed", "reason": "status_unavailable",
-                "exit_code": EXIT_BY_REASON["status_unavailable"],
-                "controller_pid": None, "finished_epoch": time.time(),
-            })
+            transition(job, state, prior_raw, _terminal_projection(
+                state, status="failed", reason="status_unavailable",
+                exit_code=EXIT_BY_REASON["status_unavailable"],
+                failure_stage="binding_failure",
+                allow_continue=False,
+            ))
             return EXIT_BY_REASON["status_unavailable"]
         attempt = state["attempt"]
         stream_path, stderr_path, envelope_path = _attempt_paths(job, attempt)
@@ -1271,20 +1856,22 @@ def controller(job: Path, ownership_fd: int) -> int:
                 "status": "running", "controller_pid": os.getpid(),
                 "started_epoch": now, "last_progress_epoch": None,
                 "stream_path": str(stream_path), "stderr_path": str(stderr_path),
+                "next_action": "wait",
             })
             _stage(command, True)
             _load_bound_command(job, state, stage_readonly=True)
+            schema_paths = _bound_schemas(command, state)
         except (OSError, DispatchError):
             if stdout_fd >= 0: os.close(stdout_fd)
             if stderr_fd >= 0: os.close(stderr_fd)
             with contextlib.suppress(OSError): _stage(command, False)
             current, current_raw, _current_sha = read_state_snapshot(job)
-            transition(job, current, current_raw, {
-                "status": "failed", "reason": "status_unavailable",
-                "exit_code": EXIT_BY_REASON["status_unavailable"],
-                "controller_pid": None, "finished_epoch": time.time(),
-                "resume_available": bool(current["conversation_id"]),
-            })
+            transition(job, current, current_raw, _terminal_projection(
+                current, status="failed", reason="status_unavailable",
+                exit_code=EXIT_BY_REASON["status_unavailable"],
+                failure_stage="binding_failure",
+                allow_continue=False,
+            ))
             return EXIT_BY_REASON["status_unavailable"]
         argv = list(command["argv"])
         if state["attempt_origin"] in {"conversation-resume", "conversation-continue"}:
@@ -1310,6 +1897,7 @@ def controller(job: Path, ownership_fd: int) -> int:
         next_notice = started_mono + float(command["notice_seconds"])
         reason: str | None = None
         limit_kind: str | None = None
+        failure_stage: str | None = None
         saw_init = False
         saw_terminal = False
 
@@ -1421,6 +2009,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                                     event_kind != "init" and not saw_init
                                 ):
                                     reason = "invalid_envelope"
+                                    failure_stage = "framing"
                                     break
                                 if event_kind == "init":
                                     saw_init = True
@@ -1431,6 +2020,11 @@ def controller(job: Path, ownership_fd: int) -> int:
                                     "progress_count": state["progress_count"] + 1,
                                     "last_progress_epoch": time.time(),
                                     "elapsed_seconds": float(state["attempt_base_elapsed"]) + heartbeat_mono - started_mono,
+                                    "last_activity": (
+                                        "provider_initialized" if event_kind == "init"
+                                        else "progress_signal" if event_kind == "step_update"
+                                        else "terminal_received"
+                                    ),
                                 }
                                 if conversation is not None:
                                     if state["conversation_id"] not in {None, conversation}:
@@ -1455,6 +2049,7 @@ def controller(job: Path, ownership_fd: int) -> int:
             os.fsync(stderr_fd)
             elapsed = float(state["attempt_base_elapsed"]) + time.monotonic() - started_mono
             result_binding: tuple[str, tuple[int, int, int, int, int]] | None = None
+            outer_status: str | None = None
             provider_retry_after: int | None = None
             provider_retry_observed: float | None = None
             if reason is None:
@@ -1466,16 +2061,29 @@ def controller(job: Path, ownership_fd: int) -> int:
                     reason, provider_retry_after = terminal_failure
                     if provider_retry_after is not None:
                         provider_retry_observed = time.time()
-                elif returncode != 0:
-                    reason = _classify_stderr(stderr_path, command["agy_version"], returncode)
                 elif sizes["stdout"] == 0:
-                    reason = "empty_output"
-                else:
-                    result_binding = _validate_terminal_envelope(
-                        stream_path, envelope_path, argv[argv.index("--json-schema") + 1]
+                    reason = (
+                        _classify_stderr(stderr_path, command["agy_version"], returncode)
+                        if returncode != 0 else "empty_output"
                     )
-                    if result_binding is None:
-                        reason = "invalid_envelope"
+                else:
+                    try:
+                        if schema_paths is None:
+                            raise DispatchError("dispatch schema binding is unavailable")
+                        schema_paths = _bound_schemas(command, state)
+                        result_binding, outer_status, failure_stage = _validate_terminal_envelope(
+                            stream_path, envelope_path, schema_paths[0], schema_paths[1],
+                        )
+                        if result_binding is None:
+                            reason = "invalid_envelope"
+                        elif outer_status == "ERROR":
+                            reason = "provider_terminal_error"
+                        elif outer_status == "CANCELLED":
+                            reason = "provider_terminal_cancelled"
+                    except DispatchError:
+                        reason = "status_unavailable"
+                        result_binding = None
+                        failure_stage = "binding_failure"
             boundary_failed = False
             if command["workflow"] == "project":
                 try:
@@ -1485,6 +2093,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                     boundary_failed = True
                     reason = "status_unavailable"
                     result_binding = None
+                    failure_stage = "binding_failure"
             # One blocked completion snapshot linearizes terminal state against
             # late HUP/INT/TERM just as the foreground result publisher does.
             watched = tuple(prior_handlers)
@@ -1499,13 +2108,16 @@ def controller(job: Path, ownership_fd: int) -> int:
                 stop_signal = completion_signal
                 reason = "interrupted"
                 result_binding = None
+                failure_stage = None
             if reason is None:
                 final_status, exit_code = "succeeded", 0
                 result_path: str | None = str(envelope_path)
             else:
                 final_status = "cancelled" if reason in {"cancelled", "interrupted"} else "failed"
+                if reason == "provider_terminal_cancelled":
+                    final_status = "cancelled"
                 exit_code = 128 + stop_signal if stop_signal is not None else EXIT_BY_REASON[reason]
-                result_path = None
+                result_path = str(envelope_path) if result_binding is not None else None
             cleanup_failed = False
             try:
                 selector.close()
@@ -1513,6 +2125,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 os.close(stderr_fd); stderr_fd = -1
                 _stage(command, False)
                 _load_bound_command(job, state, stage_readonly=False)
+                _bound_schemas(command, state)
                 if state["attempt_origin"] == "conversation-continue":
                     _bound_verification(job, state)
             except (OSError, DispatchError):
@@ -1522,6 +2135,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 exit_code = EXIT_BY_REASON["status_unavailable"]
                 result_path = None
                 result_binding = None
+                failure_stage = "binding_failure"
             # An approved control may land after the last loop observation.  Bind
             # finalization to the current state under the same short transition lock.
             with state_lock(job):
@@ -1531,9 +2145,31 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if current["cancel_requested"]:
                     reason, final_status, exit_code = "cancelled", "cancelled", EXIT_BY_REASON["cancelled"]
                     result_path = None
+                    result_binding = None
+                    failure_stage = None
                 if reason != "provider_quota_exhausted":
                     provider_retry_after = None
                     provider_retry_observed = None
+                preserve_candidate = bool(
+                    result_binding is None
+                    and current["attempt_origin"] == "conversation-continue"
+                    and current["candidate_recognized"]
+                )
+                candidate_worktree = _worktree_snapshot(command["workdir"]) if result_binding is not None else None
+                candidate_recognized = result_binding is not None or preserve_candidate
+                candidate_unavailable = bool(
+                    candidate_recognized and failure_stage == "binding_failure"
+                )
+                candidate_source = (
+                    "provider_success" if result_binding is not None and outer_status == "SUCCESS"
+                    else "provider_error" if result_binding is not None and outer_status == "ERROR"
+                    else "provider_cancelled" if result_binding is not None and outer_status == "CANCELLED"
+                    else current["candidate_source"] if preserve_candidate
+                    else "none"
+                )
+                preserved_path = current["result_path"] if preserve_candidate else None
+                preserved_sha = current["result_sha256"] if preserve_candidate else None
+                preserved_identity = current["result_identity"] if preserve_candidate else None
                 updates = {
                     "status": final_status,
                     "reason": reason,
@@ -1542,28 +2178,68 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "finished_epoch": time.time(),
                     "elapsed_seconds": elapsed,
                     "agy_returncode": returncode,
-                    "result_path": result_path,
-                    "result_sha256": None if result_binding is None else result_binding[0],
-                    "result_identity": None if result_binding is None else list(result_binding[1]),
-                    "resume_available": bool(current["conversation_id"]) and final_status != "succeeded",
+                    "result_path": str(envelope_path) if result_binding is not None else preserved_path,
+                    "result_sha256": result_binding[0] if result_binding is not None else preserved_sha,
+                    "result_identity": list(result_binding[1]) if result_binding is not None else preserved_identity,
+                    "candidate_recognized": candidate_recognized,
+                    "candidate_source": candidate_source,
+                    # Preserve an exact old candidate after a binding failure for
+                    # forensics, but never claim it can still be read or reviewed.
+                    "result_available": candidate_recognized and not candidate_unavailable,
+                    "candidate_worktree_sha256": (
+                        candidate_worktree["sha256"] if candidate_worktree is not None
+                        else current["candidate_worktree_sha256"] if preserve_candidate else None
+                    ),
+                    "candidate_worktree_entries": (
+                        candidate_worktree["entries"] if candidate_worktree is not None
+                        else current["candidate_worktree_entries"] if preserve_candidate else None
+                    ),
+                    "driver_disposition": "unreviewed" if candidate_recognized else "not_applicable",
+                    "failure_stage": failure_stage,
+                    "last_activity": "terminal_received" if saw_terminal else current["last_activity"],
+                    "next_action": (
+                        "blocked" if candidate_unavailable else "driver_review"
+                    ) if candidate_recognized else ("resume" if current["conversation_id"] else "blocked"),
+                    "next_action_command": None,
+                    **_reconcile_worktree(command["workdir"], current["worktree_baseline"]),
+                    "resume_available": bool(
+                        current["conversation_id"] and not candidate_recognized
+                        and final_status == "failed"
+                    ),
                     "continue_available": False,
                     "remote_cancel_unverified": reason in {"cancelled", "interrupted"},
                     "limit_kind": limit_kind,
                     "provider_retry_after_seconds": provider_retry_after,
                     "provider_retry_observed_epoch": provider_retry_observed,
                 }
-                if current["workflow"] == "project":
-                    if boundary_failed:
+                if current["workflow"] != "legacy":
+                    if boundary_failed or candidate_unavailable:
                         updates.update({"phase": "blocked", "assurance": "blocked"})
-                    elif final_status == "succeeded":
+                    elif candidate_recognized:
                         updates.update({
-                            "phase": "awaiting-verification", "assurance": "pending",
-                            "continue_available": bool(current["conversation_id"]) and current["attempt"] < current["max_cycles"] and elapsed < current["max_seconds"],
+                            "phase": (
+                                "repair-failed"
+                                if final_status == "failed" and current["attempt_origin"] == "conversation-continue"
+                                else "awaiting-verification"
+                            ),
+                            "assurance": "pending",
+                            "continue_available": bool(
+                                final_status in {"succeeded", "failed"}
+                                and candidate_source != "provider_cancelled"
+                                and current["conversation_id"]
+                                and current["attempt"] < current["max_cycles"]
+                                and elapsed < current["max_seconds"]
+                            ),
                         })
                     else:
                         updates.update({
-                            "phase": "repair-failed" if current["attempt"] > 1 else "provider-failed",
+                            "phase": (
+                                "repair-failed"
+                                if final_status == "failed" and current["attempt_origin"] == "conversation-continue"
+                                else "attempt-failed"
+                            ),
                             "assurance": "pending",
+                            "continue_available": False,
                         })
                 state, prior_raw, _sha = _transition_locked(job, current, current_raw, updates)
             return exit_code
@@ -1589,6 +2265,7 @@ def create_state(
 ) -> tuple[dict[str, Any], str]:
     command, command_raw, command_info = load_command(job)
     stage_sha, stage_info = _bound_stage(command, readonly=False)
+    schema_bindings = _schema_bindings(command)
     path = job / STATE_NAME
     with state_lock(job):
         if resume:
@@ -1596,26 +2273,34 @@ def create_state(
             if approve_sha != sha:
                 raise DispatchError("continuation state approval is stale")
             _load_bound_command(job, state, stage_readonly=False)
+            if state["schema_version"] != 5:
+                state = _upgrade_legacy_state(state, command)
+            _bound_schemas(command, state)
             if state["workflow"] == "project" and (
                 _project_boundary(command["workdir"]) != state["project_boundary"]
             ):
                 raise DispatchError("project worktree boundary changed")
             if origin == "conversation-continue":
                 if (
-                    state["workflow"] != "project" or state["status"] != "succeeded"
-                    or state["phase"] != "awaiting-verification"
+                    state["workflow"] == "legacy" or not state["candidate_recognized"]
+                    or state["status"] not in {"succeeded", "failed"}
+                    or state["phase"] not in {"awaiting-verification", "repair-failed"}
                     or not state["continue_available"] or verification is None
                 ):
-                    raise DispatchError("project continuation is unavailable")
+                    raise DispatchError("dispatch continuation is unavailable")
+                _require_current_candidate_verification(verification, state)
+                _bound_candidate_worktree(state, command)
             else:
-                if state["status"] not in TERMINAL or state["status"] in {"succeeded", "orphaned"}:
+                if state["status"] not in TERMINAL or state["status"] == "orphaned":
                     raise DispatchError("only a terminal unsuccessful dispatch can continue")
+                if origin == "conversation-resume" and state["candidate_recognized"]:
+                    raise DispatchError("recognized candidates require driver review, finalize, or continue")
                 if origin == "conversation-resume" and not state["resume_available"]:
                     raise DispatchError("dispatch is not resume-eligible")
             if float(state["elapsed_seconds"]) >= float(state["max_seconds"]):
                 raise DispatchError("dispatch max runtime is exhausted")
-            if state["workflow"] == "project" and state["attempt"] >= state["max_cycles"]:
-                raise DispatchError("project max cycles is exhausted")
+            if state["workflow"] != "legacy" and state["attempt"] >= state["max_cycles"]:
+                raise DispatchError("dispatch max cycles is exhausted")
             conversation = state["conversation_id"] if origin == "conversation-resume" else None
             if origin == "conversation-continue":
                 conversation = state["conversation_id"]
@@ -1632,6 +2317,7 @@ def create_state(
                     command_sha=digest(command_raw), command_identity=command_info,
                     stage_sha=stage_sha, stage_identity=stage_info,
                     project_boundary=state["project_boundary"],
+                    schema_bindings=schema_bindings,
                 )
                 next_state["sequence"] = state["sequence"] + 1
                 next_state["previous_state_sha256"] = sha
@@ -1644,13 +2330,21 @@ def create_state(
                     float(state["elapsed_seconds"]) + float(command["hard_seconds"]),
                 )
                 next_state["max_seconds"] = float(state["max_seconds"])
-                if state["workflow"] == "project":
-                    next_state["phase"] = "repairing"
+                if state["workflow"] != "legacy":
+                    next_state["phase"] = "repairing" if origin == "conversation-continue" else "dispatching"
                     next_state["check_summary"] = state["check_summary"]
                     next_state["check_counts"] = state["check_counts"]
                     next_state["last_success_path"] = state["result_path"] or state["last_success_path"]
                     next_state["last_success_sha256"] = state["result_sha256"] or state["last_success_sha256"]
                     next_state["last_success_identity"] = state["result_identity"] or state["last_success_identity"]
+                    if origin == "conversation-continue":
+                        for key in (
+                            "result_path", "result_sha256", "result_identity",
+                            "candidate_recognized", "candidate_source", "result_available",
+                            "candidate_worktree_sha256", "candidate_worktree_entries",
+                            "driver_disposition",
+                        ):
+                            next_state[key] = state[key]
                 if verification_path is not None:
                     next_state.update({
                         "verification_path": str(verification_path),
@@ -1673,6 +2367,7 @@ def create_state(
         state = initial_state(
             command, origin, 1, command_sha=digest(command_raw),
             command_identity=command_info, stage_sha=stage_sha, stage_identity=stage_info,
+            schema_bindings=schema_bindings,
         )
         validate_state(state)
         _raw, sha = write_atomic(job, STATE_NAME, state)
@@ -1773,18 +2468,82 @@ def spawn(
             signal.signal(number, handler)
 
 
+def _terminal_projection(
+    state: dict[str, Any], *, status: str, reason: str, exit_code: int,
+    failure_stage: str | None = None, remote_cancel_unverified: bool = False,
+    allow_continue: bool = True,
+) -> dict[str, Any]:
+    """Project a local terminal side path without dropping a bound candidate.
+
+    These paths run before normal provider terminalization, so they must not leave
+    the transient dispatching/repairing UI fields behind.  A queued continuation
+    already contains an exact, driver-owned candidate binding; returning that
+    candidate to review is safer than treating a local controller failure as a
+    provider repair result.
+    """
+    candidate = bool(state["candidate_recognized"])
+    candidate_unavailable = bool(candidate and failure_stage == "binding_failure")
+    continuation = candidate and state["attempt_origin"] == "conversation-continue"
+    can_continue = bool(
+        continuation
+        and state["candidate_source"] != "provider_cancelled"
+        and state["conversation_id"]
+        and state["attempt"] < state["max_cycles"]
+        and float(state["elapsed_seconds"]) < float(state["max_seconds"])
+        and status == "failed"
+        and allow_continue
+        and not candidate_unavailable
+    )
+    updates: dict[str, Any] = {
+        "status": status,
+        "reason": reason,
+        "exit_code": exit_code,
+        "controller_pid": None,
+        "finished_epoch": time.time(),
+        "failure_stage": failure_stage,
+        # A local process signal is not evidence that the provider observed a
+        # cancellation.  Startup/binding failures make no remote-cancel claim.
+        "remote_cancel_unverified": remote_cancel_unverified,
+        "continue_available": can_continue,
+        "result_available": candidate and not candidate_unavailable,
+        **_reconcile_worktree(state["workdir"], state["worktree_baseline"]),
+    }
+    if candidate:
+        updates.update({
+            "resume_available": False,
+            "driver_disposition": "unreviewed",
+            "next_action": "blocked" if candidate_unavailable else "driver_review",
+            "next_action_command": None,
+        })
+    else:
+        resume_eligible = bool(
+            status == "failed" and state["conversation_id"]
+            and state["attempt_origin"] != "conversation-continue"
+        )
+        updates.update({
+            "resume_available": resume_eligible,
+            "driver_disposition": "not_applicable",
+            "next_action": "resume" if resume_eligible else "blocked",
+            "next_action_command": None,
+        })
+    if state["workflow"] != "legacy":
+        updates.update({
+            "phase": "blocked" if candidate_unavailable else ("awaiting-verification" if candidate else "attempt-failed"),
+            "assurance": "blocked" if candidate_unavailable else "pending",
+        })
+    return updates
+
+
 def _terminalize_start_failure(job: Path) -> None:
     with lifecycle_lock(job, blocking=True):
         with state_lock(job):
             state, raw, _sha = load_state(job)
             if state["status"] in TERMINAL:
                 return
-            _transition_locked(job, state, raw, {
-                "status": "failed", "reason": "status_unavailable",
-                "exit_code": EXIT_BY_REASON["status_unavailable"],
-                "controller_pid": None, "finished_epoch": time.time(),
-                "resume_available": bool(state["conversation_id"]),
-            })
+            _transition_locked(job, state, raw, _terminal_projection(
+                state, status="failed", reason="status_unavailable",
+                exit_code=EXIT_BY_REASON["status_unavailable"],
+            ))
 
 
 def _terminalize_queued_signal(job: Path, number: int) -> None:
@@ -1792,12 +2551,21 @@ def _terminalize_queued_signal(job: Path, number: int) -> None:
         state, raw, _sha = load_state(job)
         if state["status"] != "queued":
             raise DispatchError("dispatch changed before queued cancellation")
-        _transition_locked(job, state, raw, {
-            "status": "cancelled", "reason": "interrupted",
-            "exit_code": 128 + number, "controller_pid": None,
-            "finished_epoch": time.time(), "remote_cancel_unverified": False,
-            "resume_available": bool(state["conversation_id"]),
-        })
+        # A signal before a continuation controller starts must preserve the
+        # prior candidate and send it back to driver review.  Its local terminal
+        # state is failed (not provider-CANCELED), so a strict same-conversation
+        # continue remains possible when its original budget still permits it.
+        continuation = bool(
+            state["candidate_recognized"]
+            and state["attempt_origin"] == "conversation-continue"
+        )
+        _transition_locked(job, state, raw, _terminal_projection(
+            state,
+            status="failed" if continuation else "cancelled",
+            reason="interrupted",
+            exit_code=128 + number,
+            remote_cancel_unverified=True,
+        ))
 
 
 def command_status(job: Path) -> int:
@@ -1807,12 +2575,10 @@ def command_status(job: Path) -> int:
             with lifecycle_lock(job, blocking=False):
                 state, raw, sha = read_state_snapshot(job)
                 if state["status"] in {"queued", "running", "cancel-requested"}:
-                    state, raw, sha = transition(job, state, raw, {
-                        "status": "orphaned", "reason": "status_unavailable",
-                        "exit_code": EXIT_BY_REASON["status_unavailable"],
-                        "controller_pid": None, "finished_epoch": time.time(),
-                        "resume_available": False,
-                    })
+                    state, raw, sha = transition(job, state, raw, _terminal_projection(
+                        state, status="orphaned", reason="status_unavailable",
+                        exit_code=EXIT_BY_REASON["status_unavailable"],
+                    ))
         except DispatchError as exc:
             if str(exc) != "dispatch controller is active":
                 raise
@@ -1837,8 +2603,6 @@ def command_wait(job: Path, after: str, timeout: float) -> int:
 
 def command_result(job: Path) -> int:
     state, _raw, _sha = read_state_snapshot(job)
-    if state["status"] == "orphaned":
-        raise DispatchError("orphaned dispatch result is preserve-only")
     result_path = state["result_path"]
     result_sha = state["result_sha256"]
     result_identity = state["result_identity"]
@@ -1849,20 +2613,29 @@ def command_result(job: Path) -> int:
         result_path = state["last_success_path"]
         result_sha = state["last_success_sha256"]
         result_identity = state["last_success_identity"]
+    elif not state["result_available"]:
+        raise DispatchError("dispatch result is unavailable")
     if result_path is None:
-        raise DispatchError("dispatch has no successful result")
+        raise DispatchError("dispatch has no preserved result")
     raw, info = read_regular(Path(result_path), 1024 * 1024, "dispatch result")
     if digest(raw) != result_sha or list(_identity(info)) != result_identity:
         raise DispatchError("dispatch result binding changed")
     command = _load_bound_command(job, state, stage_readonly=False)
-    schema = command["argv"][command["argv"].index("--json-schema") + 1]
+    schema_paths = _schema_paths(command)
+    if schema_paths is None:
+        raise DispatchError("dispatch result schema is unavailable")
+    if state["schema_version"] == 5:
+        schema_paths = _bound_schemas(command, state)
     validator = Path(__file__).with_name("validate-envelope.py")
-    checked = subprocess.run(
-        [sys.executable, "-I", "-S", "-B", str(validator), schema, str(result_path)],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if checked.returncode != 0:
+    checked = [
+        subprocess.run(
+            [sys.executable, "-I", "-S", "-B", str(validator), str(schema), str(result_path)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        for schema in schema_paths
+    ]
+    if any(item.returncode != 0 for item in checked):
         raise DispatchError("dispatch result is no longer valid")
     sys.stdout.buffer.write(raw)
     sys.stdout.buffer.flush()
@@ -1880,25 +2653,34 @@ def command_continue(job: Path, approve_sha: str) -> int:
 
 
 def command_finalize(job: Path, approve_sha: str, assurance: str) -> int:
-    if assurance not in {"verified", "partially_verified", "blocked"}:
+    if assurance not in {"verified", "partially_verified", "rejected", "blocked"}:
         raise DispatchError("project assurance is invalid")
     verification = _verification_from_stdin()
     with state_lock(job):
         state, raw, sha = load_state(job)
-        eligible_success = state["status"] == "succeeded" and state["phase"] == "awaiting-verification"
-        eligible_failure = state["status"] == "failed" and state["phase"] in {"provider-failed", "repair-failed"}
-        eligible_partial = state["status"] in {"failed", "cancelled"} and bool(state["last_success_path"])
-        if sha != approve_sha or state["workflow"] != "project" or not (eligible_success or eligible_failure or eligible_partial):
-            raise DispatchError("project finalization is stale or unavailable")
+        if sha != approve_sha:
+            raise DispatchError("dispatch finalization is stale or unavailable")
+        command = _load_bound_command(job, state, stage_readonly=False)
+        if state["schema_version"] != 5:
+            state = _upgrade_legacy_state(state, command)
+        eligible_candidate = bool(
+            state["candidate_recognized"] and state["result_available"] and state["result_path"]
+            and state["workflow"] != "legacy"
+        )
+        if not eligible_candidate:
+            raise DispatchError("dispatch finalization is stale or unavailable")
+        _bound_schemas(command, state)
+        _require_current_candidate_verification(verification, state)
+        _bound_candidate_worktree(state, command)
         counts = _verification_counts(verification)
-        if assurance == "verified" and (
-            not eligible_success or counts["passed"] < 1 or counts["failed"] or counts["missing"]
-        ):
+        if assurance == "verified" and (not eligible_candidate or not _verification_is_verified(verification, state["workflow"])):
             raise DispatchError("verified finalization requires passing complete checks")
-        if assurance == "partially_verified" and not (eligible_success or eligible_partial):
+        if assurance == "partially_verified" and not eligible_candidate:
             raise DispatchError("partial finalization has no candidate")
+        if assurance == "rejected" and not (eligible_candidate and (counts["failed"] or counts["missing"])):
+            raise DispatchError("rejected finalization requires a driver-observed failure")
         if assurance == "blocked" and (
-            not (eligible_success or eligible_failure) or not (counts["failed"] or counts["missing"])
+            not (counts["failed"] or counts["missing"])
         ):
             raise DispatchError("blocked finalization requires a driver-observed blocker")
         path: Path | None = None
@@ -1917,6 +2699,9 @@ def command_finalize(job: Path, approve_sha: str, assurance: str) -> int:
                 "verification_path": str(path),
                 "verification_sha256": verification_sha,
                 "verification_identity": list(identity),
+                "driver_disposition": assurance,
+                "next_action": "none",
+                "next_action_command": None,
             })
         except Exception:
             _discard_new_verification(path, identity)
