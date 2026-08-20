@@ -204,6 +204,7 @@ if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
     printf 'version\n' >> "$FAKE_CALLS_FILE"
     case "${FAKE_VERSION_MODE:-ready}" in
         ready) printf '1.1.12\n' ;;
+        quota113) printf '1.1.13\n' ;;
         prefixed) printf 'agy 1.1.12\n' ;;
         drift) printf '1.1.11\n' ;;
         empty) : ;;
@@ -369,6 +370,29 @@ case "${FAKE_DISPATCH_MODE:-result}" in
         printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
         exit 23
         ;;
+    quota-error)
+        quota_text="${FAKE_QUOTA_ERROR:-rpc error: Individual quota reached. Contact your administrator to enable overages. Resets in 4h51m54s.}"
+        printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+        python3 -B - "$quota_text" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "event": "result",
+    "result": {
+        "conversation_id": "fake-conversation-01",
+        "status": "ERROR",
+        "response": "",
+        "error": sys.argv[1],
+        "duration_seconds": 1.0,
+        "num_turns": 3,
+        "json_schema": {},
+        "usage": {},
+    },
+}, separators=(",", ":")))
+PY
+        exit "${FAKE_EXIT_CODE:-23}"
+        ;;
 esac
 if [[ "${FAKE_EXIT_CODE:-0}" != "0" ]]; then
     [[ -z "${FAKE_ERROR_LINE:-}" ]] || printf '%s\n' "$FAKE_ERROR_LINE" >&2
@@ -418,6 +442,7 @@ run_worker() {
     FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
     FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
     FAKE_ERROR_LINE="${FAKE_ERROR_LINE:-}" \
+    FAKE_QUOTA_ERROR="${FAKE_QUOTA_ERROR:-}" \
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
@@ -533,7 +558,7 @@ import sys
 argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
 record = json.load(open(sys.argv[2], encoding="utf-8"))
 calls = open(sys.argv[3], encoding="ascii").read().splitlines()
-assert calls == ["worker"]
+assert calls == ["version", "worker"]
 assert argv.count(b"--model") == 1
 assert argv[argv.index(b"--model") + 1] == b"future-model-1.2"
 assert b"--effort" not in argv and b"--thinking-level" not in argv
@@ -548,7 +573,7 @@ assert record == {
 }
 PY
 then
-    ok "literal model is version-independent, single-pass, and truthfully unreconciled"
+    ok "literal model routing stays version-independent while version observation remains non-gating"
 else
     bad "literal model version-independent contract (exit $rc)"
 fi
@@ -1740,6 +1765,215 @@ for classified_case in authentication_text provider_text unknown_text; do
     fi
 done
 
+printf 'observed quota terminal\n' | FAKE_VERSION_MODE=quota113 \
+    FAKE_DISPATCH_MODE=quota-error FAKE_EXIT_CODE=23 \
+    run_worker quota-terminal --literal-model claude-opus-4-6-thinking \
+    > "$TMP/quota-terminal.out" 2> "$TMP/quota-terminal.err"
+quota_rc=$?
+sleep 1
+control_worker status quota-terminal > "$TMP/quota-terminal.status"
+quota_status_rc=$?
+if [[ "$quota_rc" == 24 && "$quota_status_rc" == 0 \
+        && ! -s "$TMP/quota-terminal.out" ]] && python3 - \
+        "$TMP/quota-terminal.err" "$TMP/quota-terminal.status" \
+        "$TMP/quota-terminal.calls" "$TMP/quota-terminal.model" <<'PY'
+import json
+import sys
+
+first = json.load(open(sys.argv[1], encoding="utf-8"))
+later = json.load(open(sys.argv[2], encoding="utf-8"))
+calls = open(sys.argv[3], encoding="ascii").read().splitlines()
+model = open(sys.argv[4], encoding="utf-8").read()
+for value in (first, later):
+    assert value["status"] == "failed"
+    assert value["exit_code"] == 24
+    assert value["reason"] == "provider_quota_exhausted"
+    assert value["resume_available"] is True
+    assert "conversation_id" not in value
+    assert "provider_retry_after_seconds" not in value
+    assert "provider_retry_observed_epoch" not in value
+assert 17510 <= first["retry_after_seconds"] <= 17514
+assert 17508 <= later["retry_after_seconds"] < first["retry_after_seconds"]
+assert calls == ["version", "worker"]
+assert model == "claude-opus-4-6-thinking"
+PY
+then
+    ok "exact agy 1.1.13 quota terminal gets exit 24, bounded countdown, and no automatic retry"
+else
+    bad "exact agy 1.1.13 quota terminal classification"
+fi
+
+printf 'same text wrong version\n' | FAKE_DISPATCH_MODE=quota-error FAKE_EXIT_CODE=23 \
+    run_worker quota-wrong-version > "$TMP/quota-wrong-version.out" \
+    2> "$TMP/quota-wrong-version.err"
+quota_wrong_version_rc=$?
+if [[ "$quota_wrong_version_rc" == 5 \
+        && "$(status_field "$TMP/quota-wrong-version.err" reason)" == agy_failed_unclassified ]]; then
+    ok "quota terminal is not inferred for an unreviewed agy version"
+else
+    bad "version-bound quota terminal classification"
+fi
+
+printf 'altered quota prose\n' | FAKE_VERSION_MODE=quota113 \
+    FAKE_DISPATCH_MODE=quota-error FAKE_EXIT_CODE=23 \
+    FAKE_QUOTA_ERROR='quota reached; retry in 4h51m54s' \
+    run_worker quota-altered --literal-model claude-opus-4-6-thinking \
+    > "$TMP/quota-altered.out" 2> "$TMP/quota-altered.err"
+quota_altered_rc=$?
+if [[ "$quota_altered_rc" == 5 \
+        && "$(status_field "$TMP/quota-altered.err" reason)" == agy_failed_unclassified ]]; then
+    ok "free-form quota prose remains unclassified"
+else
+    bad "free-form quota prose classification boundary"
+fi
+
+printf 'quota duration outside bound\n' | FAKE_VERSION_MODE=quota113 \
+    FAKE_DISPATCH_MODE=quota-error FAKE_EXIT_CODE=23 \
+    FAKE_QUOTA_ERROR='rpc error: Individual quota reached. Contact your administrator to enable overages. Resets in 999h00m00s.' \
+    run_worker quota-unbounded --literal-model claude-opus-4-6-thinking \
+    > "$TMP/quota-unbounded.out" 2> "$TMP/quota-unbounded.err"
+quota_unbounded_rc=$?
+if [[ "$quota_unbounded_rc" == 24 ]] && python3 - "$TMP/quota-unbounded.err" <<'PY'
+import json
+import sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["reason"] == "provider_quota_exhausted"
+assert value["retry_after_seconds"] is None
+PY
+then
+    ok "out-of-range quota reset stays classified without publishing a false duration"
+else
+    bad "quota retry duration bound"
+fi
+
+if PYTHONDONTWRITEBYTECODE=1 python3 - \
+        "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" "$TMP" <<'PY'
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+spec = importlib.util.spec_from_file_location("agy_dispatch_quota_contract", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+root = Path(sys.argv[2])
+canonical = (
+    "rpc error: Individual quota reached. Contact your administrator to enable "
+    "overages. Resets in 4h51m54s."
+)
+result = {
+    "conversation_id": "fake-conversation-01",
+    "status": "ERROR",
+    "response": "",
+    "error": canonical,
+    "duration_seconds": 1.0,
+    "num_turns": 3,
+    "json_schema": {},
+    "usage": {},
+}
+
+def stream(name, value=result, *, init=True, duplicate=False, malformed=False):
+    path = root / name
+    rows = []
+    if init:
+        rows.append(json.dumps({"event": "init", "conversation_id": "fake-conversation-01", "init": {}}))
+    rows.append(json.dumps({"event": "result", "result": value}, separators=(",", ":")))
+    if duplicate:
+        rows.append(rows[-1])
+    if malformed:
+        rows.insert(0, "{not-json")
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return path
+
+for index, duration in enumerate(("4h51m54s", "4h51m53s", "4h50m17s")):
+    value = copy.deepcopy(result)
+    value["error"] = canonical.replace("4h51m54s", duration)
+    classified = module._quota_terminal_failure(stream(f"quota-observed-{index}", value), "1.1.13")
+    assert classified == ("provider_quota_exhausted", {
+        "4h51m54s": 17514, "4h51m53s": 17513, "4h50m17s": 17417,
+    }[duration])
+
+altered = (
+    canonical + " ", canonical.replace("Individual", "individual"),
+    "prefix " + canonical, canonical + " suffix",
+    canonical.replace("quota", "limit"),
+    canonical.replace("quota", "QUOTA"),
+    "rpc error: RESOURCE_EXHAUSTED 429 retry quota",
+)
+for index, error in enumerate(altered):
+    value = copy.deepcopy(result); value["error"] = error
+    assert module._quota_terminal_failure(stream(f"quota-altered-{index}", value), "1.1.13") is None
+
+for index, mutate in enumerate((
+    lambda value: value.pop("usage"),
+    lambda value: value.__setitem__("extra", 1),
+    lambda value: value.__setitem__("response", "not empty"),
+    lambda value: value.__setitem__("error", {"code": 429}),
+    lambda value: value.__setitem__("duration_seconds", "1"),
+    lambda value: value.__setitem__("duration_seconds", float("nan")),
+    lambda value: value.__setitem__("num_turns", True),
+    lambda value: value.__setitem__("json_schema", []),
+    lambda value: value.__setitem__("usage", []),
+)):
+    value = copy.deepcopy(result); mutate(value)
+    assert module._quota_terminal_failure(stream(f"quota-shape-{index}", value), "1.1.13") is None
+
+assert module._quota_terminal_failure(stream("quota-no-init", init=False), "1.1.13") is None
+assert module._quota_terminal_failure(stream("quota-duplicate", duplicate=True), "1.1.13") is None
+assert module._quota_terminal_failure(stream("quota-malformed", malformed=True), "1.1.13") is None
+mismatch = copy.deepcopy(result); mismatch["conversation_id"] = "different-conversation"
+assert module._quota_terminal_failure(stream("quota-conversation-mismatch", mismatch), "1.1.13") is None
+duplicate_key = root / "quota-duplicate-key"
+duplicate_key.write_text(
+    '{"event":"init","init":{},"conversation_id":"fake-conversation-01"}\n'
+    '{"event":"result","result":{"conversation_id":"fake-conversation-01",'
+    '"status":"ERROR","status":"ERROR","response":"","error":'
+    + json.dumps(canonical) + ',"duration_seconds":1.0,"num_turns":3,'
+    '"json_schema":{},"usage":{}}}\n',
+    encoding="utf-8",
+)
+assert module._quota_terminal_failure(duplicate_key, "1.1.13") is None
+
+# Older command schemas normalize conservatively: their version text was not a
+# runtime observation and therefore cannot authorize this classifier.
+job = root / "quota-command-v2"
+job.mkdir(mode=0o700)
+command = {
+    "schema_version": 2, "kind": "agy-worker-dispatch-command", "job_id": "quota-v2",
+    "workdir": str(root), "argv": ["agy", "--print", "task"], "agy_version": "1.1.13",
+    "idle_seconds": 1, "hard_seconds": 2, "max_seconds": 3, "notice_seconds": 1,
+    "stage_dir": None, "stage_file": None, "child_umask": "022",
+    "resume_prompt": "resume", "continue_prompt": "continue",
+    "workflow": "legacy", "max_cycles": 1,
+}
+(job / module.COMMAND_NAME).write_bytes(module.canonical(command))
+(job / module.COMMAND_NAME).chmod(0o600)
+loaded, _raw, _identity = module.load_command(job)
+assert loaded["agy_version_observed"] is False
+for bad_version in ([], {}, "01.1.13", "1.1", "1.1.123456"):
+    bad = copy.deepcopy(command); bad["agy_version"] = bad_version
+    (job / module.COMMAND_NAME).write_bytes(module.canonical(bad))
+    try:
+        module.load_command(job)
+    except module.DispatchError as exc:
+        assert str(exc) == "dispatch agy version is invalid"
+    else:
+        raise AssertionError("invalid command agy version accepted")
+state = json.loads((root / "logs" / "quota-terminal" / module.STATE_NAME).read_text(encoding="utf-8"))
+state.pop("provider_retry_after_seconds")
+state.pop("provider_retry_observed_epoch")
+state["schema_version"] = 3
+migrated = module.validate_state(state)
+assert migrated["provider_retry_after_seconds"] is None
+assert migrated["provider_retry_observed_epoch"] is None
+PY
+then
+    ok "agy 1.1.13 quota classifier is exact-shape, exact-version, and legacy-command conservative"
+else
+    bad "quota terminal exact contract matrix"
+fi
+
 HARD_SIDE_EFFECT="$TMP/hard-side-effect"
 printf 'hard limit must win\n' | FAKE_DISPATCH_MODE=heartbeat-forever \
     FAKE_SIDE_EFFECT_FILE="$HARD_SIDE_EFFECT" \
@@ -2673,6 +2907,8 @@ job = Path(sys.argv[2])
 state, _raw, _sha = module.load_state(job)
 for field in module.STATE_PROJECT_FIELDS:
     state.pop(field)
+state.pop("provider_retry_after_seconds")
+state.pop("provider_retry_observed_epoch")
 state["schema_version"] = 1
 module.write_atomic(job, module.STATE_NAME, state)
 PY

@@ -264,7 +264,7 @@ def capture_version_output(process: subprocess.Popen[bytes]) -> bytes:
         stream.close()
 
 
-def probe_installed_version(expected: str) -> str:
+def probe_installed_version(expected: str | None = None) -> str:
     executable = shutil.which("agy")
     if not executable:
         raise EvidenceUnavailable("agy is unavailable on PATH")
@@ -313,7 +313,7 @@ def probe_installed_version(expected: str) -> str:
     if match is None:
         raise EvidenceUnavailable("agy version output lacks documented semantic content")
     installed = match.group(1)
-    if installed != expected:
+    if expected is not None and installed != expected:
         raise ReviewRequired("installed agy version differs from the reviewed matrix")
     return installed
 
@@ -558,6 +558,7 @@ def build_parser() -> UsageParser:
     parser.add_argument("--effort-source", action="append", choices=SOURCE_NAMES)
     parser.add_argument("--output", action="append")
     parser.add_argument("--validate-record", action="append")
+    parser.add_argument("--observe-installed-version", action="store_true")
     return parser
 
 
@@ -573,6 +574,24 @@ def main(argv: list[str] | None = None) -> int:
     effort_source = one(parser, args.effort_source, "--effort-source", False)
     output = one(parser, args.output, "--output", False)
     validate_record = one(parser, args.validate_record, "--validate-record", False)
+    if args.observe_installed_version:
+        if any(
+            value is not None
+            for value in (
+                args.tier, args.tier_source, args.model, args.literal_model,
+                args.effort, args.model_source, args.effort_source, args.output,
+                args.validate_record,
+            )
+        ):
+            parser.error("--observe-installed-version is mutually exclusive with selection inputs")
+        try:
+            print(probe_installed_version())
+        except EvidenceUnavailable as exc:
+            print(f"model-selection: evidence-unavailable - {exc}", file=sys.stderr)
+            return 8
+        except ProbeInterrupted as exc:
+            return 128 + exc.signal_number
+        return 0
     if validate_record is not None:
         if any(
             value is not None
