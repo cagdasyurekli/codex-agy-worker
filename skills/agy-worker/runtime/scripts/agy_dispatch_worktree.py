@@ -399,12 +399,6 @@ def _safe_git_executable() -> tuple[str, dict[str, Any]] | None:
     candidate = shutil.which("git")
     if not candidate:
         return None
-    candidate = os.path.abspath(candidate)
-    parts = list(Path(candidate).parts[1:])
-    current = Path(os.sep)
-    chain: list[tuple[tuple[int, int, int, int, int], str]] = []
-    components: list[tuple[int, int, int, int, int]] = []
-    seen: set[tuple[int, int]] = set()
 
     def authority(info: os.stat_result) -> tuple[int, int, int, int, int]:
         return info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid
@@ -415,52 +409,72 @@ def _safe_git_executable() -> tuple[str, dict[str, Any]] | None:
             info.st_uid, info.st_gid, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
         )
 
-    try:
-        for _ in range(128):
-            if not parts:
-                break
-            part = parts.pop(0)
-            if part in {"", ".", ".."}:
-                return None
-            current /= part
-            metadata = os.lstat(current)
-            if stat.S_ISLNK(metadata.st_mode):
-                if metadata.st_uid not in {os.geteuid(), 0}:
+    def bind(selected: str) -> tuple[str, dict[str, Any]] | None:
+        """Bind one exact executable spelling without relaxing path authority."""
+        selected = os.path.abspath(selected)
+        parts = list(Path(selected).parts[1:])
+        current = Path(os.sep)
+        chain: list[tuple[tuple[int, int, int, int, int], str]] = []
+        components: list[tuple[int, int, int, int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        try:
+            for _ in range(128):
+                if not parts:
+                    break
+                part = parts.pop(0)
+                if part in {"", ".", ".."}:
                     return None
-                identity = (metadata.st_dev, metadata.st_ino)
-                if identity in seen or len(chain) >= 16:
+                current /= part
+                metadata = os.lstat(current)
+                if stat.S_ISLNK(metadata.st_mode):
+                    if metadata.st_uid not in {os.geteuid(), 0}:
+                        return None
+                    identity = (metadata.st_dev, metadata.st_ino)
+                    if identity in seen or len(chain) >= 16:
+                        return None
+                    seen.add(identity)
+                    target = os.readlink(current)
+                    chain.append((authority(metadata), digest(os.fsencode(target))))
+                    target_path = Path(target if os.path.isabs(target) else current.parent / target)
+                    target_path = Path(os.path.normpath(str(target_path)))
+                    if not target_path.is_absolute():
+                        return None
+                    parts = list(target_path.parts[1:]) + parts
+                    current = Path(os.sep)
+                    continue
+                if parts:
+                    if not stat.S_ISDIR(metadata.st_mode) or not _safe_git_owner_mode(metadata, directory=True):
+                        return None
+                    components.append(authority(metadata))
+                    if len(components) > 128:
+                        return None
+                    continue
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or not _safe_git_owner_mode(metadata, directory=False)
+                    or not (stat.S_IMODE(metadata.st_mode) & 0o111)
+                ):
                     return None
-                seen.add(identity)
-                target = os.readlink(current)
-                chain.append((authority(metadata), digest(os.fsencode(target))))
-                target_path = Path(target if os.path.isabs(target) else current.parent / target)
-                target_path = Path(os.path.normpath(str(target_path)))
-                if not target_path.is_absolute():
-                    return None
-                parts = list(target_path.parts[1:]) + parts
-                current = Path(os.sep)
-                continue
-            if parts:
-                if not stat.S_ISDIR(metadata.st_mode) or not _safe_git_owner_mode(metadata, directory=True):
-                    return None
-                components.append(authority(metadata))
-                if len(components) > 128:
-                    return None
-                continue
-            if (
-                not stat.S_ISREG(metadata.st_mode)
-                or not _safe_git_owner_mode(metadata, directory=False)
-                or not (stat.S_IMODE(metadata.st_mode) & 0o111)
-            ):
-                return None
-            return str(current), {
-                "candidate": candidate,
-                "target": target_binding(metadata),
-                "chain": tuple(chain),
-                "components": tuple(components),
-            }
-    except OSError:
+                return str(current), {
+                    "candidate": selected,
+                    "target": target_binding(metadata),
+                    "chain": tuple(chain),
+                    "components": tuple(components),
+                }
+        except OSError:
+            return None
         return None
+
+    selected = os.path.abspath(candidate)
+    bound = bind(selected)
+    if bound is not None:
+        return bound
+    # GitHub's Apple-Silicon image can expose a group-writable Homebrew
+    # launcher before the root-owned system Git.  Do not widen Homebrew's
+    # authority: when that exact launcher fails the existing no-follow bind,
+    # use only the fixed platform Git path and bind it by the same rules.
+    if sys.platform == "darwin" and selected == "/opt/homebrew/bin/git":
+        return bind("/usr/bin/git")
     return None
 
 

@@ -3799,6 +3799,48 @@ with tempfile.TemporaryDirectory() as temporary:
             assert MODULE._dispatch_root_identity(str(repo)) is not None
             assert marker.exists(), "root binding rejected an owner-private external Git"
             marker.unlink()
+            if sys.platform == "darwin":
+                # The hosted Apple-Silicon image may put Homebrew's writable
+                # launcher ahead of the root-owned platform Git.  A rejected
+                # launcher must never be executed or trusted; the controller
+                # may use only a separately bound system Git fallback.
+                original_which = MODULE.shutil.which
+                original_lstat = MODULE.os.lstat
+                original_git_read = MODULE._bounded_git_read
+                homebrew_marker = root / "rejected-homebrew-git-marker"
+                homebrew_paths = {
+                    "/opt/homebrew": bin_dir,
+                    "/opt/homebrew/bin": bin_dir,
+                    "/opt/homebrew/bin/git": fake,
+                }
+
+                def rejected_homebrew_lstat(path, *arguments, **keywords):
+                    try:
+                        mapped = homebrew_paths.get(os.fsdecode(path))
+                    except (TypeError, UnicodeError):
+                        mapped = None
+                    return original_lstat(path if mapped is None else mapped, *arguments, **keywords)
+
+                def observed_git_read(executable, *arguments, **keywords):
+                    if executable == "/opt/homebrew/bin/git":
+                        homebrew_marker.write_text("unexpected execution", encoding="utf-8")
+                    return original_git_read(executable, *arguments, **keywords)
+
+                MODULE.shutil.which = lambda name: "/opt/homebrew/bin/git" if name == "git" else original_which(name)
+                MODULE.os.lstat = rejected_homebrew_lstat
+                MODULE._bounded_git_read = observed_git_read
+                fake.chmod(0o777)
+                try:
+                    fallback = MODULE._safe_git_executable()
+                    assert fallback is not None and fallback[0] == "/usr/bin/git"
+                    assert MODULE._worktree_snapshot(str(repo)) is not None
+                    assert MODULE._dispatch_root_identity(str(repo)) is not None
+                    assert not homebrew_marker.exists(), "a rejected Homebrew launcher executed"
+                finally:
+                    fake.chmod(0o700)
+                    MODULE._bounded_git_read = original_git_read
+                    MODULE.os.lstat = original_lstat
+                    MODULE.shutil.which = original_which
             fake.chmod(0o777)
             assert MODULE._worktree_snapshot(str(repo)) is None
             assert not marker.exists(), "a group/world-writable Git target executed"
