@@ -13,6 +13,7 @@ import argparse
 import contextlib
 import fcntl
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -20,6 +21,7 @@ from pathlib import Path
 import re
 import selectors
 import signal
+import shutil
 import stat
 import subprocess
 import sys
@@ -54,6 +56,7 @@ COMMAND_V1_FIELDS = {
 }
 COMMAND_V2_FIELDS = COMMAND_V1_FIELDS | {"workflow", "max_cycles", "continue_prompt"}
 COMMAND_V3_FIELDS = COMMAND_V2_FIELDS | {"agy_version_observed"}
+COMMAND_V4_FIELDS = COMMAND_V3_FIELDS | {"selection_path", "selection_sha256", "selection_identity"}
 STATE_PROJECT_FIELDS = {
     "workflow", "max_cycles", "cycle", "phase", "assurance",
     "check_summary", "check_counts", "verification_path", "verification_sha256",
@@ -70,9 +73,17 @@ STATE_V5_FIELDS = {
     "canonical_schema_sha256", "canonical_schema_identity",
     "candidate_worktree_sha256", "candidate_worktree_entries",
 }
+STATE_V6_FIELDS = {"selection_sha256", "selection_identity"}
+STATE_V8_FIELDS = {"worktree_snapshot_algorithm"}
+STATE_V9_FIELDS = {"worktree_root_identity"}
+PUBLIC_LAUNCHER = '"$PIPELINE/agy-worker.sh"'
+CURRENT_STATE_SCHEMA = 9
+WORKTREE_SNAPSHOT_LEGACY_V6 = "legacy-v6"
+WORKTREE_SNAPSHOT_SEMANTIC_V1 = "semantic-v1"
+CURRENT_WORKTREE_SNAPSHOT_ALGORITHM = WORKTREE_SNAPSHOT_SEMANTIC_V1
 FAILURE_STAGES = {
-    "framing", "outer_status", "structured_output", "schema_rejection",
-    "binding_failure",
+    "framing", "outer_status", "missing_structured_output", "schema_rejection",
+    "binding_failure", "selection_preflight",
 }
 LIFECYCLE_PHASES = {
     "dispatching", "awaiting-verification", "repairing", "completed",
@@ -86,6 +97,7 @@ REASONS = {
     "permission_required", "empty_output", "invalid_envelope",
     "output_oversized", "interrupted", "provider_quota_exhausted",
     "provider_terminal_error", "provider_terminal_cancelled",
+    "selection_preflight_failed",
 }
 EXIT_BY_REASON = {
     "empty_output": 3,
@@ -103,6 +115,7 @@ EXIT_BY_REASON = {
     "output_oversized": 23,
     "provider_quota_exhausted": 24,
     "provider_terminal_error": 25,
+    "selection_preflight_failed": 26,
     "provider_terminal_cancelled": 22,
     "interrupted": 143,
 }
@@ -134,6 +147,27 @@ class DispatchError(ValueError):
     pass
 
 
+class SelectionPreflightError(DispatchError):
+    """A direct caller selection could not be safely reprobed for one launch."""
+
+
+class WorktreeBaselineError(DispatchError):
+    """The queued worktree baseline is unavailable or no longer exact."""
+
+
+_selection_spec = importlib.util.spec_from_file_location(
+    "agy_dispatch_model_selection", Path(__file__).with_name("model_selection.py"),
+)
+if _selection_spec is None or _selection_spec.loader is None:  # pragma: no cover - package invariant
+    raise RuntimeError("model selection runtime is unavailable")
+# Loading this sibling as a module (rather than a subprocess) keeps the re-probe
+# path private.  Its local compatibility dependency is package-owned too.
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+MODEL_SELECTION = importlib.util.module_from_spec(_selection_spec)
+_selection_spec.loader.exec_module(MODEL_SELECTION)
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         del message
@@ -142,13 +176,57 @@ class Parser(argparse.ArgumentParser):
 
 
 def canonical(value: Any) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=True, sort_keys=True, separators=(",", ":")
-    ).encode("ascii") + b"\n"
+    try:
+        return json.dumps(
+            value, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode("ascii") + b"\n"
+    except RecursionError as exc:
+        raise DispatchError("JSON structure is invalid") from exc
 
 
 def digest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+def _parse_resolve_undo(
+    raw: bytes, object_length: int,
+) -> dict[tuple[bytes, int], tuple[int, bytes]] | None:
+    """Strictly parse ``ls-files --resolve-undo -z`` records.
+
+    V7 does not persist REUC records: any well-formed record makes the semantic
+    snapshot unavailable.  Parsing first keeps malformed, duplicate, and
+    unsupported output fail-closed instead of treating it as an empty result.
+    """
+    if object_length not in {40, 64}:
+        return None
+    if not raw:
+        return {}
+    if not raw.endswith(b"\0"):
+        return None
+    parsed: dict[tuple[bytes, int], tuple[int, bytes]] = {}
+    for record in raw.split(b"\0")[:-1]:
+        try:
+            header, relative = record.split(b"\t", 1)
+            mode_raw, oid, stage_raw = header.split(b" ")
+            mode = int(mode_raw, 8)
+            stage = int(stage_raw, 10)
+        except (ValueError, TypeError):
+            return None
+        parts = relative.split(b"/")
+        key = (relative, stage)
+        if (
+            mode not in {0o100644, 0o100755, 0o120000, 0o160000}
+            or len(oid) != object_length
+            or any(char not in b"0123456789abcdef" for char in oid)
+            or stage not in {1, 2, 3}
+            or not relative or relative.startswith(b"/")
+            or any(part in {b"", b".", b".."} for part in parts)
+            or parts[0] == b".git"
+            or key in parsed
+        ):
+            return None
+        parsed[key] = (mode, oid)
+    return parsed
 
 
 def _duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -170,7 +248,7 @@ def parse_json(raw: bytes, label: str) -> Any:
             raw.decode("utf-8", "strict"), object_pairs_hook=_duplicates,
             parse_constant=_invalid_json_constant,
         )
-    except (UnicodeError, json.JSONDecodeError, DispatchError) as exc:
+    except (UnicodeError, json.JSONDecodeError, DispatchError, RecursionError) as exc:
         raise DispatchError(f"{label} is invalid") from exc
 
 
@@ -360,13 +438,20 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             "workflow": "legacy", "max_cycles": 1,
             "continue_prompt": "legacy commands cannot continue projects",
             "agy_version_observed": False,
+            "selection_path": None, "selection_sha256": None, "selection_identity": None,
         })
     elif set(value) == COMMAND_V2_FIELDS and value.get("schema_version") == 2:
         if raw != canonical(value):
             raise DispatchError("dispatch command is not canonical")
         value = dict(value)
         value["agy_version_observed"] = False
-    elif set(value) != COMMAND_V3_FIELDS or value.get("schema_version") != 3:
+        value.update({"selection_path": None, "selection_sha256": None, "selection_identity": None})
+    elif set(value) == COMMAND_V3_FIELDS and value.get("schema_version") == 3:
+        if raw != canonical(value):
+            raise DispatchError("dispatch command is not canonical")
+        value = dict(value)
+        value.update({"selection_path": None, "selection_sha256": None, "selection_identity": None})
+    elif set(value) != COMMAND_V4_FIELDS or value.get("schema_version") != 4:
         raise DispatchError("dispatch command fields are invalid")
     elif raw != canonical(value):
         raise DispatchError("dispatch command is not canonical")
@@ -413,6 +498,18 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         raise DispatchError("dispatch max cycles is invalid for workflow")
     if type(value["agy_version_observed"]) is not bool:
         raise DispatchError("dispatch agy version evidence is invalid")
+    selection_path = value["selection_path"]
+    selection_sha = value["selection_sha256"]
+    selection_identity = value["selection_identity"]
+    if (selection_path is None) != (selection_sha is None) or (selection_path is None) != (selection_identity is None):
+        raise DispatchError("dispatch selection binding is incomplete")
+    if selection_path is not None and (
+        not isinstance(selection_path, str) or not Path(selection_path).is_absolute()
+        or not isinstance(selection_sha, str) or SHA_RE.fullmatch(selection_sha) is None
+        or not isinstance(selection_identity, list) or len(selection_identity) != 5
+        or any(type(item) is not int or item < 0 for item in selection_identity)
+    ):
+        raise DispatchError("dispatch selection binding is invalid")
     return value, raw, _identity(info)
 
 
@@ -440,11 +537,17 @@ def validate_state(value: Any) -> dict[str, Any]:
         "provider_schema_sha256", "provider_schema_identity",
         "canonical_schema_sha256", "canonical_schema_identity",
         "candidate_worktree_sha256", "candidate_worktree_entries",
+        "selection_sha256", "selection_identity",
+        "worktree_snapshot_algorithm", "worktree_root_identity",
     }
     retry_fields = {"provider_retry_after_seconds", "provider_retry_observed_epoch"}
-    legacy_fields = fields - STATE_PROJECT_FIELDS - retry_fields - STATE_V5_FIELDS
-    version_three_fields = fields - retry_fields - STATE_V5_FIELDS
-    version_four_fields = fields - STATE_V5_FIELDS
+    legacy_fields = fields - STATE_PROJECT_FIELDS - retry_fields - STATE_V5_FIELDS - STATE_V6_FIELDS - STATE_V8_FIELDS - STATE_V9_FIELDS
+    version_three_fields = fields - retry_fields - STATE_V5_FIELDS - STATE_V6_FIELDS - STATE_V8_FIELDS - STATE_V9_FIELDS
+    version_four_fields = fields - STATE_V5_FIELDS - STATE_V6_FIELDS - STATE_V8_FIELDS - STATE_V9_FIELDS
+    version_five_fields = fields - STATE_V6_FIELDS - STATE_V8_FIELDS - STATE_V9_FIELDS
+    version_six_fields = fields - STATE_V8_FIELDS - STATE_V9_FIELDS
+    version_seven_fields = fields - STATE_V8_FIELDS - STATE_V9_FIELDS
+    version_eight_fields = fields - STATE_V9_FIELDS
     if not isinstance(value, dict):
         raise DispatchError("dispatch state fields are invalid")
     if set(value) == legacy_fields and value.get("schema_version") == 1:
@@ -472,16 +575,16 @@ def validate_state(value: Any) -> dict[str, Any]:
             "provider_schema_sha256": None, "provider_schema_identity": None,
             "canonical_schema_sha256": None, "canonical_schema_identity": None,
             "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
+            "selection_sha256": None, "selection_identity": None,
         })
     elif set(value) == version_three_fields and value.get("schema_version") == 3:
         value = dict(value)
-        if value["result_path"] is None and value["last_success_path"] is not None:
-            value["result_path"] = value["last_success_path"]
-            value["result_sha256"] = value["last_success_sha256"]
-            value["result_identity"] = value["last_success_identity"]
         value.update({
             "provider_retry_after_seconds": None,
             "provider_retry_observed_epoch": None,
+            # ``last_success_*`` was a historical compatibility pointer, not
+            # proof of the outer provider outcome or a driver-reviewed
+            # candidate.  Keep it distinct from the current result binding.
             "candidate_recognized": bool(value["result_path"]),
             "candidate_source": "provider_success" if value["result_path"] else "none",
             "result_available": bool(value["result_path"]),
@@ -494,13 +597,10 @@ def validate_state(value: Any) -> dict[str, Any]:
             "provider_schema_sha256": None, "provider_schema_identity": None,
             "canonical_schema_sha256": None, "canonical_schema_identity": None,
             "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
+            "selection_sha256": None, "selection_identity": None,
         })
     elif set(value) == version_four_fields and value.get("schema_version") == 4:
         value = dict(value)
-        if value["result_path"] is None and value["last_success_path"] is not None:
-            value["result_path"] = value["last_success_path"]
-            value["result_sha256"] = value["last_success_sha256"]
-            value["result_identity"] = value["last_success_identity"]
         value.update({
             "candidate_recognized": bool(value["result_path"]),
             "candidate_source": "provider_success" if value["result_path"] else "none",
@@ -514,11 +614,74 @@ def validate_state(value: Any) -> dict[str, Any]:
             "provider_schema_sha256": None, "provider_schema_identity": None,
             "canonical_schema_sha256": None, "canonical_schema_identity": None,
             "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
+            "selection_sha256": None, "selection_identity": None,
         })
-    elif set(value) != fields or value.get("schema_version") != 5:
+    elif set(value) == version_five_fields and value.get("schema_version") == 5:
+        value = dict(value)
+        value.update({"selection_sha256": None, "selection_identity": None})
+    elif set(value) == version_six_fields and value.get("schema_version") == 6:
+        pass
+    elif set(value) == version_seven_fields and value.get("schema_version") == 7:
+        pass
+    elif set(value) == version_eight_fields and value.get("schema_version") == 8:
+        pass
+    elif set(value) != fields or value.get("schema_version") != CURRENT_STATE_SCHEMA:
         raise DispatchError("dispatch state fields are invalid")
     if value["kind"] != "agy-worker-dispatch-state":
         raise DispatchError("dispatch state version is invalid")
+    if value["schema_version"] == CURRENT_STATE_SCHEMA and (
+        value["worktree_snapshot_algorithm"] != CURRENT_WORKTREE_SNAPSHOT_ALGORITHM
+    ):
+        raise DispatchError("dispatch worktree snapshot algorithm is invalid")
+    root_identity = value.get("worktree_root_identity")
+    if value["schema_version"] == CURRENT_STATE_SCHEMA:
+        def valid_authority(authority: Any, *, directory: bool | None = None) -> bool:
+            if not isinstance(authority, dict) or set(authority) != {
+                "dev", "ino", "type", "mode", "uid", "gid",
+            }:
+                return False
+            if any(type(authority[key]) is not int or authority[key] < 0 for key in authority):
+                return False
+            if authority["type"] not in {stat.S_IFDIR, stat.S_IFREG}:
+                return False
+            return directory is None or (authority["type"] == stat.S_IFDIR) == directory
+
+        if (
+            not isinstance(root_identity, dict)
+            or set(root_identity) != {
+                "root", "git_marker", "git_dir", "common_dir", "object_format", "show_toplevel",
+            }
+            or not isinstance(root_identity["root"], dict)
+            or set(root_identity["root"]) != {"realpath", "dev", "ino"}
+            or not isinstance(root_identity["root"]["realpath"], str)
+            or not os.path.isabs(root_identity["root"]["realpath"])
+            or type(root_identity["root"]["dev"]) is not int or root_identity["root"]["dev"] < 0
+            or type(root_identity["root"]["ino"]) is not int or root_identity["root"]["ino"] < 0
+            or root_identity["show_toplevel"] != root_identity["root"]["realpath"]
+            or root_identity["object_format"] not in {"sha1", "sha256"}
+            or not isinstance(root_identity["git_marker"], dict)
+            or set(root_identity["git_marker"]) != {"kind", "authority", "content_sha256"}
+            or root_identity["git_marker"]["kind"] not in {"directory", "file"}
+            or not valid_authority(
+                root_identity["git_marker"]["authority"],
+                directory=root_identity["git_marker"]["kind"] == "directory",
+            )
+            or (
+                root_identity["git_marker"]["content_sha256"] is not None
+                if root_identity["git_marker"]["kind"] == "directory" else
+                not isinstance(root_identity["git_marker"]["content_sha256"], str)
+                or SHA_RE.fullmatch(root_identity["git_marker"]["content_sha256"]) is None
+            )
+            or any(
+                not isinstance(root_identity[key], dict)
+                or set(root_identity[key]) != {"realpath", "authority"}
+                or not isinstance(root_identity[key]["realpath"], str)
+                or not os.path.isabs(root_identity[key]["realpath"])
+                or not valid_authority(root_identity[key]["authority"], directory=True)
+                for key in ("git_dir", "common_dir")
+            )
+        ):
+            raise DispatchError("dispatch worktree root identity is invalid")
     if type(value["sequence"]) is not int or value["sequence"] < 1:
         raise DispatchError("dispatch sequence is invalid")
     previous = value["previous_state_sha256"]
@@ -558,7 +721,7 @@ def validate_state(value: Any) -> dict[str, Any]:
         raise DispatchError("dispatch failure stage is invalid")
     if value["last_activity"] not in {None, "provider_initialized", "progress_signal", "terminal_received"}:
         raise DispatchError("dispatch activity is invalid")
-    if value["next_action"] not in {"none", "wait", "resume", "driver_review", "driver_finalize", "blocked"}:
+    if value["next_action"] not in {"none", "wait", "resume", "restart", "driver_review", "driver_finalize", "blocked"}:
         raise DispatchError("dispatch next action is invalid")
     if value["next_action_command"] is not None and (not isinstance(value["next_action_command"], str) or not value["next_action_command"]):
         raise DispatchError("dispatch next action command is invalid")
@@ -659,6 +822,16 @@ def validate_state(value: Any) -> dict[str, Any]:
             or any(type(item) is not int or item < 0 for item in identity)
         ):
             raise DispatchError("dispatch identity is invalid")
+    selection_sha = value["selection_sha256"]
+    selection_identity = value["selection_identity"]
+    if (selection_sha is None) != (selection_identity is None):
+        raise DispatchError("dispatch selection state binding is incomplete")
+    if selection_sha is not None and (
+        not isinstance(selection_sha, str) or SHA_RE.fullmatch(selection_sha) is None
+        or not isinstance(selection_identity, list) or len(selection_identity) != 5
+        or any(type(item) is not int or item < 0 for item in selection_identity)
+    ):
+        raise DispatchError("dispatch selection state binding is invalid")
     current_result = [value["result_path"], value["result_sha256"], value["result_identity"]]
     if any(item is None for item in current_result) != all(item is None for item in current_result):
         raise DispatchError("dispatch result binding is incomplete")
@@ -676,14 +849,14 @@ def validate_state(value: Any) -> dict[str, Any]:
         and not value["resume_available"]
         and not value["continue_available"]
         and value["driver_disposition"] == "unreviewed"
-        and value["next_action"] == "blocked"
+        and value["next_action"] in {"blocked", "none"}
         and value["next_action_command"] is None
     ):
         raise DispatchError("dispatch inaccessible candidate state is inconsistent")
     if value["status"] in TERMINAL:
         if value["finished_epoch"] is None or value["exit_code"] is None:
             raise DispatchError("terminal dispatch state is incomplete")
-    lifecycle_enabled = value["schema_version"] == 5
+    lifecycle_enabled = value["schema_version"] >= 5
     if lifecycle_enabled:
         if value["phase"] not in LIFECYCLE_PHASES:
             raise DispatchError("dispatch lifecycle phase is invalid")
@@ -734,15 +907,15 @@ def validate_state(value: Any) -> dict[str, Any]:
                 value["phase"] != "attempt-failed" or value["assurance"] != "pending"
             ):
                 raise DispatchError("failed legacy lifecycle is invalid")
-    elif value["schema_version"] == 5 and (value["phase"] is not None or value["assurance"] is not None or value["continue_available"]):
+    elif value["schema_version"] >= 5 and (value["phase"] is not None or value["assurance"] is not None or value["continue_available"]):
         raise DispatchError("legacy state has lifecycle status")
-    elif value["schema_version"] != 5 and value["workflow"] == "project":
+    elif value["schema_version"] < 5 and value["workflow"] == "project":
         if value["phase"] not in {
             "dispatching", "awaiting-verification", "repairing", "completed",
             "blocked", "provider-failed", "repair-failed",
         } or value["assurance"] not in {"pending", "verified", "partially_verified", "blocked"}:
             raise DispatchError("legacy project lifecycle state is invalid")
-    elif value["schema_version"] != 5 and (
+    elif value["schema_version"] < 5 and (
         value["phase"] is not None or value["assurance"] is not None or value["continue_available"]
     ):
         raise DispatchError("legacy non-project state has lifecycle status")
@@ -782,12 +955,15 @@ def initial_state(
     stage_identity: tuple[int, int, int, int, int] | None,
     project_boundary: dict[str, Any] | None = None,
     schema_bindings: dict[str, Any] | None = None,
+    state_schema: int = CURRENT_STATE_SCHEMA,
 ) -> dict[str, Any]:
+    if state_schema not in {6, 7, 8, CURRENT_STATE_SCHEMA}:
+        raise DispatchError("dispatch state schema is invalid")
     now = time.time()
     workflow = command.get("workflow", "legacy")
     max_cycles = command.get("max_cycles", 1)
-    return {
-        "schema_version": 5,
+    state = {
+        "schema_version": state_schema,
         "kind": "agy-worker-dispatch-state",
         "sequence": 1,
         "previous_state_sha256": None,
@@ -856,24 +1032,45 @@ def initial_state(
         "driver_disposition": "not_applicable",
         "failure_stage": None,
         "last_activity": None,
-        "next_action": "wait",
+        # Deprecated v5 storage only.  V7 never writes a semantic controller
+        # recommendation; public aliases are derived at read time.
+        "next_action": "none",
         "next_action_command": None,
-        "worktree_baseline": _worktree_snapshot(command["workdir"]),
+        "worktree_baseline": _worktree_snapshot(command["workdir"], legacy=state_schema == 6),
         "provider_schema_sha256": None if schema_bindings is None else schema_bindings["provider_schema_sha256"],
         "provider_schema_identity": None if schema_bindings is None else schema_bindings["provider_schema_identity"],
         "canonical_schema_sha256": None if schema_bindings is None else schema_bindings["canonical_schema_sha256"],
         "canonical_schema_identity": None if schema_bindings is None else schema_bindings["canonical_schema_identity"],
         "candidate_worktree_sha256": None,
         "candidate_worktree_entries": None,
+        "selection_sha256": command.get("selection_sha256"),
+        "selection_identity": command.get("selection_identity"),
     }
+    if state_schema >= 8:
+        state["worktree_snapshot_algorithm"] = CURRENT_WORKTREE_SNAPSHOT_ALGORITHM
+    if state_schema == CURRENT_STATE_SCHEMA:
+        root_identity = _dispatch_root_identity(command["workdir"])
+        if root_identity is None:
+            raise DispatchError("dispatch worktree root cannot be bound")
+        state["worktree_root_identity"] = root_identity
+    return state
 
 
 def _upgrade_legacy_state(
-    state: dict[str, Any], command: dict[str, Any],
+    state: dict[str, Any], command: dict[str, Any], *,
+    migration_facts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Prepare an old readable snapshot for one atomic, approved v5 write."""
-    if state["schema_version"] == 5:
+    """Prepare an eligible pre-V9 state for one atomic approved current write."""
+    if state["schema_version"] >= CURRENT_STATE_SCHEMA:
         return state
+    if state["schema_version"] == 1:
+        # V1 has neither a lifecycle nor a bounded current-candidate contract.
+        # It remains readable evidence only; do not invent task/project authority.
+        raise DispatchError("legacy dispatch state has no migration authority")
+    if state["schema_version"] in {3, 4} and migration_facts is None:
+        # V3/V4 may be migrated only by the separate, state-SHA-approved
+        # no-write proof below.  Never promote a path observation implicitly.
+        raise DispatchError("legacy migration approval is required")
     value = dict(state)
     if value["phase"] == "provider-failed":
         value["phase"] = "attempt-failed"
@@ -896,12 +1093,38 @@ def _upgrade_legacy_state(
             value["phase"] = "dispatching"
         if value["assurance"] is None:
             value["assurance"] = "pending"
-    snapshot = _worktree_snapshot(command["workdir"])
+    # Pre-V9 state has no separate root identity.  Its persisted snapshot can
+    # prove the old state once; it cannot become the new V9 baseline.  V5/V6
+    # use their frozen legacy digest only for that proof, then capture a fresh
+    # semantic-v1 observation in this same pending transition.  V7/V8 already
+    # use semantic-v1, so their exact proved observation is safe to reuse.
+    if value["schema_version"] in {3, 4}:
+        assert migration_facts is not None
+        snapshot = migration_facts["semantic_snapshot"]
+        root_identity = migration_facts["root_identity"]
+    else:
+        expected = value.get("candidate_worktree_sha256") if value["candidate_recognized"] else None
+        expected_entries = value.get("candidate_worktree_entries") if value["candidate_recognized"] else None
+        if expected is None:
+            baseline = value.get("worktree_baseline")
+            if isinstance(baseline, dict):
+                expected, expected_entries = baseline.get("sha256"), baseline.get("entries")
+        observed = _state_worktree_snapshot(value, command["workdir"])
+        if (
+            observed is None or not isinstance(expected, str) or type(expected_entries) is not int
+            or observed["sha256"] != expected or observed["entries"] != expected_entries
+        ):
+            raise DispatchError("legacy dispatch root identity cannot be proved")
+        root_identity = _dispatch_root_identity(command["workdir"])
+        if root_identity is None:
+            raise DispatchError("legacy dispatch root identity cannot be proved")
+        snapshot = _worktree_snapshot(command["workdir"]) if value["schema_version"] in {5, 6} else observed
     if snapshot is None:
         raise DispatchError("legacy worktree cannot be bound")
     value.update(_schema_bindings(command))
     value.update({
-        "schema_version": 5,
+        "schema_version": CURRENT_STATE_SCHEMA,
+        "worktree_snapshot_algorithm": CURRENT_WORKTREE_SNAPSHOT_ALGORITHM,
         "worktree_baseline": snapshot,
         "worktree_reconciliation": "available",
         "worktree_changes_present": snapshot["entries"] > 0,
@@ -910,12 +1133,14 @@ def _upgrade_legacy_state(
             value["conversation_id"] and not value["candidate_recognized"]
             and value["status"] == "failed"
         ),
+        "selection_sha256": command.get("selection_sha256"),
+        "selection_identity": command.get("selection_identity"),
+        "worktree_root_identity": root_identity,
     })
     if value["candidate_recognized"]:
         value["candidate_worktree_sha256"] = snapshot["sha256"]
         value["candidate_worktree_entries"] = snapshot["entries"]
         value["driver_disposition"] = "unreviewed"
-        value["next_action"] = "driver_review"
     value["continue_available"] = bool(
         value["workflow"] != "legacy"
         and value["candidate_recognized"]
@@ -926,25 +1151,140 @@ def _upgrade_legacy_state(
         and value["attempt"] < value["max_cycles"]
         and float(value["elapsed_seconds"]) < float(value["max_seconds"])
     )
+    # V3/V4's raw lifecycle fields were private compatibility data, never
+    # evidence of a current controller phase or completed driver decision.
+    value["assurance"] = "pending"
+    value["next_action"] = "none"
+    value["next_action_command"] = None
+    value["phase"] = _controller_phase(value) or "attempt-failed"
     validate_state(value)
     return value
 
 
-def _transition_locked(job: Path, state: dict[str, Any], prior_raw: bytes, updates: dict[str, Any]) -> tuple[dict[str, Any], bytes, str]:
+def _legacy_migration_facts(
+    job: Path, state: dict[str, Any], state_sha: str,
+) -> dict[str, Any]:
+    """Prove a V3/V4 transition without giving a pathname lasting authority.
+
+    The returned private facts are deliberately recomputed for status and again
+    while holding the transition lock.  Their digest is an approval capability,
+    not a claim that a legacy result was provider-successful or driver-verified.
+    """
+    if state["schema_version"] not in {3, 4}:
+        raise DispatchError("legacy migration is unavailable")
+    if _legacy_prior_result_is_unknown(state):
+        raise DispatchError("unknown legacy result has no migration authority")
+    command = _load_bound_command(job, state, stage_readonly=False)
+    command, checked = _bound_lifecycle_inputs(job, state, command, read_legacy=True)
+    selection = _load_bound_selection(command, checked, legacy_command_binding=True)
+    schema_bindings = _schema_bindings(command)
+    root_identity = _dispatch_root_identity(command["workdir"])
+    snapshot = _worktree_snapshot(command["workdir"])
+    if root_identity is None or snapshot is None:
+        raise DispatchError("legacy dispatch root identity cannot be proved")
+    artifact: dict[str, Any] | None = None
+    if checked["candidate_recognized"]:
+        _bound_current_candidate(job, checked)
+        artifact = {
+            "sha256": checked["result_sha256"],
+            "identity": checked["result_identity"],
+            "source": checked["candidate_source"],
+        }
+    facts = {
+        "kind": "agy-worker-legacy-migration-v1",
+        "state_sha256": state_sha,
+        "legacy_schema_version": checked["schema_version"],
+        "command_sha256": checked["command_sha256"],
+        "command_identity": checked["command_identity"],
+        "stage_sha256": checked["stage_sha256"],
+        "stage_identity": checked["stage_identity"],
+        "selection": {
+            "sha256": command.get("selection_sha256"),
+            "identity": command.get("selection_identity"),
+            "schema_version": None if selection is None else selection.get("schema_version"),
+        },
+        "schemas": schema_bindings,
+        "root_identity": root_identity,
+        "semantic_snapshot": snapshot,
+        "project_boundary": checked["project_boundary"],
+        "workflow": checked["workflow"],
+        "attempt_origin": checked["attempt_origin"],
+        "status": checked["status"],
+        "candidate": artifact,
+        "provider_launch_authorized": _selection_launch_is_authorized(selection),
+        "historical_result_provenance": (
+            "unknown_bound_legacy" if _legacy_prior_result_is_unknown(checked) else None
+        ),
+    }
+    return facts
+
+
+def _legacy_migration_sha(job: Path | None, state: dict[str, Any], state_sha: str) -> str | None:
+    """Return an exact, public-safe V3/V4 transition approval digest."""
+    if job is None or state["schema_version"] not in {3, 4}:
+        return None
+    try:
+        return digest(canonical(_legacy_migration_facts(job, state, state_sha)))
+    except (OSError, DispatchError):
+        return None
+
+
+def _approved_legacy_migration(
+    job: Path, state: dict[str, Any], raw: bytes, approve_migration_sha: str | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Recompute an approved V3/V4 proof immediately before its first write."""
+    if state["schema_version"] not in {3, 4}:
+        command = _load_bound_command(job, state, stage_readonly=False)
+        return command, state
+    if not isinstance(approve_migration_sha, str) or SHA_RE.fullmatch(approve_migration_sha) is None:
+        raise DispatchError("legacy migration approval is missing or invalid")
+    state_sha = digest(raw)
+    facts = _legacy_migration_facts(job, state, state_sha)
+    if digest(canonical(facts)) != approve_migration_sha:
+        raise DispatchError("legacy migration approval is stale")
+    command = _load_bound_command(job, state, stage_readonly=False)
+    return command, _upgrade_legacy_state(state, command, migration_facts=facts)
+
+
+def _transition_locked(
+    job: Path, state: dict[str, Any], prior_raw: bytes, updates: dict[str, Any], *,
+    legacy_control_only: bool = False,
+) -> tuple[dict[str, Any], bytes, str]:
     current, _info = read_regular(job / STATE_NAME, MAX_STATE_BYTES, "dispatch state")
     if current != prior_raw:
         raise DispatchError("dispatch state changed before transition")
     value = dict(state)
     value.update(updates)
-    if value["schema_version"] in {1, 3, 4}:
+    if value["schema_version"] < CURRENT_STATE_SCHEMA and not legacy_control_only:
         command = _load_bound_command(job, state, stage_readonly=False)
         value = _upgrade_legacy_state(value, command)
+    elif legacy_control_only:
+        # ``validate_state`` projects additive facts while reading old bytes.
+        # A cheap active control must write the old generation's exact field
+        # shape back, not accidentally persist a partial migration.
+        omitted = set(STATE_V5_FIELDS) | set(STATE_V6_FIELDS) | set(STATE_V8_FIELDS) | set(STATE_V9_FIELDS)
+        if value["schema_version"] == 1:
+            omitted |= set(STATE_PROJECT_FIELDS) | {
+                "provider_retry_after_seconds", "provider_retry_observed_epoch",
+            }
+        elif value["schema_version"] == 3:
+            omitted |= {"provider_retry_after_seconds", "provider_retry_observed_epoch"}
+        for key in omitted:
+            value.pop(key, None)
+    # New V7+ writes retain these only for private legacy read compatibility.
+    # A control-only legacy transition preserves its original field shape.
+    if not legacy_control_only:
+        value["next_action"] = "none"
+        value["next_action_command"] = None
     value["sequence"] = state["sequence"] + 1
     value["previous_state_sha256"] = digest(prior_raw)
     value["updated_epoch"] = time.time()
     validate_state(value)
     raw, sha = write_atomic(job, STATE_NAME, value)
-    return value, raw, sha
+    # Return the same additive read projection that ordinary callers receive;
+    # control-only V1/V3/V4 writes intentionally used their historical storage
+    # shape above and must still be safe for the public status formatter.
+    return validate_state(value), raw, sha
 
 
 def transition(job: Path, state: dict[str, Any], prior_raw: bytes, updates: dict[str, Any]) -> tuple[dict[str, Any], bytes, str]:
@@ -952,14 +1292,365 @@ def transition(job: Path, state: dict[str, Any], prior_raw: bytes, updates: dict
         return _transition_locked(job, state, prior_raw, updates)
 
 
-def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
-    now = time.time()
+def _live_elapsed(value: dict[str, Any], now: float) -> float:
     elapsed = float(value["elapsed_seconds"])
     if value["status"] in {"running", "cancel-requested"} and value["started_epoch"] is not None:
         elapsed = max(
             elapsed,
             float(value["attempt_base_elapsed"]) + max(0.0, now - float(value["started_epoch"])),
         )
+    return elapsed
+
+
+def _is_active(value: dict[str, Any]) -> bool:
+    return value["status"] in {"queued", "running", "cancel-requested"}
+
+
+def _extend_is_eligible(value: dict[str, Any], now: float) -> bool:
+    """One cheap state/time predicate shared by status and the lock guard."""
+    elapsed = _live_elapsed(value, now)
+    return bool(
+        _is_active(value)
+        and not value["cancel_requested"]
+        and value["progress_count"] > 0
+        and value["last_progress_epoch"] is not None
+        and now - float(value["last_progress_epoch"]) < float(value["idle_seconds"])
+        # ``--by`` has one-second precision.  Advertising extend with less
+        # than one second before either limit would name an operation the lock
+        # guard must reject.
+        and elapsed + 1.0 <= float(value["hard_seconds"])
+        and float(value["hard_seconds"]) + 1.0 <= float(value["max_seconds"])
+    )
+
+
+def _legacy_prior_result_is_unknown(value: dict[str, Any]) -> bool:
+    """Recognize only the historical V3/V4 last-success pointer as unknown."""
+    return bool(
+        value["schema_version"] in {3, 4}
+        and value["result_path"] is None
+        and all(value[key] is not None for key in (
+            "last_success_path", "last_success_sha256", "last_success_identity",
+        ))
+    )
+
+
+def _resume_is_eligible(value: dict[str, Any], now: float) -> bool:
+    """Mirror the strict same-conversation resume guard used before staging."""
+    return bool(
+        value["status"] == "failed"
+        and not value["candidate_recognized"]
+        and value["resume_available"]
+        and isinstance(value["conversation_id"], str)
+        and _restart_guard_accepts(value, elapsed_seconds=_live_elapsed(value, now))
+    )
+
+
+def _continue_is_eligible(value: dict[str, Any], now: float) -> bool:
+    """Return the state-only half of the exact continuation guard."""
+    return bool(
+        value["workflow"] != "legacy"
+        # A failed final direct-selection proof invalidates provider launch
+        # authority for this frozen job.  Keep its bound candidate available
+        # for result review/finalization, but never reuse the selection through
+        # another same-conversation continuation.
+        and value["reason"] != "selection_preflight_failed"
+        and value["continue_available"]
+        and value["candidate_recognized"]
+        and value["result_available"]
+        and value["candidate_source"] != "provider_cancelled"
+        and value["status"] in {"succeeded", "failed"}
+        and _controller_phase(value) in {"awaiting-verification", "repair-failed"}
+        and isinstance(value["conversation_id"], str)
+        and value["cycle"] < value["max_cycles"]
+        and _live_elapsed(value, now) < float(value["max_seconds"])
+    )
+
+
+def _finalize_is_eligible(value: dict[str, Any]) -> bool:
+    """Return the state-only half of the exact finalization guard."""
+    return bool(
+        value["candidate_recognized"] and value["result_available"]
+        and value["result_path"] and value["workflow"] != "legacy"
+        and value["driver_disposition"] == "unreviewed"
+        and (value["assurance"] == "pending" or value["schema_version"] in {3, 4})
+        and _controller_phase(value) in {"awaiting-verification", "repair-failed"}
+    )
+
+
+def _verification_copy_is_eligible(value: dict[str, Any]) -> bool:
+    """Return the exact state predicate for the non-migrating copy helper.
+
+    A V3/V4 finalization can first obtain an explicit migration capability, but
+    ``verification-copy`` deliberately accepts no migration approval.  Keep it
+    current-state-only so status never advertises a command the helper rejects.
+    """
+    return bool(
+        value["schema_version"] >= CURRENT_STATE_SCHEMA
+        and _finalize_is_eligible(value)
+    )
+
+
+def _controller_phase(value: dict[str, Any]) -> str | None:
+    """Project controller-owned mechanics without trusting legacy raw phase."""
+    if value["schema_version"] in {3, 4} and _legacy_prior_result_is_unknown(value):
+        return None
+    if value["driver_disposition"] in {"verified", "partially_verified", "rejected"}:
+        return "completed"
+    if value["driver_disposition"] == "blocked" or (
+        value["candidate_recognized"] and not value["result_available"]
+    ):
+        return "blocked"
+    if _is_active(value):
+        return "repairing" if value["attempt_origin"] == "conversation-continue" else "dispatching"
+    if value["candidate_recognized"]:
+        if value["status"] == "failed" and value["attempt_origin"] == "conversation-continue":
+            return "repair-failed"
+        return "awaiting-verification"
+    if value["status"] in TERMINAL:
+        return "repair-failed" if value["attempt_origin"] == "conversation-continue" else "attempt-failed"
+    return None
+
+
+def _candidate_actions_are_bound(job: Path | None, value: dict[str, Any]) -> bool:
+    """Keep public candidate actions as strict as their mutating commands."""
+    if job is None:
+        return False
+    try:
+        _bound_current_candidate(job, value)
+    except (OSError, DispatchError):
+        return False
+    return True
+
+
+def _post_candidate_selection_binding_drift(job: Path | None, value: dict[str, Any]) -> bool:
+    """Identify a frozen direct-selection failure without publishing its bytes.
+
+    The candidate action binder uses the same selection record, but can also
+    reject a result/schema/worktree drift. Text recovery guidance must only
+    name a fresh-job handoff for selection drift, so bind the command first and
+    then probe its selection record in isolation.
+    """
+    if job is None or not (
+        value["candidate_recognized"] and value["result_available"]
+    ):
+        return False
+    try:
+        bound_job = canonical_job(Path(job).resolve(strict=True))
+        command = _load_bound_command(bound_job, value, stage_readonly=False)
+    except (OSError, DispatchError):
+        return False
+    if command.get("selection_path") is None:
+        return False
+    try:
+        _load_bound_selection(command, value)
+    except (OSError, DispatchError):
+        return True
+    return False
+
+
+def _lifecycle_mutation_bindings(
+    job: Path | None, value: dict[str, Any],
+) -> tuple[bool, bool]:
+    """Return driver-write and provider-launch binding availability.
+
+    Finalization records an exact driver decision without launching a provider.
+    Recovery actions additionally require a selection record that is current
+    launch authority.  Keep those facts separate so status advertises exactly
+    the operations their command guards accept.
+    """
+    if job is None:
+        return False, False
+    try:
+        bound_job = canonical_job(Path(job).resolve(strict=True))
+        command = _load_bound_command(bound_job, value, stage_readonly=False)
+        _bound_lifecycle_inputs(bound_job, value, command)
+        provider_launch_bound = _selection_launch_is_authorized(
+            _load_bound_selection(command, value)
+        )
+    except (OSError, DispatchError):
+        return False, False
+    return True, provider_launch_bound
+
+
+def _selection_launch_is_authorized(record: dict[str, Any] | None) -> bool:
+    """Allow exact-match V2 or explicitly approved V3 direct provenance."""
+    if record is None or record.get("selection_mode") not in {
+        "exact-model", "model-effort",
+    }:
+        return True
+    if not MODEL_SELECTION.has_current_probed_executable_binding(record.get("probed_executable")):
+        return False
+    if record.get("schema_version") == 3:
+        return True
+    return (
+        record.get("schema_version") == 2
+        and record.get("version_relation") == "match"
+        and record.get("compatibility_status") == "reviewed-version-match"
+    )
+
+
+def _legacy_result_action_is_bound(job: Path | None, value: dict[str, Any]) -> bool:
+    """Probe an unknown-provenance legacy result with its command guard."""
+    if job is None:
+        return False
+    try:
+        _bound_legacy_unknown_result(job, value)
+    except (OSError, DispatchError):
+        return False
+    return True
+
+
+def _available_actions(
+    value: dict[str, Any], sha: str, now: float, *, job: Path | None = None,
+    candidate_bound: bool | None = None, legacy_result_bound: bool | None = None,
+    lifecycle_mutation_bound: bool | None = None,
+    provider_launch_bound: bool | None = None,
+    legacy_migration_sha: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return only state/time-applicable mechanical controller operations.
+
+    Cancel and extend remain cheap state/time controls.  A terminal candidate is
+    revalidated only when it could make a result, continue, or finalize action
+    visible, and uses the same binder the command paths require.
+    """
+    job_id = value["job_id"]
+    actions: list[dict[str, Any]] = []
+    active = _is_active(value)
+    if active:
+        actions.append({
+            "action": "wait",
+            "command": f"{PUBLIC_LAUNCHER} wait --job-id {job_id} --after-state-sha {sha} --format text",
+        })
+    if active and not value["cancel_requested"]:
+        actions.append({
+            "action": "cancel",
+            "command": f"{PUBLIC_LAUNCHER} cancel --job-id {job_id} --approve-state-sha {sha}",
+        })
+    # A terminal report with an unavailable candidate worktree is forensic
+    # state only.  It must not be presented as a route to another provider
+    # action, result delivery, continuation, or finalization.
+    if (
+        not active and value["status"] in TERMINAL
+        and value["candidate_recognized"] and not value["result_available"]
+        and value["worktree_reconciliation"] == "unavailable"
+    ):
+        return actions
+    if _extend_is_eligible(value, now):
+        # The state cannot choose a duration on the caller's behalf.  Keep
+        # this guidance deliberately commandless: a copied command with a
+        # made-up duration would not share the mutation guard's contract.
+        actions.append({
+            "action": "extend",
+            "requires": ["--by caller-provided DURATION"],
+            "guidance": "choose a positive duration that remains within the current maximum runtime",
+        })
+    terminal_candidate = bool(
+        not active and value["status"] in TERMINAL
+        and value["candidate_recognized"] and value["result_available"]
+    )
+    if terminal_candidate and candidate_bound is None:
+        candidate_bound = _candidate_actions_are_bound(job, value)
+    if terminal_candidate and candidate_bound:
+        actions.append({
+            "action": "result",
+            "command": f"{PUBLIC_LAUNCHER} result --job-id {job_id} --format json",
+        })
+        if _verification_copy_is_eligible(value):
+            actions.append({
+                "action": "verification-copy",
+                "command": (
+                    f"{PUBLIC_LAUNCHER} verification-copy --job-id {job_id} "
+                    "--destination NEW_PRIVATE_DIRECTORY --format text"
+                ),
+                "requires": ["new owner-private destination outside the candidate"],
+            })
+    elif (
+        not active and value["status"] in TERMINAL
+        and _legacy_prior_result_is_unknown(value) and legacy_result_bound
+    ):
+        actions.append({
+            "action": "result",
+            "command": f"{PUBLIC_LAUNCHER} result --job-id {job_id} --format json",
+        })
+    # A public recovery operation is useful only when the same frozen command,
+    # schemas, worktree root/boundary, and selector the command will use are
+    # still present.  ``None`` keeps pure in-memory compatibility callers from
+    # claiming a failed local probe; CLI status always supplies a concrete bool.
+    # V1 remains result-only.  V3/V4 may advertise a lifecycle action only
+    # with a fresh public migration digest which the command recomputes under
+    # its transition lock.  V5-V8 retain their existing migration proof.
+    lifecycle_mutation_available = bool(
+        (value["schema_version"] >= 5 and lifecycle_mutation_bound is not False)
+        or (value["schema_version"] in {3, 4} and legacy_migration_sha is not None)
+    )
+    provider_mutation_available = bool(
+        lifecycle_mutation_available and provider_launch_bound is not False
+    )
+    if _resume_is_eligible(value, now) and provider_mutation_available:
+        actions.append({
+            "action": "resume",
+            "command": (
+                f"{PUBLIC_LAUNCHER} resume --job-id {job_id} --approve-state-sha {sha}"
+                + (f" --approve-migration-sha {legacy_migration_sha}" if value["schema_version"] in {3, 4} else "")
+                + " --format text"
+            ),
+        })
+    if (
+        _restart_guard_accepts(value, elapsed_seconds=_live_elapsed(value, now))
+        and provider_mutation_available
+    ):
+        actions.append({
+            "action": "restart",
+            "command": (
+                f"{PUBLIC_LAUNCHER} restart --job-id {job_id} --approve-state-sha {sha}"
+                + (f" --approve-migration-sha {legacy_migration_sha}" if value["schema_version"] in {3, 4} else "")
+                + " --format text"
+            ),
+        })
+    if (
+        terminal_candidate and candidate_bound and _continue_is_eligible(value, now)
+        and provider_mutation_available
+    ):
+        actions.append({
+            "action": "continue",
+            "command": (
+                f"{PUBLIC_LAUNCHER} continue --job-id {job_id} --approve-state-sha {sha} "
+                + (f"--approve-migration-sha {legacy_migration_sha} " if value["schema_version"] in {3, 4} else "")
+                + "< DRIVER_VERIFICATION_JSON"
+            ),
+            "requires": ["verification JSON"],
+        })
+    if (
+        terminal_candidate and candidate_bound and _finalize_is_eligible(value)
+        and lifecycle_mutation_available
+    ):
+        actions.append({
+            "action": "finalize",
+            "command": (
+                f"{PUBLIC_LAUNCHER} finalize --job-id {job_id} --approve-state-sha {sha} "
+                + (f"--approve-migration-sha {legacy_migration_sha} " if value["schema_version"] in {3, 4} else "")
+                + "--assurance ASSURANCE < DRIVER_VERIFICATION_JSON"
+            ),
+            "requires": ["--assurance", "verification JSON"],
+        })
+    return actions
+
+
+def _public_next_action(actions: list[dict[str, Any]]) -> tuple[str, str | None]:
+    if not actions:
+        return "none", None
+    # `resume` and `restart` are distinct caller-owned recovery policies.  The
+    # deprecated scalar alias must not turn their deterministic display order
+    # into a controller recommendation.
+    if {"resume", "restart"} <= {str(item.get("action")) for item in actions}:
+        return "none", None
+    first = actions[0]
+    return str(first["action"]), first.get("command") if isinstance(first.get("command"), str) else None
+
+
+def public_status(value: dict[str, Any], sha: str, *, job: Path | None = None) -> dict[str, Any]:
+    now = time.time()
+    elapsed = _live_elapsed(value, now)
     last_age = None
     if value["last_progress_epoch"] is not None:
         last_age = max(0.0, now - value["last_progress_epoch"])
@@ -972,10 +1663,96 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
                 - max(0.0, now - value["provider_retry_observed_epoch"])
             )),
         )
+    candidate_bound: bool | None = None
+    legacy_result_bound: bool | None = None
+    lifecycle_mutation_bound: bool | None = None
+    provider_launch_bound: bool | None = None
+    legacy_migration_sha: str | None = None
+    terminal_candidate = bool(
+        not _is_active(value) and value["status"] in TERMINAL
+        and value["candidate_recognized"] and value["result_available"]
+    )
+    if terminal_candidate:
+        candidate_bound = _candidate_actions_are_bound(job, value)
+        # Candidate reconciliation can take meaningful bounded time.  Resample
+        # the clocks so an extension that expired during that scan is omitted.
+        now = time.time()
+        elapsed = _live_elapsed(value, now)
+    elif (
+        job is not None and not _is_active(value) and value["status"] in TERMINAL
+        and _legacy_prior_result_is_unknown(value)
+    ):
+        legacy_result_bound = _legacy_result_action_is_bound(job, value)
+        # Legacy reconciliation is also a bounded terminal scan.  Do not let
+        # its duration publish stale elapsed-time action eligibility.
+        now = time.time()
+        elapsed = _live_elapsed(value, now)
+    if (
+        job is not None and not _is_active(value) and value["schema_version"] in {3, 4}
+        and (
+            _resume_is_eligible(value, now)
+            or _restart_guard_accepts(value, elapsed_seconds=_live_elapsed(value, now))
+            or _continue_is_eligible(value, now)
+            or _finalize_is_eligible(value)
+        )
+    ):
+        try:
+            migration_facts = _legacy_migration_facts(job, value, sha)
+            legacy_migration_sha = digest(canonical(migration_facts))
+            lifecycle_mutation_bound = True
+            provider_launch_bound = bool(migration_facts["provider_launch_authorized"])
+            if terminal_candidate:
+                candidate_bound = True
+        except (OSError, DispatchError):
+            # A stale root, artifact, schema, selector, or boundary may not be
+            # advertised as a migration route.  Terminal result readback keeps
+            # its own stricter, non-mutating binder.
+            legacy_migration_sha = None
+    elif job is not None and (
+        _resume_is_eligible(value, now)
+        or _restart_guard_accepts(value, elapsed_seconds=_live_elapsed(value, now))
+        or _continue_is_eligible(value, now)
+        or _finalize_is_eligible(value)
+    ):
+        lifecycle_mutation_bound, provider_launch_bound = _lifecycle_mutation_bindings(
+            job, value
+        )
+    available_actions = _available_actions(
+        value, sha, now, job=job, candidate_bound=candidate_bound,
+        legacy_result_bound=legacy_result_bound,
+        lifecycle_mutation_bound=lifecycle_mutation_bound,
+        provider_launch_bound=provider_launch_bound,
+        legacy_migration_sha=legacy_migration_sha,
+    )
+    action_names = {item["action"] for item in available_actions}
+    public_result_available = bool(
+        value["candidate_recognized"] and "result" in action_names
+    )
+    # This is the canonical digest of the bound result bytes, never a worker
+    # claim, path, or prose.  Do not expose it for a merely remembered or stale
+    # candidate: consumers can safely use it as Verification v2 input only when
+    # the same public surface makes `result` available.
+    public_candidate_sha256 = (
+        value["result_sha256"] if public_result_available else None
+    )
+    public_continue_available = "continue" in action_names
+    public_failure_stage = (
+        "binding_failure"
+        if terminal_candidate and candidate_bound is False
+        else value["failure_stage"]
+    )
+    next_action, next_action_command = _public_next_action(available_actions)
+    public_assurance = (
+        value["driver_disposition"]
+        if value["driver_disposition"] in {"verified", "partially_verified", "rejected", "blocked"}
+        else None
+    )
     return {
         "attempt": value["attempt"],
         "attempt_origin": value["attempt_origin"],
-        "assurance": value["assurance"],
+        # Only a bound finalize records a Codex/driver decision.  Pending is
+        # local lifecycle plumbing, never an assurance claim.
+        "assurance": public_assurance,
         "check_counts": value["check_counts"],
         "check_summary": value["check_summary"],
         "cycle": value["cycle"],
@@ -987,18 +1764,20 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
         "has_prior_candidate": bool(value["result_path"] or value["last_success_path"]),
         "candidate_recognized": value["candidate_recognized"],
         "candidate_source": value["candidate_source"],
-        "result_available": value["result_available"],
+        "candidate_sha256": public_candidate_sha256,
+        "result_available": public_result_available,
         "worktree_reconciliation": value["worktree_reconciliation"],
         "worktree_changes_present": value["worktree_changes_present"],
         "worktree_changed_since_dispatch": value["worktree_changed_since_dispatch"],
         "driver_disposition": value["driver_disposition"],
-        "failure_stage": value["failure_stage"],
+        "failure_stage": public_failure_stage,
         "last_activity": value["last_activity"],
-        "next_action": value["next_action"],
-        # Stored state records only the semantic action.  Commands are derived
-        # from the current public snapshot so their approval SHA cannot go stale
-        # inside an otherwise unchanged state file.
-        "next_action_command": _safe_next_action(value, sha),
+        "available_actions": available_actions,
+        # Deprecated mechanical aliases retained for additive consumers.  They
+        # are derived from the same live predicates as available_actions, never
+        # from a controller recommendation stored in state.
+        "next_action": next_action,
+        "next_action_command": next_action_command,
         "job_id": value["job_id"],
         "last_progress_age_seconds": None if last_age is None else round(last_age, 3),
         "limit_kind": value["limit_kind"],
@@ -1006,12 +1785,17 @@ def public_status(value: dict[str, Any], sha: str) -> dict[str, Any]:
         "max_cycles": value["max_cycles"],
         "notice_count": value["notice_count"],
         "progress_count": value["progress_count"],
+        "controller_phase": _controller_phase(value),
         "phase": value["phase"],
+        "legacy_result_provenance": (
+            "unknown_bound_legacy" if _legacy_prior_result_is_unknown(value) else "none"
+        ),
+        "migration_binding_sha256": legacy_migration_sha,
         "reason": value["reason"],
         "retry_after_seconds": retry_remaining,
         "remote_cancel_unverified": value["remote_cancel_unverified"],
-        "resume_available": value["resume_available"],
-        "continue_available": value["continue_available"],
+        "resume_available": "resume" in action_names,
+        "continue_available": public_continue_available,
         "state_sha256": sha,
         "status": value["status"],
         "workflow": value["workflow"],
@@ -1023,57 +1807,145 @@ def print_json(value: Any) -> None:
     sys.stdout.buffer.flush()
 
 
-def _safe_next_action(value: dict[str, Any], sha: str) -> str | None:
-    """Build a copy/pasteable command from public controller data only."""
-    job = value["job_id"]
-    action = value["next_action"]
-    if action == "wait":
-        return f"agy-worker.sh wait --job-id {job} --after-state-sha {sha} --format text"
-    if action == "resume":
-        return f"agy-worker.sh resume --job-id {job} --approve-state-sha {sha} --format text"
-    if action == "driver_review":
-        return f"agy-worker.sh result --job-id {job} --format json"
-    # Final assurance and its bound verification input are driver-owned.  A
-    # blocked or completed state likewise has no safe executable suggestion.
-    return None
-
-
-def print_text_status(value: dict[str, Any], sha: str) -> None:
+def print_text_status(value: dict[str, Any], sha: str, *, job: Path | None = None) -> None:
     """Print exactly three private-data-free lines for the human CLI surface."""
-    completed = value["driver_disposition"] in {"verified", "partially_verified"}
-    outcome = "completed" if completed else "not completed"
     counts = value["check_counts"]
-    present = value["worktree_changes_present"]
-    changed = value["worktree_changed_since_dispatch"]
-    present_text = "unknown" if present is None else str(present).lower()
-    changed_text = "unknown" if changed is None else str(changed).lower()
-    safe_action = _safe_next_action(value, sha)
-    next_action = safe_action or f"{value['next_action']} (no automatic command)"
+    public = public_status(value, sha, job=job)
+    actions = public["available_actions"]
+    action_names = {item["action"] for item in actions}
+    next_command = public["next_action_command"]
+    result_command = next((
+        item.get("command") for item in actions
+        if item["action"] == "result" and isinstance(item.get("command"), str)
+    ), None)
+    resume_command = next((
+        item.get("command") for item in actions
+        if item["action"] == "resume" and isinstance(item.get("command"), str)
+    ), None)
+    restart_command = next((
+        item.get("command") for item in actions
+        if item["action"] == "restart" and isinstance(item.get("command"), str)
+    ), None)
+    historical_result = bool(
+        result_command is not None
+        and public["legacy_result_provenance"] == "unknown_bound_legacy"
+    )
+    finalized_result = bool(
+        result_command is not None
+        and value["driver_disposition"] in {
+            "verified", "partially_verified", "rejected", "blocked",
+        }
+    )
+    candidate_decision = (
+        "then Codex—not the controller—chooses an eligible continue or finalize."
+        if {"continue", "finalize"} <= action_names else
+        "then Codex—not the controller—may choose the eligible continue action."
+        if "continue" in action_names else
+        "then Codex—not the controller—may choose the eligible finalize action."
+        if "finalize" in action_names else
+        "then no further driver decision is currently listed."
+    )
+    if next_command is None:
+        # Continue/finalize need driver-owned bounded JSON.  This is still an
+        # exact mechanical invocation, not a controller recommendation.
+        action = next((item["action"] for item in actions if item["action"] in {"continue", "finalize"}), None)
+        if action == "continue":
+            next_command = (
+                f"{PUBLIC_LAUNCHER} continue --job-id {value['job_id']} --approve-state-sha {sha} "
+                "< DRIVER_VERIFICATION_JSON"
+            )
+        elif action == "finalize":
+            next_command = (
+                f"{PUBLIC_LAUNCHER} finalize --job-id {value['job_id']} --approve-state-sha {sha} "
+                "--assurance ASSURANCE < DRIVER_VERIFICATION_JSON"
+            )
+    reason = public["reason"] if public["reason"] is not None else "none"
+    failure_stage = public["failure_stage"] if public["failure_stage"] is not None else "none"
+    selection_preflight_recovery_blocked = bool(
+        public["reason"] == "selection_preflight_failed"
+        or _post_candidate_selection_binding_drift(job, value)
+    )
+    cancelled_unreviewed_restart_guidance = (
+        f" Available fresh restart command: {restart_command}."
+        if (
+            value["status"] == "cancelled"
+            and value["driver_disposition"] == "unreviewed"
+            and restart_command is not None
+        ) else ""
+    )
+    ambiguous_recovery_options = {"resume", "restart"} <= action_names
+    candidate_free_no_actions = bool(
+        not actions
+        and not value["candidate_recognized"]
+    )
+    candidate_free_runtime_budget_exhausted = bool(
+        candidate_free_no_actions and value["limit_kind"] == "max-runtime"
+    )
+    candidate_free_attempt_budget_exhausted = bool(
+        candidate_free_no_actions
+        and not candidate_free_runtime_budget_exhausted
+        and value["attempt"] >= value["max_cycles"]
+    )
     lines = (
-        f"Outcome: {value['status']} ({outcome}); driver disposition: {value['driver_disposition']}.",
-        f"Driver evidence: {counts['passed']} passed, {counts['failed']} failed, "
-        f"{counts['advisory']} advisory, {counts['missing']} missing; limits: cycle "
-        f"{value['cycle']}/{value['max_cycles']}, worktree reconciliation "
-        f"{value['worktree_reconciliation']}, worktree changes present {present_text}, "
-        f"changed since dispatch {changed_text}.",
-        f"Next action: {next_action}",
+        f"Provider attempt: {value['status']}; reason: {reason}; failure stage: {failure_stage}; bound result available: {'yes' if public['result_available'] else 'no'}; driver disposition: {value['driver_disposition']}.",
+        f"Driver evidence: {counts['passed']} passed, {counts['failed']} failed, {counts['advisory']} advisory, {counts['missing']} missing; cycle: {public['cycle']}/{public['max_cycles']}.",
+        (
+            (
+                f"Next safe action: retrieve current bound result JSON with {result_command}; review it and run driver checks, then Codex—not the controller—may finalize after review. No provider-launching same-job recovery is available."
+                if result_command is not None and "finalize" in action_names else
+                f"Next safe action: retrieve current bound result JSON with {result_command}; no provider-launching same-job recovery is available."
+                if result_command is not None else
+                "Next safe action: create a fresh job using the unchanged caller selection after reviewing the current sanitized agy interface evidence. No same-job action is available."
+            )
+            if selection_preflight_recovery_blocked else
+            f"Next safe action: retrieve historical result evidence only with {result_command}; do not use it for Verification v2, continue, or finalize."
+            if historical_result else
+            (
+                f"Next safe action: optional finalized result JSON readback with {result_command}; driver disposition is already recorded; do not construct Verification v2, continue, or finalize. Available fresh restart command: {restart_command}."
+                if restart_command is not None else
+                f"Next safe action: optional finalized result JSON readback with {result_command}; driver disposition is already recorded; do not construct Verification v2, continue, or finalize."
+            )
+            if finalized_result else
+            f"Next safe action: retrieve current bound result JSON with {result_command}; review it and run driver checks, construct Verification v2, {candidate_decision}{cancelled_unreviewed_restart_guidance}"
+            if result_command is not None else
+            f"Next safe actions: exact-conversation resume: {resume_command}; fresh-attempt restart: {restart_command}."
+            if ambiguous_recovery_options and resume_command is not None and restart_command is not None else
+            f"Next safe action: exact-conversation resume: {resume_command}."
+            if resume_command is not None and "resume" in action_names else
+            f"Next safe action: fresh-attempt restart: {restart_command}."
+            if restart_command is not None and "restart" in action_names else
+            "Next safe action: none; the current runtime budget is exhausted."
+            if candidate_free_runtime_budget_exhausted else
+            "Next safe action: none; the current attempt budget is exhausted."
+            if candidate_free_attempt_budget_exhausted else
+            f"Next safe action: {next_command}." if next_command is not None else "Next safe action: none."
+        ),
     )
     sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))
     sys.stdout.buffer.flush()
 
 
-def print_control_status(value: dict[str, Any], sha: str, output_format: str) -> None:
+def print_control_status(
+    value: dict[str, Any], sha: str, output_format: str, *, job: Path | None = None,
+) -> None:
     if output_format == "text":
-        print_text_status(value, sha)
+        print_text_status(value, sha, job=job)
     else:
-        print_json(public_status(value, sha))
+        print_json(public_status(value, sha, job=job))
 
 
 def _state_approval_error(state: dict[str, Any], sha: str, action: str) -> DispatchError:
     """Keep stale approval recovery useful without exposing private controller data."""
+    suffix = {
+        "continue": " < DRIVER_VERIFICATION_JSON",
+        "finalize": " --assurance ASSURANCE < DRIVER_VERIFICATION_JSON",
+        # Duration is caller-owned input.  A placeholder is deliberately not
+        # an executable-looking exact duration, and never invents a value.
+        "extend": " --by DURATION",
+    }.get(action, "")
     return DispatchError(
         "state approval is missing or stale; rerun: "
-        f"agy-worker.sh {action} --job-id {state['job_id']} --approve-state-sha {sha}"
+        f"{PUBLIC_LAUNCHER} {action} --job-id {state['job_id']} --approve-state-sha {sha}{suffix}"
     )
 
 
@@ -1318,10 +2190,298 @@ def _bound_verification(job: Path, state: dict[str, Any]) -> Path | None:
     return path
 
 
+class _MarkerPreflightLimit(Exception):
+    """The marker-only scan hit its documented bounded entry cap."""
+
+
+def _marker_only_preflight(root_fd: int, *, deadline: float | None = None) -> bool:
+    """Reject root aliases and nested Git markers without opening their contents.
+
+    Filesystems such as the usual macOS volume can resolve ``.GIT`` through a
+    lookup for ``.git``.  Authority checks must use the directory entry's
+    actual bytes, rather than a later pathname lookup.  This intentionally
+    walks only no-follow directory descriptors and returns before reading,
+    opening, or resolving a marker itself.  The later complete boundary or
+    manifest scan remains the timing-consistency observation.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    entries_seen = 0
+
+    def binding(info: os.stat_result) -> tuple[int, ...]:
+        return (
+            info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+            info.st_uid, info.st_gid, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+        )
+
+    def walk(parent_fd: int, *, is_root: bool = False) -> bool:
+        nonlocal entries_seen
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
+        try:
+            before_directory = os.fstat(parent_fd)
+            if not stat.S_ISDIR(before_directory.st_mode):
+                return False
+        except OSError:
+            return False
+        scan_fd = -1
+        try:
+            # Keep ownership of a duplicate: the traversal must not depend on
+            # a pathname after its parent was bound.
+            scan_fd = os.dup(parent_fd)
+            with os.scandir(scan_fd) as scanned:
+                for entry in scanned:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return False
+                    raw_name = os.fsencode(entry.name)
+                    if not raw_name or b"\0" in raw_name:
+                        return False
+                    if raw_name.lower() == b".git":
+                        # An exact root spelling is the only marker permitted;
+                        # its normal directory or linked-worktree file binding
+                        # is performed by the caller after this preflight.
+                        if is_root and raw_name == b".git":
+                            continue
+                        return False
+                    entries_seen += 1
+                    if entries_seen > MAX_BOUNDARY_ENTRIES:
+                        raise _MarkerPreflightLimit
+                    try:
+                        info = os.stat(entry.name, dir_fd=parent_fd, follow_symlinks=False)
+                    except OSError:
+                        return False
+                    if not stat.S_ISDIR(info.st_mode):
+                        continue
+                    try:
+                        child_fd = os.open(
+                            entry.name, os.O_RDONLY | directory | nofollow, dir_fd=parent_fd,
+                        )
+                    except OSError:
+                        return False
+                    try:
+                        if binding(os.fstat(child_fd)) != binding(info) or not walk(child_fd):
+                            return False
+                        if binding(os.fstat(child_fd)) != binding(info):
+                            return False
+                    except OSError:
+                        return False
+                    finally:
+                        os.close(child_fd)
+        except OSError:
+            return False
+        finally:
+            if scan_fd >= 0:
+                os.close(scan_fd)
+        try:
+            return binding(os.fstat(parent_fd)) == binding(before_directory)
+        except OSError:
+            return False
+
+    return walk(root_fd, is_root=True)
+
+
+def _resolved_path_is_git_administration(root: str, resolved: str) -> bool:
+    """Return whether a contained resolved path enters a Git admin boundary."""
+    try:
+        if os.path.commonpath([root, resolved]) != root:
+            return False
+    except ValueError:
+        return False
+    relative = os.path.relpath(resolved, root)
+    return any(part.lower() == ".git" for part in relative.split(os.sep))
+
+
+def _worktree_symlink_boundary(workdir: str) -> bool:
+    """Boundedly reject a link whose resolved target leaves ``workdir``.
+
+    This is intentionally a no-follow directory walk, not a worktree snapshot:
+    link targets are resolved only to check containment and link directories are
+    never traversed.  The controller invokes it for every provider workflow.
+    """
+    root = os.path.realpath(workdir)
+    pending = [root]
+    count = 0
+    try:
+        while pending:
+            current = pending.pop()
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    raw_name = os.fsencode(entry.name)
+                    if raw_name.lower() == b".git":
+                        # The root marker is controller metadata, not worktree
+                        # content.  Nested Git administration is handled by
+                        # the existing marker preflight.
+                        if current == root and raw_name == b".git":
+                            continue
+                        return False
+                    count += 1
+                    if count > MAX_BOUNDARY_ENTRIES:
+                        return False
+                    if entry.is_symlink():
+                        # `mktemp` commonly returns /var/... on macOS while
+                        # realpath canonicalizes the worktree to /private/var.
+                        # Resolve before containment so an internal link is not
+                        # falsely treated as an escape; chained escapes remain
+                        # outside the canonical root.
+                        resolved = os.path.realpath(entry.path)
+                        try:
+                            contained = os.path.commonpath([root, resolved]) == root
+                        except ValueError:
+                            contained = False
+                        if not contained or not os.path.exists(resolved):
+                            return False
+                        if _resolved_path_is_git_administration(root, resolved):
+                            # A contained alias into the root marker or a
+                            # nested Git administration area still changes
+                            # repository authority; containment alone is not
+                            # sufficient for lifecycle/provider safety.
+                            return False
+                    elif entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+    except OSError:
+        return False
+    return True
+
+
+def _worktree_git_admin_alias_boundary(workdir: str) -> bool:
+    """Reject only contained symlink aliases into a Git admin boundary.
+
+    Snapshotting intentionally hashes outward symlink target bytes rather than
+    following them, so it cannot reuse the provider/lifecycle scope boundary.
+    This narrower scan preserves that evidence behavior while refusing a link
+    that aliases the worktree's own Git administration.
+    """
+    root = os.path.realpath(workdir)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    entries_seen = 0
+
+    def binding(info: os.stat_result) -> tuple[int, ...]:
+        return (
+            info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+            info.st_uid, info.st_gid, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+        )
+
+    def walk(parent_fd: int, parent_path: str, *, is_root: bool = False) -> bool:
+        nonlocal entries_seen
+        try:
+            before_directory = os.fstat(parent_fd)
+            if not stat.S_ISDIR(before_directory.st_mode):
+                return False
+        except OSError:
+            return False
+        scan_fd = -1
+        try:
+            # Retain the directory descriptor across enumeration so fixture and
+            # runtime behavior cannot depend on a mutable pathname.
+            scan_fd = os.dup(parent_fd)
+            with os.scandir(scan_fd) as entries:
+                for entry in entries:
+                    raw_name = os.fsencode(entry.name)
+                    if not raw_name or b"\0" in raw_name:
+                        return False
+                    if raw_name.lower() == b".git":
+                        if is_root and raw_name == b".git":
+                            continue
+                        return False
+                    entries_seen += 1
+                    if entries_seen > MAX_BOUNDARY_ENTRIES:
+                        return False
+                    try:
+                        info = os.stat(
+                            entry.name, dir_fd=parent_fd, follow_symlinks=False,
+                        )
+                    except OSError:
+                        return False
+                    if stat.S_ISLNK(info.st_mode):
+                        try:
+                            resolved = os.path.realpath(
+                                os.path.join(parent_path, entry.name),
+                            )
+                            after_link = os.stat(
+                                entry.name, dir_fd=parent_fd, follow_symlinks=False,
+                            )
+                        except OSError:
+                            return False
+                        if binding(info) != binding(after_link):
+                            return False
+                        if _resolved_path_is_git_administration(root, resolved):
+                            return False
+                        continue
+                    if not stat.S_ISDIR(info.st_mode):
+                        continue
+                    try:
+                        child_fd = os.open(
+                            entry.name, os.O_RDONLY | directory | nofollow, dir_fd=parent_fd,
+                        )
+                    except OSError:
+                        return False
+                    try:
+                        if (
+                            binding(os.fstat(child_fd)) != binding(info)
+                            or not walk(child_fd, os.path.join(parent_path, entry.name))
+                            or binding(os.fstat(child_fd)) != binding(info)
+                        ):
+                            return False
+                    except OSError:
+                        return False
+                    finally:
+                        os.close(child_fd)
+        except OSError:
+            return False
+        finally:
+            if scan_fd >= 0:
+                os.close(scan_fd)
+        try:
+            return binding(os.fstat(parent_fd)) == binding(before_directory)
+        except OSError:
+            return False
+
+    root_fd = -1
+    try:
+        root_fd = os.open(root, os.O_RDONLY | directory | nofollow)
+        root_info = os.fstat(root_fd)
+        if (
+            not stat.S_ISDIR(root_info.st_mode)
+            or binding(os.lstat(root)) != binding(root_info)
+        ):
+            return False
+        return walk(root_fd, root, is_root=True)
+    except OSError:
+        return False
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+
+
 def _project_boundary(workdir: str) -> dict[str, Any]:
     root = os.path.realpath(workdir)
     if root != workdir:
         raise DispatchError("project worktree is no longer canonical")
+    root_fd = -1
+    try:
+        root_fd = os.open(
+            root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        root_info = os.fstat(root_fd)
+        if (
+            not stat.S_ISDIR(root_info.st_mode)
+            or _identity(os.lstat(root)) != _identity(root_info)
+        ):
+            raise DispatchError("project worktree cannot be inspected")
+        try:
+            marker_preflight = _marker_only_preflight(root_fd)
+        except _MarkerPreflightLimit as exc:
+            raise DispatchError("project worktree boundary scan is too large") from exc
+        if not marker_preflight:
+            raise DispatchError("project worktree has nested Git administration")
+    except DispatchError:
+        raise
+    except OSError as exc:
+        raise DispatchError("project worktree cannot be inspected") from exc
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
     marker = Path(root) / ".git"
     descriptor = -1
     try:
@@ -1383,47 +2543,608 @@ def _project_boundary(workdir: str) -> dict[str, Any]:
     marker_record: dict[str, Any] = {
         "kind": "file", "identity": list(_identity(after)), "sha256": digest(raw),
     }
-    pending = [root]
-    count = 0
-    while pending:
-        current = pending.pop()
-        try:
-            with os.scandir(current) as entries:
-                for entry in entries:
-                    if current == root and entry.name == ".git":
-                        continue
-                    count += 1
-                    if count > MAX_BOUNDARY_ENTRIES:
-                        raise DispatchError("project worktree boundary scan is too large")
-                    if entry.is_symlink():
-                        # `mktemp` commonly returns /var/... on macOS while
-                        # realpath canonicalizes the worktree to /private/var.
-                        # Resolve before containment so an internal link is not
-                        # falsely treated as an escape; chained escapes remain
-                        # outside the canonical root.
-                        resolved = os.path.realpath(entry.path)
-                        try:
-                            contained = os.path.commonpath([root, resolved]) == root
-                        except ValueError:
-                            contained = False
-                        if not contained:
-                            raise DispatchError("project worktree has an outward symlink")
-                    elif entry.is_dir(follow_symlinks=False):
-                        pending.append(entry.path)
-        except OSError as exc:
-            raise DispatchError("project worktree cannot be inspected") from exc
+    if not _worktree_symlink_boundary(root):
+        raise DispatchError("project worktree has an outward symlink")
     return marker_record
 
 
-def _worktree_snapshot(workdir: str) -> dict[str, Any] | None:
-    """Hash bounded Git-visible artefacts without retaining or publishing names.
+def _safe_git_owner_mode(metadata: os.stat_result, *, directory: bool) -> bool:
+    """Keep snapshot plumbing inside the documented local-owner/root TCB."""
+    mode = stat.S_IMODE(metadata.st_mode)
+    if metadata.st_uid not in {os.geteuid(), 0}:
+        return False
+    if not directory and metadata.st_mode & (stat.S_ISUID | stat.S_ISGID):
+        return False
+    if not (mode & 0o022):
+        return True
+    return bool(
+        directory and metadata.st_uid == 0 and (mode & stat.S_ISVTX)
+        and (mode & 0o022) == 0o022
+    )
 
-    Git supplies the tracked, deleted, untracked, and ignored path set.  Every
-    component is then opened relative to a no-follow root descriptor, so a
-    symlink contributes its own lstat and target bytes but is never traversed.
+
+def _safe_git_executable() -> tuple[str, dict[str, Any]] | None:
+    """Resolve Git through a bounded safe ownership and symlink-chain check."""
+    candidate = shutil.which("git")
+    if not candidate:
+        return None
+    candidate = os.path.abspath(candidate)
+    parts = list(Path(candidate).parts[1:])
+    current = Path(os.sep)
+    chain: list[tuple[tuple[int, int, int, int, int], str]] = []
+    components: list[tuple[int, int, int, int, int]] = []
+    seen: set[tuple[int, int]] = set()
+
+    def authority(info: os.stat_result) -> tuple[int, int, int, int, int]:
+        return info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid
+
+    def target_binding(info: os.stat_result) -> tuple[int, ...]:
+        return (
+            info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+            info.st_uid, info.st_gid, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+        )
+
+    try:
+        for _ in range(128):
+            if not parts:
+                break
+            part = parts.pop(0)
+            if part in {"", ".", ".."}:
+                return None
+            current /= part
+            metadata = os.lstat(current)
+            if stat.S_ISLNK(metadata.st_mode):
+                if metadata.st_uid not in {os.geteuid(), 0}:
+                    return None
+                identity = (metadata.st_dev, metadata.st_ino)
+                if identity in seen or len(chain) >= 16:
+                    return None
+                seen.add(identity)
+                target = os.readlink(current)
+                chain.append((authority(metadata), digest(os.fsencode(target))))
+                target_path = Path(target if os.path.isabs(target) else current.parent / target)
+                target_path = Path(os.path.normpath(str(target_path)))
+                if not target_path.is_absolute():
+                    return None
+                parts = list(target_path.parts[1:]) + parts
+                current = Path(os.sep)
+                continue
+            if parts:
+                if not stat.S_ISDIR(metadata.st_mode) or not _safe_git_owner_mode(metadata, directory=True):
+                    return None
+                components.append(authority(metadata))
+                if len(components) > 128:
+                    return None
+                continue
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or not _safe_git_owner_mode(metadata, directory=False)
+                or not (stat.S_IMODE(metadata.st_mode) & 0o111)
+            ):
+                return None
+            return str(current), {
+                "candidate": candidate,
+                "target": target_binding(metadata),
+                "chain": tuple(chain),
+                "components": tuple(components),
+            }
+    except OSError:
+        return None
+    return None
+
+
+def _confirm_safe_git_executable(
+    executable: str, expected: dict[str, Any],
+) -> bool:
+    current = _safe_git_executable()
+    return current is not None and current[0] == executable and current[1] == expected
+
+
+def _safe_git_is_outside_worktree(executable: str, worktree_root: str) -> bool:
+    """Keep Git probes outside a repository-controlled executable boundary."""
+    try:
+        root = os.path.realpath(worktree_root)
+        target = os.path.realpath(executable)
+        if not os.path.isabs(root) or not os.path.isabs(target):
+            return False
+        return os.path.commonpath((root, target)) != root
+    except (OSError, ValueError):
+        # Containment is an authority decision; an unavailable or incomparable
+        # path must not surface its spelling or authorize a Git subprocess.
+        return False
+
+
+def _stable_git_authority(info: os.stat_result) -> dict[str, int]:
+    """Serialize only durable no-follow authority facts for V9 state.
+
+    Callers may use fuller observations while holding descriptors to catch a
+    race.  Persisting timestamps, sizes, or link counts would make ordinary
+    Git maintenance and worktree activity look like a boundary replacement.
+    """
+    return {
+        "dev": info.st_dev,
+        "ino": info.st_ino,
+        "type": stat.S_IFMT(info.st_mode),
+        "mode": stat.S_IMODE(info.st_mode),
+        "uid": info.st_uid,
+        "gid": info.st_gid,
+    }
+
+
+def _full_stat_binding(info: os.stat_result) -> tuple[int, ...]:
+    """Keep transient scan consistency separate from persisted authority."""
+    return (
+        info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+        info.st_uid, info.st_gid, info.st_size, info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+_FIXED_GIT_READ_ARGV = {
+    ("rev-parse", "--is-inside-work-tree"),
+    ("rev-parse", "--show-toplevel"),
+    ("rev-parse", "--show-object-format"),
+    ("rev-parse", "--absolute-git-dir"),
+    ("rev-parse", "--git-common-dir"),
+    ("rev-parse", "--git-path", "index"),
+    ("rev-parse", "--verify", "-q", "HEAD^{tree}"),
+    (
+        "config", "--local", "--no-includes", "--get-regexp",
+        "^(extensions\\.partialclone|remote\\..*\\.promisor)$",
+    ),
+    ("config", "--bool", "--get", "core.sparseCheckout"),
+    ("ls-files", "-v", "-z"),
+    ("ls-files", "--stage", "-z"),
+    ("ls-files", "--debug", "-z"),
+    ("ls-files", "--resolve-undo", "-z"),
+    ("ls-files", "-z", "--others", "--exclude-standard"),
+    ("ls-files", "-z", "--others", "--ignored", "--exclude-standard"),
+    ("cat-file", "--batch"),
+}
+
+
+def _fixed_git_read_argv(arguments: list[str]) -> bool:
+    """Accept only the read-only plumbing shapes owned by this module."""
+    value = tuple(arguments)
+    if value in _FIXED_GIT_READ_ARGV:
+        return True
+    return bool(
+        len(value) == 4 and value[:3] == ("ls-tree", "-r", "-z")
+        and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value[3]) is not None
+    )
+
+
+def _bounded_git_read(
+    executable: str, executable_authority: dict[str, Any], root: str,
+    arguments: list[str], *, deadline: float, payload: bytes = b"",
+    allowed: tuple[int, ...] = (0,), stdout_limit: int | None = None,
+) -> tuple[int, bytes] | None:
+    """Run one allowlisted Git read under a bounded, owned process group.
+
+    A private supervisor remains the session leader after Git exits, so the
+    group identity is still signalable while a Git descendant holds stdout or
+    stderr open.  Both streams are consumed incrementally with hard caps; all
+    exits kill the group before a bounded reap and close every parent pipe.
+    """
+    if (
+        not _fixed_git_read_argv(arguments)
+        or not isinstance(payload, bytes)
+        or len(payload) > MAX_STREAM_BYTES
+        or not allowed
+        or any(type(code) is not int or not (0 <= code <= 255) for code in allowed)
+    ):
+        return None
+    output_limit = MAX_STREAM_BYTES if stdout_limit is None else stdout_limit
+    if type(output_limit) is not int or not (0 <= output_limit <= MAX_STREAM_BYTES):
+        return None
+    target_binding = tuple(executable_authority.get("target", ()))
+    if len(target_binding) != 9:
+        return None
+
+    def executable_is_bound() -> bool:
+        try:
+            return bool(
+                _confirm_safe_git_executable(executable, executable_authority)
+                and _full_stat_binding(os.lstat(executable)) == target_binding
+            )
+        except OSError:
+            return False
+
+    if not executable_is_bound() or time.monotonic() >= deadline:
+        return None
+    environment = os.environ.copy()
+    for key in tuple(environment):
+        if key.startswith("GIT_"):
+            environment.pop(key)
+    environment.update({
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_PAGER": "cat",
+        "GIT_EXTERNAL_DIFF": "",
+    })
+
+    status_read = status_write = control_read = control_write = -1
+    payload_read = payload_write = -1
+    process: subprocess.Popen[bytes] | None = None
+    launched = False
+    try:
+        status_read, status_write = os.pipe()
+        control_read, control_write = os.pipe()
+        payload_read, payload_write = os.pipe()
+        # The supervisor owns the process group and deliberately outlives its
+        # Git child.  Closing its copies of both output streams means any open
+        # pipe after Git exits belongs to a descendant that the group kill must
+        # close, rather than to the supervisor itself.
+        supervisor = (
+            'status_fd=$1; control_fd=$2; payload_fd=$3; shift 3; '
+            '"$@" <&"$payload_fd" & child=$!; exec 1>&- 2>&-; '
+            'wait "$child"; code=$?; printf "%s\\n" "$code" >&"$status_fd"; '
+            'IFS= read -r _ <&"$control_fd"; exit "$code"'
+        )
+        if not executable_is_bound() or time.monotonic() >= deadline:
+            return None
+        process = subprocess.Popen(
+            [
+                "/bin/sh", "-c", supervisor, "bounded-git-supervisor",
+                str(status_write), str(control_read), str(payload_read),
+                executable, "-C", root, "-c", "core.fsmonitor=false",
+                "-c", "core.hooksPath=/dev/null", *arguments,
+            ],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, env=environment,
+            pass_fds=(status_write, control_read, payload_read),
+            start_new_session=True,
+        )
+        launched = True
+    except OSError:
+        return None
+    finally:
+        for descriptor in (status_write, control_read, payload_read):
+            if descriptor >= 0:
+                os.close(descriptor)
+        if not launched:
+            for descriptor in (status_read, control_write, payload_write):
+                if descriptor >= 0:
+                    os.close(descriptor)
+            status_read = control_write = payload_write = -1
+
+    selector = selectors.DefaultSelector()
+    output = bytearray()
+    diagnostic_bytes = 0
+    status = bytearray()
+    sent = 0
+    group_terminated = False
+    reaped = False
+    status_code: int | None = None
+    try:
+        assert process is not None
+        assert process.stdout is not None and process.stderr is not None
+        for stream in (process.stdout, process.stderr):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        os.set_blocking(status_read, False)
+        selector.register(status_read, selectors.EVENT_READ)
+        if payload:
+            os.set_blocking(payload_write, False)
+            selector.register(payload_write, selectors.EVENT_WRITE)
+        else:
+            os.close(payload_write)
+            payload_write = -1
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            ready = selector.select(remaining)
+            if not ready:
+                return None
+            for key, events in ready:
+                if events & selectors.EVENT_READ:
+                    if key.fileobj == status_read:
+                        piece = os.read(status_read, 33 - len(status))
+                        if not piece:
+                            return None
+                        status.extend(piece)
+                        if len(status) > 32 or b"\n" not in status:
+                            continue
+                        if (
+                            status.count(b"\n") != 1 or not status.endswith(b"\n")
+                            or not status[:-1].isdigit()
+                        ):
+                            return None
+                        status_code = int(status[:-1])
+                        selector.unregister(status_read)
+                        os.close(status_read)
+                        status_read = -1
+                    elif key.fileobj is process.stdout:
+                        amount = min(65536, output_limit + 1 - len(output))
+                        piece = os.read(process.stdout.fileno(), amount)
+                        if not piece:
+                            selector.unregister(process.stdout)
+                        else:
+                            output.extend(piece)
+                            if len(output) > output_limit:
+                                return None
+                    else:
+                        amount = min(65536, MAX_STREAM_BYTES + 1 - diagnostic_bytes)
+                        piece = os.read(process.stderr.fileno(), amount)
+                        if not piece:
+                            selector.unregister(process.stderr)
+                        else:
+                            diagnostic_bytes += len(piece)
+                            if diagnostic_bytes > MAX_STREAM_BYTES:
+                                return None
+                if events & selectors.EVENT_WRITE:
+                    if sent == len(payload):
+                        selector.unregister(key.fileobj)
+                        os.close(payload_write)
+                        payload_write = -1
+                    else:
+                        sent += os.write(payload_write, payload[sent:])
+        if status_code is None or not executable_is_bound():
+            return None
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            return None
+        group_terminated = True
+        process.wait(timeout=TERM_GRACE)
+        reaped = True
+        if status_code not in allowed or not executable_is_bound():
+            return None
+        return status_code, bytes(output)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        selector.close()
+        if control_write >= 0:
+            # Unblock an intact supervisor before the final group/reap guard.
+            os.close(control_write)
+            control_write = -1
+        if payload_write >= 0:
+            os.close(payload_write)
+            payload_write = -1
+        if process is not None and not group_terminated:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
+        try:
+            if process is not None and not reaped:
+                process.wait(timeout=TERM_GRACE)
+        except subprocess.SubprocessError:
+            pass
+        if status_read >= 0:
+            os.close(status_read)
+        if process is not None:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
+
+
+def _git_boundary_identity(workdir: str) -> dict[str, Any] | None:
+    """Return the V9 no-follow Git administration boundary for ``workdir``.
+
+    This intentionally records repository *authority*, not repository state:
+    no index, HEAD, ref, object, worktree-file, timestamp, directory-size, or
+    link-count data reaches the returned mapping.  It is shared by the root
+    binder and the candidate/worktree scanner, so those paths use one stable
+    definition of a repository boundary.
     """
     root_fd = -1
     try:
+        if not os.path.isabs(workdir):
+            return None
+        root = os.path.realpath(workdir)
+        if MODEL_SELECTION._canonical_executable_path(root) != (
+            MODEL_SELECTION._canonical_executable_path(workdir)
+        ):
+            return None
+        named_root = os.lstat(workdir)
+        if not stat.S_ISDIR(named_root.st_mode) or stat.S_ISLNK(named_root.st_mode):
+            return None
+        root_fd = os.open(
+            os.fsencode(workdir),
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        opened_root = os.fstat(root_fd)
+        root_binding = _full_stat_binding(opened_root)
+        if _full_stat_binding(named_root) != root_binding:
+            return None
+        deadline = time.monotonic() + 5.0
+        try:
+            if not _marker_only_preflight(root_fd, deadline=deadline):
+                return None
+        except _MarkerPreflightLimit:
+            return None
+
+        def marker() -> dict[str, Any] | None:
+            """Open the exact root marker once, never following it."""
+            descriptor = -1
+            try:
+                before = os.stat(".git", dir_fd=root_fd, follow_symlinks=False)
+                if stat.S_ISDIR(before.st_mode):
+                    kind = "directory"
+                    descriptor = os.open(
+                        ".git", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                        | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd,
+                    )
+                    payload_sha = None
+                    payload_size = 0
+                elif stat.S_ISREG(before.st_mode) and before.st_size <= 8192:
+                    kind = "file"
+                    descriptor = os.open(
+                        ".git", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd,
+                    )
+                    chunks: list[bytes] = []
+                    total = 0
+                    while True:
+                        piece = os.read(descriptor, min(8193 - total, 8192))
+                        if not piece:
+                            break
+                        chunks.append(piece)
+                        total += len(piece)
+                        if total > 8192:
+                            return None
+                    payload_sha = digest(b"".join(chunks))
+                    payload_size = total
+                else:
+                    return None
+                opened = os.fstat(descriptor)
+                after = os.stat(".git", dir_fd=root_fd, follow_symlinks=False)
+            except OSError:
+                return None
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+            if (
+                _full_stat_binding(before) != _full_stat_binding(opened)
+                or _full_stat_binding(opened) != _full_stat_binding(after)
+                or (kind == "directory" and not stat.S_ISDIR(opened.st_mode))
+                or (kind == "file" and (
+                    not stat.S_ISREG(opened.st_mode)
+                    or payload_sha is None
+                    or opened.st_size != payload_size
+                ))
+            ):
+                return None
+            return {
+                "kind": kind,
+                "authority": _stable_git_authority(opened),
+                "content_sha256": payload_sha,
+            }
+
+        initial_marker = marker()
+        if initial_marker is None:
+            return None
+        safe_git = _safe_git_executable()
+        if safe_git is None:
+            return None
+        executable, executable_authority = safe_git
+        if not _safe_git_is_outside_worktree(executable, root):
+            # Repository-controlled programs are outside the read-only probe
+            # authority even when their mode and parent ownership look safe.
+            return None
+
+        def read_plumbing(arguments: list[str]) -> bytes | None:
+            """Use fixed read-only plumbing with the snapshot's Git guards."""
+            completed = _bounded_git_read(
+                executable, executable_authority, root, arguments,
+                deadline=deadline,
+            )
+            return None if completed is None else completed[1]
+
+        def one_line(raw: bytes) -> str | None:
+            if not raw.endswith(b"\n") or raw.count(b"\n") != 1 or b"\0" in raw:
+                return None
+            try:
+                text = os.fsdecode(raw[:-1])
+            except UnicodeError:
+                return None
+            return text if text else None
+
+        def directory(
+            path_text: str, *, allow_root_relative: bool = False,
+        ) -> tuple[str, dict[str, int]] | None:
+            """Reject a named Git authority that is a symlink or replacement."""
+            if not os.path.isabs(path_text) and not allow_root_relative:
+                return None
+            named_path = os.path.abspath(
+                path_text if os.path.isabs(path_text) else os.path.join(root, path_text)
+            )
+            try:
+                named = os.lstat(named_path)
+                if not stat.S_ISDIR(named.st_mode) or stat.S_ISLNK(named.st_mode):
+                    return None
+                canonical_path = os.path.realpath(named_path)
+                # The Git path itself must be direct; silently accepting a
+                # symlink can bind an arbitrary outward repository boundary.
+                if canonical_path != named_path:
+                    return None
+                descriptor = os.open(
+                    canonical_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                )
+                try:
+                    opened = os.fstat(descriptor)
+                finally:
+                    os.close(descriptor)
+                after = os.lstat(canonical_path)
+            except OSError:
+                return None
+            if (
+                _full_stat_binding(named) != _full_stat_binding(opened)
+                or _full_stat_binding(opened) != _full_stat_binding(after)
+            ):
+                return None
+            return canonical_path, _stable_git_authority(opened)
+
+        inside = read_plumbing(["rev-parse", "--is-inside-work-tree"])
+        top_level = read_plumbing(["rev-parse", "--show-toplevel"])
+        object_format = read_plumbing(["rev-parse", "--show-object-format"])
+        git_dir_raw = read_plumbing(["rev-parse", "--absolute-git-dir"])
+        common_dir_raw = read_plumbing(["rev-parse", "--git-common-dir"])
+        if (
+            inside != b"true\n"
+            or top_level != os.fsencode(root) + b"\n"
+            or object_format not in {b"sha1\n", b"sha256\n"}
+            or git_dir_raw is None or common_dir_raw is None
+        ):
+            return None
+        git_dir_text = one_line(git_dir_raw)
+        common_dir_text = one_line(common_dir_raw)
+        if git_dir_text is None or common_dir_text is None:
+            return None
+        git_dir = directory(git_dir_text)
+        common_dir = directory(common_dir_text, allow_root_relative=True)
+        if git_dir is None or common_dir is None:
+            return None
+        final_marker = marker()
+        if (
+            final_marker != initial_marker
+            or _full_stat_binding(os.fstat(root_fd)) != root_binding
+            or _full_stat_binding(os.lstat(workdir)) != root_binding
+            or read_plumbing(["rev-parse", "--show-toplevel"]) != top_level
+            or read_plumbing(["rev-parse", "--show-object-format"]) != object_format
+            or read_plumbing(["rev-parse", "--absolute-git-dir"]) != git_dir_raw
+            or read_plumbing(["rev-parse", "--git-common-dir"]) != common_dir_raw
+            or directory(git_dir_text) != git_dir
+            or directory(common_dir_text, allow_root_relative=True) != common_dir
+        ):
+            return None
+        return {
+            "root": {"realpath": root, "dev": opened_root.st_dev, "ino": opened_root.st_ino},
+            "git_marker": initial_marker,
+            "git_dir": {"realpath": git_dir[0], "authority": git_dir[1]},
+            "common_dir": {"realpath": common_dir[0], "authority": common_dir[1]},
+            "object_format": object_format[:-1].decode("ascii"),
+            "show_toplevel": root,
+        }
+    except (OSError, UnicodeError, ValueError, OverflowError):
+        return None
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+
+
+def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] | None:
+    """Hash a bounded worktree fact set without executing repository programs.
+
+    This deliberately avoids ``status``, diff, attributes' clean/textconv
+    filters, hooks, and external commands.  Read-only index/object plumbing
+    provides the tracked baseline; files are opened relative to a no-follow
+    root descriptor, so symlinks contribute their own target bytes only.  The
+    persisted v7 form deliberately excludes volatile inode/timestamp/cache
+    details; the complete bindings below remain in this one scan to detect
+    replacement and TOCTOU races.  ``legacy`` retains the exact v6 digest
+    algorithm for already-persisted v6 state only.
+    """
+    root_fd = -1
+    try:
+        if not os.path.isabs(workdir):
+            return None
+        root = os.path.realpath(workdir)
         root_fd = os.open(
             os.fsencode(workdir),
             os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
@@ -1431,132 +3152,753 @@ def _worktree_snapshot(workdir: str) -> dict[str, Any] | None:
         root_info = os.fstat(root_fd)
         if not stat.S_ISDIR(root_info.st_mode):
             return None
-        commands = (
-            ["git", "-C", workdir, "status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=all"],
-            ["git", "-C", workdir, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-            ["git", "-C", workdir, "ls-files", "-z", "--others", "--ignored", "--exclude-standard"],
-        )
-        outputs: list[bytes] = []
-        total = 0
-        for argv in commands:
-            completed = subprocess.run(
-                argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, check=False, timeout=5.0,
+
+        def binding(info: os.stat_result) -> tuple[int, ...]:
+            return (
+                info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+                info.st_uid, info.st_gid, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
             )
-            if completed.returncode != 0:
-                return None
-            total += len(completed.stdout)
-            if total > MAX_STREAM_BYTES:
-                return None
-            outputs.append(completed.stdout)
-        status_raw, visible_raw, ignored_raw = outputs
-        if any(raw and not raw.endswith(b"\0") for raw in outputs):
+
+        def authority(value: tuple[int, ...]) -> tuple[int, int, int, int, int]:
+            """Project stable identity out of a full in-call race binding."""
+            return value[0], value[1], value[4], value[5], stat.S_IMODE(value[2])
+
+        def persistent_metadata(value: tuple[int, ...]) -> tuple[int, ...]:
+            """Persist semantic file shape while retaining full race bindings."""
+            if not value:
+                return value
+            if legacy:
+                return value
+            return stat.S_IFMT(value[2]), stat.S_IMODE(value[2])
+
+        root_binding = binding(root_info)
+        if binding(os.lstat(workdir)) != root_binding:
             return None
-        dirty_entries = status_raw.count(b"\0")
-        paths = set(visible_raw.split(b"\0")[:-1]) | set(ignored_raw.split(b"\0")[:-1])
-        if dirty_entries > MAX_BOUNDARY_ENTRIES or len(paths) > MAX_BOUNDARY_ENTRIES:
+        # Do not start Git plumbing until a no-follow, marker-only traversal
+        # established that the sole marker has the exact root spelling.  The
+        # complete directory manifest below repeats the check as its later
+        # bounded timing-consistency observation.
+        deadline = time.monotonic() + 5.0
+        try:
+            marker_preflight = _marker_only_preflight(root_fd, deadline=deadline)
+        except _MarkerPreflightLimit:
             return None
-        observation = hashlib.sha256()
-        observation.update(b"agy-worker-worktree-v2\0")
-        observation.update(len(status_raw).to_bytes(8, "big"))
-        observation.update(status_raw)
-        content_bytes = 0
-        nofollow = getattr(os, "O_NOFOLLOW", 0)
-        directory = getattr(os, "O_DIRECTORY", 0)
-        for relative in sorted(paths):
-            parts = relative.split(b"/")
+        if not marker_preflight:
+            return None
+        if not _worktree_git_admin_alias_boundary(root):
+            return None
+
+        def git_marker_binding() -> tuple[bytes, tuple[int, ...], bytes] | None:
+            """Bind the root .git marker without following it or its contents."""
+            try:
+                before = os.stat(".git", dir_fd=root_fd, follow_symlinks=False)
+                if stat.S_ISDIR(before.st_mode):
+                    descriptor = os.open(
+                        ".git", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                        | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd,
+                    )
+                    kind = b"directory"
+                    payload = b""
+                elif stat.S_ISREG(before.st_mode) and before.st_size <= 8192:
+                    descriptor = os.open(
+                        ".git", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd,
+                    )
+                    kind = b"file"
+                else:
+                    return None
+                try:
+                    if kind == b"file":
+                        chunks: list[bytes] = []
+                        size = 0
+                        while True:
+                            piece = os.read(descriptor, min(8193 - size, 8192))
+                            if not piece:
+                                break
+                            chunks.append(piece); size += len(piece)
+                            if size > 8192:
+                                return None
+                        payload = b"".join(chunks)
+                    opened = os.fstat(descriptor)
+                finally:
+                    os.close(descriptor)
+                named = os.stat(".git", dir_fd=root_fd, follow_symlinks=False)
+            except OSError:
+                return None
             if (
-                not relative or relative.startswith(b"/")
-                or any(part in {b"", b".", b".."} for part in parts)
-                or parts[0] == b".git"
+                binding(before) != binding(opened) or binding(opened) != binding(named)
+                or (kind == b"directory" and not stat.S_ISDIR(opened.st_mode))
+                or (kind == b"file" and (not stat.S_ISREG(opened.st_mode) or len(payload) != opened.st_size))
             ):
                 return None
-            observation.update(len(relative).to_bytes(8, "big"))
-            observation.update(relative)
+            return kind, binding(opened), hashlib.sha256(payload).digest()
+
+        root_git_marker = git_marker_binding()
+        if root_git_marker is None:
+            return None
+        safe_git = _safe_git_executable()
+        if safe_git is None:
+            return None
+        target, target_authority = safe_git
+        if not _safe_git_is_outside_worktree(target, root):
+            return None
+        target_binding = tuple(target_authority["target"])
+        total = 0
+
+        def git_read(
+            arguments: list[str], payload: bytes = b"", *, allowed: tuple[int, ...] = (0,),
+        ) -> tuple[int, bytes] | None:
+            """Read fixed Git plumbing with no filters, hooks, fetches, or locks."""
+            nonlocal total
+            completed = _bounded_git_read(
+                target, target_authority, root, arguments, payload=payload,
+                allowed=allowed, deadline=deadline,
+                stdout_limit=MAX_STREAM_BYTES - total,
+            )
+            if completed is None:
+                return None
+            total += len(completed[1])
+            return completed
+
+        def one_path(raw: bytes, *, resolve: bool = True) -> str | None:
+            if not raw.endswith(b"\n") or raw.count(b"\n") != 1 or b"\0" in raw:
+                return None
+            value = os.fsdecode(raw[:-1])
+            if not value:
+                return None
+            path = value if os.path.isabs(value) else os.path.join(root, value)
+            return os.path.realpath(path) if resolve else os.path.abspath(path)
+
+        def directory_boundary(path: str) -> tuple[str, tuple[int, ...]] | None:
+            canonical_path = os.path.realpath(path)
+            if not os.path.isabs(canonical_path):
+                return None
+            try:
+                descriptor = os.open(
+                    canonical_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                )
+                try:
+                    opened = os.fstat(descriptor)
+                finally:
+                    os.close(descriptor)
+                named = os.lstat(canonical_path)
+            except OSError:
+                return None
+            if (
+                not stat.S_ISDIR(opened.st_mode) or stat.S_ISLNK(named.st_mode)
+                or binding(opened) != binding(named)
+            ):
+                return None
+            return canonical_path, binding(opened)
+
+        def index_binding(path: str) -> tuple[bytes | None, tuple[int, ...] | None] | None:
+            try:
+                descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            except FileNotFoundError:
+                return (None, None)
+            except OSError:
+                return None
+            try:
+                before = os.fstat(descriptor)
+                if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode) or before.st_size > MAX_STREAM_BYTES:
+                    return None
+                chunks: list[bytes] = []
+                total_bytes = 0
+                while True:
+                    piece = os.read(descriptor, min(65536, MAX_STREAM_BYTES + 1 - total_bytes))
+                    if not piece:
+                        break
+                    chunks.append(piece)
+                    total_bytes += len(piece)
+                    if total_bytes > MAX_STREAM_BYTES:
+                        return None
+                after = os.fstat(descriptor)
+            finally:
+                os.close(descriptor)
+            try:
+                named = os.lstat(path)
+            except OSError:
+                return None
+            if binding(before) != binding(after) or binding(after) != binding(named):
+                return None
+            return b"".join(chunks), binding(after)
+
+        def bound_git_worktree() -> bool:
+            """Require Git's configured worktree to remain this held root.
+
+            ``-C`` only chooses Git's process directory: a local
+            ``core.worktree`` can otherwise redirect plumbing enumeration.  The
+            two fixed rev-parse facts are therefore a prerequisite of every
+            listing, rather than a fact inferred from the marker or index path.
+            """
+            inside = git_read(["rev-parse", "--is-inside-work-tree"])
+            top_level = git_read(["rev-parse", "--show-toplevel"])
+            return (
+                inside is not None and inside[1] == b"true\n"
+                and top_level is not None
+                and top_level[1] == os.fsencode(root) + b"\n"
+            )
+
+        def bound_git_read(
+            arguments: list[str], payload: bytes = b"", *, allowed: tuple[int, ...] = (0,),
+        ) -> tuple[int, bytes] | None:
+            """Rebind the exact root immediately before one Git enumeration."""
+            if not bound_git_worktree():
+                return None
+            return git_read(arguments, payload, allowed=allowed)
+
+        if not bound_git_worktree():
+            return None
+
+        format_result = git_read(["rev-parse", "--show-object-format"])
+        if format_result is None or format_result[1] not in {b"sha1\n", b"sha256\n"}:
+            return None
+        object_length = 40 if format_result[1] == b"sha1\n" else 64
+        git_dir_result = git_read(["rev-parse", "--absolute-git-dir"])
+        if git_dir_result is None:
+            return None
+        git_dir_path = one_path(git_dir_result[1], resolve=False)
+        if git_dir_path is None:
+            return None
+        git_dir_boundary = directory_boundary(git_dir_path)
+        if git_dir_boundary is None:
+            return None
+        index_path_result = git_read(["rev-parse", "--git-path", "index"])
+        if index_path_result is None:
+            return None
+        index_path = one_path(index_path_result[1], resolve=False)
+        if index_path is None:
+            return None
+        before_index = index_binding(index_path)
+        if before_index is None:
+            return None
+        common_path_result = git_read(["rev-parse", "--git-common-dir"])
+        if common_path_result is None:
+            return None
+        common_path = one_path(common_path_result[1])
+        if common_path is None:
+            return None
+        common_dir_boundary = directory_boundary(common_path)
+        if common_dir_boundary is None:
+            return None
+        for alternate_name in ("alternates", "http-alternates"):
+            try:
+                os.lstat(os.path.join(common_path, "objects", "info", alternate_name))
+                return None
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return None
+        promisor = bound_git_read(
+            ["config", "--local", "--no-includes", "--get-regexp", "^(extensions\\.partialclone|remote\\..*\\.promisor)$"],
+            allowed=(0, 1),
+        )
+        sparse = bound_git_read(["config", "--bool", "--get", "core.sparseCheckout"], allowed=(0, 1))
+        if promisor is None or sparse is None or (promisor[0] == 0 and promisor[1]):
+            return None
+        if (promisor[0] == 1 and promisor[1]) or (sparse[0] == 0 and sparse[1] != b"false\n") or (sparse[0] == 1 and sparse[1]):
+            return None
+        skip = bound_git_read(["ls-files", "-v", "-z"])
+        if skip is None or (skip[1] and not skip[1].endswith(b"\0")):
+            return None
+        if any(
+            len(record) < 3 or record[1:2] != b" " or record.startswith(b"S ") or record[:1].islower()
+            for record in skip[1].split(b"\0")[:-1]
+        ):
+            return None
+
+        def listings() -> tuple[bytes, bytes, bytes, bytes, bytes, bytes] | None:
+            head_id = bound_git_read(["rev-parse", "--verify", "-q", "HEAD^{tree}"], allowed=(0, 1))
+            staged = bound_git_read(["ls-files", "--stage", "-z"])
+            debug = None if legacy else bound_git_read(["ls-files", "--debug", "-z"])
+            resolve_undo = None if legacy else bound_git_read(["ls-files", "--resolve-undo", "-z"])
+            other = bound_git_read(["ls-files", "-z", "--others", "--exclude-standard"])
+            ignored = bound_git_read(["ls-files", "-z", "--others", "--ignored", "--exclude-standard"])
+            if (
+                head_id is None or staged is None or (not legacy and debug is None)
+                or (not legacy and resolve_undo is None) or other is None or ignored is None
+            ):
+                return None
+            if not legacy:
+                parsed_resolve_undo = _parse_resolve_undo(resolve_undo[1], object_length)  # type: ignore[index]
+                if parsed_resolve_undo is None or parsed_resolve_undo:
+                    return None
+            if head_id[0] == 1:
+                if head_id[1]:
+                    return None
+                head = b""
+            elif len(head_id[1]) == object_length + 1 and head_id[1].endswith(b"\n"):
+                oid = head_id[1][:-1]
+                if any(char not in b"0123456789abcdef" for char in oid):
+                    return None
+                tree = bound_git_read(["ls-tree", "-r", "-z", oid.decode("ascii")])
+                if tree is None:
+                    return None
+                head = tree[1]
+            else:
+                return None
+            values = (head, staged[1], other[1], ignored[1])
+            if any(raw and not raw.endswith(b"\0") for raw in values):
+                return None
+            return values[0], values[1], b"" if debug is None else debug[1], values[2], values[3], head_id[1]
+
+        first = listings()
+        if first is None:
+            return None
+        head_raw, staged_raw, debug_raw, other_raw, ignored_raw, head_id_raw = first
+
+        def valid_oid(value: bytes) -> bool:
+            return len(value) == object_length and not any(char not in b"0123456789abcdef" for char in value)
+
+        def parse_tree(raw: bytes) -> dict[bytes, tuple[int, bytes]] | None:
+            parsed: dict[bytes, tuple[int, bytes]] = {}
+            for record in raw.split(b"\0")[:-1]:
+                try:
+                    header, relative = record.split(b"\t", 1)
+                    mode_raw, kind, oid = header.split(b" ")
+                    mode = int(mode_raw, 8)
+                except (ValueError, TypeError):
+                    return None
+                if kind != b"blob" or mode not in {0o100644, 0o100755, 0o120000} or not valid_oid(oid) or relative in parsed:
+                    return None
+                parsed[relative] = (mode, oid)
+            return parsed
+
+        def parse_index(raw: bytes) -> dict[bytes, tuple[int, bytes]] | None:
+            parsed: dict[bytes, tuple[int, bytes]] = {}
+            for record in raw.split(b"\0")[:-1]:
+                try:
+                    header, relative = record.split(b"\t", 1)
+                    mode_raw, oid, stage_raw = header.split(b" ")
+                    mode = int(mode_raw, 8)
+                except (ValueError, TypeError):
+                    return None
+                if stage_raw != b"0" or mode not in {0o100644, 0o100755, 0o120000} or not valid_oid(oid) or relative in parsed:
+                    return None
+                parsed[relative] = (mode, oid)
+            return parsed
+
+        def debug_index_flags(raw: bytes) -> dict[bytes, int] | None:
+            """Read documented ls-files debug flags, ignoring volatile stat cache.
+
+            The debug record's pathname is NUL-delimited; its preceding stat
+            cache lines are intentionally only shape-checked.  Flags are the
+            semantic portion: unsupported nonzero values, including
+            CE_INTENT_TO_ADD, reject rather than silently sharing an OID/mode
+            digest with a different index meaning.
+            """
+            parsed: dict[bytes, int] = {}
+            position = 0
+            while position < len(raw):
+                separator = raw.find(b"\0", position)
+                if separator < position:
+                    return None
+                relative = raw[position:separator]
+                position = separator + 1
+                lines: list[bytes] = []
+                for _ in range(5):
+                    ending = raw.find(b"\n", position)
+                    if ending < position:
+                        return None
+                    lines.append(raw[position:ending + 1])
+                    position = ending + 1
+                if not relative or relative in parsed or any(
+                    re.fullmatch(shape, line) is None
+                    for shape, line in zip((
+                        br"  ctime: [0-9]+:[0-9]+\n",
+                        br"  mtime: [0-9]+:[0-9]+\n",
+                        br"  dev: [0-9]+\tino: [0-9]+\n",
+                        br"  uid: [0-9]+\tgid: [0-9]+\n",
+                    ), lines[:4])
+                ):
+                    return None
+                flags = re.fullmatch(br"  size: [0-9]+\tflags: ([0-9a-f]+)\n", lines[4])
+                if flags is None:
+                    return None
+                try:
+                    parsed[relative] = int(flags.group(1), 16)
+                except ValueError:
+                    return None
+            return parsed
+
+        head = parse_tree(head_raw)
+        staged = parse_index(staged_raw)
+        flags = {} if legacy else debug_index_flags(debug_raw)
+        if head is None or staged is None or flags is None:
+            return None
+        if not legacy and (set(flags) != set(staged) or any(value != 0 for value in flags.values())):
+            return None
+        other = set(other_raw.split(b"\0")[:-1])
+        ignored = set(ignored_raw.split(b"\0")[:-1])
+        if other & ignored or len(head) + len(staged) + len(other) + len(ignored) > MAX_BOUNDARY_ENTRIES:
+            return None
+        object_ids = sorted({oid for _mode, oid in staged.values()})
+        objects_raw = bound_git_read(["cat-file", "--batch"], b"".join(item + b"\n" for item in object_ids))
+        if objects_raw is None:
+            return None
+        objects: dict[bytes, bytes] = {}
+        position = 0
+        while position < len(objects_raw[1]):
+            end = objects_raw[1].find(b"\n", position)
+            if end < 0:
+                return None
+            fields = objects_raw[1][position:end].split(b" ")
+            if len(fields) != 3 or fields[0] not in object_ids or fields[1] != b"blob":
+                return None
+            try:
+                size = int(fields[2])
+            except ValueError:
+                return None
+            start = end + 1
+            finish = start + size
+            if size < 0 or finish >= len(objects_raw[1]) or objects_raw[1][finish:finish + 1] != b"\n" or fields[0] in objects:
+                return None
+            objects[fields[0]] = objects_raw[1][start:finish]
+            position = finish + 1
+        if len(objects) != len(object_ids):
+            return None
+
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        directory = getattr(os, "O_DIRECTORY", 0)
+
+        def directory_manifest() -> tuple[bytes, int] | None:
+            """Bind bounded topology and count otherwise-unlisted empty directories."""
+            manifest_bytes = 0
+            manifest_entries = 0
+            empty_directories = 0
+
+            def walk(parent_fd: int, *, is_root: bool = False) -> bytes | None:
+                nonlocal manifest_bytes, manifest_entries, empty_directories
+                if time.monotonic() >= deadline:
+                    return None
+                before_directory = os.fstat(parent_fd)
+                if not stat.S_ISDIR(before_directory.st_mode):
+                    return None
+                records: list[tuple[bytes, bytes, tuple[int, ...], bytes]] = []
+                scan_fd = -1
+                try:
+                    # scandir does not own a caller-supplied descriptor on the
+                    # supported runtimes, so retain and close this duplicate in
+                    # our own finally path even if scandir rejects it.
+                    scan_fd = os.dup(parent_fd)
+                    with os.scandir(scan_fd) as scanned:
+                        for entry in scanned:
+                            if time.monotonic() >= deadline:
+                                return None
+                            name = entry.name
+                            raw_name = os.fsencode(name)
+                            if not raw_name or b"\0" in raw_name:
+                                continue
+                            if raw_name.lower() == b".git":
+                                # Only the root marker was bound separately.
+                                # Do not open or traverse a nested marker.
+                                if is_root and raw_name == b".git":
+                                    continue
+                                return None
+                            manifest_entries += 1
+                            if manifest_entries > MAX_BOUNDARY_ENTRIES:
+                                return None
+                            try:
+                                info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                            except OSError:
+                                return None
+                            metadata = binding(info)
+                            if stat.S_ISDIR(info.st_mode):
+                                try:
+                                    child_fd = os.open(name, os.O_RDONLY | directory | nofollow, dir_fd=parent_fd)
+                                except OSError:
+                                    return None
+                                try:
+                                    if binding(os.fstat(child_fd)) != metadata:
+                                        return None
+                                    payload = walk(child_fd)
+                                    if payload is None or binding(os.fstat(child_fd)) != metadata:
+                                        return None
+                                finally:
+                                    os.close(child_fd)
+                                kind = b"directory"
+                            elif stat.S_ISLNK(info.st_mode):
+                                try:
+                                    target_raw = os.fsencode(os.readlink(name, dir_fd=parent_fd))
+                                    named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                                except OSError:
+                                    return None
+                                manifest_bytes += len(target_raw)
+                                if manifest_bytes > MAX_STREAM_BYTES or binding(named) != metadata:
+                                    return None
+                                payload = hashlib.sha256(target_raw).digest()
+                                kind = b"symlink"
+                            elif stat.S_ISREG(info.st_mode):
+                                # Regular bytes and metadata are bound by the
+                                # primary listed-path observation and its final
+                                # revalidation.  This second pass is topology
+                                # only, so it never re-reads file contents.
+                                metadata = ()
+                                payload = b""
+                                kind = b"file"
+                            else:
+                                metadata = ()
+                                payload = b""
+                                kind = b"special"
+                            records.append((raw_name, kind, persistent_metadata(metadata), payload))
+                except OSError:
+                    return None
+                finally:
+                    if scan_fd >= 0:
+                        os.close(scan_fd)
+                try:
+                    if binding(os.fstat(parent_fd)) != binding(before_directory):
+                        return None
+                except OSError:
+                    return None
+                result = hashlib.sha256()
+                result.update(b"agy-worker-directory-manifest-v1\0")
+                for raw_name, kind, metadata, payload in sorted(records):
+                    result.update(len(raw_name).to_bytes(8, "big")); result.update(raw_name)
+                    result.update(len(kind).to_bytes(8, "big")); result.update(kind)
+                    metadata_raw = canonical(list(metadata))
+                    result.update(len(metadata_raw).to_bytes(8, "big")); result.update(metadata_raw)
+                    result.update(len(payload).to_bytes(8, "big")); result.update(payload)
+                if not is_root and not records:
+                    empty_directories += 1
+                return result.digest()
+
+            manifest = walk(root_fd, is_root=True)
+            if manifest is None:
+                return None
+            return manifest, empty_directories
+
+        observation = hashlib.sha256()
+        observation.update(b"agy-worker-worktree-v5\0" if legacy else b"agy-worker-worktree-v7\0")
+        canonical_root = os.fsencode(root)
+        observation.update(len(canonical_root).to_bytes(8, "big")); observation.update(canonical_root)
+        observation.update(canonical([root_info.st_dev, root_info.st_ino]))
+        observation.update(canonical([
+            os.fsdecode(root_git_marker[0]), list(authority(root_git_marker[1])),
+            root_git_marker[2].hex(),
+        ]))
+        observation.update(canonical([
+            git_dir_boundary[0], list(authority(git_dir_boundary[1])),
+            common_dir_boundary[0], list(authority(common_dir_boundary[1])),
+            os.path.realpath(index_path) if legacy else None,
+            None if before_index[0] is None else hashlib.sha256(before_index[0]).hexdigest() if legacy else None,
+            None if before_index[1] is None else list(authority(before_index[1])) if legacy else None,
+        ]))
+        content_bytes = 0
+        changed = 0
+        observed_paths: dict[bytes, tuple[Any, ...]] = {}
+        for relative in sorted(set(head) | set(staged) | other | ignored):
+            parts = relative.split(b"/")
+            if not relative or relative.startswith(b"/") or any(part in {b"", b".", b".."} for part in parts) or parts[0] == b".git":
+                return None
+            observation.update(len(relative).to_bytes(8, "big")); observation.update(relative)
+            indexed = staged.get(relative)
+            head_entry = head.get(relative)
+            for label, entry in ((b"head", head_entry), (b"index", indexed)):
+                observation.update(label + b"\0")
+                if entry is None:
+                    observation.update(b"missing\0")
+                else:
+                    observation.update(f"{entry[0]:o}".encode("ascii") + b"\0")
+                    observation.update(entry[1])
+            index_changed = indexed != head_entry
+            is_other = relative in other or relative in ignored
             parent_fd = os.dup(root_fd)
             try:
                 for component in parts[:-1]:
-                    next_fd = os.open(
-                        component, os.O_RDONLY | directory | nofollow,
-                        dir_fd=parent_fd,
-                    )
-                    os.close(parent_fd)
-                    parent_fd = next_fd
+                    next_fd = os.open(component, os.O_RDONLY | directory | nofollow, dir_fd=parent_fd)
+                    os.close(parent_fd); parent_fd = next_fd
                 name = parts[-1]
                 try:
                     before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
                 except FileNotFoundError:
                     observation.update(b"missing\0")
-                    continue
-                metadata = (
-                    before.st_dev, before.st_ino, before.st_mode, before.st_nlink,
-                    before.st_uid, before.st_gid, before.st_size,
-                    before.st_mtime_ns, before.st_ctime_ns,
-                )
-                observation.update(canonical(list(metadata)))
-                if stat.S_ISLNK(before.st_mode):
-                    target = os.readlink(name, dir_fd=parent_fd)
-                    target_raw = os.fsencode(target)
-                    content_bytes += len(target_raw)
-                    if content_bytes > MAX_STREAM_BYTES:
-                        return None
-                    after = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-                    if metadata != (
-                        after.st_dev, after.st_ino, after.st_mode, after.st_nlink,
-                        after.st_uid, after.st_gid, after.st_size,
-                        after.st_mtime_ns, after.st_ctime_ns,
-                    ):
-                        return None
-                    observation.update(b"symlink\0")
-                    observation.update(len(target_raw).to_bytes(8, "big"))
-                    observation.update(target_raw)
-                elif stat.S_ISREG(before.st_mode):
-                    file_fd = os.open(name, os.O_RDONLY | nofollow, dir_fd=parent_fd)
-                    try:
-                        opened = os.fstat(file_fd)
-                        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-                            return None
-                        content = hashlib.sha256()
-                        while True:
-                            piece = os.read(file_fd, 65536)
-                            if not piece:
-                                break
-                            content_bytes += len(piece)
-                            if content_bytes > MAX_STREAM_BYTES:
-                                return None
-                            content.update(piece)
-                        after = os.fstat(file_fd)
-                    finally:
-                        os.close(file_fd)
-                    named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-                    after_metadata = (
-                        after.st_dev, after.st_ino, after.st_mode, after.st_nlink,
-                        after.st_uid, after.st_gid, after.st_size,
-                        after.st_mtime_ns, after.st_ctime_ns,
-                    )
-                    named_metadata = (
-                        named.st_dev, named.st_ino, named.st_mode, named.st_nlink,
-                        named.st_uid, named.st_gid, named.st_size,
-                        named.st_mtime_ns, named.st_ctime_ns,
-                    )
-                    if metadata != after_metadata or after_metadata != named_metadata:
-                        return None
-                    observation.update(b"file\0")
-                    observation.update(content.digest())
+                    observed_paths[relative] = (b"missing",)
+                    differs = indexed is not None
                 else:
-                    observation.update(b"special\0")
+                    metadata = binding(before); observation.update(canonical(list(persistent_metadata(metadata))))
+                    if stat.S_ISLNK(before.st_mode):
+                        target_raw = os.fsencode(os.readlink(name, dir_fd=parent_fd))
+                        content_bytes += len(target_raw)
+                        if content_bytes > MAX_STREAM_BYTES or binding(os.stat(name, dir_fd=parent_fd, follow_symlinks=False)) != metadata:
+                            return None
+                        observation.update(b"symlink\0"); observation.update(len(target_raw).to_bytes(8, "big")); observation.update(target_raw)
+                        observed_paths[relative] = (b"symlink", metadata, target_raw)
+                        differs = indexed is None or indexed[0] != 0o120000 or target_raw != objects[indexed[1]]
+                    elif stat.S_ISREG(before.st_mode):
+                        descriptor = os.open(name, os.O_RDONLY | nofollow, dir_fd=parent_fd)
+                        try:
+                            opened = os.fstat(descriptor)
+                            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                                return None
+                            content = hashlib.sha256()
+                            while True:
+                                piece = os.read(descriptor, 65536)
+                                if not piece:
+                                    break
+                                content_bytes += len(piece)
+                                if content_bytes > MAX_STREAM_BYTES:
+                                    return None
+                                content.update(piece)
+                            after = os.fstat(descriptor)
+                        finally:
+                            os.close(descriptor)
+                        if binding(after) != metadata or binding(os.stat(name, dir_fd=parent_fd, follow_symlinks=False)) != metadata:
+                            return None
+                        content_digest = content.digest()
+                        observation.update(b"file\0"); observation.update(content_digest)
+                        observed_paths[relative] = (b"file", metadata, content_digest)
+                        differs = indexed is None or indexed[0] not in {0o100644, 0o100755} or bool(before.st_mode & 0o111) != bool(indexed[0] & 0o111) or before.st_size != len(objects[indexed[1]]) or content_digest != hashlib.sha256(objects[indexed[1]]).digest()
+                    else:
+                        observation.update(b"special\0")
+                        observed_paths[relative] = (b"special", metadata)
+                        differs = True
+                if is_other or index_changed or differs:
+                    changed += 1
             finally:
                 os.close(parent_fd)
-        return {"sha256": observation.hexdigest(), "entries": dirty_entries}
-    except (OSError, subprocess.TimeoutExpired, OverflowError):
+        initial_directory_observation = directory_manifest()
+        if initial_directory_observation is None:
+            return None
+        initial_directory_manifest, initial_empty_directories = initial_directory_observation
+        second = listings()
+        if second is None or second != first or index_binding(index_path) != before_index:
+            return None
+
+        revalidated_bytes = 0
+        for relative, expected in observed_paths.items():
+            parts = relative.split(b"/")
+            parent_fd = os.dup(root_fd)
+            try:
+                for component in parts[:-1]:
+                    next_fd = os.open(component, os.O_RDONLY | directory | nofollow, dir_fd=parent_fd)
+                    os.close(parent_fd); parent_fd = next_fd
+                name = parts[-1]
+                try:
+                    before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    current: tuple[Any, ...] = (b"missing",)
+                else:
+                    metadata = binding(before)
+                    if stat.S_ISLNK(before.st_mode):
+                        target_raw = os.fsencode(os.readlink(name, dir_fd=parent_fd))
+                        revalidated_bytes += len(target_raw)
+                        if (
+                            revalidated_bytes > MAX_STREAM_BYTES
+                            or binding(os.stat(name, dir_fd=parent_fd, follow_symlinks=False)) != metadata
+                        ):
+                            return None
+                        current = (b"symlink", metadata, target_raw)
+                    elif stat.S_ISREG(before.st_mode):
+                        descriptor = os.open(name, os.O_RDONLY | nofollow, dir_fd=parent_fd)
+                        try:
+                            opened = os.fstat(descriptor)
+                            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                                return None
+                            content = hashlib.sha256()
+                            while True:
+                                piece = os.read(descriptor, 65536)
+                                if not piece:
+                                    break
+                                revalidated_bytes += len(piece)
+                                if revalidated_bytes > MAX_STREAM_BYTES:
+                                    return None
+                                content.update(piece)
+                            after = os.fstat(descriptor)
+                        finally:
+                            os.close(descriptor)
+                        if (
+                            binding(after) != metadata
+                            or binding(os.stat(name, dir_fd=parent_fd, follow_symlinks=False)) != metadata
+                        ):
+                            return None
+                        current = (b"file", metadata, content.digest())
+                    else:
+                        current = (b"special", metadata)
+                if current != expected:
+                    return None
+            finally:
+                os.close(parent_fd)
+        third = listings()
+        if (
+            third is None
+            or third != first
+            or index_binding(index_path) != before_index
+        ):
+            return None
+        # The second complete manifest is the bounded linearization point: all
+        # Git/listing operations completed before it begins and it must equal
+        # the first manifest. A same-UID mutation after an entry's final read
+        # remains outside this finite observation and is a controller-TCB
+        # residual, not a reason to alternate scans indefinitely.
+        final_directory_observation = directory_manifest()
+        if final_directory_observation is None:
+            return None
+        final_directory_manifest, final_empty_directories = final_directory_observation
+        if (
+            final_directory_manifest != initial_directory_manifest
+            or final_empty_directories != initial_empty_directories
+            or index_binding(index_path) != before_index
+        ):
+            return None
+        if (
+            os.path.realpath(workdir) != root
+            or binding(os.fstat(root_fd)) != root_binding
+            or binding(os.lstat(workdir)) != root_binding
+            or git_marker_binding() != root_git_marker
+            or directory_boundary(git_dir_path) != git_dir_boundary
+            or directory_boundary(common_path) != common_dir_boundary
+            or index_binding(index_path) != before_index
+            or binding(os.lstat(target)) != target_binding
+            or not bound_git_worktree()
+        ):
+            return None
+        observation.update(b"directory-manifest-v1\0")
+        observation.update(initial_directory_manifest)
+        observation.update(initial_empty_directories.to_bytes(8, "big"))
+        return {"sha256": observation.hexdigest(), "entries": changed + initial_empty_directories}
+    except (OSError, subprocess.TimeoutExpired, OverflowError, ValueError, RecursionError):
         return None
     finally:
         if root_fd >= 0:
             os.close(root_fd)
 
 
-def _reconcile_worktree(workdir: str, baseline: dict[str, Any] | None) -> dict[str, Any]:
-    current = _worktree_snapshot(workdir)
+def _dispatch_root_identity(workdir: str) -> dict[str, Any] | None:
+    """Return V9's stable root/Git-administration authority record.
+
+    Unlike the semantic candidate snapshot, this extractor is intentionally
+    unchanged by ordinary tracked/untracked worktree edits, index refreshes,
+    HEAD/ref moves, and object maintenance.  Those remain candidate-binding
+    facts; this record detects a substituted repository boundary.
+    """
+    return _git_boundary_identity(workdir)
+
+
+def _state_worktree_snapshot(state: dict[str, Any], workdir: str) -> dict[str, Any] | None:
+    """Use a persisted algorithm identity; historical snapshots stay exact."""
+    if state.get("schema_version") in {5, 6}:
+        algorithm = WORKTREE_SNAPSHOT_LEGACY_V6
+    elif state.get("schema_version") == 7:
+        # V7 predates the explicit field but its semantic digest is frozen.
+        algorithm = WORKTREE_SNAPSHOT_SEMANTIC_V1
+    elif state.get("schema_version") is None:
+        # This private helper also accepts a baseline-only test/launch probe;
+        # it is never a validated persisted state.
+        algorithm = WORKTREE_SNAPSHOT_SEMANTIC_V1
+    else:
+        algorithm = state.get("worktree_snapshot_algorithm")
+    if algorithm == WORKTREE_SNAPSHOT_LEGACY_V6:
+        return _worktree_snapshot(workdir, legacy=True)
+    if algorithm == WORKTREE_SNAPSHOT_SEMANTIC_V1:
+        return _worktree_snapshot(workdir)
+    raise DispatchError("dispatch worktree snapshot algorithm is unavailable")
+
+
+def _reconcile_worktree(
+    workdir: str, baseline: dict[str, Any] | None, *, state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    current = _worktree_snapshot(workdir) if state is None else _state_worktree_snapshot(state, workdir)
     if current is None or baseline is None:
         return {
             "worktree_reconciliation": "unavailable",
@@ -1638,13 +3980,392 @@ def _bound_schemas(command: dict[str, Any], state: dict[str, Any]) -> tuple[Path
 
 def _bound_candidate_worktree(state: dict[str, Any], command: dict[str, Any]) -> None:
     """Reject post-review worktree drift before a continuation or final disposition."""
+    quiescent = state["controller_pid"] is None and (
+        state["status"] in TERMINAL
+        or (
+            state["status"] == "queued"
+            and state["attempt_origin"] == "conversation-continue"
+        )
+    )
+    if not quiescent:
+        raise DispatchError("candidate worktree is not quiescent")
+    # Candidate content and repository authority are separate checks.  The
+    # same V9 extractor used by lifecycle recovery is repeated here so a
+    # direct candidate-binding caller cannot turn a substituted Git boundary
+    # into a content-only comparison.
+    if state.get("schema_version") == CURRENT_STATE_SCHEMA and (
+        _git_boundary_identity(command["workdir"])
+        != state.get("worktree_root_identity")
+    ):
+        raise DispatchError("dispatch worktree root binding changed")
     expected_sha = state["candidate_worktree_sha256"]
     expected_entries = state["candidate_worktree_entries"]
-    current = _worktree_snapshot(command["workdir"])
+    current = _state_worktree_snapshot(state, command["workdir"])
     if current is None or expected_sha is None or expected_entries is None:
         raise DispatchError("candidate worktree reconciliation is unavailable")
     if current["sha256"] != expected_sha or current["entries"] != expected_entries:
         raise DispatchError("candidate worktree binding changed")
+
+
+def _bound_current_candidate(job: Path, state: dict[str, Any]) -> tuple[dict[str, Any], bytes]:
+    """Reopen every current-candidate authority before exposing or mutating it.
+
+    This is intentionally one bounded no-follow binding sequence, reused by
+    status action projection, continuation staging/launch, result delivery, and
+    finalization.  It binds the private command, state worktree/root, both
+    schemas, current canonical artifact, and post-provider worktree fact set.
+    """
+
+    if not (
+        state["candidate_recognized"] and state["result_available"]
+        and isinstance(state["result_path"], str)
+        and isinstance(state["result_sha256"], str)
+        and isinstance(state["result_identity"], list)
+    ):
+        raise DispatchError("dispatch has no current recognized candidate")
+    try:
+        bound_job = canonical_job(Path(job).resolve(strict=True))
+    except OSError as exc:
+        raise DispatchError("job directory is unavailable") from exc
+    # Old snapshots are readable evidence only.  Do not synthesize a V9 root
+    # identity during a result/status read: that would make a replacement root
+    # look approved before an explicit, provable transition.
+    legacy_read = state["schema_version"] < CURRENT_STATE_SCHEMA
+    result_path = Path(state["result_path"])
+    try:
+        result_parent = result_path.parent.resolve(strict=True)
+    except OSError as exc:
+        raise DispatchError("dispatch result path is unavailable") from exc
+    if not result_path.is_absolute() or result_parent != bound_job:
+        raise DispatchError("dispatch result path is outside this job")
+    command = _load_bound_command(bound_job, state, stage_readonly=False)
+    command, state = _bound_lifecycle_inputs(
+        bound_job, state, command, read_legacy=legacy_read,
+    )
+    schema_paths = _schema_paths(command)
+    if schema_paths is None:
+        raise DispatchError("dispatch schema argument is unavailable")
+    raw, info = read_regular(result_path, 1024 * 1024, "dispatch result")
+    if digest(raw) != state["result_sha256"] or list(_identity(info)) != state["result_identity"]:
+        raise DispatchError("dispatch result binding changed")
+    validator = Path(__file__).with_name("validate-envelope.py")
+    checked = [
+        subprocess.run(
+            [sys.executable, "-I", "-S", "-B", str(validator), str(schema), str(result_path)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        for schema in schema_paths
+    ]
+    if any(item.returncode != 0 for item in checked):
+        raise DispatchError("dispatch result is no longer valid")
+    rebound, rebound_info = read_regular(result_path, 1024 * 1024, "dispatch result")
+    if rebound != raw or _identity(rebound_info) != _identity(info):
+        raise DispatchError("dispatch result binding changed")
+    # The validator opened both schema pathnames; bind them and the project
+    # marker again before accepting its answer.
+    _bound_lifecycle_inputs(bound_job, state, command, read_legacy=legacy_read)
+    if not legacy_read:
+        _bound_candidate_worktree(state, command)
+    return command, raw
+
+
+def _verification_copy_destination(destination: Path, worktree: Path) -> tuple[Path, tuple[int, int, int, int, int]]:
+    """Accept one new private directory outside the bound candidate.
+
+    The copy is a driver convenience, not controller state or acceptance evidence.
+    Keeping the destination caller-selected avoids exposing a local path through the
+    public status surface, while the private-parent rule keeps accidental sharing and
+    symlink traversal out of the helper's scope.
+    """
+    if not destination.is_absolute() or destination.name in {"", ".", ".."}:
+        raise DispatchError("verification copy destination is invalid")
+    parent = destination.parent
+    if Path(os.path.realpath(parent)) != parent:
+        raise DispatchError("verification copy destination parent is not canonical")
+    try:
+        metadata = parent.lstat()
+    except OSError as exc:
+        raise DispatchError("verification copy destination parent is unavailable") from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise DispatchError("verification copy destination parent must be owner-private")
+    if destination.exists() or destination.is_symlink():
+        raise DispatchError("verification copy destination must be new")
+    try:
+        if os.path.commonpath((str(worktree), str(destination))) == str(worktree):
+            raise DispatchError("verification copy destination is inside the candidate")
+    except ValueError as exc:
+        raise DispatchError("verification copy destination is invalid") from exc
+    return destination, _identity(metadata)
+
+
+def _discard_verification_copy(destination: Path) -> None:
+    """Best-effort removal of a failed new verifier workspace without following links."""
+    try:
+        info = destination.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    try:
+        if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+            # Copied source metadata may make nested directories read-only.
+            # Restore write/search permission only on lstat-proven directories
+            # below this disposable copy; link nodes are never traversed or
+            # chmodded before rmtree unlinks them.
+            pending = [destination]
+            while pending:
+                current = pending.pop()
+                current_info = current.lstat()
+                if not stat.S_ISDIR(current_info.st_mode) or stat.S_ISLNK(current_info.st_mode):
+                    continue
+                os.chmod(current, 0o700)
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        child = Path(entry.path)
+                        child_info = child.lstat()
+                        if stat.S_ISDIR(child_info.st_mode) and not stat.S_ISLNK(child_info.st_mode):
+                            pending.append(child)
+            shutil.rmtree(destination)
+        elif stat.S_ISLNK(info.st_mode):
+            destination.unlink()
+    except OSError:
+        # The owner-private parent and the current local user are in the
+        # documented TCB.  A same-UID replacement can still make cleanup
+        # uncertain; never turn that into a successful copy result.
+        pass
+
+
+def _copy_bound_candidate(worktree: Path, destination: Path) -> None:
+    """Copy a candidate without following source links or copying Git metadata.
+
+    Every contained source link becomes a relative link to the corresponding
+    object under ``destination``.  Preserving either an absolute target or a
+    location-dependent relative spelling can resolve back into the candidate
+    after relocation, so ``copytree(symlinks=True)`` cannot provide this
+    isolation.
+    """
+    root = Path(os.path.realpath(worktree))
+
+    def require_contained_link(source: Path, target: Path) -> str:
+        before = source.lstat()
+        if not stat.S_ISLNK(before.st_mode):
+            raise DispatchError("verification copy source link changed")
+        try:
+            target_text = os.readlink(source)
+            resolved = os.path.realpath(source)
+            after = source.lstat()
+        except OSError as exc:
+            raise DispatchError("verification copy source link is unavailable") from exc
+        if _identity(before) != _identity(after):
+            raise DispatchError("verification copy source link changed")
+        try:
+            contained = os.path.commonpath([str(root), resolved]) == str(root)
+        except ValueError:
+            contained = False
+        if (
+            not contained or not os.path.exists(resolved)
+            or _resolved_path_is_git_administration(str(root), resolved)
+        ):
+            raise DispatchError("verification copy source link is unsafe")
+        # A relative source spelling can still escape a sibling copy (for
+        # example ``../source/target``).  Rebase every contained link from its
+        # resolved source object to the mirrored destination object instead of
+        # preserving raw target text.
+        mirrored = destination / os.path.relpath(resolved, root)
+        return os.path.relpath(mirrored, target.parent)
+
+    def copy_entry(source: Path, target: Path, *, is_root: bool = False) -> None:
+        try:
+            before = source.lstat()
+        except OSError as exc:
+            raise DispatchError("verification copy source is unavailable") from exc
+        if stat.S_ISLNK(before.st_mode):
+            target_text = require_contained_link(source, target)
+            try:
+                os.symlink(target_text, target)
+                shutil.copystat(source, target, follow_symlinks=False)
+            except OSError as exc:
+                raise DispatchError("verification copy failed") from exc
+            return
+        if stat.S_ISREG(before.st_mode):
+            try:
+                shutil.copy2(source, target, follow_symlinks=False)
+                copied = target.lstat()
+                after = source.lstat()
+            except OSError as exc:
+                raise DispatchError("verification copy failed") from exc
+            if (
+                _identity(before) != _identity(after)
+                or not stat.S_ISREG(copied.st_mode)
+            ):
+                raise DispatchError("verification copy source changed")
+            return
+        if not stat.S_ISDIR(before.st_mode):
+            raise DispatchError("verification copy source has unsupported entry")
+        try:
+            # Child entries must be created before source metadata is restored:
+            # an otherwise valid read-only source directory would reject them.
+            os.mkdir(target, 0o700)
+            entries = list(os.scandir(source))
+        except OSError as exc:
+            raise DispatchError("verification copy failed") from exc
+        markers = [entry.name for entry in entries if entry.name.lower() == ".git"]
+        if is_root:
+            if any(name != ".git" for name in markers):
+                raise DispatchError("verification copy source has ambiguous Git administration")
+        elif markers:
+            raise DispatchError("verification copy source has nested Git administration")
+        for entry in entries:
+            if is_root and entry.name == ".git":
+                continue
+            copy_entry(Path(entry.path), target / entry.name)
+        try:
+            after = source.lstat()
+            if _identity(before) != _identity(after):
+                raise DispatchError("verification copy source changed")
+            shutil.copystat(source, target, follow_symlinks=False)
+        except OSError as exc:
+            raise DispatchError("verification copy failed") from exc
+
+    try:
+        copy_entry(root, destination, is_root=True)
+        os.chmod(destination, 0o700)
+        copied = destination.lstat()
+    except (OSError, shutil.Error, DispatchError):
+        _discard_verification_copy(destination)
+        raise
+    if (
+        not stat.S_ISDIR(copied.st_mode)
+        or stat.S_ISLNK(copied.st_mode)
+        or copied.st_uid != os.getuid()
+        or stat.S_IMODE(copied.st_mode) != 0o700
+        or (destination / ".git").exists()
+        or (destination / ".git").is_symlink()
+    ):
+        _discard_verification_copy(destination)
+        raise DispatchError("verification copy binding changed")
+
+
+def command_verification_copy(job: Path, destination: Path, output_format: str) -> int:
+    """Create an isolated verifier workspace after exact candidate revalidation."""
+    with state_lock(job):
+        state, _raw, _sha = load_state(job)
+        if not _verification_copy_is_eligible(state):
+            raise DispatchError("verification copy is unavailable")
+        command = _load_bound_command(job, state, stage_readonly=False)
+        command, state = _bound_lifecycle_inputs(job, state, command)
+        command, _candidate_raw = _bound_current_candidate(job, state)
+        worktree = Path(command["workdir"])
+        destination, parent_identity = _verification_copy_destination(destination, worktree)
+        _copy_bound_candidate(worktree, destination)
+        try:
+            if _identity(destination.parent.lstat()) != parent_identity:
+                raise DispatchError("verification copy destination parent changed")
+            # The source candidate is still the final authority.  A verifier
+            # copy never reconciles ignored drift into that candidate.
+            _bound_current_candidate(job, state)
+        except (OSError, DispatchError):
+            _discard_verification_copy(destination)
+            raise DispatchError("candidate changed while creating verification copy") from None
+    result = {
+        "candidate_sha256": state["result_sha256"],
+        "verification_copy": "created",
+    }
+    if output_format == "text":
+        sys.stdout.buffer.write(
+            b"Driver verification copy created; no candidate acceptance was recorded.\n"
+        )
+        sys.stdout.buffer.flush()
+    else:
+        print_json(result)
+    return 0
+
+
+def _bound_legacy_unknown_result(job: Path, state: dict[str, Any]) -> bytes:
+    """Revalidate a V3/V4 historical result without promoting its provenance."""
+    if not _legacy_prior_result_is_unknown(state):
+        raise DispatchError("dispatch has no unknown legacy result")
+    try:
+        bound_job = canonical_job(Path(job).resolve(strict=True))
+    except OSError as exc:
+        raise DispatchError("job directory is unavailable") from exc
+    result_path = Path(state["last_success_path"])
+    try:
+        result_parent = result_path.parent.resolve(strict=True)
+    except OSError as exc:
+        raise DispatchError("legacy dispatch result path is unavailable") from exc
+    if not result_path.is_absolute() or result_parent != bound_job:
+        raise DispatchError("legacy dispatch result path is outside this job")
+    command = _load_bound_command(bound_job, state, stage_readonly=False)
+    command, state = _bound_lifecycle_inputs(bound_job, state, command, read_legacy=True)
+    if state["workflow"] != "project" or (
+        _project_boundary(command["workdir"]) != state["project_boundary"]
+    ):
+        raise DispatchError("legacy dispatch result boundary is unavailable")
+    schema_paths = _schema_paths(command)
+    if schema_paths is None:
+        raise DispatchError("dispatch result schema is unavailable")
+    raw, info = read_regular(result_path, 1024 * 1024, "dispatch result")
+    if digest(raw) != state["last_success_sha256"] or list(_identity(info)) != state["last_success_identity"]:
+        raise DispatchError("dispatch result binding changed")
+    validator = Path(__file__).with_name("validate-envelope.py")
+    checked = [
+        subprocess.run(
+            [sys.executable, "-I", "-S", "-B", str(validator), str(schema), str(result_path)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        for schema in schema_paths
+    ]
+    if any(item.returncode != 0 for item in checked):
+        raise DispatchError("dispatch result is no longer valid")
+    rebound, rebound_info = read_regular(result_path, 1024 * 1024, "dispatch result")
+    if rebound != raw or _identity(rebound_info) != _identity(info):
+        raise DispatchError("dispatch result binding changed")
+    _bound_lifecycle_inputs(bound_job, state, command, read_legacy=True)
+    return raw
+
+
+def _bound_worktree_baseline(state: dict[str, Any], command: dict[str, Any]) -> None:
+    """Require the queued worktree fact set immediately before provider launch."""
+    expected = state["worktree_baseline"]
+    current = _state_worktree_snapshot(state, command["workdir"])
+    if expected is None or current is None:
+        raise WorktreeBaselineError("queued worktree baseline is unavailable")
+    if (
+        current["sha256"] != expected["sha256"]
+        or current["entries"] != expected["entries"]
+    ):
+        raise WorktreeBaselineError("queued worktree baseline changed")
+
+
+def _restart_guard_accepts(
+    state: dict[str, Any], *, status: str | None = None,
+    elapsed_seconds: float | None = None,
+) -> bool:
+    """Share the state-only fresh-restart guard with public recovery projection."""
+    current_status = state["status"] if status is None else status
+    elapsed = float(state["elapsed_seconds"]) if elapsed_seconds is None else elapsed_seconds
+    return bool(
+        current_status in TERMINAL
+        and current_status != "orphaned"
+        # A frozen direct-selection record which just failed its final
+        # executable/version/help proof cannot become launch authority by
+        # creating another attempt.  Keep that local evidence for Codex, but
+        # reject recovery before it can stage or mutate the job.
+        and state["reason"] != "selection_preflight_failed"
+        and elapsed < float(state["max_seconds"])
+        and (
+            state["workflow"] == "legacy"
+            or state["attempt"] < state["max_cycles"]
+        )
+    )
 
 
 def _load_bound_command(
@@ -1659,6 +4380,155 @@ def _load_bound_command(
     ) or (stage_identity is None) != (state["stage_identity"] is None):
         raise DispatchError("staged prompt binding changed")
     return command
+
+
+def _load_bound_selection(
+    command: dict[str, Any], state: dict[str, Any], *,
+    legacy_command_binding: bool = False,
+) -> dict[str, Any] | None:
+    """Read the frozen selection bytes and bind them to command and state.
+
+    The record is private job state.  Its public JSON contains no executable
+    pathname, and a controller never turns it back into an argv[0] string.
+    """
+
+    path_value = command["selection_path"]
+    if path_value is None:
+        if state["selection_sha256"] is not None or state["selection_identity"] is not None:
+            raise DispatchError("dispatch selection state binding changed")
+        return None
+    # V1-V5 predate the duplicate state-level selection fields.  Their bound
+    # command still freezes the selection path, digest, and identity, which is
+    # sufficient for a read-only result revalidation.  Provider-causing and
+    # V6+ paths retain the stricter duplicate state binding.
+    if not (
+        legacy_command_binding and state["schema_version"] < 6
+    ) and (
+        state["selection_sha256"] != command["selection_sha256"]
+        or state["selection_identity"] != command["selection_identity"]
+    ):
+        raise DispatchError("dispatch selection state binding changed")
+    try:
+        raw, info = read_regular(Path(path_value), MAX_COMMAND_BYTES, "dispatch selection")
+    except DispatchError:
+        raise
+    if digest(raw) != command["selection_sha256"] or list(_identity(info)) != command["selection_identity"]:
+        raise DispatchError("dispatch selection binding changed")
+    try:
+        # A direct selection is an immutable dispatch input.  Its raw bytes and
+        # identity have just been compared to the command/state bindings; do
+        # not reapply a mutable current compatibility matrix to it here.
+        record = MODEL_SELECTION.decode_selection_record(raw, frozen=True)
+    except (MODEL_SELECTION.CallerError, MODEL_SELECTION.ReviewRequired, MODEL_SELECTION.EvidenceUnavailable) as exc:
+        raise DispatchError("dispatch selection is invalid") from exc
+    return record
+
+
+def _bound_lifecycle_inputs(
+    job: Path, state: dict[str, Any], command: dict[str, Any] | None = None,
+    *, read_legacy: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind non-provider recovery/finalization inputs before any state write.
+
+    This never writes state or launches a provider, but it does perform the
+    bounded local root, selection, schema, and boundary probes shared by status
+    projection and the mutating create/finalize/result paths.  Provider launch
+    still repeats its final executable and worktree probes.
+    """
+    if command is None:
+        command = _load_bound_command(job, state, stage_readonly=False)
+    checked = state
+    if checked["schema_version"] < CURRENT_STATE_SCHEMA and not read_legacy:
+        checked = _upgrade_legacy_state(checked, command)
+    # V3/V4 still carry their own lifecycle copy.  Before those historical
+    # bytes can produce a migration approval (or be upgraded under one), bind
+    # every immutable overlap to the frozen command.  ``hard_seconds`` is not
+    # included: an approved local extend is allowed to change that one limit.
+    # V1 has no comparable workflow contract and remains result-only.
+    if checked["schema_version"] in {3, 4}:
+        for key in ("job_id", "workflow", "max_cycles"):
+            if checked[key] != command[key]:
+                raise DispatchError("dispatch immutable lifecycle binding changed")
+        for key in ("idle_seconds", "max_seconds"):
+            if float(checked[key]) != float(command[key]):
+                raise DispatchError("dispatch immutable lifecycle binding changed")
+    if checked["workdir"] != command["workdir"]:
+        raise DispatchError("dispatch worktree root binding changed")
+    root = Path(command["workdir"])
+    try:
+        root_info = root.lstat()
+    except OSError as exc:
+        raise DispatchError("dispatch worktree root is unavailable") from exc
+    if checked["schema_version"] >= CURRENT_STATE_SCHEMA:
+        root_identity = _dispatch_root_identity(command["workdir"])
+        if (
+            root_identity is None
+            or root_identity != checked["worktree_root_identity"]
+        ):
+            raise DispatchError("dispatch worktree root binding changed")
+    elif not read_legacy:
+        raise DispatchError("legacy dispatch root identity cannot be proved")
+    if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode):
+        raise DispatchError("dispatch worktree root binding changed")
+    try:
+        # macOS exposes /var through its documented /private/var alias.  A
+        # no-symlink root can legitimately stringify through that alias; all
+        # other resolution changes remain a fail-closed boundary drift.
+        if MODEL_SELECTION._canonical_executable_path(os.path.realpath(root)) != (
+            MODEL_SELECTION._canonical_executable_path(command["workdir"])
+        ):
+            raise DispatchError("dispatch worktree root binding changed")
+    except OSError as exc:
+        raise DispatchError("dispatch worktree root is unavailable") from exc
+    if not _worktree_symlink_boundary(command["workdir"]):
+        raise DispatchError("dispatch worktree symlink boundary changed")
+    _load_bound_selection(
+        command, checked, legacy_command_binding=read_legacy,
+    )
+    if checked["schema_version"] >= CURRENT_STATE_SCHEMA:
+        _bound_schemas(command, checked)
+    elif not read_legacy or _schema_paths(command) is None:
+        raise DispatchError("legacy dispatch schema binding cannot be proved")
+    if checked["workflow"] == "project" and (
+        _project_boundary(command["workdir"]) != checked["project_boundary"]
+    ):
+        raise DispatchError("project worktree boundary changed")
+    return command, checked
+
+
+def _reprobe_direct_selection(
+    command: dict[str, Any], state: dict[str, Any], argv: list[str],
+) -> tuple[str, dict[str, Any]] | None:
+    """Prove direct selection compatibility immediately before provider launch."""
+
+    record = _load_bound_selection(command, state)
+    if record is None:
+        return None
+    mode = record["selection_mode"]
+    if mode not in {"exact-model", "model-effort"}:
+        return None
+    if not _selection_launch_is_authorized(record):
+        # A current exact-version V2 record is mechanically sufficient.  V2
+        # drift remains historical evidence only; drift needs a bound V3 Codex
+        # disposition before any provider-causing lifecycle.
+        raise DispatchError("dispatch direct selection lacks approved compatibility disposition")
+    if argv.count("--model") != 1:
+        raise DispatchError("dispatch direct selection model argument is invalid")
+    model_index = argv.index("--model")
+    if model_index + 1 >= len(argv) or argv[model_index + 1] != record["resolved_agy_model"]:
+        raise DispatchError("dispatch direct selection model argument drifted")
+    # The worker does not support an effort flag; selection resolves effort into
+    # one immutable compound model slug.  A new one would be a fallback surface.
+    if "--effort" in argv:
+        raise DispatchError("dispatch direct selection effort fallback is invalid")
+    try:
+        # Keep both facts through the subsequent bounded worktree scan.  The
+        # final confirmation belongs after that scan, immediately before the
+        # provider process is created; otherwise an A->B replacement can make
+        # a successfully probed A authorize an unprobed B.
+        return MODEL_SELECTION.reprobe_selection_record(record)
+    except (MODEL_SELECTION.CallerError, MODEL_SELECTION.ReviewRequired, MODEL_SELECTION.EvidenceUnavailable) as exc:
+        raise SelectionPreflightError("dispatch direct selection reprobe failed") from exc
 
 
 def _terminate(process: subprocess.Popen[bytes]) -> int:
@@ -1700,7 +4570,7 @@ def _event(line: bytes) -> tuple[bool, str | None, str | None]:
             line.decode("utf-8", "strict"), object_pairs_hook=_duplicates,
             parse_constant=_invalid_json_constant,
         )
-    except (UnicodeError, json.JSONDecodeError, DispatchError):
+    except (UnicodeError, json.JSONDecodeError, DispatchError, RecursionError):
         return False, None, None
     if not isinstance(value, dict):
         return False, None, None
@@ -1753,7 +4623,7 @@ def _terminal_result(stream: Path, *, strict: bool = False) -> dict[str, Any] | 
                         raw.decode("utf-8", "strict"), object_pairs_hook=_duplicates,
                         parse_constant=_invalid_json_constant,
                     )
-                except (UnicodeError, json.JSONDecodeError, DispatchError):
+                except (UnicodeError, json.JSONDecodeError, DispatchError, RecursionError):
                     if strict:
                         return None
                     continue
@@ -1852,7 +4722,7 @@ def _validate_terminal_envelope(
     outer_status = "CANCELLED" if outer_status in {"CANCELED", "CANCELLED"} else outer_status
     value = result.get("structured_output")
     if not isinstance(value, dict):
-        return None, outer_status, "structured_output"
+        return None, outer_status, "missing_structured_output"
     # The provider may omit exactly these ergonomic report-only arrays.  Every
     # other required field and every extra field remain schema failures.
     value = dict(value)
@@ -1923,7 +4793,10 @@ def controller(job: Path, ownership_fd: int) -> int:
         schema_paths: tuple[Path, Path] | None = None
         try:
             command = _load_bound_command(job, state, stage_readonly=False)
+            _load_bound_selection(command, state)
             schema_paths = _bound_schemas(command, state)
+            if not _worktree_symlink_boundary(command["workdir"]):
+                raise DispatchError("dispatch worktree symlink boundary changed")
             if state["workflow"] == "project":
                 if _project_boundary(command["workdir"]) != state["project_boundary"]:
                     raise DispatchError("project worktree boundary changed")
@@ -1931,7 +4804,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 feedback = _bound_verification(job, state)
                 if feedback is None:
                     raise DispatchError("project continuation has no verification feedback")
-                _bound_candidate_worktree(state, command)
+                command, _candidate_raw = _bound_current_candidate(job, state)
         except (OSError, DispatchError):
             transition(job, state, prior_raw, _terminal_projection(
                 state, status="failed", reason="status_unavailable",
@@ -1946,6 +4819,10 @@ def controller(job: Path, ownership_fd: int) -> int:
         try:
             stdout_fd = _ensure_new_private(stream_path)
             stderr_fd = _ensure_new_private(stderr_path)
+            # The launch budget starts when this controller marks the attempt
+            # running, so final local probes and the bounded worktree scan are
+            # charged against both the per-attempt and absolute deadlines.
+            started_mono = time.monotonic()
             now = time.time()
             state, prior_raw, _sha = transition(job, state, prior_raw, {
                 "status": "running", "controller_pid": os.getpid(),
@@ -1955,6 +4832,7 @@ def controller(job: Path, ownership_fd: int) -> int:
             })
             _stage(command, True)
             _load_bound_command(job, state, stage_readonly=True)
+            _load_bound_selection(command, state)
             schema_paths = _bound_schemas(command, state)
         except (OSError, DispatchError):
             if stdout_fd >= 0: os.close(stdout_fd)
@@ -1987,8 +4865,6 @@ def controller(job: Path, ownership_fd: int) -> int:
         process: subprocess.Popen[bytes] | None = None
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         sizes = {"stdout": 0, "stderr": 0}
-        heartbeat_mono = time.monotonic()
-        started_mono = heartbeat_mono
         next_notice = started_mono + float(command["notice_seconds"])
         reason: str | None = None
         limit_kind: str | None = None
@@ -2012,15 +4888,70 @@ def controller(job: Path, ownership_fd: int) -> int:
                 return False
         try:
             try:
-                process = subprocess.Popen(
-                    argv,
-                    cwd=command["workdir"],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    start_new_session=True,
-                    preexec_fn=lambda: os.umask(int(command["child_umask"], 8)),
-                )
+                # Re-read the frozen record and re-probe *after* all controller
+                # mutations and immediately before the provider-causing launch.
+                # argv[0] stays the portable public spelling while executable=
+                # pins the safe, freshly-probed target for this one process.
+                executable_binding = _reprobe_direct_selection(command, state, argv)
+                _bound_worktree_baseline(state, command)
+                if not _worktree_symlink_boundary(command["workdir"]):
+                    raise DispatchError("dispatch worktree symlink boundary changed")
+                exact_executable = None
+                if executable_binding is not None:
+                    try:
+                        exact_executable = MODEL_SELECTION.confirm_executable_binding(
+                            *executable_binding,
+                        )
+                    except MODEL_SELECTION.EvidenceUnavailable as exc:
+                        raise SelectionPreflightError(
+                            "dispatch direct selection launch binding changed",
+                        ) from exc
+                # This sample must follow both bounded local checks.  Anything
+                # slower than the remaining attempt or absolute budget stops
+                # before a provider-causing Popen.
+                launch_mono = time.monotonic()
+                elapsed = float(state["attempt_base_elapsed"]) + max(0.0, launch_mono - started_mono)
+                if stop_signal is not None:
+                    reason = "interrupted"
+                    returncode = 128 + stop_signal
+                elif elapsed >= float(state["max_seconds"]):
+                    reason, limit_kind = "hard_deadline_exceeded", "max-runtime"
+                    returncode = EXIT_BY_REASON[reason]
+                elif elapsed >= float(state["hard_seconds"]):
+                    reason, limit_kind = "hard_deadline_exceeded", "hard"
+                    returncode = EXIT_BY_REASON[reason]
+                else:
+                    process = subprocess.Popen(
+                        argv,
+                        executable=exact_executable,
+                        cwd=command["workdir"],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        start_new_session=True,
+                        preexec_fn=lambda: os.umask(int(command["child_umask"], 8)),
+                    )
+                    # Local bindings/preflight remain charged to the hard and
+                    # maximum budgets from ``started_mono``.  The idle lease
+                    # instead begins only once this provider process exists.
+                    heartbeat_mono = time.monotonic()
+            except MODEL_SELECTION.ProbeInterrupted as exc:
+                # model_selection owns and reaps its short-lived probe group;
+                # the controller owns the terminal dispatch projection.
+                stop_signal = exc.signal_number
+                reason = "interrupted"
+                returncode = 128 + exc.signal_number
+            except SelectionPreflightError:
+                reason = "selection_preflight_failed"
+                failure_stage = "selection_preflight"
+                returncode = EXIT_BY_REASON[reason]
+            except WorktreeBaselineError:
+                reason = "status_unavailable"
+                failure_stage = "binding_failure"
+                returncode = EXIT_BY_REASON[reason]
+            except DispatchError:
+                reason = "status_unavailable"
+                returncode = EXIT_BY_REASON["status_unavailable"]
             except OSError:
                 # A legacy tier deliberately reaches this point even when agy is
                 # absent.  Publish a terminal, sanitized dispatch failure rather
@@ -2028,10 +4959,11 @@ def controller(job: Path, ownership_fd: int) -> int:
                 reason = "agy_failed_unclassified"
                 returncode = 127
             else:
-                assert process.stdout is not None and process.stderr is not None
-                for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
-                    os.set_blocking(pipe.fileno(), False)
-                    selector.register(pipe, selectors.EVENT_READ, name)
+                if process is not None:
+                    assert process.stdout is not None and process.stderr is not None
+                    for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
+                        os.set_blocking(pipe.fileno(), False)
+                        selector.register(pipe, selectors.EVENT_READ, name)
             # Pipe EOF is the completion observation.  Do not poll/reap the leader
             # before process-group closure; its PID reserves the group identifier.
             while process is not None and selector.get_map():
@@ -2138,6 +5070,8 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if reason is not None:
                     break
             if process is not None:
+                # The candidate worktree binding below is taken only after this
+                # reaps the provider process group and closes its output streams.
                 returncode = _terminate(process)
                 process = None
             os.fsync(stdout_fd)
@@ -2154,6 +5088,10 @@ def controller(job: Path, ownership_fd: int) -> int:
                 )
                 if terminal_failure is not None:
                     reason, provider_retry_after = terminal_failure
+                    # The exact 1.1.13 quota terminal has a valid outer ERROR
+                    # fact but intentionally carries no structured report.
+                    # Preserve both facts without treating quota as a report.
+                    failure_stage = "missing_structured_output"
                     if provider_retry_after is not None:
                         provider_retry_observed = time.time()
                 elif sizes["stdout"] == 0:
@@ -2237,6 +5175,15 @@ def controller(job: Path, ownership_fd: int) -> int:
                 current, current_raw, _current_sha = load_state(job)
                 if current["attempt"] != state["attempt"] or current["status"] in TERMINAL:
                     raise DispatchError("dispatch changed before terminalization")
+                # Persist the latest value while still holding the terminal
+                # transition lock, then use that same value for recovery
+                # eligibility.  A slow failed preflight must never advertise a
+                # restart that create_state will (correctly) refuse.
+                elapsed = max(
+                    elapsed,
+                    float(current["elapsed_seconds"]),
+                    float(current["attempt_base_elapsed"]) + max(0.0, time.monotonic() - started_mono),
+                )
                 if current["cancel_requested"]:
                     reason, final_status, exit_code = "cancelled", "cancelled", EXIT_BY_REASON["cancelled"]
                     result_path = None
@@ -2250,7 +5197,19 @@ def controller(job: Path, ownership_fd: int) -> int:
                     and current["attempt_origin"] == "conversation-continue"
                     and current["candidate_recognized"]
                 )
-                candidate_worktree = _worktree_snapshot(command["workdir"]) if result_binding is not None else None
+                candidate_worktree = _state_worktree_snapshot(current, command["workdir"]) if result_binding is not None else None
+                terminal_snapshot_unavailable = bool(
+                    result_binding is not None
+                    and outer_status in {"SUCCESS", "ERROR", "CANCELLED"}
+                    and candidate_worktree is None
+                )
+                if terminal_snapshot_unavailable:
+                    # Keep the exact terminal report binding and its outer
+                    # provenance for forensics, but it is not a reviewable
+                    # candidate without a worktree binding.
+                    reason, final_status = "status_unavailable", "failed"
+                    exit_code = EXIT_BY_REASON["status_unavailable"]
+                    failure_stage = "binding_failure"
                 candidate_recognized = result_binding is not None or preserve_candidate
                 candidate_unavailable = bool(
                     candidate_recognized and failure_stage == "binding_failure"
@@ -2294,12 +5253,24 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "last_activity": "terminal_received" if saw_terminal else current["last_activity"],
                     "next_action": (
                         "blocked" if candidate_unavailable else "driver_review"
-                    ) if candidate_recognized else ("resume" if current["conversation_id"] else "blocked"),
+                    ) if candidate_recognized else (
+                        "none" if reason == "selection_preflight_failed" else
+                        "resume" if current["conversation_id"] else "blocked"
+                    ),
                     "next_action_command": None,
-                    **_reconcile_worktree(command["workdir"], current["worktree_baseline"]),
+                    **(
+                        {
+                            "worktree_reconciliation": "unavailable",
+                            "worktree_changes_present": None,
+                            "worktree_changed_since_dispatch": None,
+                        }
+                        if terminal_snapshot_unavailable else
+                        _reconcile_worktree(command["workdir"], current["worktree_baseline"], state=current)
+                    ),
                     "resume_available": bool(
                         current["conversation_id"] and not candidate_recognized
                         and final_status == "failed"
+                        and reason != "selection_preflight_failed"
                     ),
                     "continue_available": False,
                     "remote_cancel_unverified": reason in {"cancelled", "interrupted"},
@@ -2307,7 +5278,18 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "provider_retry_after_seconds": provider_retry_after,
                     "provider_retry_observed_epoch": provider_retry_observed,
                 }
-                if current["schema_version"] == 5:
+                if result_binding is not None:
+                    # Continuation feedback remains bound audit evidence for
+                    # the prior candidate. A newly returned candidate starts
+                    # unreviewed, so it cannot inherit prior check evidence.
+                    updates.update({
+                        "check_summary": None,
+                        "check_counts": {
+                            "passed": 0, "failed": 0,
+                            "advisory": 0, "missing": 0,
+                        },
+                    })
+                if current["schema_version"] >= 5:
                     if boundary_failed or candidate_unavailable:
                         updates.update({"phase": "blocked", "assurance": "blocked"})
                     elif candidate_recognized:
@@ -2320,6 +5302,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                             "assurance": "pending",
                             "continue_available": bool(
                                 final_status in {"succeeded", "failed"}
+                                and reason != "selection_preflight_failed"
                                 and candidate_source != "provider_cancelled"
                                 and current["conversation_id"]
                                 and current["attempt"] < current["max_cycles"]
@@ -2356,7 +5339,7 @@ def controller(job: Path, ownership_fd: int) -> int:
 
 def create_state(
     job: Path, origin: str, *, resume: bool, approve_sha: str | None = None,
-    verification: dict[str, Any] | None = None,
+    approve_migration_sha: str | None = None, verification: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     command, command_raw, command_info = load_command(job)
     stage_sha, stage_info = _bound_stage(command, readonly=False)
@@ -2372,31 +5355,38 @@ def create_state(
                     "conversation-continue": "continue",
                 }[origin]
                 raise _state_approval_error(state, sha, action)
-            _load_bound_command(job, state, stage_readonly=False)
-            if state["schema_version"] != 5:
-                state = _upgrade_legacy_state(state, command)
-            _bound_schemas(command, state)
-            if state["workflow"] == "project" and (
-                _project_boundary(command["workdir"]) != state["project_boundary"]
-            ):
-                raise DispatchError("project worktree boundary changed")
+            # Reject a semantically unavailable recovery before probing its
+            # launch inputs.  This keeps an approved stale-state diagnostic
+            # actionable without treating the diagnostic itself as authority
+            # to rebind a root for a recovery that cannot run.
+            if origin != "conversation-continue":
+                if state["status"] not in TERMINAL or state["status"] == "orphaned":
+                    raise DispatchError("only a terminal unsuccessful dispatch can continue")
+                if origin == "fresh-restart" and not _restart_guard_accepts(state):
+                    raise DispatchError("dispatch fresh restart is unavailable")
+                if origin == "conversation-resume" and not _resume_is_eligible(state, time.time()):
+                    raise DispatchError("dispatch is not resume-eligible")
+            if state["schema_version"] in {3, 4}:
+                command, state = _approved_legacy_migration(
+                    job, state, raw, approve_migration_sha,
+                )
+            else:
+                command = _load_bound_command(job, state, stage_readonly=False)
+            command, state = _bound_lifecycle_inputs(job, state, command)
+            if not _selection_launch_is_authorized(_load_bound_selection(command, state)):
+                raise DispatchError("dispatch direct selection lacks approved compatibility disposition")
             if origin == "conversation-continue":
                 if (
-                    state["workflow"] == "legacy" or not state["candidate_recognized"]
-                    or state["status"] not in {"succeeded", "failed"}
-                    or state["phase"] not in {"awaiting-verification", "repair-failed"}
-                    or not state["continue_available"] or verification is None
+                    verification is None
+                    or not _continue_is_eligible(state, time.time())
                 ):
                     raise DispatchError("dispatch continuation is unavailable")
                 _require_current_candidate_verification(verification, state)
-                _bound_candidate_worktree(state, command)
+                command, _candidate_raw = _bound_current_candidate(job, state)
             else:
-                if state["status"] not in TERMINAL or state["status"] == "orphaned":
-                    raise DispatchError("only a terminal unsuccessful dispatch can continue")
-                if origin == "conversation-resume" and state["candidate_recognized"]:
-                    raise DispatchError("recognized candidates require driver review, finalize, or continue")
-                if origin == "conversation-resume" and not state["resume_available"]:
-                    raise DispatchError("dispatch is not resume-eligible")
+                # The terminal/recovery predicates were checked above before
+                # any launch-input probe; preserve that linearization here.
+                pass
             if float(state["elapsed_seconds"]) >= float(state["max_seconds"]):
                 raise DispatchError("dispatch max runtime is exhausted")
             if state["workflow"] != "legacy" and state["attempt"] >= state["max_cycles"]:
@@ -2418,6 +5408,7 @@ def create_state(
                     stage_sha=stage_sha, stage_identity=stage_info,
                     project_boundary=state["project_boundary"],
                     schema_bindings=schema_bindings,
+                    state_schema=state["schema_version"],
                 )
                 next_state["sequence"] = state["sequence"] + 1
                 next_state["previous_state_sha256"] = sha
@@ -2477,6 +5468,7 @@ def create_state(
 def spawn(
     job: Path, origin: str, *, resume: bool, foreground: bool,
     approve_sha: str | None = None, verification: dict[str, Any] | None = None,
+    approve_migration_sha: str | None = None,
     output_format: str = "json",
 ) -> int:
     parent_signal: int | None = None
@@ -2495,7 +5487,8 @@ def spawn(
     try:
       with lifecycle_lock(job, blocking=False) as ownership_fd:
         state, _sha = create_state(
-            job, origin, resume=resume, approve_sha=approve_sha, verification=verification,
+            job, origin, resume=resume, approve_sha=approve_sha,
+            approve_migration_sha=approve_migration_sha, verification=verification,
         )
         if parent_signal is not None:
             _terminalize_queued_signal(job, parent_signal)
@@ -2535,7 +5528,7 @@ def spawn(
             _terminate(controller_process)
         return 128 + parent_signal
       if not foreground:
-        print_control_status(current, sha, output_format)
+        print_control_status(current, sha, output_format, job=job)
         return 0
       while controller_process.poll() is None:
         if parent_signal is not None and not forwarded:
@@ -2560,7 +5553,7 @@ def spawn(
       if completion_signal is None and final["status"] == "succeeded" and final["result_path"] is not None:
         command_result(job)
       else:
-        sys.stderr.buffer.write(canonical(public_status(final, sha)))
+        sys.stderr.buffer.write(canonical(public_status(final, sha, job=job)))
         sys.stderr.buffer.flush()
       return result_code
     finally:
@@ -2607,7 +5600,7 @@ def _terminal_projection(
         "remote_cancel_unverified": remote_cancel_unverified,
         "continue_available": can_continue,
         "result_available": candidate and not candidate_unavailable,
-        **_reconcile_worktree(state["workdir"], state["worktree_baseline"]),
+        **_reconcile_worktree(state["workdir"], state["worktree_baseline"], state=state),
     }
     if candidate:
         updates.update({
@@ -2627,7 +5620,7 @@ def _terminal_projection(
             "next_action": "resume" if resume_eligible else "blocked",
             "next_action_command": None,
         })
-    if state["schema_version"] == 5:
+    if state["schema_version"] >= 5:
         updates.update({
             "phase": "blocked" if candidate_unavailable else ("awaiting-verification" if candidate else "attempt-failed"),
             "assurance": "blocked" if candidate_unavailable else "pending",
@@ -2683,7 +5676,7 @@ def command_status(job: Path, output_format: str = "json") -> int:
         except DispatchError as exc:
             if str(exc) != "dispatch controller is active":
                 raise
-    print_control_status(state, sha, output_format)
+    print_control_status(state, sha, output_format, job=job)
     return 0
 
 
@@ -2694,22 +5687,41 @@ def command_wait(job: Path, after: str, timeout: float, output_format: str = "js
     while True:
         state, _raw, sha = read_state_snapshot(job)
         if sha != after or state["status"] in TERMINAL:
-            print_control_status(state, sha, output_format)
+            print_control_status(state, sha, output_format, job=job)
             return 0
         if time.monotonic() >= deadline:
-            print_control_status(state, sha, output_format)
+            print_control_status(state, sha, output_format, job=job)
             return 0
         time.sleep(min(0.20, max(0.0, deadline - time.monotonic())))
 
 
 def command_result(job: Path, output_format: str = "json") -> int:
     state, _raw, sha = read_state_snapshot(job)
+    if state["candidate_recognized"]:
+        if _is_active(state):
+            raise DispatchError("dispatch result is unavailable while a repair is active")
+        _command, candidate_raw = _bound_current_candidate(job, state)
+        if output_format == "text":
+            print_text_status(state, sha, job=job)
+        else:
+            sys.stdout.buffer.write(candidate_raw)
+            sys.stdout.buffer.flush()
+        return 0
+    if _legacy_prior_result_is_unknown(state):
+        legacy_raw = _bound_legacy_unknown_result(job, state)
+        if output_format == "text":
+            print_text_status(state, sha, job=job)
+        else:
+            sys.stdout.buffer.write(legacy_raw)
+            sys.stdout.buffer.flush()
+        return 0
     result_path = state["result_path"]
     result_sha = state["result_sha256"]
     result_identity = state["result_identity"]
     if (
         state["workflow"] == "project" and state["status"] in {"failed", "cancelled"}
         and state["phase"] == "completed" and state["assurance"] == "partially_verified"
+        and result_path is None
     ):
         result_path = state["last_success_path"]
         result_sha = state["last_success_sha256"]
@@ -2725,7 +5737,7 @@ def command_result(job: Path, output_format: str = "json") -> int:
     schema_paths = _schema_paths(command)
     if schema_paths is None:
         raise DispatchError("dispatch result schema is unavailable")
-    if state["schema_version"] == 5:
+    if state["schema_version"] >= 5:
         schema_paths = _bound_schemas(command, state)
     validator = Path(__file__).with_name("validate-envelope.py")
     checked = [
@@ -2739,24 +5751,29 @@ def command_result(job: Path, output_format: str = "json") -> int:
     if any(item.returncode != 0 for item in checked):
         raise DispatchError("dispatch result is no longer valid")
     if output_format == "text":
-        print_text_status(state, sha)
+        print_text_status(state, sha, job=job)
     else:
         sys.stdout.buffer.write(raw)
         sys.stdout.buffer.flush()
     return 0
 
 
-def command_continue(job: Path, approve_sha: str, output_format: str = "json") -> int:
+def command_continue(
+    job: Path, approve_sha: str, approve_migration_sha: str | None,
+    output_format: str = "json",
+) -> int:
     verification = _verification_from_stdin()
-    if not verification["failed_checks"] and verification["missing_checks"] == 0:
-        raise DispatchError("project continuation requires one failed or missing check")
     return spawn(
         job, "conversation-continue", resume=True, foreground=False,
-        approve_sha=approve_sha, verification=verification, output_format=output_format,
+        approve_sha=approve_sha, approve_migration_sha=approve_migration_sha,
+        verification=verification, output_format=output_format,
     )
 
 
-def command_finalize(job: Path, approve_sha: str, assurance: str, output_format: str = "json") -> int:
+def command_finalize(
+    job: Path, approve_sha: str, approve_migration_sha: str | None,
+    assurance: str, output_format: str = "json",
+) -> int:
     if assurance not in {"verified", "partially_verified", "rejected", "blocked"}:
         raise DispatchError("project assurance is invalid")
     verification = _verification_from_stdin()
@@ -2764,29 +5781,20 @@ def command_finalize(job: Path, approve_sha: str, assurance: str, output_format:
         state, raw, sha = load_state(job)
         if sha != approve_sha:
             raise _state_approval_error(state, sha, "finalize")
-        command = _load_bound_command(job, state, stage_readonly=False)
-        if state["schema_version"] != 5:
-            state = _upgrade_legacy_state(state, command)
-        eligible_candidate = bool(
-            state["candidate_recognized"] and state["result_available"] and state["result_path"]
-            and state["workflow"] != "legacy"
-        )
-        if not eligible_candidate:
+        if state["schema_version"] in {3, 4}:
+            command, state = _approved_legacy_migration(
+                job, state, raw, approve_migration_sha,
+            )
+        else:
+            command = _load_bound_command(job, state, stage_readonly=False)
+        command, state = _bound_lifecycle_inputs(job, state, command)
+        if not _finalize_is_eligible(state):
             raise DispatchError("dispatch finalization is stale or unavailable")
-        _bound_schemas(command, state)
         _require_current_candidate_verification(verification, state)
-        _bound_candidate_worktree(state, command)
+        if assurance == "verified" and not _verification_is_verified(verification, state["workflow"]):
+            raise DispatchError("verified finalization requires complete driver evidence")
+        command, _candidate_raw = _bound_current_candidate(job, state)
         counts = _verification_counts(verification)
-        if assurance == "verified" and (not eligible_candidate or not _verification_is_verified(verification, state["workflow"])):
-            raise DispatchError("verified finalization requires passing complete checks")
-        if assurance == "partially_verified" and not eligible_candidate:
-            raise DispatchError("partial finalization has no candidate")
-        if assurance == "rejected" and not (eligible_candidate and (counts["failed"] or counts["missing"])):
-            raise DispatchError("rejected finalization requires a driver-observed failure")
-        if assurance == "blocked" and (
-            not (counts["failed"] or counts["missing"])
-        ):
-            raise DispatchError("blocked finalization requires a driver-observed blocker")
         path: Path | None = None
         identity: tuple[int, int, int, int, int] | None = None
         try:
@@ -2810,7 +5818,7 @@ def command_finalize(job: Path, approve_sha: str, assurance: str, output_format:
         except Exception:
             _discard_new_verification(path, identity)
             raise
-    print_control_status(state, sha, output_format)
+    print_control_status(state, sha, output_format, job=job)
     return 0
 
 
@@ -2821,6 +5829,7 @@ def command_control(job: Path, action: str, approve_sha: str, seconds: float | N
         state, raw, sha = load_state(job)
         if sha != approve_sha:
             raise _state_approval_error(state, sha, action)
+        now = time.time()
         if state["status"] not in {"queued", "running", "cancel-requested"}:
             raise DispatchError("state approval is stale or dispatch is terminal")
         if action == "cancel":
@@ -2829,25 +5838,19 @@ def command_control(job: Path, action: str, approve_sha: str, seconds: float | N
             updates = {"cancel_requested": True, "status": "cancel-requested"}
         else:
             assert seconds is not None
-            now = time.time()
-            current_elapsed = float(state["elapsed_seconds"])
-            if state["started_epoch"] is not None:
-                current_elapsed = max(
-                    current_elapsed,
-                    float(state["attempt_base_elapsed"]) + now - float(state["started_epoch"]),
-                )
-            progress_fresh = (
-                state["progress_count"] > 0
-                and state["last_progress_epoch"] is not None
-                and now - float(state["last_progress_epoch"]) < float(state["idle_seconds"])
-            )
-            if not progress_fresh or current_elapsed >= float(state["hard_seconds"]):
+            if not _extend_is_eligible(state, now):
                 raise DispatchError("deadline extension requires fresh progress before the hard deadline")
             if seconds <= 0 or state["hard_seconds"] + seconds > state["max_seconds"]:
                 raise DispatchError("deadline extension exceeds max runtime")
             updates = {"hard_seconds": state["hard_seconds"] + seconds}
-        state, _raw, sha = _transition_locked(job, state, raw, updates)
-    print_json(public_status(state, sha))
+        state, _raw, sha = _transition_locked(
+            job, state, raw, updates,
+            # Cancel/extend are cheap active-process controls.  They must not
+            # trigger a candidate/root migration scan or turn an active V3/V4
+            # record into a different lifecycle state.
+            legacy_control_only=state["schema_version"] in {1, 3, 4},
+        )
+    print_json(public_status(state, sha, job=job))
     return 0
 
 
@@ -2865,18 +5868,22 @@ def duration(text: str) -> float:
 def parser() -> Parser:
     result = Parser(prog="agy-dispatch")
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
-    for name in ("run", "start", "resume", "restart", "continue", "status", "result", "controller"):
+    for name in ("run", "start", "resume", "restart", "continue", "status", "result", "verification-copy", "controller"):
         item = commands.add_parser(name)
         item.add_argument("--job-dir", required=True)
         if name == "controller":
             item.add_argument("--ownership-fd", required=True, type=int)
         if name in {"resume", "restart", "continue"}:
             item.add_argument("--approve-state-sha", required=name != "resume")
-        if name in {"resume", "restart", "continue", "status", "result"}:
+            item.add_argument("--approve-migration-sha")
+        if name in {"resume", "restart", "continue", "status", "result", "verification-copy"}:
             item.add_argument("--format", choices=("json", "text"), default="json")
+        if name == "verification-copy":
+            item.add_argument("--destination", required=True)
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--job-dir", required=True)
     finalize.add_argument("--approve-state-sha", required=True)
+    finalize.add_argument("--approve-migration-sha")
     finalize.add_argument("--assurance", required=True)
     finalize.add_argument("--format", choices=("json", "text"), default="json")
     wait = commands.add_parser("wait")
@@ -2909,23 +5916,32 @@ def main(argv: list[str] | None = None) -> int:
             raise _missing_state_approval(job, "resume")
         return spawn(
             job, "conversation-resume", resume=True, foreground=False,
-            approve_sha=args.approve_state_sha, output_format=args.format,
+            approve_sha=args.approve_state_sha,
+            approve_migration_sha=args.approve_migration_sha, output_format=args.format,
         )
     if args.command == "restart":
         return spawn(
             job, "fresh-restart", resume=True, foreground=False,
-            approve_sha=args.approve_state_sha, output_format=args.format,
+            approve_sha=args.approve_state_sha,
+            approve_migration_sha=args.approve_migration_sha, output_format=args.format,
         )
     if args.command == "continue":
-        return command_continue(job, args.approve_state_sha, args.format)
+        return command_continue(
+            job, args.approve_state_sha, args.approve_migration_sha, args.format,
+        )
     if args.command == "status":
         return command_status(job, args.format)
     if args.command == "wait":
         return command_wait(job, args.after_state_sha, args.timeout, args.format)
     if args.command == "result":
         return command_result(job, args.format)
+    if args.command == "verification-copy":
+        return command_verification_copy(job, Path(args.destination), args.format)
     if args.command == "finalize":
-        return command_finalize(job, args.approve_state_sha, args.assurance, args.format)
+        return command_finalize(
+            job, args.approve_state_sha, args.approve_migration_sha,
+            args.assurance, args.format,
+        )
     if args.command in {"cancel", "extend"}:
         return command_control(
             job, args.command, args.approve_state_sha,
@@ -2942,6 +5958,6 @@ if __name__ == "__main__":
         command_name = sys.argv[1] if len(sys.argv) > 1 else ""
         if command_name == "resume":
             raise SystemExit(EXIT_BY_REASON["resume_failed"])
-        if command_name in {"status", "wait", "result"}:
+        if command_name in {"status", "wait", "result", "verification-copy"}:
             raise SystemExit(EXIT_BY_REASON["status_unavailable"])
         raise SystemExit(64)
