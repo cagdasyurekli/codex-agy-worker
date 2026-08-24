@@ -656,6 +656,12 @@ fi
 
 printf 'small task\n' | run_worker tier --tier cheap > "$TMP/tier.out" 2> "$TMP/tier.err"
 rc=$?
+if [[ "$rc" != "0" ]]; then
+    # Keep the first synthetic dispatch actionable in remote CI.  This fixture
+    # contains no provider prose or credentials; later cases intentionally keep
+    # their captured diagnostics private.
+    tail -n 5 "$TMP/tier.err" >&2
+fi
 expect_exit "--tier cheap produces an envelope" 0 "$rc"
 if [[ "$(<"$TMP/tier.model")" == "gemini-3.6-flash-low" ]]; then
     ok "--tier is resolved after CLI parsing"
