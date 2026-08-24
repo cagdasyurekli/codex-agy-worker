@@ -1680,8 +1680,8 @@ tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/ma
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite
-tests/test-packaging.sh       371-case offline Codex package/CI-policy/relocation/landing suite
-tests/test-doctor.sh          251-case offline fake-tool/read-only doctor suite
+tests/test-packaging.sh       377-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational daily/manual fixed-source watch

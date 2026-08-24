@@ -943,7 +943,9 @@ fi
 
 if [[ -x "$ROOT/agy-worker.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/agy-worker.sh" ]] \
-        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" ]]; then
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
+        && [[ ! -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]]; then
     ok "root and portable packages include the progress-aware local dispatcher"
 else
     bad "root and portable packages include the progress-aware local dispatcher"
@@ -1139,6 +1141,7 @@ required_runtime_dependencies=(
     scripts/compatibility.py
     scripts/candidate_state.py
     scripts/agy_dispatch.py
+    scripts/agy_dispatch_worktree.py
     scripts/job_lifecycle.py
     scripts/doctor-metadata.py
     scripts/feedback-triage.py
@@ -1286,6 +1289,7 @@ for specification in \
     'scripts/recommendation_record.py:executable' \
     'scripts/candidate_state.py:executable' \
     'scripts/agy_dispatch.py:executable' \
+    'scripts/agy_dispatch_worktree.py:data' \
     'scripts/job_lifecycle.py:executable' \
     'scripts/model_selection.py:executable' \
     'schemas/worker-result.schema.json:data' \
@@ -2098,6 +2102,8 @@ if [[ -x "$ROOT/agy-worker.sh" ]] \
         && grep -Fq 'skills/agy-worker/runtime/agy-worker.sh' "$ROOT/agy-worker.sh" \
         && [[ -x "$TMP/installed/agy-worker/runtime/doctor.sh" ]] \
         && [[ -x "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch.py" ]] \
+        && [[ -f "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
+        && [[ ! -x "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
         && [[ -x "$TMP/installed/agy-worker/runtime/scripts/doctor-metadata.py" ]] \
         && grep -Fq '`"$PIPELINE/scripts/agy_dispatch.py"`' "$TMP/installed/agy-worker/SKILL.md" \
         && cmp -s "$ROOT/compat/agy-verified-version.txt" \
@@ -2445,6 +2451,9 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'tests/test-agy-worker-remediation.py 87-case' "$ROOT/README.md" \
         && grep -Fq 'EXPECTED_CHECKS = 87' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (87 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
+        && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 377 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \

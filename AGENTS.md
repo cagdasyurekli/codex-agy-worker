@@ -105,7 +105,7 @@ Each profile is data, not a driver: it cannot name a repository, path, command,
 selection, authorization, dispatch, or Git action. These offline coverage counts are
 not live-provider claims:
 
-- Adoption measurement: 41 offline; Local update notifier: 89 offline.
+- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 377 offline.
 - Canonical version-attestation runner: 165 offline; Version-attestation mutation harness: 60 offline.
 - Canonical models-inventory attestation runner: 116 offline; Explicit-account models capture runner: 84 offline.
 - Repository-only version bootstrap runner: 139 offline; Repository-only version initial-bootstrap runner: 43 offline.

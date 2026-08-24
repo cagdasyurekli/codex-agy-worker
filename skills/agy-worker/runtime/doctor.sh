@@ -87,6 +87,7 @@ doctor_runtime_complete() {
     done
 
     for required in \
+        scripts/agy_dispatch_worktree.py \
         schemas/worker-result.schema.json \
         schemas/worker-result.provider.schema.json \
         schemas/evidence-receipt.schema.json \
@@ -141,7 +142,9 @@ doctor_runtime_complete() {
         esac
         [[ "$dependency_canonical" == "$runtime_canonical/$required" \
             && -f "$dependency_canonical" && ! -x "$dependency_canonical" \
-            && ! -L "$dependency_canonical" ]] || return 1
+            && ! -L "$dependency_canonical" \
+            && "$(/usr/bin/stat -f '%Lp' "$dependency_canonical" 2>/dev/null \
+                || /usr/bin/stat -c '%a' "$dependency_canonical" 2>/dev/null)" == 644 ]] || return 1
     done
 }
 
