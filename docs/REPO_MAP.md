@@ -11,11 +11,19 @@ driver task
   -> model-recommendation.sh --stage pre-dispatch (visible advisory only)
   -> agy-worker.sh selector preflight
        -> legacy tier mapping; or portable exact-SHA/version/source-bound resolver
-       -> one bounded installed `agy --version` probe for direct selection only
-          -> HUP/INT/TERM closes the probe process group before task read
+       -> every direct selection: bounded safe-target `agy --version` and strict
+          critical `agy --help` probes; exact version match proceeds mechanically,
+          while drift requires Codex disposition plus the exact raw-help SHA
+       -> silent pre-task executable-record binding reprobe (no executable pathname
+          is printed); HUP/INT/TERM closes the probe process group before task read
        -> owner-private selection.json; exact slug and matrix SHA frozen once
   -> agy-worker.sh / agy_dispatch.py (private staged prompt, one exact model,
        process-owning per-job controller, idle/hard/max clocks)
+       -> every provider attempt: final version/help/executable binding reprobe
+          immediately before provider launch
+       -> direct-selection preflight failure: preserve local evidence only; no
+          same-job resume/restart; Codex reviews sanitized interface evidence before
+          creating a new job with the same caller-selected model and effort
   -> agy (untrusted worker; NDJSON is consumed incrementally)
   -> provider result (`SUCCESS`, `ERROR`, or `CANCELED`; a valid candidate may survive)
   -> provider schema (report-only `commands_run`/`tests_run` may be omitted)
@@ -51,7 +59,7 @@ The optional local lifecycle wraps that same authority without adding autonomy:
 job.sh init (explicit repo/worktree/branch/full base/job ID -> private state v1)
   -> separately approved agy-worker.sh dispatch in the bound worktree
        -> `run` foreground or one explicit owner-private `start` controller
-       -> local v5 `status|wait|result|extend|cancel|resume|restart` state only
+       -> local current-v9 `status|wait|result|extend|cancel|resume|restart` state only
   -> job.sh verify -> exact verify-job.sh / qa-gate.sh receipt path
   -> job.sh status (read-only facts and current approval hashes)
   -> gate-passed: preserve-instructions only, never execution
@@ -78,19 +86,37 @@ resumed. A valid `CANCELED` candidate (exit 22) is preserved for `result` and
 finalization or explicit fresh restart; it is never resumed or continued. No branch is
 automatic. Only `init`, `step_update`, and terminal `result` update `last_activity` to
 `provider_initialized`, `progress_signal`, or `terminal_received`; that activity is
-nonsemantic and renews only the idle lease. V5 uses `dispatching` for an active
+nonsemantic and renews only the idle lease. Current v9 uses `dispatching` for an active
 initial, resume, or restart attempt; `attempt-failed` for a pre-candidate failure;
 `awaiting-verification` for a recognized candidate; `repairing` for an active
-continuation; and `repair-failed` for an actual failed continuation attempt. Final
-disposition uses `completed` or `blocked`. Its additive candidate recognition/source/availability, driver
-disposition, failure stage, `last_activity`, `next_action`, safe current-SHA command,
+continuation; and `repair-failed` for an actual failed continuation attempt. Controller
+terminal phases are `completed` or `blocked`; exact Codex driver decisions/dispositions
+are `verified`, `partially_verified`, `rejected`, or `blocked`. Its additive candidate recognition/source/availability, driver
+disposition, failure stage, `last_activity`, mechanically derived `available_actions`,
+deprecated mechanical `next_action`/safe-current-SHA aliases,
 and worktree-reconciliation fields are controller facts. `has_prior_candidate` is
-deprecated and does not assert cleanliness. Reconciliation is a bounded snapshot
-comparison, not a clean-worktree, review, or acceptance claim. V1/V3/V4 state remains
-readable; the first approved transition atomically writes v5. `status`, `wait`,
-`result`, `resume`, `continue`, and `finalize` default to public JSON and accept three
-sanitized driver-owned text lines. `result` returns only a bound canonical candidate
-and remains separate from provider or driver acceptance. Every explicit
+deprecated and does not assert cleanliness. Reconciliation captures the pre-provider
+baseline, the post-group-reap terminal candidate, and an exact recomputation before
+queued `Popen`, `continue`, or `finalize`. Under controller-managed provider quiescence
+it performs a bounded no-follow double-manifest comparison and binds the Git, index,
+root, and selected-Git target facts; drift or unavailable evidence fails closed. This
+is neither a filesystem snapshot/FSEvents monitor nor hostile same-user tamper
+resistance; it proves no clean
+worktree, review, or acceptance and makes no semantic recommendation. The local owner,
+same-UID processes, and OS administrators remain the TCB; mutation after an entry's
+final read is the portable residual. V1 is read-only. A V3/V4 current result requires
+both state SHA and a status-time `migration_binding_sha256`, rebound under the first
+transition lock; `last_success_*`-only evidence remains read-only. V5/V6 retains its exact legacy digest, V7 retains its
+exact semantic-v1 digest, and V8 retains its explicit semantic-v1 algorithm. A V5/V6
+transition proves its legacy state and atomically captures a fresh semantic V9
+baseline/candidate; V7/V8 reuse an exact semantic proof. V9's separate no-follow
+root/Git boundary identity excludes mutable worktree/index/HEAD/ref/object content.
+`status`, `wait`, `result`, `resume`, `restart`,
+`continue`, and `finalize` default to public JSON and accept three sanitized
+driver-owned text lines. Every emitted action or stale-approval rerun command uses the
+caller-resolved symbolic launcher `"$PIPELINE/agy-worker.sh"`. `result` returns only a
+bound canonical candidate and remains separate from provider or driver acceptance.
+Every explicit
 `explore`/`task`/`project` workflow consumes candidate-SHA-bound Verification v2 for
 `continue`/`finalize`, never a worker command. For `verified`, explore needs complete
 coverage, zero unresolved gaps, zero failed checks, and zero missing checks;
@@ -230,9 +256,9 @@ does not establish same-user tamper resistance.
 
 | Path | Responsibility | Owning offline suite |
 |---|---|---|
-| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh`, `skills/agy-worker/runtime/scripts/agy_dispatch.py` | Root compatibility entry plus caller-owned selection, optional personas, workflow resolution (`explore`/`task`: 1..2, default 2; `project`: 1..5, default 5), private prompt/log staging, process-owning progress-aware dispatch, v5 candidate/lifecycle state, candidate-SHA-bound Verification v2, same-conversation `continue`, driver-owned assurance finalization, explicit SHA-approved resume/restart with no automatic continuation, preserved valid provider-error/cancelled candidates, and an exact agy 1.1.13 quota terminal mapped to sanitized exit 24/countdown without raw error disclosure or automatic model/retry action | `tests/test-agy-worker.sh` (283 cases) |
-| `model-selection.sh`, `skills/agy-worker/runtime/model-selection.sh`, `skills/agy-worker/runtime/scripts/model_selection.py`, portable matrix/schema/SHA | Root compatibility entry plus exact matrix-bound model/effort resolution, CLI-only version-independent literal records, bounded installed-version preflight for reviewed resolution, a non-gating bounded literal-version observation used only for exact diagnostics, and driver selection provenance | dispatcher, doctor, and packaging suites |
-| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre/post recommendations; direct selections are labelled but unranked and never applied | `tests/test-agy-worker.sh` (283 cases) |
+| `agy-worker.sh`, `skills/agy-worker/runtime/agy-worker.sh`, `skills/agy-worker/runtime/scripts/agy_dispatch.py` | Root compatibility entry plus caller-owned selection, optional personas, workflow resolution (`explore`/`task`: 1..2, default 2; `project`: 1..5, default 5), private prompt/log staging, process-owning progress-aware dispatch, current V9 candidate/lifecycle writes with explicit semantic-v1 candidate snapshots plus a separate stable no-follow root/Git boundary (canonical root dev/inode, marker, git/common dirs, format, and top-level), current-bound-only candidate-SHA Verification v2, and a driver-invoked verification-copy that rebinds result/schema/root/candidate before and after a no-follow isolated copy. It preserves regular bytes/executable bits, rebases every contained symlink inside the copy, and rejects broken/outward/Git-admin links (no `.git`) so writable driver checks do not reconcile ignored drift into the candidate. Wrapper parse errors remain `64`; post-parse copy runtime/binding/destination failures map to `20`. The bounded owner-controlled copy is not same-UID tamper resistance. V1 remains read-only; V3/V4 require first-transition SHA+rebound-migration approval and do not advertise the non-migrating copy helper. Finalization remains exact Codex-declared assurance after current artifact/schema/root/worktree rebinding; preserved provider-error/cancelled candidates, queued SHA+entry rebinding, and exact quota-terminal mapping remain unchanged. | `tests/test-agy-worker.sh` (331 cases); `tests/test-agy-worker-remediation.py` (87 focused cases) |
+| `model-selection.sh`, `skills/agy-worker/runtime/model-selection.sh`, `skills/agy-worker/runtime/scripts/model_selection.py`, portable matrix/schema/SHA | Root compatibility entry plus exact matrix-bound model/effort resolution, CLI-only version-independent literal records, bounded safe-target semantic version plus structural critical-help preflight, automatic V2 mechanical launch authority for an exact version match, and explicit Codex disposition plus exact raw-help SHA for drift. V3 records bind that drift decision, capabilities/matrix/selection facts, and a bounded no-follow descriptor digest plus complete safe executable path authority (only the macOS `/var` alias is normalized); controller help prose is data, never availability inference. Codex inspects current bounded raw help before every reviewed direct dispatch and owns the semantic stop decision, including for an exact-version match. Literal version observation remains non-gating and selection provenance is driver-owned. | dispatcher, doctor, and packaging suites |
+| `model-recommendation.sh`, `skills/agy-worker/runtime/model-recommendation.sh`, `skills/agy-worker/runtime/scripts/model-recommendation.py` | Root compatibility entry plus side-effect-free pre/post recommendations; direct selections are labelled but unranked and never applied | `tests/test-agy-worker.sh` (331 cases) |
 | `doctor.sh`, `skills/agy-worker/runtime/doctor.sh`, `skills/agy-worker/runtime/scripts/doctor-metadata.py`, `skills/agy-worker/runtime/compat/` | Root compatibility entry plus deterministic offline prerequisite checks and byte-synchronized portable agy metadata | `tests/test-doctor.sh` (251 cases) plus packaging synchronization checks |
 | `install.sh`, `skills/agy-worker/`, `skills/agy-worker/scripts/resolve-pipeline.sh` | Install and resolve complete-plugin, explicit-checkout, or folder-only skill layouts without fetching code | dispatcher and packaging suites |
 | `skills/agy-worker/runtime/schemas/`, `skills/agy-worker/runtime/scripts/validate-envelope.py` | Dependency-free envelope contract validation | dispatcher and gate suites |
@@ -264,12 +290,12 @@ does not establish same-user tamper resistance.
 | `scripts/models_capture_1_1_16_runner.py` | Fixed 1.1.16 capture-only bridge using logical argv `source --output-format json models`, the retained snapshot as executable, one no-retry process group, 25-second wall and independent 64-KiB streams. It fails closed on group-closure uncertainty and publishes a marker only for private raw `captured` evidence; it never accepts inventory, routes, or advances metadata. | `tests/test-models-capture-1-1-16-runner.py` (58 offline cases; 88 combined with the 30-case profile suite) |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact double confirmation for public bug/improvement submission, explicit private-only security drafts, fixed-destination issue submission, and conservative non-proof keyword barrier | `tests/test-reporting.sh` (47 cases) |
 | `feedback-triage.sh`, `scripts/feedback-triage.py`, `.github/workflows/feedback-watch.yml` | Explicit or weekly bounded read-only aggregate over fixed public issue metadata; raw issue content is not requested, surfaced, or agent input; no GitHub writes | `tests/test-feedback-triage.py` (26 cases) plus packaging workflow policy |
-| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (367 cases) plus platform validators |
-| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (367 cases) plus review |
-| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (367 cases) plus rendered review |
-| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (367 cases) plus rendered review |
+| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (371 cases) plus platform validators |
+| `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (371 cases) plus review |
+| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (371 cases) plus rendered review |
+| `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (371 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
-| `.github/workflows/test.yml`, `scripts/ci-offline.sh`, `scripts/ci-diff-check.sh`, `scripts/ci_diff_check.py` | Required `test` runs the exact full macOS offline suite for PRs (and explicit exact-SHA manual dispatch), cancels stale same-PR runs, and does not repeat the suite after a normal merge. The controller keeps committed-range hygiene separate; the canonical local runner performs static/worktree diff checks and all thirty-one offline suites without requiring network/provider calls or intentionally inspecting account-HOME contents; ambient local tools may consult ordinary user configuration. Local quota fallback evidence never satisfies branch protection. | packaging policy tests plus GitHub Actions |
+| `.github/workflows/test.yml`, `scripts/ci-offline.sh`, `scripts/ci-diff-check.sh`, `scripts/ci_diff_check.py` | Required `test` runs the exact full macOS offline suite for PRs (and explicit exact-SHA manual dispatch), cancels stale same-PR runs, and does not repeat the suite after a normal merge. The controller keeps committed-range hygiene separate; the canonical local runner performs static/worktree diff checks and all thirty-two offline suites without requiring network/provider calls or intentionally inspecting account-HOME contents; ambient local tools may consult ordinary user configuration. Local quota fallback evidence never satisfies branch protection. | packaging policy tests plus GitHub Actions |
 | `.github/workflows/compatibility-watch.yml` | Daily/manual macOS observation of fixed official evidence; bounded Step Summary only, never a required PR or metadata/action path | static policy tests in `tests/test-update.sh` plus GitHub Actions observation |
 | `.github/workflows/feedback-watch.yml` | Weekly/manual Linux metadata-only feedback aggregate; read-only GitHub permissions, no raw issue content in logs or prompts, and no issue mutations | packaging policy tests plus GitHub Actions observation |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |

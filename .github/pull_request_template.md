@@ -21,6 +21,7 @@
 - [ ] `/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-workload-profiles.py`
 - [ ] `./tests/test-agy-worker.sh`
+- [ ] `/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py`
 - [ ] `./tests/test-update.sh`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-adoption-measurement.py`
 - [ ] `/usr/bin/python3 -I -S -B tests/test-update-notifier.py`

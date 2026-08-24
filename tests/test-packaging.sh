@@ -212,6 +212,7 @@ required = (
     "/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py",
     "/usr/bin/python3 -I -S -B tests/test-workload-profiles.py",
     "./tests/test-agy-worker.sh",
+    "/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py",
     "./tests/test-update.sh",
     "/usr/bin/python3 -I -S -B tests/test-adoption-measurement.py",
     "/usr/bin/python3 -I -S -B tests/test-update-notifier.py",
@@ -963,6 +964,102 @@ else
     bad "root and portable packages include offline Benchmark v1"
 fi
 
+if python3 - "$ROOT" "$TMP" <<'PY'
+import copy
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import shutil
+import stat
+import sys
+
+root = Path(sys.argv[1])
+temporary = Path(sys.argv[2])
+runtime = root / "skills/agy-worker/runtime"
+root_manifest = root / "benchmarks/v1/portable-source.json"
+portable_manifest = runtime / "benchmarks/v1/portable-source.json"
+raw = root_manifest.read_bytes()
+assert raw == portable_manifest.read_bytes()
+payload = json.loads(raw)
+expected = {
+    "benchmark.sh", "qa-gate.sh", "verify-job.sh",
+    "scripts/benchmark.py", "scripts/candidate_state.py",
+    "scripts/compatibility.py", "scripts/evidence_receipt.py",
+    "scripts/model_selection.py", "scripts/recommendation_record.py",
+    "scripts/validate-envelope.py", "schemas/benchmark-plan.schema.json",
+    "schemas/benchmark-result.schema.json", "schemas/evidence-receipt.schema.json",
+    "schemas/worker-result.schema.json", "schemas/worker-result.provider.schema.json",
+}
+
+def valid(value, source):
+    try:
+        if set(value) != {"files", "kind", "schema_version", "source_revision"}:
+            return False
+        if value["kind"] != "agy-worker-benchmark-portable-source" or value["schema_version"] != 1:
+            return False
+        files = value["files"]
+        if not isinstance(files, list) or len(files) != len(expected):
+            return False
+        names = []
+        for item in files:
+            if set(item) != {"path", "mode", "sha256"}:
+                return False
+            name, mode, digest = item["path"], item["mode"], item["sha256"]
+            if not isinstance(name, str) or "\\" in name:
+                return False
+            pure = PurePosixPath(name)
+            if pure.is_absolute() or ".." in pure.parts or str(pure) != name:
+                return False
+            names.append(name)
+            if mode not in {"100644", "100755"} or not isinstance(digest, str) or len(digest) != 64:
+                return False
+            path = source.joinpath(*pure.parts)
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                return False
+            if "100" + format(stat.S_IMODE(info.st_mode), "03o") != mode:
+                return False
+            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                return False
+        return len(set(names)) == len(names) and set(names) == expected
+    except (OSError, TypeError, ValueError):
+        return False
+
+assert valid(payload, runtime)
+mutant = copy.deepcopy(payload); mutant["files"][0]["path"] = "../benchmark.sh"
+assert not valid(mutant, runtime)
+mutant = copy.deepcopy(payload); mutant["files"].pop()
+assert not valid(mutant, runtime)
+mutant = copy.deepcopy(payload); mutant["files"].append(copy.deepcopy(mutant["files"][0]))
+assert not valid(mutant, runtime)
+mutant = copy.deepcopy(payload); mutant["files"][0]["mode"] = "100600"
+assert not valid(mutant, runtime)
+mutant = copy.deepcopy(payload); mutant["files"][0]["sha256"] = "0" * 64
+assert not valid(mutant, runtime)
+
+fixture = temporary / "portable-source-fixture"
+shutil.copytree(runtime, fixture)
+missing = fixture / "scripts/model_selection.py"
+missing.unlink()
+assert not valid(payload, fixture)
+shutil.copytree(runtime, fixture, dirs_exist_ok=True)
+link = fixture / "scripts/model_selection.py"
+link.unlink()
+os.symlink("benchmark.py", link)
+assert not valid(payload, fixture)
+link.unlink()
+shutil.copy2(runtime / "scripts/model_selection.py", link)
+with link.open("ab") as handle:
+    handle.write(b"# bounded packaging tamper\n")
+assert not valid(payload, fixture)
+PY
+then
+    ok "portable source manifest binds every exact runtime file and rejects bounded drift"
+else
+    bad "portable source manifest binds every exact runtime file and rejects bounded drift"
+fi
+
 if [[ -x "$ROOT/profile.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/profile.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/workload_profiles.py" ]] \
@@ -1516,12 +1613,14 @@ else
     bad "portable resolver matrix, schema, and exact SHA are byte-synchronized"
 fi
 
-if python3 -B - "$ROOT/skills/agy-worker/runtime/schemas/model-selection.schema.json" <<'PY'
+if python3 -B - "$ROOT/skills/agy-worker/runtime/schemas/model-selection.schema.json" \
+        "$ROOT/skills/agy-worker/runtime/compat/agy-verified-version.txt" <<'PY'
 import copy
 import json
 import sys
 
 schema = json.load(open(sys.argv[1], encoding="utf-8"))
+matrix_version = open(sys.argv[2], encoding="ascii").read().strip()
 
 required = {
     "legacy tier selection": {
@@ -1543,33 +1642,113 @@ required = {
         "resolved_agy_model", "installed_agy_version", "matrix_sha256",
         "matrix_agy_version", "matrix_source_revision",
     },
+    "v2 exact reviewed model selection": {
+        "schema_version", "kind", "selection_mode", "user_model", "user_model_source",
+        "resolved_agy_model", "installed_agy_version", "matrix_sha256",
+        "matrix_agy_version", "matrix_source_revision", "version_relation",
+        "compatibility_status", "critical_interface_probe_version",
+        "critical_interface_status", "critical_capabilities_sha256", "help_sha256",
+        "model_availability", "probed_executable",
+    },
+    "v2 reviewed model and effort selection": {
+        "schema_version", "kind", "selection_mode", "user_model", "user_model_source",
+        "user_effort", "user_effort_source", "resolved_agy_model",
+        "installed_agy_version", "matrix_sha256", "matrix_agy_version",
+        "matrix_source_revision", "version_relation", "compatibility_status",
+        "critical_interface_probe_version", "critical_interface_status",
+        "critical_capabilities_sha256", "help_sha256", "model_availability",
+        "probed_executable",
+    },
+    "v3 approved drift exact-model selection": {
+        "schema_version", "kind", "selection_mode", "user_model", "user_model_source",
+        "resolved_agy_model", "installed_agy_version", "matrix_sha256",
+        "matrix_agy_version", "matrix_source_revision", "version_relation",
+        "compatibility_status", "critical_interface_probe_version",
+        "critical_interface_status", "critical_capabilities_sha256", "help_sha256",
+        "model_availability", "probed_executable", "compatibility_disposition",
+        "approved_help_sha256", "compatibility_decision_sha256",
+    },
+    "v3 approved drift model and effort selection": {
+        "schema_version", "kind", "selection_mode", "user_model", "user_model_source",
+        "user_effort", "user_effort_source", "resolved_agy_model",
+        "installed_agy_version", "matrix_sha256", "matrix_agy_version",
+        "matrix_source_revision", "version_relation", "compatibility_status",
+        "critical_interface_probe_version", "critical_interface_status",
+        "critical_capabilities_sha256", "help_sha256", "model_availability",
+        "probed_executable", "compatibility_disposition", "approved_help_sha256",
+        "compatibility_decision_sha256",
+    },
 }
 forbidden = {
     "legacy tier selection": {
         "user_model", "user_model_source", "user_effort", "user_effort_source",
         "installed_agy_version", "matrix_sha256", "matrix_agy_version",
         "matrix_source_revision",
-        "compatibility_status",
+        "compatibility_status", "version_relation", "critical_interface_probe_version",
+        "critical_interface_status", "critical_capabilities_sha256", "help_sha256",
+        "model_availability", "probed_executable", "compatibility_disposition",
+        "approved_help_sha256", "compatibility_decision_sha256",
     },
     "unreconciled literal model selection": {
         "selected_tier", "selected_tier_source", "user_effort", "user_effort_source",
         "installed_agy_version", "matrix_sha256", "matrix_agy_version",
         "matrix_source_revision",
+        "version_relation", "critical_interface_probe_version", "critical_interface_status",
+        "critical_capabilities_sha256", "help_sha256", "model_availability", "probed_executable",
+        "compatibility_disposition", "approved_help_sha256", "compatibility_decision_sha256",
     },
     "exact reviewed model selection": {
         "selected_tier", "selected_tier_source", "user_effort", "user_effort_source",
-        "compatibility_status",
+        "compatibility_status", "version_relation", "critical_interface_probe_version",
+        "critical_interface_status", "critical_capabilities_sha256", "help_sha256",
+        "model_availability", "probed_executable", "compatibility_disposition",
+        "approved_help_sha256", "compatibility_decision_sha256",
     },
     "reviewed model and effort selection": {
         "selected_tier", "selected_tier_source", "compatibility_status",
+        "version_relation", "critical_interface_probe_version", "critical_interface_status",
+        "critical_capabilities_sha256", "help_sha256", "model_availability", "probed_executable",
+        "compatibility_disposition", "approved_help_sha256", "compatibility_decision_sha256",
+    },
+    "v2 exact reviewed model selection": {
+        "selected_tier", "selected_tier_source", "user_effort", "user_effort_source",
+        "compatibility_disposition", "approved_help_sha256",
+        "compatibility_decision_sha256",
+    },
+    "v2 reviewed model and effort selection": {
+        "selected_tier", "selected_tier_source",
+        "compatibility_disposition", "approved_help_sha256",
+        "compatibility_decision_sha256",
+    },
+    "v3 approved drift exact-model selection": {
+        "selected_tier", "selected_tier_source", "user_effort", "user_effort_source",
+    },
+    "v3 approved drift model and effort selection": {
+        "selected_tier", "selected_tier_source",
     },
 }
 
 def assert_strict(value):
     assert value["additionalProperties"] is False
     assert set(value["required"]) == {"schema_version", "kind", "selection_mode"}
+    assert "reviewed_help_sha256" not in value["properties"]
+    binding = value["properties"]["probed_executable"]
+    assert binding["additionalProperties"] is False
+    assert set(binding["required"]) == {
+        "path_sha256", "target_lstat", "symlink_chain", "components",
+    }
+    assert binding["properties"]["content_sha256"] == {
+        "type": "string", "pattern": "^[0-9a-f]{64}$",
+    }
+    lstat = binding["properties"]["target_lstat"]
+    assert lstat["additionalProperties"] is False
+    assert set(lstat["required"]) == {
+        "device", "inode", "mode", "uid", "gid", "size", "mtime_ns",
+    }
+    assert lstat["properties"]["ctime_ns"] == {"type": "integer", "minimum": 0}
     variants = {variant["title"]: variant for variant in value["oneOf"]}
     assert set(variants) == set(required)
+    assert value["properties"]["schema_version"]["enum"] == [1, 2, 3]
     for title, expected in required.items():
         variant = variants[title]
         assert set(variant["required"]) == expected
@@ -1583,20 +1762,94 @@ def assert_strict(value):
     assert '"const": "default"' in tier_conditions and '"type": "null"' in tier_conditions
     assert '"const": "implicit-default"' in tier_conditions
     assert tier_conditions.count('"const": "default"') >= 2
+    expected_relation = {
+        "oneOf": [
+            {"properties": {
+                "installed_agy_version": {"const": matrix_version},
+                "matrix_agy_version": {"const": matrix_version},
+                "version_relation": {"const": "match"},
+                "compatibility_status": {"const": "reviewed-version-match"},
+            }},
+            {"properties": {
+                "installed_agy_version": {"not": {"const": matrix_version}},
+                "matrix_agy_version": {"const": matrix_version},
+                "version_relation": {"const": "drift"},
+                "compatibility_status": {"const": "critical-interface-compatible-version-drift"},
+            }},
+        ],
+    }
+    expected_v3_relation = {
+        "properties": {
+            "installed_agy_version": {"not": {"const": matrix_version}},
+            "matrix_agy_version": {"const": matrix_version},
+            "version_relation": {"const": "drift"},
+            "compatibility_status": {"const": "critical-interface-compatible-version-drift"},
+        },
+    }
+    assert value.get("definitions") == {
+        "v2_version_relation": expected_relation,
+        "v3_approved_help": expected_v3_relation,
+    }
+    for title in ("v2 exact reviewed model selection", "v2 reviewed model and effort selection"):
+        assert variants[title]["allOf"] == [{"$ref": "#/definitions/v2_version_relation"}]
+    for title in ("v3 approved drift exact-model selection", "v3 approved drift model and effort selection"):
+        assert variants[title]["allOf"] == [{"$ref": "#/definitions/v3_approved_help"}]
+        props = variants[title]["properties"]
+        assert props["schema_version"] == {"const": 3}
+        assert props["compatibility_disposition"] == {"const": "proceed"}
+
+def relation_accepts(record):
+    relation = schema["definitions"]["v2_version_relation"]
+    for variant in relation["oneOf"]:
+        if any(key not in record for key in variant.get("required", ())):
+            continue
+        accepted = True
+        for field, rule in variant["properties"].items():
+            if "const" in rule and record.get(field) != rule["const"]:
+                accepted = False
+            if "not" in rule and record.get(field) == rule["not"]["const"]:
+                accepted = False
+        if accepted:
+            return True
+    return False
 
 assert_strict(schema)
+match = {
+    "installed_agy_version": matrix_version, "matrix_agy_version": matrix_version,
+    "version_relation": "match", "compatibility_status": "reviewed-version-match",
+}
+drift = {
+    "installed_agy_version": "9.9.9", "matrix_agy_version": matrix_version,
+    "version_relation": "drift",
+    "compatibility_status": "critical-interface-compatible-version-drift",
+}
+assert relation_accepts(match) and relation_accepts(drift)
+for invalid in (
+    {**match, "version_relation": "drift"},
+    {**match, "compatibility_status": "critical-interface-compatible-version-drift"},
+    {**drift, "version_relation": "match"},
+    {**drift, "compatibility_status": "reviewed-version-match"},
+    {**match, "matrix_agy_version": "9.9.9", "installed_agy_version": "9.9.9"},
+):
+    assert not relation_accepts(invalid)
 mutants = []
 mutant = copy.deepcopy(schema)
 mutant["additionalProperties"] = True
 mutants.append(mutant)
 mutant = copy.deepcopy(schema)
-mutant["oneOf"][2]["required"].remove("matrix_sha256")
+mutant["oneOf"][4]["required"].remove("help_sha256")
 mutants.append(mutant)
 mutant = copy.deepcopy(schema)
 mutant["oneOf"][0]["not"]["anyOf"] = mutant["oneOf"][0]["not"]["anyOf"][1:]
 mutants.append(mutant)
 mutant = copy.deepcopy(schema)
 mutant["oneOf"][0]["allOf"] = mutant["oneOf"][0]["allOf"][:1]
+mutants.append(mutant)
+mutant = copy.deepcopy(schema)
+mutant["definitions"]["v2_version_relation"]["oneOf"][1]["properties"]["version_relation"]["const"] = "match"
+mutants.append(mutant)
+mutant = copy.deepcopy(schema)
+mutant["definitions"]["v2_version_relation"]["oneOf"][0]["required"] = []
 mutants.append(mutant)
 for mutant in mutants:
     try:
@@ -1606,9 +1859,9 @@ for mutant in mutants:
     raise AssertionError("weakened selection schema mutant was accepted")
 PY
 then
-    ok "selection schema contract rejects required, forbidden, conditional, and extra-field weakening"
+    ok "selection schema derives v2 relation/status and rejects required, forbidden, conditional, and extra-field weakening"
 else
-    bad "selection schema contract rejects required, forbidden, conditional, and extra-field weakening"
+    bad "selection schema derives v2 relation/status and rejects required, forbidden, conditional, and extra-field weakening"
 fi
 
 TAMPERED_PORTABLE="$TMP/tampered-portable-metadata"
@@ -1733,18 +1986,34 @@ fi
 
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
-    '[[ "$*" == "--version" ]] || exit 97' \
-    'printf "1.1.16\n"' > "$TMP/selector-bin/agy"
+    'case "$*" in' \
+    '  --version) printf "1.1.16\n" ;;' \
+    '  --help) printf "%s\n" "Usage of agy:" "  --add-dir  Add a directory" "  --conversation  Resume a conversation" "  --disable-slash-commands  Disable slash commands" "  --json-schema  Schema path" "  --mode  Execution mode (accept-edits, plan)" "  --model  Select a model" "  --output-format  Format (text, json, stream-json)" "  --print  Run a prompt" "  --print-timeout  Print timeout" "  --sandbox  Sandboxed" >&2 ;;' \
+    '  *) exit 97 ;;' \
+    'esac' > "$TMP/selector-bin/agy"
 chmod +x "$TMP/selector-bin/agy"
 PATH="$TMP/selector-bin:$PATH" NETWORK_MARKER="$TMP/network-called" \
     "$copied_pipeline/model-selection.sh" --model gemini-3.6-flash --effort high \
     > "$TMP/copied-selection.json" 2> "$TMP/copied-selection.err"
 rc=$?
+copied_selection_v2=0
+if python3 -B - "$TMP/copied-selection.json" <<'PY'
+import json
+import sys
+
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+assert record["schema_version"] == 2
+assert not ({"compatibility_disposition", "approved_help_sha256", "compatibility_decision_sha256"} & set(record))
+PY
+then
+    copied_selection_v2=1
+fi
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
         && grep -Fq '"matrix_sha256": "a586927552d90295529f3059989a2a8c36c234d41b8f79d61c1c89edbf829e00"' \
             "$TMP/copied-selection.json" \
+        && [[ "$copied_selection_v2" == 1 ]] \
         && [[ ! -e "$TMP/network-called" ]]; then
     ok "skill-folder-only copy resolves an exact direct selector offline"
 else
@@ -1825,8 +2094,12 @@ if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]]; then
 else
     bad "standalone install resolves the checkout without rewriting SKILL.md"
 fi
-if [[ -x "$TMP/installed/agy-worker/runtime/doctor.sh" ]] \
+if [[ -x "$ROOT/agy-worker.sh" ]] \
+        && grep -Fq 'skills/agy-worker/runtime/agy-worker.sh' "$ROOT/agy-worker.sh" \
+        && [[ -x "$TMP/installed/agy-worker/runtime/doctor.sh" ]] \
+        && [[ -x "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch.py" ]] \
         && [[ -x "$TMP/installed/agy-worker/runtime/scripts/doctor-metadata.py" ]] \
+        && grep -Fq '`"$PIPELINE/scripts/agy_dispatch.py"`' "$TMP/installed/agy-worker/SKILL.md" \
         && cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$TMP/installed/agy-worker/runtime/compat/agy-verified-version.txt" \
         && cmp -s "$ROOT/compat/agy-upstream-head.txt" \
@@ -1839,9 +2112,65 @@ if [[ -x "$TMP/installed/agy-worker/runtime/doctor.sh" ]] \
             "$TMP/installed/agy-worker/runtime/compat/model-effort-matrix.schema.json" \
         && cmp -s "$ROOT/compat/agy-model-effort-matrix.sha256" \
             "$TMP/installed/agy-worker/runtime/compat/agy-model-effort-matrix.sha256"; then
-    ok "standalone install preserves doctor and explicit-selector compatibility bytes"
+    ok "root wrapper and installed skill preserve runtime dispatcher authority and compatibility bytes"
 else
-    bad "standalone install preserves doctor and explicit-selector compatibility bytes"
+    bad "root wrapper and installed skill preserve runtime dispatcher authority and compatibility bytes"
+fi
+
+governance_clauses=(
+    'For material UX, lifecycle, trust-boundary, security, data-semantics, or other domain plans:'
+    'A coordinator and suitable domain expert must co-plan.'
+    'Freeze user journeys, acceptance tests, and authority/privacy constraints before implementation.'
+    'The final acceptor must be a different agent or fresh context; no planner or implementer may self-accept.'
+    'Purely mechanical changes are exempt.'
+    'Verification v2 and the controller bind candidate evidence, not agent identity or governance.'
+    'The final human-readable handoff must report the planner/reviewer separation.'
+)
+
+governance_skill_contract() {
+    local skill_path="$1" clause
+    for clause in "${governance_clauses[@]}"; do
+        [[ "$(grep -Fxc "$clause" "$skill_path")" == "1" ]] || return 1
+    done
+}
+
+if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]] \
+        && governance_skill_contract "$TMP/installed/agy-worker/SKILL.md"; then
+    ok "installed skill preserves independent material-plan governance and handoff disclosure"
+else
+    bad "installed skill preserves independent material-plan governance and handoff disclosure"
+fi
+
+governance_mutants_rejected=1
+governance_mutant_index=0
+for clause in "${governance_clauses[@]}"; do
+    governance_mutant_index=$((governance_mutant_index + 1))
+    mutant="$TMP/governance-skill-mutant-$governance_mutant_index.md"
+    if ! python3 -B - "$TMP/installed/agy-worker/SKILL.md" "$mutant" "$clause" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+clause = sys.argv[3]
+text = source.read_text(encoding="utf-8")
+if text.count(clause) != 1:
+    raise SystemExit(1)
+target.write_text(text.replace(clause, "", 1), encoding="utf-8")
+PY
+    then
+        governance_mutants_rejected=0
+        break
+    fi
+    if governance_skill_contract "$mutant"; then
+        governance_mutants_rejected=0
+        break
+    fi
+done
+if [[ "$governance_mutants_rejected" == "1" ]]; then
+    ok "installed governance contract rejects every independent clause deletion"
+else
+    bad "installed governance contract rejects every independent clause deletion"
 fi
 
 mkdir -p "$TMP/reject-relative/agy-worker"
@@ -2062,8 +2391,16 @@ for suite in tests/test-adoption-measurement.py tests/test-update-notifier.py; d
     fi
 done
 
+if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py' \
+        "$ROOT/CONTRIBUTING.md" \
+        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py' \
+            "$ROOT/.github/pull_request_template.md" \
+        || ! grep -Fq 'tests/test-agy-worker-remediation.py' "$CI_OFFLINE"; then
+    governance_lists_all_suites=0
+fi
+
 if [[ "$governance_lists_all_suites" == "1" ]] \
-        && grep -Fq 'The thirty-one offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The thirty-two offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 73 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
@@ -2074,9 +2411,50 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all thirty-one suites and disclose public policy boundaries"
+    ok "governance docs require all thirty-two suites and disclose public policy boundaries"
 else
-    bad "governance docs require all thirty-one suites and disclose public policy boundaries"
+    bad "governance docs require all thirty-two suites and disclose public policy boundaries"
+fi
+
+if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
+        "$ROOT/README.md" \
+        && grep -Fq 'An exact matrix-version match proceeds mechanically' \
+            "$ROOT/README.md" \
+        && grep -Fq 'that structural probe. Compatible version drift requires Codex' \
+            "$ROOT/README.md" \
+        && ! grep -Fq 'only when its raw C-locale help SHA-256 is retained' "$ROOT/README.md" \
+        && ! grep -Fq 'An unseen exact-version digest, or compatible version drift' "$ROOT/README.md" \
+        && grep -Fq "\`LC_ALL=C agy --help 2>&1 | /usr/bin/python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'\`" \
+            "$ROOT/README.md" \
+        && ! grep -Fq 'shasum -a 256' "$ROOT/README.md" \
+            "$ROOT/README.md" \
+        && grep -Fq 'controller help prose is data, never availability inference' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq '`model_availability: not_assessed`' "$ROOT/README.md" \
+        && grep -Fq 'V3/V4 *current* bound result may perform its first lifecycle transition' "$ROOT/README.md" \
+        && grep -Fq 'migration_binding_sha256' "$ROOT/README.md" \
+        && grep -Fq 'V5/V6 transition proves the legacy' "$ROOT/README.md" \
+        && grep -Fq 'caller-resolved symbolic launcher' "$ROOT/README.md" \
+        && grep -Fq 'caller-resolved symbolic launcher `"$PIPELINE/agy-worker.sh"`' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq '`status`, `wait`, `result`, `resume`, `restart`,' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
+            "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq 'tests/test-agy-worker.sh      331-case' "$ROOT/README.md" \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (331 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
+        && grep -Fq 'tests/test-agy-worker-remediation.py 87-case' "$ROOT/README.md" \
+        && grep -Fq 'EXPECTED_CHECKS = 87' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (87 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
+            "$ROOT/tests/test-agy-worker.sh" \
+        && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
+        && ! grep -Fq 'tests/test-agy-worker.sh      300-case' "$ROOT/README.md" \
+        && ! grep -Fq '`tests/test-agy-worker.sh` (300 cases)' "$ROOT/docs/REPO_MAP.md" \
+        && ! grep -Fq 'resolution remains blocked until installed agy exactly matches' \
+            "$ROOT/README.md"; then
+    ok "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
+else
+    bad "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
 fi
 
 bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
@@ -2497,11 +2875,33 @@ fi
 
 if grep -Fq '24 quota exhausted' "$ROOT/skills/agy-worker/runtime/agy-worker.sh" \
         && grep -Fq '`24` provider quota exhausted' "$ROOT/README.md" \
+        && grep -Fq 'Wrong-version or altered quota terminals without a report remain `invalid_envelope`' \
+            "$ROOT/README.md" \
+        && grep -Fq '`1.1.13` quota terminal remains `provider_quota_exhausted` with exit `24`' \
+            "$ROOT/README.md" \
         && grep -Fq 'exact agy `1.1.13` terminal quota response' \
             "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq 'terminal phases are `completed` or `blocked`; exact Codex driver decisions/dispositions' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Controller terminal phases are `completed` or' \
+            "$ROOT/docs/lessons_learned.md" \
         && grep -Fq 'bounded non-gating version observation' "$ROOT/README.md" \
-        && grep -Fq 'provider_quota_exhausted' \
-            "$ROOT/compat/reviews/agy-1.1.13-quota-terminal.md"; then
+        && grep -Fq '1.1.13 shape with no report, it records `provider_quota_exhausted`, exit `24`, and' \
+            "$ROOT/compat/reviews/agy-1.1.13-quota-terminal.md" \
+        && grep -Fq 'are `invalid_envelope`, exit `4`, and `failure_stage=missing_structured_output`.' \
+            "$ROOT/compat/reviews/agy-1.1.13-quota-terminal.md" \
+        && grep -Fq 'Wrong-version or altered quota terminals without a report remain `invalid_envelope`' \
+            "$ROOT/README.md" \
+        && grep -Fq 'Wrong-version or altered quota terminals without a' \
+            "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq 'before every reviewed direct dispatch, Codex inspects' "$ROOT/README.md" \
+        && grep -Fq 'Before every' "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq 'reviewed direct dispatch, including an exact-version match, Codex must inspect' \
+            "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq 'Codex inspects current bounded raw help before every reviewed direct dispatch' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Exact-version structural acceptance is only mechanical' \
+            "$ROOT/docs/lessons_learned.md"; then
     ok "package documents the narrow version-bound quota terminal contract"
 else
     bad "package quota terminal documentation contract"

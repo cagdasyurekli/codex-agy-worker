@@ -47,6 +47,13 @@ Keep these hard boundaries regardless of workflow:
 Before external agy dispatch, confirm repository/path scope and provider transmission
 unless the user already approved that exact transmission.
 
+For ambiguous architecture or trust decisions, do not lock onto the first plausible
+approach. Preserve the hard boundaries, then compare at least two viable options by
+user value, implementation cost, portability, and residual risk. Do not turn a
+speculative hostile threat into the default product requirement without concrete
+evidence or an explicit request. Prefer the smallest testable solution, and change
+direction when new evidence invalidates an assumption.
+
 ## Workflow and implementation guidance
 
 Use the public workflow surface rather than inventing an ad hoc dispatch protocol:
@@ -87,6 +94,13 @@ this file concise and repository-wide; put detailed lifecycle lessons in
 `docs/lessons_learned.md`, release history in the roadmap/release notes, and mechanical
 checks in tests or CI.
 
+For material plans involving UX, lifecycle, trust boundaries, security, data semantics,
+or other domain judgment, the coordinator and a suitable domain expert must co-plan
+and freeze user journeys, acceptance tests, and authority/privacy constraints before
+implementation. The planning expert and final reviewer must be different agents or
+fresh contexts; neither may accept its own plan or implementation. The independent
+reviewer remains the final acceptor. Purely mechanical changes are exempt.
+
 Each profile is data, not a driver: it cannot name a repository, path, command,
 selection, authorization, dispatch, or Git action. These offline coverage counts are
 not live-provider claims:
@@ -113,7 +127,8 @@ agy choices.
 Parallelize only independent file ownership or frozen interfaces. No author is the
 sole acceptor of its change; use an independent diff/test review for material work.
 
-Use RTK for supported shell and Git commands and run `rtk hook check` before promoting
-a rewrite. Use `rtk proxy` when exact output or shell semantics require it. Use
-Graphify only when a current graph materially improves an architecture/data-flow
-question; query first and verify every material edge against source and tests.
+Use RTK for supported shell and Git commands and run
+`rtk hook check <exact command...>` before promoting a rewrite. Use `rtk proxy` when
+exact output or shell semantics require it. Use Graphify only when a current graph
+materially improves an architecture/data-flow question; query first and verify every
+material edge against source and tests.
