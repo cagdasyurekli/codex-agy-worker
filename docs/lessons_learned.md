@@ -766,6 +766,12 @@ contract, then cross the boundary through uninstall plus a fresh current install
 Never solve this by accepting arbitrary subsets, rewriting private authority in place,
 or deleting a malformed ledger without historical authentication.
 
+The bounded implementation supports exactly the v0.8.0 18-file ledger as the one
+immediately-prior migration into the current 21-file install, and only through the
+explicit `refresh` command. It reuses the old ledger solely for bound, authenticated,
+resumable uninstall; the replacement ledger is produced by a fresh current install.
+Every other command and every unknown legacy shape remains strict and fail-closed.
+
 An accumulating measurement ledger must age records out per reporting horizon rather
 than become invalid when the first record expires. Store only closed aggregate
 metrics, opaque observation IDs, exact revisions, and explicitly public evidence.

@@ -1250,6 +1250,15 @@ rebinds only through the existing serialized uninstall/install lifecycle and nev
 updates code, metadata, or a tool. A notification attempt is the final irreversible
 UI side effect and cannot be retracted.
 
+`refresh` also has one deliberately narrow migration path for the immediately prior
+v0.8.0 installation ledger. It recognizes only that exact 18-file manifest, validates
+its account/source/Git binding and installed bytes under the historical contract,
+then uses its authenticated resumable uninstall authority before creating a fresh
+current 21-file installation. Unknown, partial, expanded, tampered, or unrelated
+legacy shapes fail closed; the migration never rewrites private authority in place
+and requires no manual private-state editing. Other notifier commands retain the
+strict current manifest contract.
+
 The separate optional [measurement ledger](docs/MEASUREMENT.md) records only explicit
 sanitized public evidence and renders fixed 30/60/90-day reports. Neither watcher nor
 notifier writes that ledger automatically.
@@ -1667,7 +1676,7 @@ tests/test-models-capture-1-1-16-profile.py 30-case offline fixed 1.1.16 capture
 tests/test-models-capture-1-1-16-runner.py 58-case offline fixed 1.1.16 capture-runner suite (88 combined with profile)
 tests/test-agy-1-1-16-activation.py 22-case offline active-baseline/inventory-binding suite
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
-tests/test-update-notifier.py 73-case offline local notifier lifecycle/signal/maintenance suite
+tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/maintenance suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite

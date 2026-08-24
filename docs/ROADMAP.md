@@ -213,17 +213,16 @@ quota terminal is classified as exit 24 with a bounded countdown. No raw error t
 public, and no retry, restart, model change, provider call, or metadata activation is
 automatic.
 
-**Required next-release gate — legacy notifier refresh migration:** v0.9.0 expanded
-the notifier's closed source manifest from the v0.8.0 18-file set to 21 files. The
-new exact-key validator correctly rejected that legacy ledger as malformed, but this
-also prevented the public `refresh` command from using the older authenticated
-uninstall authority. Before the next release, `refresh` must recognize only an
-explicitly allowlisted immediately-prior ledger shape, validate its account/source/Git
-binding and installed bytes with the matching historical manifest, complete the
-serialized uninstall, and install the current manifest without manual private-state
-editing. Offline coverage must include the positive 18→21 migration and negative
-unknown-key, digest, identity, replacement-file, tombstone, and launchd-state cases.
-No generic schema relaxation or silent ledger rewrite is acceptable.
+**Implemented next-release gate — legacy notifier refresh migration:** v0.9.0
+expanded the notifier's closed source manifest from the v0.8.0 18-file set to 21
+files. `refresh` now recognizes only that explicitly allowlisted immediately-prior
+ledger shape, validates its account/source/Git binding and installed bytes with the
+matching historical manifest, completes the serialized authenticated uninstall, and
+installs the current manifest without manual private-state editing. Current install,
+status, run, and uninstall paths remain strict. Offline coverage includes the positive
+18→21 migration and negative unknown-key, digest, identity, replacement-file,
+tombstone, launchd-state, and refresh-only cases. No generic schema relaxation or
+silent ledger rewrite is accepted. Publication remains a separate release action.
 
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the

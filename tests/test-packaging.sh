@@ -2402,9 +2402,9 @@ fi
 if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'The thirty-two offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'Local update notifier: 73 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-update-notifier.py 73-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-update-notifier.py 89-case' "$ROOT/README.md" \
         && [[ -f "$ROOT/docs/MEASUREMENT.md" ]] \
         && [[ -x "$ROOT/update-notifier.sh" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
