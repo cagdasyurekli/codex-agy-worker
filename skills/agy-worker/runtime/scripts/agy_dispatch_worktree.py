@@ -511,6 +511,61 @@ def _full_stat_binding(info: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def _bound_git_worktree_root(
+    raw: bytes, canonical_root: str, root_binding: tuple[int, ...],
+) -> bool:
+    """Accept only Git's exact bound-root spelling or macOS's /var alias.
+
+    Git may report the documented ``/var`` spelling while Python canonicalizes
+    the same macOS directory as ``/private/var``.  The alias is accepted only
+    after strict UTF-8 framing and a no-follow full-stat binding prove that the
+    final named directory is the held root.  This is deliberately narrower
+    than ``realpath``: arbitrary symlink aliases and lexical path variations
+    remain a failed boundary.
+    """
+    if (
+        type(raw) is not bytes
+        or type(canonical_root) is not str
+        or type(root_binding) is not tuple
+        or len(root_binding) != 9
+        or any(type(value) is not int for value in root_binding)
+        or not raw.endswith(b"\n")
+        or raw.count(b"\n") != 1
+        or b"\0" in raw
+    ):
+        return False
+    try:
+        path_text = raw[:-1].decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        return False
+    if not path_text or not os.path.isabs(path_text) or "\0" in path_text:
+        return False
+    try:
+        if MODEL_SELECTION._canonical_executable_path(path_text) != (
+            MODEL_SELECTION._canonical_executable_path(canonical_root)
+        ):
+            return False
+        named = os.lstat(os.fsencode(path_text))
+        if not stat.S_ISDIR(named.st_mode) or stat.S_ISLNK(named.st_mode):
+            return False
+        descriptor = os.open(
+            os.fsencode(path_text), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            opened = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        after = os.lstat(os.fsencode(path_text))
+    except OSError:
+        return False
+    return (
+        _full_stat_binding(named) == root_binding
+        and _full_stat_binding(opened) == root_binding
+        and _full_stat_binding(after) == root_binding
+    )
+
+
 _FIXED_GIT_READ_ARGV = {
     ("rev-parse", "--is-inside-work-tree"),
     ("rev-parse", "--show-toplevel"),
@@ -878,30 +933,33 @@ def _git_boundary_identity(workdir: str) -> dict[str, Any] | None:
         def directory(
             path_text: str, *, allow_root_relative: bool = False,
         ) -> tuple[str, dict[str, int]] | None:
-            """Reject a named Git authority that is a symlink or replacement."""
+            """Bind a direct Git authority, allowing only macOS's /var alias."""
             if not os.path.isabs(path_text) and not allow_root_relative:
                 return None
             named_path = os.path.abspath(
                 path_text if os.path.isabs(path_text) else os.path.join(root, path_text)
             )
             try:
-                named = os.lstat(named_path)
+                named = os.lstat(os.fsencode(named_path))
                 if not stat.S_ISDIR(named.st_mode) or stat.S_ISLNK(named.st_mode):
                     return None
-                canonical_path = os.path.realpath(named_path)
-                # The Git path itself must be direct; silently accepting a
-                # symlink can bind an arbitrary outward repository boundary.
-                if canonical_path != named_path:
+                resolved_path = os.path.realpath(named_path)
+                # ``realpath`` may change only macOS's documented /var
+                # spelling.  An arbitrary outward symlink remains a boundary
+                # failure even if its target happens to be a Git directory.
+                if MODEL_SELECTION._canonical_executable_path(resolved_path) != (
+                    MODEL_SELECTION._canonical_executable_path(named_path)
+                ):
                     return None
                 descriptor = os.open(
-                    canonical_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                    os.fsencode(named_path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                     | getattr(os, "O_NOFOLLOW", 0),
                 )
                 try:
                     opened = os.fstat(descriptor)
                 finally:
                     os.close(descriptor)
-                after = os.lstat(canonical_path)
+                after = os.lstat(os.fsencode(named_path))
             except OSError:
                 return None
             if (
@@ -909,7 +967,7 @@ def _git_boundary_identity(workdir: str) -> dict[str, Any] | None:
                 or _full_stat_binding(opened) != _full_stat_binding(after)
             ):
                 return None
-            return canonical_path, _stable_git_authority(opened)
+            return resolved_path, _stable_git_authority(opened)
 
         inside = read_plumbing(["rev-parse", "--is-inside-work-tree"])
         top_level = read_plumbing(["rev-parse", "--show-toplevel"])
@@ -918,7 +976,7 @@ def _git_boundary_identity(workdir: str) -> dict[str, Any] | None:
         common_dir_raw = read_plumbing(["rev-parse", "--git-common-dir"])
         if (
             inside != b"true\n"
-            or top_level != os.fsencode(root) + b"\n"
+            or not _bound_git_worktree_root(top_level, root, root_binding)
             or object_format not in {b"sha1\n", b"sha256\n"}
             or git_dir_raw is None or common_dir_raw is None
         ):
@@ -936,7 +994,8 @@ def _git_boundary_identity(workdir: str) -> dict[str, Any] | None:
             final_marker != initial_marker
             or _full_stat_binding(os.fstat(root_fd)) != root_binding
             or _full_stat_binding(os.lstat(workdir)) != root_binding
-            or read_plumbing(["rev-parse", "--show-toplevel"]) != top_level
+            or (final_top_level := read_plumbing(["rev-parse", "--show-toplevel"])) != top_level
+            or not _bound_git_worktree_root(final_top_level, root, root_binding)
             or read_plumbing(["rev-parse", "--show-object-format"]) != object_format
             or read_plumbing(["rev-parse", "--absolute-git-dir"]) != git_dir_raw
             or read_plumbing(["rev-parse", "--git-common-dir"]) != common_dir_raw
@@ -1100,24 +1159,33 @@ def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] 
             return os.path.realpath(path) if resolve else os.path.abspath(path)
 
         def directory_boundary(path: str) -> tuple[str, tuple[int, ...]] | None:
-            canonical_path = os.path.realpath(path)
-            if not os.path.isabs(canonical_path):
+            """Bind a direct Git directory without accepting arbitrary aliases."""
+            if not os.path.isabs(path):
                 return None
+            named_path = os.path.abspath(path)
             try:
+                named = os.lstat(os.fsencode(named_path))
+                if not stat.S_ISDIR(named.st_mode) or stat.S_ISLNK(named.st_mode):
+                    return None
+                canonical_path = os.path.realpath(named_path)
+                if MODEL_SELECTION._canonical_executable_path(canonical_path) != (
+                    MODEL_SELECTION._canonical_executable_path(named_path)
+                ):
+                    return None
                 descriptor = os.open(
-                    canonical_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                    os.fsencode(named_path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                     | getattr(os, "O_NOFOLLOW", 0),
                 )
                 try:
                     opened = os.fstat(descriptor)
                 finally:
                     os.close(descriptor)
-                named = os.lstat(canonical_path)
+                after = os.lstat(os.fsencode(named_path))
             except OSError:
                 return None
             if (
-                not stat.S_ISDIR(opened.st_mode) or stat.S_ISLNK(named.st_mode)
-                or binding(opened) != binding(named)
+                binding(named) != binding(opened)
+                or binding(opened) != binding(after)
             ):
                 return None
             return canonical_path, binding(opened)
@@ -1167,7 +1235,7 @@ def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] 
             return (
                 inside is not None and inside[1] == b"true\n"
                 and top_level is not None
-                and top_level[1] == os.fsencode(root) + b"\n"
+                and _bound_git_worktree_root(top_level[1], root, root_binding)
             )
 
         def bound_git_read(
@@ -1206,7 +1274,7 @@ def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] 
         common_path_result = git_read(["rev-parse", "--git-common-dir"])
         if common_path_result is None:
             return None
-        common_path = one_path(common_path_result[1])
+        common_path = one_path(common_path_result[1], resolve=False)
         if common_path is None:
             return None
         common_dir_boundary = directory_boundary(common_path)
@@ -1707,6 +1775,7 @@ _IMPLEMENTATION_FUNCTIONS = frozenset({
     "_safe_git_is_outside_worktree",
     "_stable_git_authority",
     "_full_stat_binding",
+    "_bound_git_worktree_root",
     "_fixed_git_read_argv",
     "_bounded_git_read",
     "_git_boundary_identity",

@@ -4582,6 +4582,75 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def v9_git_boundary_identity_is_stable_for_provider_content_and_rejects_replacement() -> None:
         """V9 separates stable Git authority from mutable candidate content."""
+        def git_toplevel_alias_is_narrowly_bound_to_the_held_directory() -> None:
+            """Only macOS's documented spelling alias survives a full binding."""
+            fixture = root / "git-toplevel-alias"; fixture.mkdir()
+            other = root / "git-toplevel-alias-other"; other.mkdir()
+            arbitrary_link = root / "git-toplevel-arbitrary-link"
+            arbitrary_link.symlink_to(fixture, target_is_directory=True)
+            binding = MODULE._full_stat_binding(os.lstat(fixture))
+
+            # Model a macOS Git response without depending on whether this host
+            # exposes /var through /private/var.  The only mocked filesystem
+            # lookups map that public spelling to this owned fixture directory.
+            git_path = "/var/agy-worker-synthetic-root"
+            canonical_root = "/private/var/agy-worker-synthetic-root"
+            original_canonical = MODULE.MODEL_SELECTION._canonical_executable_path
+            original_lstat = MODULE.os.lstat
+            original_open = MODULE.os.open
+
+            def mapped_path(value: str | bytes | os.PathLike[str] | os.PathLike[bytes]):
+                try:
+                    text = os.fsdecode(value)
+                except (TypeError, UnicodeError):
+                    return value
+                return str(fixture) if text == git_path else value
+
+            def canonical(value: str) -> str:
+                if value in {git_path, canonical_root}:
+                    return canonical_root
+                return original_canonical(value)
+
+            def lstat(value, *arguments, **keywords):
+                return original_lstat(mapped_path(value), *arguments, **keywords)
+
+            def open_path(value, *arguments, **keywords):
+                return original_open(mapped_path(value), *arguments, **keywords)
+
+            MODULE.MODEL_SELECTION._canonical_executable_path = canonical
+            MODULE.os.lstat = lstat
+            MODULE.os.open = open_path
+            try:
+                assert MODULE._bound_git_worktree_root(
+                    git_path.encode("utf-8") + b"\n", canonical_root, binding,
+                )
+            finally:
+                MODULE.MODEL_SELECTION._canonical_executable_path = original_canonical
+                MODULE.os.lstat = original_lstat
+                MODULE.os.open = original_open
+
+            assert not MODULE._bound_git_worktree_root(
+                os.fsencode(str(arbitrary_link)) + b"\n", str(fixture), binding,
+            )
+            assert not MODULE._bound_git_worktree_root(
+                os.fsencode(str(other)) + b"\n", str(fixture), binding,
+            )
+            for malformed in (b"relative\n", b"/tmp/has\0nul\n", b"\xff\n", b"/tmp/one\nsecond\n"):
+                assert not MODULE._bound_git_worktree_root(malformed, str(fixture), binding)
+
+            helper_source = WORKTREE_SOURCE.read_text(encoding="utf-8")
+            boundary = helper_source[
+                helper_source.index("def _git_boundary_identity"):
+                helper_source.index("\ndef _worktree_snapshot")
+            ]
+            snapshot = helper_source[
+                helper_source.index("def _worktree_snapshot"):helper_source.index("\n\n_IMPLEMENTATION_FUNCTIONS")
+            ]
+            assert "_bound_git_worktree_root(top_level, root, root_binding)" in boundary
+            assert "_bound_git_worktree_root(top_level[1], root, root_binding)" in snapshot
+
+        git_toplevel_alias_is_narrowly_bound_to_the_held_directory()
+
         def verification(state: dict, label: str) -> dict:
             return {
                 "schema_version": 2, "summary": f"{label} driver review", "passed_checks": [],

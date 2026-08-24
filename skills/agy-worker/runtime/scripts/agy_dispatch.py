@@ -2266,6 +2266,12 @@ def _full_stat_binding(info: os.stat_result) -> tuple[int, ...]:
     return _worktree_call("_full_stat_binding", info)
 
 
+def _bound_git_worktree_root(
+    raw: bytes, canonical_root: str, root_binding: tuple[int, ...],
+) -> bool:
+    return _worktree_call("_bound_git_worktree_root", raw, canonical_root, root_binding)
+
+
 def _fixed_git_read_argv(arguments: list[str]) -> bool:
     return _worktree_call("_fixed_git_read_argv", arguments)
 

@@ -46,7 +46,73 @@ def run(context: dict[str, object]) -> None:
             if linked.exists():
                 subprocess.run(["git", "-C", str(source_repo), "worktree", "remove", "--force", str(linked)], check=True)
             shutil.rmtree(fixture)
+        git_plumbing_var_aliases_preserve_only_direct_standard_and_linked_boundaries()
 
+    def git_plumbing_var_aliases_preserve_only_direct_standard_and_linked_boundaries() -> None:
+        """A documented /var spelling cannot widen Git-directory authority."""
+        fixture = root / "git-plumbing-var-aliases"; fixture.mkdir()
+        source_repo = fixture / "source"; source_repo.mkdir()
+        linked = fixture / "linked"
+        other = fixture / "other"; other.mkdir()
+        try:
+            for repo in (source_repo, other):
+                subprocess.run(["git", "init", "-q", str(repo)], check=True)
+                subprocess.run(["git", "-C", str(repo), "config", "user.email", "fixture@example.invalid"], check=True)
+                subprocess.run(["git", "-C", str(repo), "config", "user.name", "Fixture"], check=True)
+                subprocess.run(["git", "-C", str(repo), "commit", "--allow-empty", "-qm", "base"], check=True)
+            subprocess.run(
+                ["git", "-C", str(source_repo), "worktree", "add", "-q", "-b", "var-alias-linked", str(linked)],
+                check=True,
+            )
+            linked = linked.resolve()
+            direct_reader = MODULE._WORKTREE_HELPER._IMPLEMENTATION_DEFAULTS["_bounded_git_read"]
+            facade_reader = MODULE._bounded_git_read
+
+            def with_reader(reader, action):
+                MODULE._bounded_git_read = reader
+                try:
+                    return action()
+                finally:
+                    MODULE._bounded_git_read = facade_reader
+
+            aliases: set[tuple[str, ...]] = set()
+            def var_alias_reader(*args, **kwargs):
+                result = direct_reader(*args, **kwargs)
+                if result is not None and result[1].startswith(b"/private/var/"):
+                    aliases.add(tuple(args[3]))
+                    return result[0], b"/var/" + result[1][len(b"/private/var/"):]
+                return result
+
+            for label, worktree in (("standard", source_repo), ("linked", linked)):
+                assert with_reader(var_alias_reader, lambda: MODULE._git_boundary_identity(str(worktree))) is not None, label
+                assert with_reader(var_alias_reader, lambda: MODULE._worktree_snapshot(str(worktree))) is not None, label
+            assert {("rev-parse", "--show-toplevel"), ("rev-parse", "--absolute-git-dir")} <= aliases
+            assert ("rev-parse", "--git-common-dir") in aliases
+
+            git_link = fixture / "git-dir-link"; git_link.symlink_to(source_repo / ".git", target_is_directory=True)
+            common_link = fixture / "common-dir-link"; common_link.symlink_to(source_repo / ".git", target_is_directory=True)
+            def replaced_reader(arguments, replacement):
+                def reader(*args, **kwargs):
+                    result = direct_reader(*args, **kwargs)
+                    return (result[0], replacement) if result is not None and tuple(args[3]) == arguments else result
+                return reader
+
+            for worktree, arguments, replacement in (
+                (source_repo, ("rev-parse", "--absolute-git-dir"), os.fsencode(git_link) + b"\n"),
+                (linked, ("rev-parse", "--git-common-dir"), os.fsencode(common_link) + b"\n"),
+                (source_repo, ("rev-parse", "--show-toplevel"), os.fsencode(other) + b"\n"),
+                (source_repo, ("rev-parse", "--absolute-git-dir"), b"/tmp/has\0nul\n"),
+            ):
+                reader = replaced_reader(arguments, replacement)
+                assert with_reader(reader, lambda: MODULE._git_boundary_identity(str(worktree))) is None
+                assert with_reader(reader, lambda: MODULE._worktree_snapshot(str(worktree))) is None
+        finally:
+            if linked.exists():
+                subprocess.run(["git", "-C", str(source_repo), "worktree", "remove", "--force", str(linked)], check=True)
+            shutil.rmtree(fixture)
+
+    # Keep the established V9 dispatch-state case as the inventory owner: this
+    # is its plumbing-alias integration branch, not a new suite count.
     check("normal standard and linked worktrees persist a bound V9 dispatch state", normal_standard_and_linked_worktrees_create_bound_v9_state)
 
     def extracted_worktree_facade_preserves_all_signatures_and_patch_seams() -> None:
@@ -66,6 +132,7 @@ def run(context: dict[str, object]) -> None:
             "_safe_git_is_outside_worktree",
             "_stable_git_authority",
             "_full_stat_binding",
+            "_bound_git_worktree_root",
             "_fixed_git_read_argv",
             "_bounded_git_read",
             "_git_boundary_identity",
@@ -82,7 +149,7 @@ def run(context: dict[str, object]) -> None:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
         assert set(extracted) <= set(facade_nodes) & set(helper_nodes)
-        assert len(extracted) == 15
+        assert len(extracted) == 16
         for name in extracted:
             assert ast.dump(facade_nodes[name].args, include_attributes=False) == ast.dump(
                 helper_nodes[name].args, include_attributes=False,
