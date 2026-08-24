@@ -25,7 +25,7 @@ jobs:
     # The suite is deliberately offline — no agy, no API keys, no network — so it
     # runs on every PR.
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
