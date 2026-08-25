@@ -134,7 +134,7 @@ required = (
     "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n",
     "  cancel-in-progress: true\n",
     "permissions:\n  contents: read\n",
-    "    timeout-minutes: 30\n",
+    "    timeout-minutes: 45\n",
     "      base_sha:\n",
     "      head_sha:\n",
     "      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
