@@ -1302,6 +1302,43 @@ def _live_elapsed(value: dict[str, Any], now: float) -> float:
     return elapsed
 
 
+def _freeze_reaped_runtime(
+    job: Path, attempt: int, controller_pid: int, elapsed: float,
+) -> tuple[dict[str, Any], bytes, str, str | None]:
+    """Atomically stop the provider clock and classify its locked deadline.
+
+    Reaping is the last provider-owned operation.  Everything after this
+    point—envelope extraction, schema validation, and candidate worktree
+    reconciliation—must observe the exact persisted value rather than accrue
+    controller-local time.  Reload under the lock instead of applying a stale
+    controller snapshot so a just-approved extension is included, while a
+    prior freeze makes the same extension predicate ineligible.
+    """
+    with state_lock(job):
+        current, raw, _sha = load_state(job)
+        if (
+            current["attempt"] != attempt
+            or current["controller_pid"] != controller_pid
+            or current["status"] not in {"running", "cancel-requested"}
+        ):
+            raise DispatchError("dispatch changed before runtime freeze")
+        frozen_elapsed = max(float(elapsed), float(current["elapsed_seconds"]))
+        current, raw, sha = _transition_locked(job, current, raw, {
+            "elapsed_seconds": frozen_elapsed,
+            "started_epoch": None,
+        })
+        deadline: str | None = None
+        # Cancellation is an approved state fact and has priority over a
+        # post-reap deadline classification.  The terminal projection still
+        # handles it with the existing remote-cancel semantics.
+        if not current["cancel_requested"]:
+            if frozen_elapsed >= float(current["max_seconds"]):
+                deadline = "max-runtime"
+            elif frozen_elapsed >= float(current["hard_seconds"]):
+                deadline = "hard"
+        return current, raw, sha, deadline
+
+
 def _is_active(value: dict[str, Any]) -> bool:
     return value["status"] in {"queued", "running", "cancel-requested"}
 
@@ -1311,6 +1348,9 @@ def _extend_is_eligible(value: dict[str, Any], now: float) -> bool:
     elapsed = _live_elapsed(value, now)
     return bool(
         _is_active(value)
+        # The lease is a provider-runtime control, never a way to extend
+        # queued preflight or post-reap controller reconciliation.
+        and value["started_epoch"] is not None
         and not value["cancel_requested"]
         and value["progress_count"] > 0
         and value["last_progress_epoch"] is not None
@@ -2331,10 +2371,10 @@ def _state_worktree_snapshot(state: dict[str, Any], workdir: str) -> dict[str, A
     raise DispatchError("dispatch worktree snapshot algorithm is unavailable")
 
 
-def _reconcile_worktree(
-    workdir: str, baseline: dict[str, Any] | None, *, state: dict[str, Any] | None = None,
+def _reconciliation_from_snapshot(
+    current: dict[str, Any] | None, baseline: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    current = _worktree_snapshot(workdir) if state is None else _state_worktree_snapshot(state, workdir)
+    """Project reconciliation from one already-linearized worktree fact."""
     if current is None or baseline is None:
         return {
             "worktree_reconciliation": "unavailable",
@@ -2346,6 +2386,13 @@ def _reconcile_worktree(
         "worktree_changes_present": current["entries"] > 0,
         "worktree_changed_since_dispatch": current["sha256"] != baseline["sha256"],
     }
+
+
+def _reconcile_worktree(
+    workdir: str, baseline: dict[str, Any] | None, *, state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    current = _worktree_snapshot(workdir) if state is None else _state_worktree_snapshot(state, workdir)
+    return _reconciliation_from_snapshot(current, baseline)
 
 
 def _schema_binding(path: Path) -> tuple[str, tuple[int, int, int, int, int]]:
@@ -2416,12 +2463,15 @@ def _bound_schemas(command: dict[str, Any], state: dict[str, Any]) -> tuple[Path
 
 def _bound_candidate_worktree(state: dict[str, Any], command: dict[str, Any]) -> None:
     """Reject post-review worktree drift before a continuation or final disposition."""
-    quiescent = state["controller_pid"] is None and (
-        state["status"] in TERMINAL
-        or (
-            state["status"] == "queued"
-            and state["attempt_origin"] == "conversation-continue"
-        )
+    quiescent = (
+        state["status"] in TERMINAL and state["controller_pid"] is None
+    ) or (
+        state["status"] == "queued"
+        and state["attempt_origin"] == "conversation-continue"
+        # The owning controller publishes its PID while provider-free local
+        # preflight is in progress.  No other process may treat that active
+        # queued candidate as quiescent.
+        and state["controller_pid"] in {None, os.getpid()}
     )
     if not quiescent:
         raise DispatchError("candidate worktree is not quiescent")
@@ -3199,6 +3249,10 @@ def _validate_terminal_envelope(
 
 def controller(job: Path, ownership_fd: int) -> int:
     stop_signal: int | None = None
+    process: subprocess.Popen[bytes] | None = None
+    started_mono: float | None = None
+    runtime_end_mono: float | None = None
+    runtime_frozen = False
 
     def interrupted(number: int, _frame: Any) -> None:
         nonlocal stop_signal
@@ -3213,18 +3267,29 @@ def controller(job: Path, ownership_fd: int) -> int:
         signal.signal(number, interrupted)
     try:
       with inherited_lifecycle_lock(job, ownership_fd):
-        state, prior_raw, _sha = read_state_snapshot(job)
-        if state["status"] == "cancel-requested" and state["cancel_requested"]:
-            transition(job, state, prior_raw, _terminal_projection(
-                state, status="cancelled", reason="cancelled",
-                exit_code=EXIT_BY_REASON["cancelled"],
-                # This SHA-approved local cancellation occurs before provider
-                # startup; it is not an unverified remote cancellation.
-                remote_cancel_unverified=False,
-            ))
+        # Claim the queued attempt under one state lock.  A cancel can land
+        # between process spawn and this point, but never between this exact
+        # queued observation and controller ownership publication.
+        cancelled_before_claim = False
+        with state_lock(job):
+            state, prior_raw, _sha = load_state(job)
+            if state["status"] == "cancel-requested" and state["cancel_requested"]:
+                cancelled_before_claim = True
+            elif state["status"] != "queued" or state["cancel_requested"]:
+                raise DispatchError("dispatch is not queued")
+            else:
+                # A queued state with this exact PID is the startup handshake; it
+                # means the private controller is alive, not that a provider
+                # process exists or that provider runtime has started.
+                state, prior_raw, _sha = _transition_locked(job, state, prior_raw, {
+                    "controller_pid": os.getpid(),
+                })
+        if cancelled_before_claim:
+            _terminalize_owned(
+                job, state, status="cancelled", reason="cancelled",
+                exit_code=EXIT_BY_REASON["cancelled"], expected_controller_pid=None,
+            )
             return EXIT_BY_REASON["cancelled"]
-        if state["status"] != "queued" or state["cancel_requested"]:
-            raise DispatchError("dispatch is not queued")
         feedback: Path | None = None
         schema_paths: tuple[Path, Path] | None = None
         try:
@@ -3242,30 +3307,24 @@ def controller(job: Path, ownership_fd: int) -> int:
                     raise DispatchError("project continuation has no verification feedback")
                 command, _candidate_raw = _bound_current_candidate(job, state)
         except (OSError, DispatchError):
-            transition(job, state, prior_raw, _terminal_projection(
-                state, status="failed", reason="status_unavailable",
+            terminal, _raw, _sha = _terminalize_owned(
+                job, state, status="failed", reason="status_unavailable",
                 exit_code=EXIT_BY_REASON["status_unavailable"],
-                failure_stage="binding_failure",
-                allow_continue=False,
-            ))
-            return EXIT_BY_REASON["status_unavailable"]
+                failure_stage="binding_failure", expected_controller_pid=os.getpid(),
+            )
+            return int(terminal["exit_code"])
         attempt = state["attempt"]
         stream_path, stderr_path, envelope_path = _attempt_paths(job, attempt)
         stdout_fd = -1; stderr_fd = -1
+        # ``elapsed_seconds`` is provider execution time.  The strict local
+        # command/root/schema/worktree proofs below happen before a provider
+        # process exists, so they cannot consume the provider hard, maximum,
+        # or idle budgets.  This is especially important when a safe platform
+        # Git fallback makes those bounded probes materially slower.
+        elapsed = float(state["attempt_base_elapsed"])
         try:
             stdout_fd = _ensure_new_private(stream_path)
             stderr_fd = _ensure_new_private(stderr_path)
-            # The launch budget starts when this controller marks the attempt
-            # running, so final local probes and the bounded worktree scan are
-            # charged against both the per-attempt and absolute deadlines.
-            started_mono = time.monotonic()
-            now = time.time()
-            state, prior_raw, _sha = transition(job, state, prior_raw, {
-                "status": "running", "controller_pid": os.getpid(),
-                "started_epoch": now, "last_progress_epoch": None,
-                "stream_path": str(stream_path), "stderr_path": str(stderr_path),
-                "next_action": "wait",
-            })
             _stage(command, True)
             _load_bound_command(job, state, stage_readonly=True)
             _load_bound_selection(command, state)
@@ -3274,14 +3333,12 @@ def controller(job: Path, ownership_fd: int) -> int:
             if stdout_fd >= 0: os.close(stdout_fd)
             if stderr_fd >= 0: os.close(stderr_fd)
             with contextlib.suppress(OSError): _stage(command, False)
-            current, current_raw, _current_sha = read_state_snapshot(job)
-            transition(job, current, current_raw, _terminal_projection(
-                current, status="failed", reason="status_unavailable",
+            terminal, _raw, _sha = _terminalize_owned(
+                job, state, status="failed", reason="status_unavailable",
                 exit_code=EXIT_BY_REASON["status_unavailable"],
-                failure_stage="binding_failure",
-                allow_continue=False,
-            ))
-            return EXIT_BY_REASON["status_unavailable"]
+                failure_stage="binding_failure", expected_controller_pid=os.getpid(),
+            )
+            return int(terminal["exit_code"])
         argv = list(command["argv"])
         if state["attempt_origin"] in {"conversation-resume", "conversation-continue"}:
             conversation = state["conversation_id"]
@@ -3298,10 +3355,9 @@ def controller(job: Path, ownership_fd: int) -> int:
             argv[print_index + 1] = prompt
             argv[print_index:print_index] = prefix
         selector = selectors.DefaultSelector()
-        process: subprocess.Popen[bytes] | None = None
         buffers = {"stdout": bytearray(), "stderr": bytearray()}
         sizes = {"stdout": 0, "stderr": 0}
-        next_notice = started_mono + float(command["notice_seconds"])
+        next_notice = 0.0
         reason: str | None = None
         limit_kind: str | None = None
         failure_stage: str | None = None
@@ -3322,6 +3378,53 @@ def controller(job: Path, ownership_fd: int) -> int:
                     raise DispatchError("dispatch attempt changed during control")
                 state, prior_raw = current, current_raw
                 return False
+
+        def refresh_control_snapshot() -> None:
+            """Reload an approved control transition before using live limits."""
+            nonlocal state, prior_raw
+            current, current_raw, _current_sha = read_state_snapshot(job)
+            if current_raw == prior_raw:
+                return
+            if (
+                current["previous_state_sha256"] != digest(prior_raw)
+                or current["sequence"] != state["sequence"] + 1
+                or current["attempt"] != state["attempt"]
+            ):
+                raise DispatchError("dispatch changed during provider control")
+            state, prior_raw = current, current_raw
+
+        def drain_reaped_streams() -> None:
+            """Bind bytes emitted before reap without treating them as activity."""
+            nonlocal reason, failure_stage
+            for key in list(selector.get_map().values()):
+                name = key.data
+                while True:
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except BlockingIOError:
+                        break
+                    except OSError:
+                        reason = "status_unavailable"
+                        failure_stage = "binding_failure"
+                        return
+                    if not chunk:
+                        try:
+                            selector.unregister(key.fileobj)
+                            key.fileobj.close()
+                        except OSError:
+                            reason = "status_unavailable"
+                            failure_stage = "binding_failure"
+                        break
+                    sizes[name] += len(chunk)
+                    if sizes[name] > MAX_STREAM_BYTES:
+                        reason = "output_oversized"
+                        return
+                    try:
+                        os.write(stdout_fd if name == "stdout" else stderr_fd, chunk)
+                    except OSError:
+                        reason = "status_unavailable"
+                        failure_stage = "binding_failure"
+                        return
         try:
             try:
                 # Re-read the frozen record and re-probe *after* all controller
@@ -3332,21 +3435,16 @@ def controller(job: Path, ownership_fd: int) -> int:
                 _bound_worktree_baseline(state, command)
                 if not _worktree_symlink_boundary(command["workdir"]):
                     raise DispatchError("dispatch worktree symlink boundary changed")
-                exact_executable = None
-                if executable_binding is not None:
-                    try:
-                        exact_executable = MODEL_SELECTION.confirm_executable_binding(
-                            *executable_binding,
-                        )
-                    except MODEL_SELECTION.EvidenceUnavailable as exc:
-                        raise SelectionPreflightError(
-                            "dispatch direct selection launch binding changed",
-                        ) from exc
-                # This sample must follow both bounded local checks.  Anything
-                # slower than the remaining attempt or absolute budget stops
-                # before a provider-causing Popen.
-                launch_mono = time.monotonic()
-                elapsed = float(state["attempt_base_elapsed"]) + max(0.0, launch_mono - started_mono)
+                # The prior attempt budget is still a hard stop, but bounded
+                # controller-local proofs do not become a provider timeout.
+                # Commit the running state/CAS boundary after slow preflight.
+                # The provider hard/runtime lease starts at the invocation
+                # boundary, immediately before Popen.  The value is committed
+                # only after Popen succeeds, so failed local creation still
+                # has no provider runtime.  This leaves no post-Popen window
+                # in which a child can schedule work beyond the hard limit.
+                # The final executable confirmation remains immediately
+                # adjacent to the provider-causing call.
                 if stop_signal is not None:
                     reason = "interrupted"
                     returncode = 128 + stop_signal
@@ -3357,20 +3455,57 @@ def controller(job: Path, ownership_fd: int) -> int:
                     reason, limit_kind = "hard_deadline_exceeded", "hard"
                     returncode = EXIT_BY_REASON[reason]
                 else:
-                    process = subprocess.Popen(
-                        argv,
-                        executable=exact_executable,
-                        cwd=command["workdir"],
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        start_new_session=True,
-                        preexec_fn=lambda: os.umask(int(command["child_umask"], 8)),
-                    )
-                    # Local bindings/preflight remain charged to the hard and
-                    # maximum budgets from ``started_mono``.  The idle lease
-                    # instead begins only once this provider process exists.
-                    heartbeat_mono = time.monotonic()
+                    # Linearize cancellation against the provider-causing
+                    # operation.  The final executable confirmation and Popen
+                    # stay in this same short critical section: cancellation
+                    # before it wins without a provider; cancellation after
+                    # it is necessarily a post-launch request.
+                    with state_lock(job):
+                        current, current_raw, _current_sha = load_state(job)
+                        if (
+                            current["attempt"] != state["attempt"]
+                            or current["controller_pid"] != os.getpid()
+                            or current["status"] in TERMINAL
+                        ):
+                            raise DispatchError("dispatch changed before provider launch")
+                        state, prior_raw = current, current_raw
+                        if state["cancel_requested"]:
+                            reason = "cancelled"
+                            returncode = EXIT_BY_REASON[reason]
+                        else:
+                            state, prior_raw, _sha = _transition_locked(job, state, prior_raw, {
+                                "status": "running", "controller_pid": os.getpid(),
+                                "started_epoch": None, "last_progress_epoch": None,
+                                "stream_path": str(stream_path), "stderr_path": str(stderr_path),
+                                "next_action": "wait",
+                            })
+                            exact_executable = None
+                            if executable_binding is not None:
+                                try:
+                                    exact_executable = MODEL_SELECTION.confirm_executable_binding(
+                                        *executable_binding,
+                                    )
+                                except MODEL_SELECTION.EvidenceUnavailable as exc:
+                                    raise SelectionPreflightError(
+                                        "dispatch direct selection launch binding changed",
+                                    ) from exc
+                            launch_mono = time.monotonic()
+                            process = subprocess.Popen(
+                                argv,
+                                executable=exact_executable,
+                                cwd=command["workdir"],
+                                stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                start_new_session=True,
+                                preexec_fn=lambda: os.umask(int(command["child_umask"], 8)),
+                            )
+                            started_mono = launch_mono
+                            heartbeat_mono = started_mono
+                            next_notice = started_mono + float(command["notice_seconds"])
+                            state, prior_raw, _sha = _transition_locked(
+                                job, state, prior_raw, {"started_epoch": time.time()},
+                            )
             except MODEL_SELECTION.ProbeInterrupted as exc:
                 # model_selection owns and reaps its short-lived probe group;
                 # the controller owns the terminal dispatch projection.
@@ -3396,29 +3531,24 @@ def controller(job: Path, ownership_fd: int) -> int:
                 returncode = 127
             else:
                 if process is not None:
-                    assert process.stdout is not None and process.stderr is not None
-                    for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
-                        os.set_blocking(pipe.fileno(), False)
-                        selector.register(pipe, selectors.EVENT_READ, name)
+                    try:
+                        assert process.stdout is not None and process.stderr is not None
+                        for name, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
+                            os.set_blocking(pipe.fileno(), False)
+                            selector.register(pipe, selectors.EVENT_READ, name)
+                    except (OSError, DispatchError):
+                        reason = "status_unavailable"
+                        failure_stage = "binding_failure"
             # Pipe EOF is the completion observation.  Do not poll/reap the leader
             # before process-group closure; its PID reserves the group identifier.
-            while process is not None and selector.get_map():
+            while process is not None and selector.get_map() and reason is None:
                 now_mono = time.monotonic()
                 elapsed = float(state["attempt_base_elapsed"]) + now_mono - started_mono
                 try:
-                    current, current_raw, _current_sha = read_state_snapshot(job)
+                    refresh_control_snapshot()
                 except DispatchError:
                     reason = "status_unavailable"
                     break
-                if current_raw != prior_raw:
-                    if (
-                        current["previous_state_sha256"] != digest(prior_raw)
-                        or current["sequence"] != state["sequence"] + 1
-                        or current["attempt"] != state["attempt"]
-                    ):
-                        reason = "status_unavailable"
-                        break
-                    state, prior_raw = current, current_raw
                 if state["cancel_requested"] or stop_signal is not None:
                     reason = "cancelled" if stop_signal is None else "interrupted"
                     break
@@ -3432,32 +3562,93 @@ def controller(job: Path, ownership_fd: int) -> int:
                     reason, limit_kind = "idle_timeout", "idle"
                     break
                 if now_mono >= next_notice:
-                    controller_transition({
-                        "notice_count": state["notice_count"] + 1,
-                        "elapsed_seconds": elapsed,
-                    })
+                    try:
+                        controller_transition({
+                            "notice_count": state["notice_count"] + 1,
+                            "elapsed_seconds": elapsed,
+                        })
+                    except DispatchError:
+                        reason = "status_unavailable"
+                        failure_stage = "binding_failure"
+                        break
                     next_notice += float(command["notice_seconds"])
                     if sys.stderr.isatty():
                         print(
                             f"agy-worker: still running; elapsed={int(elapsed)}s "
                             f"progress={state['progress_count']}", file=sys.stderr, flush=True,
                         )
-                events = selector.select(CONTROL_POLL)
+                try:
+                    # A fixed poll can return after a nearer hard, maximum,
+                    # idle, or notice boundary.  Bound the kernel wait to the
+                    # first controller-owned clock, then reload any extension
+                    # and classify the resampled time before consuming ready
+                    # bytes as semantic progress.
+                    wait_until = min(
+                        started_mono
+                        + max(0.0, float(state["max_seconds"]) - float(state["attempt_base_elapsed"])),
+                        started_mono
+                        + max(0.0, float(state["hard_seconds"]) - float(state["attempt_base_elapsed"])),
+                        heartbeat_mono + float(state["idle_seconds"]),
+                        next_notice,
+                    )
+                    wait_seconds = min(CONTROL_POLL, max(0.0, wait_until - now_mono))
+                    events = selector.select(wait_seconds)
+                except OSError:
+                    reason = "status_unavailable"
+                    failure_stage = "binding_failure"
+                    break
+                post_wait_mono = time.monotonic()
+                try:
+                    refresh_control_snapshot()
+                except DispatchError:
+                    reason = "status_unavailable"
+                    failure_stage = "binding_failure"
+                    break
+                elapsed = (
+                    float(state["attempt_base_elapsed"])
+                    + post_wait_mono - started_mono
+                )
+                if state["cancel_requested"] or stop_signal is not None:
+                    reason = "cancelled" if stop_signal is None else "interrupted"
+                    break
+                if elapsed >= float(state["max_seconds"]):
+                    reason, limit_kind = "hard_deadline_exceeded", "max-runtime"
+                    break
+                if elapsed >= float(state["hard_seconds"]):
+                    reason, limit_kind = "hard_deadline_exceeded", "hard"
+                    break
+                if post_wait_mono - heartbeat_mono >= float(state["idle_seconds"]):
+                    reason, limit_kind = "idle_timeout", "idle"
+                    break
                 for key, _mask in events:
                     name = key.data
                     try:
                         chunk = os.read(key.fd, 65536)
                     except BlockingIOError:
                         continue
+                    except OSError:
+                        reason = "status_unavailable"
+                        failure_stage = "binding_failure"
+                        break
                     if not chunk:
-                        selector.unregister(key.fileobj)
-                        key.fileobj.close()
+                        try:
+                            selector.unregister(key.fileobj)
+                            key.fileobj.close()
+                        except OSError:
+                            reason = "status_unavailable"
+                            failure_stage = "binding_failure"
+                            break
                         continue
                     sizes[name] += len(chunk)
                     if sizes[name] > MAX_STREAM_BYTES:
                         reason = "output_oversized"
                         break
-                    os.write(stdout_fd if name == "stdout" else stderr_fd, chunk)
+                    try:
+                        os.write(stdout_fd if name == "stdout" else stderr_fd, chunk)
+                    except OSError:
+                        reason = "status_unavailable"
+                        failure_stage = "binding_failure"
+                        break
                     if name == "stdout" and reason is None:
                         buffers[name].extend(chunk)
                         while b"\n" in buffers[name]:
@@ -3495,7 +3686,12 @@ def controller(job: Path, ownership_fd: int) -> int:
                                         break
                                     updates["conversation_id"] = conversation
                                     updates["resume_available"] = True
-                                controller_transition(updates)
+                                try:
+                                    controller_transition(updates)
+                                except DispatchError:
+                                    reason = "status_unavailable"
+                                    failure_stage = "binding_failure"
+                                    break
                         if len(buffers[name]) > MAX_EVENT_BYTES:
                             # A newline-free oversized frame cannot be safely
                             # resynchronized.  It is neither a heartbeat nor a
@@ -3506,36 +3702,76 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if reason is not None:
                     break
             if process is not None:
-                # The candidate worktree binding below is taken only after this
-                # reaps the provider process group and closes its output streams.
+                # The candidate worktree binding below is taken only after the
+                # provider process group has been terminated and reaped.  The
+                # controller-owned stream artifacts are flushed afterward.
+                # Freeze first: fsync, envelope parsing, and reconciliation
+                # are controller-local work and must not keep the provider
+                # clock or extension window alive.
                 returncode = _terminate(process)
                 process = None
-            os.fsync(stdout_fd)
-            os.fsync(stderr_fd)
-            elapsed = float(state["attempt_base_elapsed"]) + time.monotonic() - started_mono
+                runtime_end_mono = time.monotonic()
+                # A hard/max boundary stops semantic event processing, but a
+                # complete terminal frame already present in the reaped pipes
+                # remains bounded provider evidence.  Drain it without
+                # incrementing progress or moving the heartbeat.
+                drain_reaped_streams()
+                assert started_mono is not None
+                elapsed = float(state["attempt_base_elapsed"]) + max(
+                    0.0, runtime_end_mono - started_mono,
+                )
+                state, prior_raw, _sha, frozen_limit = _freeze_reaped_runtime(
+                    job, state["attempt"], os.getpid(), elapsed,
+                )
+                runtime_frozen = True
+                if reason == "hard_deadline_exceeded":
+                    # A valid extension may have landed after this controller
+                    # observed its old limit but before the reaped-runtime CAS.
+                    # The frozen locked limit is authoritative in either
+                    # direction; do not retain a stale timeout projection.
+                    if frozen_limit is None:
+                        reason, limit_kind = None, None
+                    else:
+                        reason, limit_kind = "hard_deadline_exceeded", frozen_limit
+                elif reason is None and frozen_limit is not None:
+                    reason, limit_kind = "hard_deadline_exceeded", frozen_limit
+            try:
+                os.fsync(stdout_fd)
+                os.fsync(stderr_fd)
+            except OSError:
+                reason = "status_unavailable"
+                failure_stage = "binding_failure"
             result_binding: tuple[str, tuple[int, int, int, int, int]] | None = None
             outer_status: str | None = None
             provider_retry_after: int | None = None
             provider_retry_observed: float | None = None
-            if reason is None:
-                terminal_failure = _quota_terminal_failure(
-                    stream_path,
-                    command["agy_version"] if command["agy_version_observed"] else "",
-                )
-                if terminal_failure is not None:
-                    reason, provider_retry_after = terminal_failure
-                    # The exact 1.1.13 quota terminal has a valid outer ERROR
-                    # fact but intentionally carries no structured report.
-                    # Preserve both facts without treating quota as a report.
-                    failure_stage = "missing_structured_output"
-                    if provider_retry_after is not None:
-                        provider_retry_observed = time.time()
-                elif sizes["stdout"] == 0:
-                    reason = (
-                        _classify_stderr(stderr_path, command["agy_version"], returncode)
-                        if returncode != 0 else "empty_output"
+            # A deadline is a controller fact, not a reason to discard a
+            # terminal report already emitted by the bounded provider.  Parse
+            # that report for candidate/provenance evidence, but never let its
+            # outer SUCCESS/ERROR/CANCELLED disposition publish past the
+            # frozen deadline.  Cancellation and binding failures retain their
+            # existing fail-closed precedence and do not enter this path.
+            if reason in {None, "hard_deadline_exceeded"}:
+                if reason is None:
+                    terminal_failure = _quota_terminal_failure(
+                        stream_path,
+                        command["agy_version"] if command["agy_version_observed"] else "",
                     )
-                else:
+                    if terminal_failure is not None:
+                        reason, provider_retry_after = terminal_failure
+                        # The exact 1.1.13 quota terminal has a valid outer ERROR
+                        # fact but intentionally carries no structured report.
+                        # Preserve both facts without treating quota as a report.
+                        failure_stage = "missing_structured_output"
+                        if provider_retry_after is not None:
+                            provider_retry_observed = time.time()
+                if reason in {None, "hard_deadline_exceeded"} and sizes["stdout"] == 0:
+                    if reason is None:
+                        reason = (
+                            _classify_stderr(stderr_path, command["agy_version"], returncode)
+                            if returncode != 0 else "empty_output"
+                        )
+                elif reason in {None, "hard_deadline_exceeded"}:
                     try:
                         if schema_paths is None:
                             raise DispatchError("dispatch schema binding is unavailable")
@@ -3543,13 +3779,16 @@ def controller(job: Path, ownership_fd: int) -> int:
                         result_binding, outer_status, failure_stage = _validate_terminal_envelope(
                             stream_path, envelope_path, schema_paths[0], schema_paths[1],
                         )
-                        if result_binding is None:
+                        if result_binding is None and reason is None:
                             reason = "invalid_envelope"
-                        elif outer_status == "ERROR":
+                        elif reason is None and outer_status == "ERROR":
                             reason = "provider_terminal_error"
-                        elif outer_status == "CANCELLED":
+                        elif reason is None and outer_status == "CANCELLED":
                             reason = "provider_terminal_cancelled"
                     except DispatchError:
+                        # A binding/schema failure is security-relevant even
+                        # when a deadline was observed.  Do not preserve a
+                        # candidate whose terminal bytes could not be bound.
                         reason = "status_unavailable"
                         result_binding = None
                         failure_stage = "binding_failure"
@@ -3605,20 +3844,78 @@ def controller(job: Path, ownership_fd: int) -> int:
                 result_path = None
                 result_binding = None
                 failure_stage = "binding_failure"
+            # A SHA-approved cancellation may arrive after the last pipe-loop
+            # observation (or after reaping) and before candidate work begins.
+            # Observe it under the short ownership lock before selecting the
+            # expensive reconciliation path.  The final transition reloads
+            # again, but that later check is too late to keep a cheap cancel
+            # from being delayed by a repository-controlled Git probe.
+            with state_lock(job):
+                current, current_raw, _current_sha = load_state(job)
+                if (
+                    current["attempt"] != state["attempt"]
+                    or current["controller_pid"] != os.getpid()
+                    or current["status"] in TERMINAL
+                ):
+                    raise DispatchError("dispatch changed before terminal reconciliation")
+                state, prior_raw = current, current_raw
+                if current["cancel_requested"]:
+                    reason, final_status = "cancelled", "cancelled"
+                    exit_code = EXIT_BY_REASON["cancelled"]
+                    result_path = None
+                    result_binding = None
+                    failure_stage = None
+            # This may use a bounded Git fallback.  The provider clock was
+            # already frozen above, so keep this outside the final short state
+            # lock: status/control readers can observe the frozen record and
+            # reject stale extensions while reconciliation is in progress.
+            # A local cancellation/interruption with no current terminal
+            # report has no new worktree fact to reconcile.  Do not make the
+            # cheap control wait for a candidate/worktree Git scan after the
+            # provider group is already reaped.  A continuation's prior
+            # candidate remains exact-bound and unreviewed; result/finalize
+            # rebind it before use.  A provider-CANCELLED report still has a
+            # current result_binding and retains the reconciliation path.
+            skip_cancel_reconciliation = bool(
+                reason in {"cancelled", "interrupted"}
+                and result_binding is None
+            )
+            if skip_cancel_reconciliation:
+                candidate_worktree = None
+                reconciliation = {
+                    "worktree_reconciliation": "unavailable",
+                    "worktree_changes_present": None,
+                    "worktree_changed_since_dispatch": None,
+                }
+            else:
+                candidate_worktree = (
+                    _state_worktree_snapshot(state, command["workdir"])
+                    if result_binding is not None else None
+                )
+                reconciliation = (
+                    _reconciliation_from_snapshot(
+                        candidate_worktree, state["worktree_baseline"],
+                    )
+                    if result_binding is not None else _reconcile_worktree(
+                        command["workdir"], state["worktree_baseline"], state=state,
+                    )
+                )
             # An approved control may land after the last loop observation.  Bind
             # finalization to the current state under the same short transition lock.
             with state_lock(job):
                 current, current_raw, _current_sha = load_state(job)
-                if current["attempt"] != state["attempt"] or current["status"] in TERMINAL:
+                if (
+                    current["attempt"] != state["attempt"]
+                    or current["controller_pid"] != os.getpid()
+                    or current["status"] in TERMINAL
+                ):
                     raise DispatchError("dispatch changed before terminalization")
-                # Persist the latest value while still holding the terminal
-                # transition lock, then use that same value for recovery
-                # eligibility.  A slow failed preflight must never advertise a
-                # restart that create_state will (correctly) refuse.
+                # Persist the provider runtime measured before local terminal
+                # parsing/reconciliation.  Those controller-local checks must
+                # not silently consume a later repair/recovery budget.
                 elapsed = max(
                     elapsed,
                     float(current["elapsed_seconds"]),
-                    float(current["attempt_base_elapsed"]) + max(0.0, time.monotonic() - started_mono),
                 )
                 if current["cancel_requested"]:
                     reason, final_status, exit_code = "cancelled", "cancelled", EXIT_BY_REASON["cancelled"]
@@ -3628,12 +3925,31 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if reason != "provider_quota_exhausted":
                     provider_retry_after = None
                     provider_retry_observed = None
-                preserve_candidate = bool(
-                    result_binding is None
-                    and current["attempt_origin"] == "conversation-continue"
+                prior_candidate_exists = bool(
+                    current["attempt_origin"] == "conversation-continue"
                     and current["candidate_recognized"]
                 )
-                candidate_worktree = _state_worktree_snapshot(current, command["workdir"]) if result_binding is not None else None
+                prior_candidate_is_bound = bool(
+                    prior_candidate_exists
+                    and current["candidate_source"] != "none"
+                    and current["result_available"]
+                    and current["failure_stage"] is None
+                    and all(current[key] is not None for key in (
+                        "result_path", "result_sha256", "result_identity",
+                        "candidate_worktree_sha256", "candidate_worktree_entries",
+                    ))
+                )
+                # An old continuation candidate remains readable only when all
+                # of its exact report/worktree bindings are still complete.
+                # Keep an incomplete one as inaccessible forensic state and
+                # fail closed; do not let a concurrent local cancel convert it
+                # into an apparently usable candidate.
+                preserve_candidate = bool(
+                    result_binding is None and prior_candidate_is_bound
+                )
+                preserve_candidate_forensics = bool(
+                    result_binding is None and prior_candidate_exists
+                )
                 terminal_snapshot_unavailable = bool(
                     result_binding is not None
                     and outer_status in {"SUCCESS", "ERROR", "CANCELLED"}
@@ -3646,7 +3962,11 @@ def controller(job: Path, ownership_fd: int) -> int:
                     reason, final_status = "status_unavailable", "failed"
                     exit_code = EXIT_BY_REASON["status_unavailable"]
                     failure_stage = "binding_failure"
-                candidate_recognized = result_binding is not None or preserve_candidate
+                if preserve_candidate_forensics and not prior_candidate_is_bound:
+                    reason, final_status = "status_unavailable", "failed"
+                    exit_code = EXIT_BY_REASON["status_unavailable"]
+                    failure_stage = "binding_failure"
+                candidate_recognized = result_binding is not None or preserve_candidate_forensics
                 candidate_unavailable = bool(
                     candidate_recognized and failure_stage == "binding_failure"
                 )
@@ -3654,12 +3974,12 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "provider_success" if result_binding is not None and outer_status == "SUCCESS"
                     else "provider_error" if result_binding is not None and outer_status == "ERROR"
                     else "provider_cancelled" if result_binding is not None and outer_status == "CANCELLED"
-                    else current["candidate_source"] if preserve_candidate
+                    else current["candidate_source"] if preserve_candidate_forensics
                     else "none"
                 )
-                preserved_path = current["result_path"] if preserve_candidate else None
-                preserved_sha = current["result_sha256"] if preserve_candidate else None
-                preserved_identity = current["result_identity"] if preserve_candidate else None
+                preserved_path = current["result_path"] if preserve_candidate_forensics else None
+                preserved_sha = current["result_sha256"] if preserve_candidate_forensics else None
+                preserved_identity = current["result_identity"] if preserve_candidate_forensics else None
                 updates = {
                     "status": final_status,
                     "reason": reason,
@@ -3678,11 +3998,11 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "result_available": candidate_recognized and not candidate_unavailable,
                     "candidate_worktree_sha256": (
                         candidate_worktree["sha256"] if candidate_worktree is not None
-                        else current["candidate_worktree_sha256"] if preserve_candidate else None
+                        else current["candidate_worktree_sha256"] if preserve_candidate_forensics else None
                     ),
                     "candidate_worktree_entries": (
                         candidate_worktree["entries"] if candidate_worktree is not None
-                        else current["candidate_worktree_entries"] if preserve_candidate else None
+                        else current["candidate_worktree_entries"] if preserve_candidate_forensics else None
                     ),
                     "driver_disposition": "unreviewed" if candidate_recognized else "not_applicable",
                     "failure_stage": failure_stage,
@@ -3700,8 +4020,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                             "worktree_changes_present": None,
                             "worktree_changed_since_dispatch": None,
                         }
-                        if terminal_snapshot_unavailable else
-                        _reconcile_worktree(command["workdir"], current["worktree_baseline"], state=current)
+                        if terminal_snapshot_unavailable else reconciliation
                     ),
                     "resume_available": bool(
                         current["conversation_id"] and not candidate_recognized
@@ -3759,7 +4078,15 @@ def controller(job: Path, ownership_fd: int) -> int:
             return exit_code
         finally:
             if process is not None:
+                # If an exception is leaving the provider loop, transfer
+                # ownership to the outer recovery only after this exact group
+                # termination/reap has succeeded.  It then freezes elapsed
+                # time from this reap boundary.  If termination itself raises,
+                # keep ``process`` live so the outer recovery retains the one
+                # retry opportunity instead of assuming the group is gone.
                 _terminate(process)
+                runtime_end_mono = time.monotonic()
+                process = None
             with contextlib.suppress(Exception):
                 selector.close()
             if stdout_fd >= 0:
@@ -3768,6 +4095,47 @@ def controller(job: Path, ownership_fd: int) -> int:
                 os.close(stderr_fd)
             with contextlib.suppress(OSError):
                 _stage(command, False)
+    except Exception:
+        # Once Popen succeeds, no ordinary controller exception may be left to
+        # the cleanup-only finally path.  Reap first, freeze if the state still
+        # belongs to this controller, then publish one fail-closed terminal
+        # projection.  Pre-launch errors retain their narrower existing paths.
+        if process is None and started_mono is None:
+            raise
+        if process is not None:
+            with contextlib.suppress(Exception):
+                _terminate(process)
+            process = None
+            runtime_end_mono = time.monotonic()
+        frozen_elapsed = float(state["elapsed_seconds"])
+        if not runtime_frozen:
+            frozen_elapsed = float(state["attempt_base_elapsed"])
+            if started_mono is not None:
+                end = runtime_end_mono if runtime_end_mono is not None else time.monotonic()
+                frozen_elapsed += max(0.0, end - started_mono)
+            try:
+                state, prior_raw, _sha, _limit = _freeze_reaped_runtime(
+                    job, state["attempt"], os.getpid(), frozen_elapsed,
+                )
+                runtime_frozen = True
+            except Exception:
+                # The final state write below still clears an active controller
+                # record; preserve the largest local elapsed observation if the
+                # dedicated freeze CAS itself could not complete.
+                pass
+        try:
+            terminal, _raw, _sha = _terminalize_owned(
+                job, state, status="failed", reason="status_unavailable",
+                exit_code=EXIT_BY_REASON["status_unavailable"],
+                failure_stage="binding_failure", expected_controller_pid=os.getpid(),
+                elapsed_seconds=frozen_elapsed, postlaunch_cancel=True,
+            )
+            return int(terminal["exit_code"])
+        except Exception:
+            # A failed final write is still not allowed to disguise the
+            # controller exception; the strict helper has already attempted
+            # its unavailable fallback without holding a scan under the lock.
+            return EXIT_BY_REASON["status_unavailable"]
     finally:
         for number, handler in prior_handlers.items():
             signal.signal(number, handler)
@@ -3946,11 +4314,16 @@ def spawn(
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(controller_process.pid, parent_signal)
             forwarded = True
-        if current["status"] != "queued":
+        if current["status"] in TERMINAL:
             break
         if controller_process.poll() is not None:
             _terminalize_start_failure(job)
             raise DispatchError("controller exited before startup handshake")
+        if (
+            current["status"] in {"queued", "running", "cancel-requested"}
+            and current["controller_pid"] == controller_process.pid
+        ):
+            break
         time.sleep(0.02)
       else:
         _terminate(controller_process)
@@ -4062,6 +4435,109 @@ def _terminal_projection(
             "assurance": "blocked" if candidate_unavailable else "pending",
         })
     return updates
+
+
+def _terminalize_owned(
+    job: Path, state: dict[str, Any], *, status: str, reason: str, exit_code: int,
+    failure_stage: str | None = None, expected_controller_pid: int | None = None,
+    elapsed_seconds: float | None = None, postlaunch_cancel: bool = False,
+) -> tuple[dict[str, Any], bytes, str]:
+    """Publish one owned terminal state without holding a lock across scans."""
+    projection_unavailable = False
+    try:
+        primary = _terminal_projection(
+            state, status=status, reason=reason, exit_code=exit_code,
+            failure_stage=failure_stage, allow_continue=False,
+        )
+        cancelled = _terminal_projection(
+            state, status="cancelled", reason="cancelled",
+            exit_code=EXIT_BY_REASON["cancelled"],
+            remote_cancel_unverified=postlaunch_cancel,
+        )
+    except Exception:
+        # The no-scan fallback is deliberately built under the final state
+        # lock below.  A continuation can have a previously bound candidate;
+        # a failed reconciliation of this new attempt is not evidence that
+        # the old binding disappeared.  Conversely, an incomplete/unavailable
+        # prior binding must fail closed as status_unavailable rather than
+        # combine ``cancelled`` with a schema-invalid inaccessible candidate.
+        projection_unavailable = True
+    with state_lock(job):
+        current, raw, _sha = load_state(job)
+        if current["status"] in TERMINAL:
+            return current, raw, digest(raw)
+        if (
+            current["attempt"] != state["attempt"]
+            or current["controller_pid"] != expected_controller_pid
+        ):
+            raise DispatchError("dispatch changed before terminalization")
+        if projection_unavailable:
+            # Do not re-run any candidate/worktree probe here: this is the
+            # recovery path for a probe that has already failed.  The exact
+            # old candidate is safe to preserve only when its stored bindings
+            # are internally complete and still advertised as available.  Its
+            # command paths will independently bind it again before result,
+            # continue, or finalize is allowed.
+            prior_candidate_is_bound = bool(
+                current["attempt_origin"] == "conversation-continue"
+                and current["candidate_recognized"]
+                and current["candidate_source"] != "none"
+                and current["result_available"]
+                and current["failure_stage"] is None
+                and all(current[key] is not None for key in (
+                    "result_path", "result_sha256", "result_identity",
+                    "candidate_worktree_sha256", "candidate_worktree_entries",
+                ))
+            )
+            candidate = bool(current["candidate_recognized"])
+            # An ordinary post-launch cancellation has no candidate to
+            # protect, so it remains cancelled.  Only an *incomplete* prior
+            # candidate takes fail-closed precedence over cancellation: that
+            # combination cannot truthfully expose a readable result.
+            cancelled = bool(
+                current["cancel_requested"]
+                and (not candidate or prior_candidate_is_bound)
+            )
+            candidate_unavailable = bool(candidate and not prior_candidate_is_bound)
+            updates = {
+                "status": "cancelled" if cancelled else "failed",
+                "reason": "cancelled" if cancelled else "status_unavailable",
+                "exit_code": (
+                    EXIT_BY_REASON["cancelled"] if cancelled
+                    else EXIT_BY_REASON["status_unavailable"]
+                ),
+                "controller_pid": None,
+                "finished_epoch": time.time(),
+                "continue_available": False,
+                "result_available": bool(prior_candidate_is_bound),
+                "worktree_reconciliation": "unavailable",
+                "worktree_changes_present": None,
+                "worktree_changed_since_dispatch": None,
+                "next_action": "blocked" if candidate_unavailable else "none",
+                "next_action_command": None,
+                "resume_available": False,
+                "driver_disposition": "unreviewed" if candidate else "not_applicable",
+                # A successful local cancellation has no failed binding to
+                # report.  An unbound/incomplete prior candidate is the one
+                # case that must retain binding_failure fail-closed.
+                "failure_stage": None if (cancelled or prior_candidate_is_bound) else "binding_failure",
+                "remote_cancel_unverified": bool(cancelled and postlaunch_cancel),
+            }
+            if current["schema_version"] >= 5:
+                updates.update({
+                    "phase": "blocked" if candidate_unavailable else (
+                        "awaiting-verification" if candidate else "attempt-failed"
+                    ),
+                    "assurance": "blocked" if candidate_unavailable else "pending",
+                })
+        else:
+            updates = dict(cancelled if current["cancel_requested"] else primary)
+        if elapsed_seconds is not None:
+            updates.update({
+                "elapsed_seconds": max(elapsed_seconds, float(current["elapsed_seconds"])),
+                "started_epoch": None,
+            })
+        return _transition_locked(job, current, raw, updates)
 
 
 def _terminalize_start_failure(job: Path) -> None:

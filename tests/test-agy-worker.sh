@@ -3169,6 +3169,14 @@ state = json.load(open(sys.argv[1], encoding="utf-8"))
 assert state["status"] == "cancelled"
 assert state["reason"] == "cancelled"
 assert state["remote_cancel_unverified"] is True
+assert state["candidate_recognized"] is False
+assert state["result_available"] is False
+assert state["driver_disposition"] == "not_applicable"
+# A no-candidate local cancel must terminalize without the potentially slow
+# repository reconciliation that follows a report-bearing completion.
+assert state["worktree_reconciliation"] == "unavailable"
+assert state["worktree_changes_present"] is None
+assert state["worktree_changed_since_dispatch"] is None
 PY
 then
     ok "concurrent cancel is state-SHA-gated, reaps the local process group, and does not claim remote cancellation"
@@ -4329,7 +4337,12 @@ project_feedback project-cancel-repair | FAKE_DISPATCH_MODE=heartbeat-forever \
     control_worker continue project-cancel-repair --approve-state-sha "$project_cancel_sha" \
     > "$TMP/project-cancel-repair.continue" 2> "$TMP/project-cancel-repair.continue.err"
 project_cancel_barrier_observed=0
-for (( project_cancel_index=0; project_cancel_index<200; project_cancel_index++ )); do
+# Controller ownership is acknowledged before its strict candidate/worktree
+# preflight.  Under full-suite scheduling that bounded preflight can outlive a
+# two-second fixture poll even though the public startup handshake remains
+# healthy.  Observe the same five-second bound as spawn(); do not manufacture
+# progress or weaken the provider hard deadline.
+for (( project_cancel_index=0; project_cancel_index<500; project_cancel_index++ )); do
     if [[ -e "$project_cancel_barrier_ready" ]]; then
         control_worker status project-cancel-repair > "$TMP/project-cancel-repair.running"
         if [[ "$(status_field "$TMP/project-cancel-repair.running" progress_count)" -ge 1 ]]; then
@@ -4343,8 +4356,11 @@ project_cancel_rc=64
 project_cancel_wait_rc=64
 project_cancel_finalize_rc=64
 project_cancel_result_rc=64
+project_cancel_latency_ok=0
+project_cancel_preserved_rc=64
 if [[ "$project_cancel_barrier_observed" == 1 ]]; then
     project_cancel_running_sha="$(status_sha "$TMP/project-cancel-repair.running")"
+    project_cancel_started_epoch="$(python3 -c 'import time; print(time.time())')"
     control_worker cancel project-cancel-repair --approve-state-sha "$project_cancel_running_sha" \
         > "$TMP/project-cancel-repair.cancel"
     project_cancel_rc=$?
@@ -4353,6 +4369,35 @@ fi
 if [[ "$project_cancel_rc" == 0 ]] \
         && wait_terminal project-cancel-repair "$TMP/project-cancel-repair.cancel"; then
     project_cancel_wait_rc=0
+    if python3 - "$project_cancel_started_epoch" \
+            "$TMP/logs/project-cancel-repair/dispatch-state.json" <<'PY'
+import json
+import sys
+started = float(sys.argv[1])
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+# Measure the terminal state transition itself. The subsequent public wait
+# deliberately rebinds candidate actions and can include a bounded Git scan.
+assert 0 <= state["finished_epoch"] - started < 2.0
+PY
+    then
+        project_cancel_latency_ok=1
+    fi
+    if python3 - "$TMP/logs/project-cancel-repair/dispatch-state.json" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert (state["status"], state["reason"]) == ("cancelled", "cancelled")
+assert state["candidate_recognized"] is True
+assert state["candidate_source"] == "provider_success"
+assert state["result_available"] is True
+assert state["driver_disposition"] == "unreviewed"
+# A local repair cancellation adds no new provider candidate/worktree fact.
+# Preserve the old exact binding and let result/finalize rebind it on use.
+assert state["worktree_reconciliation"] == "unavailable"
+PY
+    then
+        project_cancel_preserved_rc=0
+    fi
     project_cancel_terminal_sha="$(status_sha "$TMP/project-cancel-repair.cancel")"
     project_feedback project-cancel-repair | control_worker finalize project-cancel-repair \
         --approve-state-sha "$project_cancel_terminal_sha" --assurance partially_verified \
@@ -4361,7 +4406,9 @@ if [[ "$project_cancel_rc" == 0 ]] \
     control_worker result project-cancel-repair > "$TMP/project-cancel-repair.result"
     project_cancel_result_rc=$?
 fi
-if [[ "$project_cancel_wait_rc" == 0 && "$project_cancel_finalize_rc" == 0 \
+if [[ "$project_cancel_wait_rc" == 0 && "$project_cancel_latency_ok" == 1 \
+        && "$project_cancel_preserved_rc" == 0 \
+        && "$project_cancel_finalize_rc" == 0 \
         && "$project_cancel_result_rc" == 0 ]]; then
     ok "cancelled repair can partially finalize and return the prior bound success"
 else
