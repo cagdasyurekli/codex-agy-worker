@@ -1656,7 +1656,7 @@ tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
 tests/test-agy-worker.sh      331-case offline dispatcher/installer/routing/lifecycle suite
-tests/test-agy-worker-remediation.py 88-case offline controller-boundary remediation suite
+tests/test-agy-worker-remediation.py 89-case offline controller-boundary remediation suite
 tests/test-update.sh          324-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py 65-case fixed-endpoint transport adversary harness

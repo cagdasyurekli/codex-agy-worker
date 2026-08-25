@@ -288,8 +288,29 @@ def capture_probe_output(
     deadline = time.monotonic() + timeout
     captured = bytearray()
     eof = False
+
+    def read_available() -> None:
+        nonlocal eof
+        while not eof:
+            try:
+                chunk = os.read(descriptor, output_limit + 1 - len(captured))
+            except BlockingIOError:
+                return
+            if not chunk:
+                eof = True
+                return
+            captured.extend(chunk)
+            if len(captured) > output_limit:
+                raise EvidenceUnavailable(f"agy {label} probe failed or was oversized")
+
     try:
-        while not (eof and process.poll() is not None):
+        while True:
+            # The leader's exit establishes the probe result.  A descendant can
+            # inherit the combined output pipe indefinitely, so do not make a
+            # valid completed probe depend on EOF from every group member.
+            if process.poll() is not None:
+                read_available()
+                return bytes(captured)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise EvidenceUnavailable(f"agy {label} probe failed or was oversized")
@@ -302,19 +323,7 @@ def capture_probe_output(
                 except InterruptedError:
                     continue
             if readable:
-                try:
-                    chunk = os.read(
-                        descriptor,
-                        output_limit + 1 - len(captured),
-                    )
-                except BlockingIOError:
-                    continue
-                if chunk:
-                    captured.extend(chunk)
-                    if len(captured) > output_limit:
-                        raise EvidenceUnavailable(f"agy {label} probe failed or was oversized")
-                else:
-                    eof = True
+                read_available()
             elif eof:
                 try:
                     process.wait(timeout=min(remaining, 0.10))

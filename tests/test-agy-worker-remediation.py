@@ -32,7 +32,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 88
+EXPECTED_CHECKS = 89
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 
@@ -2846,6 +2846,75 @@ with tempfile.TemporaryDirectory() as temporary:
                 assert not provider_marker.exists()
 
     check("completed success and nonzero version/help probes reap pipe-closing live descendants", completed_probe_descendants_are_always_reaped)
+
+    def completed_probe_leader_does_not_wait_for_descendant_held_pipe_eof() -> None:
+        help_text = b"""Usage of agy:\n  --add-dir  Add a directory\n  --conversation  Resume a conversation\n  --disable-slash-commands  Disable slash commands\n  --json-schema  Schema path\n  --mode  Execution mode (accept-edits, plan)\n  --model  Select a model\n  --output-format  Format (text, json, stream-json)\n  --print  Run a prompt\n  --print-timeout  Print timeout\n  --sandbox  Sandboxed\n"""
+
+        def group_is_gone(child: int, group: int) -> bool:
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    os.killpg(group, 0)
+                except ProcessLookupError:
+                    return True
+                except PermissionError:
+                    try:
+                        os.kill(child, 0)
+                    except ProcessLookupError:
+                        return True
+                    except PermissionError:
+                        pass
+                time.sleep(0.02)
+            return False
+
+        for argument in ("--version", "--help"):
+            label = argument[2:]
+            child_record = root / f"probe-held-pipe-child-{label}"
+            provider_marker = root / f"probe-held-pipe-provider-{label}"
+            probe = root / f"probe-held-pipe-{label}"
+            probe.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, signal, sys, time\n"
+                f"child_record = {str(child_record)!r}\n"
+                f"provider_marker = {str(provider_marker)!r}\n"
+                f"help_text = {help_text!r}\n"
+                "child = os.fork()\n"
+                "if child == 0:\n"
+                "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                "    with open(child_record, 'w', encoding='ascii') as handle:\n"
+                "        handle.write(f'{os.getpid()} {os.getpgrp()}\\n')\n"
+                "    while True: time.sleep(60)\n"
+                "deadline = time.monotonic() + 1.0\n"
+                "while not os.path.exists(child_record) and time.monotonic() < deadline:\n"
+                "    time.sleep(0.005)\n"
+                "if sys.argv[1:] == ['--version']:\n"
+                "    os.write(1, b'1.1.16\\n')\n"
+                "elif sys.argv[1:] == ['--help']:\n"
+                "    os.write(2, help_text)\n"
+                "else:\n"
+                "    open(provider_marker, 'w', encoding='ascii').write('provider\\n')\n"
+                "os._exit(0)\n",
+                encoding="utf-8",
+            )
+            probe.chmod(0o755)
+            action = (
+                (lambda: MODULE.MODEL_SELECTION.probe_installed_version(str(probe)))
+                if argument == "--version"
+                else (lambda: MODULE.MODEL_SELECTION.probe_critical_interface(str(probe)))
+            )
+            started = time.monotonic()
+            result = action()
+            elapsed = time.monotonic() - started
+            assert elapsed < 2.00, elapsed
+            if argument == "--version":
+                assert result == "1.1.16"
+            else:
+                assert len(result) == 2
+            child, group = map(int, child_record.read_text(encoding="ascii").split())
+            assert child != group and group_is_gone(child, group), (child, group)
+            assert not provider_marker.exists()
+
+    check("successful version/help probe accepts leader output before descendant-held pipe EOF", completed_probe_leader_does_not_wait_for_descendant_held_pipe_eof)
 
     def selection_record_actions_are_mutually_exclusive() -> None:
         record = root / "mutual-selection.json"; record.write_text("{}\n", encoding="utf-8")
