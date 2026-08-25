@@ -614,6 +614,54 @@ def _fixed_git_read_argv(arguments: list[str]) -> bool:
     )
 
 
+def _bound_git_directory(path: str, expected_binding: tuple[int, ...]) -> bool:
+    """Revalidate one no-follow Git-directory authority before a pinned read."""
+    if (
+        type(path) is not str
+        or not path
+        or not os.path.isabs(path)
+        or "\0" in path
+        or type(expected_binding) is not tuple
+        or len(expected_binding) != 9
+        or any(type(value) is not int for value in expected_binding)
+    ):
+        return False
+    named_path = os.path.abspath(path)
+    try:
+        named = os.lstat(os.fsencode(named_path))
+        if not stat.S_ISDIR(named.st_mode) or stat.S_ISLNK(named.st_mode):
+            return False
+        canonical_path = os.path.realpath(named_path)
+        if MODEL_SELECTION._canonical_executable_path(canonical_path) != (
+            MODEL_SELECTION._canonical_executable_path(named_path)
+        ):
+            return False
+        descriptor = os.open(
+            os.fsencode(named_path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            opened = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        after = os.lstat(os.fsencode(named_path))
+    except OSError:
+        return False
+    return (
+        _full_stat_binding(named) == expected_binding
+        and _full_stat_binding(opened) == expected_binding
+        and _full_stat_binding(after) == expected_binding
+    )
+
+
+class _BoundGitReadArguments(list[str]):
+    """Fixed Git arguments paired with the snapshot's private directory proof."""
+
+    def __init__(self, arguments: list[str], git_directory: tuple[str, tuple[int, ...]]) -> None:
+        super().__init__(arguments)
+        self.git_directory = git_directory
+
+
 def _bounded_git_read(
     executable: str, executable_authority: dict[str, Any], root: str,
     arguments: list[str], *, deadline: float, payload: bytes = b"",
@@ -637,6 +685,17 @@ def _bounded_git_read(
     output_limit = MAX_STREAM_BYTES if stdout_limit is None else stdout_limit
     if type(output_limit) is not int or not (0 <= output_limit <= MAX_STREAM_BYTES):
         return None
+    git_directory = None
+    if type(arguments) is _BoundGitReadArguments:
+        git_directory = arguments.git_directory
+        if (
+            type(git_directory) is not tuple
+            or len(git_directory) != 2
+        ):
+            return None
+    git_options = () if git_directory is None else (
+        f"--git-dir={git_directory[0]}", f"--work-tree={root}",
+    )
     target_binding = tuple(executable_authority.get("target", ()))
     if len(target_binding) != 9:
         return None
@@ -649,6 +708,9 @@ def _bounded_git_read(
             )
         except OSError:
             return False
+
+    def git_directory_is_bound() -> bool:
+        return git_directory is None or _bound_git_directory(*git_directory)
 
     if not executable_is_bound() or time.monotonic() >= deadline:
         return None
@@ -685,14 +747,14 @@ def _bounded_git_read(
             'wait "$child"; code=$?; printf "%s\\n" "$code" >&"$status_fd"; '
             'IFS= read -r _ <&"$control_fd"; exit "$code"'
         )
-        if not executable_is_bound() or time.monotonic() >= deadline:
+        if not executable_is_bound() or not git_directory_is_bound() or time.monotonic() >= deadline:
             return None
         process = subprocess.Popen(
             [
                 "/bin/sh", "-c", supervisor, "bounded-git-supervisor",
                 str(status_write), str(control_read), str(payload_read),
                 executable, "-C", root, "-c", "core.fsmonitor=false",
-                "-c", "core.hooksPath=/dev/null", *arguments,
+                "-c", "core.hooksPath=/dev/null", *git_options, *arguments,
             ],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, env=environment,
@@ -1241,8 +1303,8 @@ def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] 
 
             ``-C`` only chooses Git's process directory: a local
             ``core.worktree`` can otherwise redirect plumbing enumeration.  The
-            two fixed rev-parse facts are therefore a prerequisite of every
-            listing, rather than a fact inferred from the marker or index path.
+            initial and final fixed rev-parse facts therefore bind the context
+            before it is passed directly to every enumeration below.
             """
             inside = git_read(["rev-parse", "--is-inside-work-tree"])
             top_level = git_read(["rev-parse", "--show-toplevel"])
@@ -1255,10 +1317,18 @@ def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] 
         def bound_git_read(
             arguments: list[str], payload: bytes = b"", *, allowed: tuple[int, ...] = (0,),
         ) -> tuple[int, bytes] | None:
-            """Rebind the exact root immediately before one Git enumeration."""
-            if not bound_git_worktree():
-                return None
-            return git_read(arguments, payload, allowed=allowed)
+            """Use the no-follow-bound Git directory and held worktree root.
+
+            The initial bare root proof rejects a configured redirected
+            worktree.  The bounded reader then derives command-line global
+            options from this exact Git-directory authority and held root;
+            arbitrary argument lists cannot override either.  The final bare
+            proof fails closed if repository configuration drifts during the
+            scan.
+            """
+            return git_read(
+                _BoundGitReadArguments(arguments, git_dir_boundary), payload, allowed=allowed,
+            )
 
         if not bound_git_worktree():
             return None

@@ -32,7 +32,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 87
+EXPECTED_CHECKS = 88
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 
@@ -4125,8 +4125,47 @@ with tempfile.TemporaryDirectory() as temporary:
 
     check("core.worktree redirection fails closed for snapshots and candidate action parity", redirected_core_worktree_cannot_hide_bound_root_content_or_authorize_actions)
 
-    def every_git_enumeration_is_preceded_by_exact_root_binding() -> None:
-        """No ls-files/list-tree/config read may precede the bound-root facts."""
+    def bounded_git_reader_rejects_unbound_global_option_overrides() -> None:
+        """A caller cannot repoint a bounded read to a different repository."""
+        repo_a = root / "bounded-git-root-a"; repo_a.mkdir()
+        repo_b = root / "bounded-git-root-b"; repo_b.mkdir()
+        for repo, filename in ((repo_a, "a.txt"), (repo_b, "b.txt")):
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            (repo / filename).write_text(filename, encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", filename], check=True)
+        safe_git = MODULE._safe_git_executable(); assert safe_git is not None
+        executable, executable_authority = safe_git
+        git_dir_a = os.fspath(repo_a / ".git")
+        git_dir_b = os.fspath(repo_b / ".git")
+        attempts = {
+            "different repository": [
+                f"--git-dir={git_dir_b}", f"--work-tree={repo_b}",
+                "ls-files", "--stage", "-z",
+            ],
+            "malformed override": [
+                "--git-dir=", f"--work-tree={repo_a}", "ls-files", "--stage", "-z",
+            ],
+            "reordered override": [
+                f"--work-tree={repo_a}", f"--git-dir={git_dir_a}",
+                "ls-files", "--stage", "-z",
+            ],
+            "duplicate override": [
+                f"--git-dir={git_dir_a}", f"--work-tree={repo_a}",
+                f"--git-dir={git_dir_b}", f"--work-tree={repo_b}",
+                "ls-files", "--stage", "-z",
+            ],
+        }
+        for label, arguments in attempts.items():
+            result = MODULE._bounded_git_read(
+                executable, executable_authority, str(repo_a), arguments,
+                deadline=time.monotonic() + 2.0,
+            )
+            assert result is None, (label, result)
+
+    check("bounded Git reads reject caller-supplied context overrides", bounded_git_reader_rejects_unbound_global_option_overrides)
+
+    def snapshot_git_context_is_pinned_and_avoids_redundant_root_probes() -> None:
+        """One bound Git context replaces per-enumeration root subprocesses."""
         repo = root / "root-order-repo"; repo.mkdir()
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         subprocess.run(["git", "-C", str(repo), "config", "user.email", "fixture@example.invalid"], check=True)
@@ -4147,25 +4186,57 @@ with tempfile.TemporaryDirectory() as temporary:
         fake.chmod(0o755)
         previous_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{previous_path}"
+        original_reader = MODULE._bounded_git_read
+        calls: list[tuple[tuple[str, ...], tuple[str, tuple[int, ...]] | None]] = []
+
+        def count_reader(*args, **kwargs):
+            arguments = args[3]
+            calls.append((tuple(arguments), getattr(arguments, "git_directory", None)))
+            return original_reader(*args, **kwargs)
+
+        MODULE._bounded_git_read = count_reader
         try:
             snapshot = MODULE._worktree_snapshot(str(repo))
             assert snapshot is not None and snapshot["entries"] == 0
         finally:
             os.environ["PATH"] = previous_path
+            MODULE._bounded_git_read = original_reader
         commands = log.read_text(encoding="utf-8").splitlines()
+        # A committed empty repository used to make 83 bounded subprocesses:
+        # 25 enumerations each repeated two root facts.  The pinned context
+        # must remain well below that deterministic baseline without caching a
+        # snapshot across lifecycle phases.
+        assert len(calls) <= 40, len(calls)
+        expected_root = os.path.realpath(repo)
+        expected_git_dir = os.path.join(expected_root, ".git")
         enumerations = [
-            index for index, command in enumerate(commands)
-            if " ls-files " in f" {command} "
-            or " ls-tree " in f" {command} "
-            or " config " in f" {command} "
+            call for call in calls
+            if call[0][0] in {"config", "ls-files", "ls-tree", "cat-file"}
         ]
-        assert enumerations, commands
-        for index in enumerations:
-            assert index >= 2, commands[:index + 1]
-            assert commands[index - 2].endswith("rev-parse --is-inside-work-tree"), commands[max(0, index - 3):index + 1]
-            assert commands[index - 1].endswith("rev-parse --show-toplevel"), commands[max(0, index - 3):index + 1]
+        assert enumerations, calls
+        for arguments, git_directory in enumerations:
+            assert git_directory is not None, arguments
+            assert git_directory[0] == expected_git_dir, arguments
 
-    check("every Git listing and config enumeration follows exact bound-root checks", every_git_enumeration_is_preceded_by_exact_root_binding)
+        def bare_root_fact(arguments: tuple[str, ...]) -> bool:
+            return arguments in {
+                ("rev-parse", "--is-inside-work-tree"),
+                ("rev-parse", "--show-toplevel"),
+            }
+
+        bare_root_calls = [arguments for arguments, git_directory in calls if git_directory is None and bare_root_fact(arguments)]
+        assert len(bare_root_calls) == 4, bare_root_calls
+        assert sum(arguments == ("rev-parse", "--is-inside-work-tree") for arguments in bare_root_calls) == 2
+        assert sum(arguments == ("rev-parse", "--show-toplevel") for arguments in bare_root_calls) == 2
+
+        for command in commands:
+            parts = shlex.split(command)
+            if not ({"config", "ls-files", "ls-tree", "cat-file"} & set(parts)):
+                continue
+            assert f"--git-dir={expected_git_dir}" in parts, command
+            assert f"--work-tree={expected_root}" in parts, command
+
+    check("snapshot pins Git context while retaining initial/final root checks", snapshot_git_context_is_pinned_and_avoids_redundant_root_probes)
 
     recovery_path = ROOT / "tests/agy_worker_remediation_recovery_cases.py"
     recovery_spec = importlib.util.spec_from_file_location(
