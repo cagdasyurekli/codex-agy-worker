@@ -124,10 +124,17 @@ fi
 
 ci_workflow_contract() {
     python3 - "$1" <<'PY'
+from hashlib import sha256
 from pathlib import Path
+import stat
 import sys
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
+path = Path(sys.argv[1])
+info = path.lstat()
+assert stat.S_ISREG(info.st_mode)
+data = path.read_bytes()
+assert sha256(data).hexdigest() == "1e9730b77931593dead3f7480107fad99e009db800d599d8869b7905e8d3b502"
+text = data.decode("utf-8")
 required = (
     "  pull_request:\n",
     "  workflow_dispatch:\n",
@@ -278,6 +285,85 @@ if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-diff-check.py"; then
     ok "CI batch reader rejects malformed, unbounded, and interrupted streams"
 else
     bad "CI batch reader rejects malformed, unbounded, and interrupted streams"
+fi
+
+workflow_mutations="$TMP/workflow-mutations"
+mkdir "$workflow_mutations"
+python3 - "$ROOT/.github/workflows/test.yml" "$workflow_mutations" <<'PY'
+from pathlib import Path
+import sys
+
+canonical = Path(sys.argv[1]).read_bytes()
+directory = Path(sys.argv[2])
+
+def replace_once(old: bytes, new: bytes) -> bytes:
+    assert canonical.count(old) == 1
+    return canonical.replace(old, new)
+
+mutations = {
+    "job-if.yml": replace_once(b"  test:\n", b"  test:\n    if: false\n"),
+    "step-if.yml": replace_once(b"        env:\n", b"        if: false\n        env:\n"),
+    "job-continue-on-error.yml": replace_once(
+        b"    timeout-minutes: 45\n",
+        b"    timeout-minutes: 45\n    continue-on-error: true\n",
+    ),
+    "step-continue-on-error.yml": replace_once(
+        b"        env:\n", b"        continue-on-error: true\n        env:\n"
+    ),
+    "step-timeout.yml": replace_once(
+        b"        env:\n", b"        timeout-minutes: 1\n        env:\n"
+    ),
+    "commented-timeout.yml": canonical + b"\n# timeout-minutes: 1\n",
+    "duplicate-timeout.yml": replace_once(
+        b"    timeout-minutes: 45\n",
+        b"    timeout-minutes: 45\n    timeout-minutes: 1\n",
+    ),
+    "alternate-timeout.yml": replace_once(
+        b"    timeout-minutes: 45\n", b"    timeout-minutes: 1\n"
+    ),
+    "explicit-if.yml": canonical + b"\n? if\n: false\n",
+    "tagged.yml": canonical + b"\npolicy_marker: !policy false\n",
+    "anchored.yml": canonical + b"\npolicy_marker: &policy false\n",
+    "alias.yml": canonical + b"\npolicy_anchor: &policy false\npolicy_marker: *policy\n",
+    "single-byte.yml": b"m" + canonical[1:],
+    "trailing-comment.yml": canonical + b"\n# byte binding\n",
+    "crlf.yml": canonical.replace(b"\n", b"\r\n"),
+}
+for name, data in mutations.items():
+    assert data != canonical
+    (directory / name).write_bytes(data)
+PY
+workflow_mutations_rejected=true
+for workflow in "$workflow_mutations"/*.yml; do
+    if ci_workflow_contract "$workflow" 2>/dev/null; then
+        workflow_mutations_rejected=false
+        break
+    fi
+done
+if [[ "$workflow_mutations_rejected" == true ]]; then
+    ok "workflow policy rejects byte-level YAML and formatting mutations"
+else
+    bad "workflow policy rejects byte-level YAML and formatting mutations"
+fi
+
+if ! ci_workflow_contract "$TMP/missing-workflow.yml" 2>/dev/null; then
+    ok "workflow policy fails closed for a missing workflow"
+else
+    bad "workflow policy fails closed for a missing workflow"
+fi
+
+ln -s "$ROOT/.github/workflows/test.yml" "$TMP/workflow-link.yml"
+if ! ci_workflow_contract "$TMP/workflow-link.yml" 2>/dev/null; then
+    ok "workflow policy fails closed for a symlinked workflow"
+else
+    bad "workflow policy fails closed for a symlinked workflow"
+fi
+
+mkdir "$TMP/workflow-directory.yml"
+if ! ci_workflow_contract "$TMP/workflow-directory.yml" 2>/dev/null; then
+    ok "workflow policy fails closed for a nonregular workflow"
+else
+    bad "workflow policy fails closed for a nonregular workflow"
 fi
 
 cp "$ROOT/.github/workflows/test.yml" "$TMP/worktree-only.yml"
@@ -2448,12 +2534,12 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/skills/agy-worker/SKILL.md" \
         && grep -Fq 'tests/test-agy-worker.sh      331-case' "$ROOT/README.md" \
         && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (331 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
-        && grep -Fq 'tests/test-agy-worker-remediation.py 87-case' "$ROOT/README.md" \
-        && grep -Fq 'EXPECTED_CHECKS = 87' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (87 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-agy-worker-remediation.py 89-case' "$ROOT/README.md" \
+        && grep -Fq 'EXPECTED_CHECKS = 89' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (89 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 377 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 381 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
