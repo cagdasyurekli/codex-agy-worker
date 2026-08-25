@@ -133,7 +133,7 @@ path = Path(sys.argv[1])
 info = path.lstat()
 assert stat.S_ISREG(info.st_mode)
 data = path.read_bytes()
-assert sha256(data).hexdigest() == "1e9730b77931593dead3f7480107fad99e009db800d599d8869b7905e8d3b502"
+assert sha256(data).hexdigest() == "8a8a96b8e9681ecc73780088cca5b0c6dacee68dc5b19e9770a7b6c69f62bacc"
 text = data.decode("utf-8")
 required = (
     "  pull_request:\n",
@@ -141,7 +141,7 @@ required = (
     "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n",
     "  cancel-in-progress: true\n",
     "permissions:\n  contents: read\n",
-    "    timeout-minutes: 45\n",
+    "    timeout-minutes: 60\n",
     "      base_sha:\n",
     "      head_sha:\n",
     "      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
@@ -304,8 +304,8 @@ mutations = {
     "job-if.yml": replace_once(b"  test:\n", b"  test:\n    if: false\n"),
     "step-if.yml": replace_once(b"        env:\n", b"        if: false\n        env:\n"),
     "job-continue-on-error.yml": replace_once(
-        b"    timeout-minutes: 45\n",
-        b"    timeout-minutes: 45\n    continue-on-error: true\n",
+        b"    timeout-minutes: 60\n",
+        b"    timeout-minutes: 60\n    continue-on-error: true\n",
     ),
     "step-continue-on-error.yml": replace_once(
         b"        env:\n", b"        continue-on-error: true\n        env:\n"
@@ -315,11 +315,11 @@ mutations = {
     ),
     "commented-timeout.yml": canonical + b"\n# timeout-minutes: 1\n",
     "duplicate-timeout.yml": replace_once(
-        b"    timeout-minutes: 45\n",
-        b"    timeout-minutes: 45\n    timeout-minutes: 1\n",
+        b"    timeout-minutes: 60\n",
+        b"    timeout-minutes: 60\n    timeout-minutes: 1\n",
     ),
     "alternate-timeout.yml": replace_once(
-        b"    timeout-minutes: 45\n", b"    timeout-minutes: 1\n"
+        b"    timeout-minutes: 60\n", b"    timeout-minutes: 1\n"
     ),
     "explicit-if.yml": canonical + b"\n? if\n: false\n",
     "tagged.yml": canonical + b"\npolicy_marker: !policy false\n",
