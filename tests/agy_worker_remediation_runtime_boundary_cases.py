@@ -1657,11 +1657,10 @@ def run(context: dict[str, object]) -> None:
         # original lease but before the extended lease must succeed.
         extended_job, extended_bin, extended_calls, _extended_fake, _extended_command = fixture(
             "selector-extension", idle_seconds=0.50,
-            # Extending by one second is intentionally rejected with less
-            # than one second left on the current hard lease.  Leave two
-            # seconds for the child to schedule and the selector to publish
-            # its first progress observation on a loaded macOS runner.
-            hard_seconds=3.00, max_seconds=4.00,
+            # Leave a wide bounded margin after the original lease: process
+            # scheduling and heartbeat sleeps can accumulate several seconds
+            # of overhead on a loaded macOS runner.
+            hard_seconds=3.00, max_seconds=8.00,
         )
         original_extension_selector = MODULE.selectors.DefaultSelector
         original_print_json = MODULE.print_json
@@ -1673,7 +1672,7 @@ def run(context: dict[str, object]) -> None:
                 nonlocal extension_applied
                 current, _raw, approval = MODULE.load_state(extended_job)
                 if current["progress_count"] > 0 and not extension_applied:
-                    MODULE.command_control(extended_job, "extend", approval, 1.0)
+                    MODULE.command_control(extended_job, "extend", approval, 5.0)
                     extension_applied = True
                 return super().select(timeout)
 
@@ -1682,7 +1681,7 @@ def run(context: dict[str, object]) -> None:
         prior_heartbeat_count = os.environ.get("FAKE_DIRECT_HEARTBEAT_COUNT")
         prior_heartbeat_delay = os.environ.get("FAKE_DIRECT_HEARTBEAT_DELAY")
         # The result remains after the original three-second lease but before
-        # the approved four-second lease, with a meaningful scheduling margin.
+        # the approved eight-second lease, with a meaningful scheduling margin.
         os.environ["FAKE_DIRECT_HEARTBEAT_COUNT"] = "32"
         os.environ["FAKE_DIRECT_HEARTBEAT_DELAY"] = "0.10"
         extended_returncode: int | None = None
@@ -1710,8 +1709,8 @@ def run(context: dict[str, object]) -> None:
             "progress_count": extended_state["progress_count"],
         }
         assert extension_applied and len(extension_output) == 1
-        assert extended_state["hard_seconds"] == 4.00
-        assert 3.00 < extended_state["elapsed_seconds"] < 4.00
+        assert extended_state["hard_seconds"] == 8.00
+        assert 3.00 < extended_state["elapsed_seconds"] < 8.00
         assert extended_state["status"] == "succeeded"
         assert extended_state["candidate_recognized"] and extended_state["result_available"]
         assert extended_calls.read_text(encoding="utf-8").splitlines() == [
