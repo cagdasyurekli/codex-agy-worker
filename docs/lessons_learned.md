@@ -624,6 +624,13 @@ shorthand such as `@{-1}` can canonicalize to a different ref. During cleanup, a
 probe's fatal exit is uncertainty, not absence; only the command's documented
 missing-ref status can advance a durable cleaned tombstone.
 
+Repository forms rejected by the semantic snapshot must fail before lifecycle state
+is queued. In particular, a partial/promisor clone is a known unsupported form, so
+the same bounded snapshot observation should raise one fixed sanitized full-clone
+diagnostic during initial-state construction. Persisting a `None` baseline merely
+defers the known failure to the controller, consumes a cycle, and loses the actionable
+cause behind a generic binding failure.
+
 A symlink inside a candidate is not automatically foreign data. The canonical gate
 digest binds its path, mode, and target. A cleanup scan may therefore delete the link
 node when the whole current candidate still matches the rejected Receipt, but it must

@@ -25,6 +25,10 @@ class _MarkerPreflightLimit(Exception):
     """The marker-only scan hit its documented bounded entry cap."""
 
 
+class _UnsupportedWorktreeError(ValueError):
+    """A known repository form cannot produce an accepted snapshot."""
+
+
 def _marker_only_preflight(root_fd: int, *, deadline: float | None = None) -> bool:
     """Reject root aliases and nested Git markers without opening their contents.
 
@@ -1094,7 +1098,9 @@ def _git_boundary_identity(workdir: str) -> dict[str, Any] | None:
             os.close(root_fd)
 
 
-def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] | None:
+def _worktree_snapshot(
+    workdir: str, *, legacy: bool = False, explain_unsupported: bool = False,
+) -> dict[str, Any] | None:
     """Hash a bounded worktree fact set without executing repository programs.
 
     This deliberately avoids ``status``, diff, attributes' clean/textconv
@@ -1377,7 +1383,13 @@ def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] 
             allowed=(0, 1),
         )
         sparse = bound_git_read(["config", "--bool", "--get", "core.sparseCheckout"], allowed=(0, 1))
-        if promisor is None or sparse is None or (promisor[0] == 0 and promisor[1]):
+        if promisor is None or sparse is None:
+            return None
+        if promisor[0] == 0 and promisor[1]:
+            if explain_unsupported:
+                raise _UnsupportedWorktreeError(
+                    "partial/promisor Git clones are unsupported; use a full clone"
+                )
             return None
         if (promisor[0] == 1 and promisor[1]) or (sparse[0] == 0 and sparse[1] != b"false\n") or (sparse[0] == 1 and sparse[1]):
             return None
@@ -1840,6 +1852,8 @@ def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] 
         observation.update(initial_directory_manifest)
         observation.update(initial_empty_directories.to_bytes(8, "big"))
         return {"sha256": observation.hexdigest(), "entries": changed + initial_empty_directories}
+    except _UnsupportedWorktreeError:
+        raise
     except (OSError, subprocess.TimeoutExpired, OverflowError, ValueError, RecursionError):
         return None
     finally:

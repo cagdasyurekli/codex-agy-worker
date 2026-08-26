@@ -2527,6 +2527,26 @@ start_worker() {
         "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$workdir" "$@"
 }
 
+partial_clone_repo="$TMP/partial-clone-repo"
+git init -q "$partial_clone_repo"
+git -C "$partial_clone_repo" config extensions.partialclone origin
+git -C "$partial_clone_repo" config remote.origin.promisor true
+printf 'partial clone must fail before queueing\n' | \
+    AGY_TEST_WORKDIR="$partial_clone_repo" start_worker partial-clone-preflight \
+        --workflow task > "$TMP/partial-clone-preflight.out" \
+        2> "$TMP/partial-clone-preflight.err"
+partial_clone_rc=$?
+if [[ "$partial_clone_rc" == 64 \
+        && ! -e "$TMP/logs/partial-clone-preflight/dispatch-state.json" \
+        && ! -s "$TMP/partial-clone-preflight.worker-calls" ]] \
+        && grep -Fqx \
+            'agy-dispatch: partial/promisor Git clones are unsupported; use a full clone' \
+            "$TMP/partial-clone-preflight.err"; then
+    ok "partial/promisor clones fail synchronously before queueing or provider launch"
+else
+    bad "partial/promisor clone synchronous preflight"
+fi
+
 printf 'plan staged prompt marker\n' | run_worker plan-staged --mode plan --persona repo-inventory \
     > "$TMP/plan-staged.out" 2> "$TMP/plan-staged.err"
 rc=$?

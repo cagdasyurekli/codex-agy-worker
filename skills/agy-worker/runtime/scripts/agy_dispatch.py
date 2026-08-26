@@ -956,6 +956,7 @@ def initial_state(
     project_boundary: dict[str, Any] | None = None,
     schema_bindings: dict[str, Any] | None = None,
     state_schema: int = CURRENT_STATE_SCHEMA,
+    explain_worktree_rejection: bool = False,
 ) -> dict[str, Any]:
     if state_schema not in {6, 7, 8, CURRENT_STATE_SCHEMA}:
         raise DispatchError("dispatch state schema is invalid")
@@ -1036,7 +1037,10 @@ def initial_state(
         # recommendation; public aliases are derived at read time.
         "next_action": "none",
         "next_action_command": None,
-        "worktree_baseline": _worktree_snapshot(command["workdir"], legacy=state_schema == 6),
+        "worktree_baseline": _worktree_snapshot(
+            command["workdir"], legacy=state_schema == 6,
+            explain_unsupported=explain_worktree_rejection,
+        ),
         "provider_schema_sha256": None if schema_bindings is None else schema_bindings["provider_schema_sha256"],
         "provider_schema_identity": None if schema_bindings is None else schema_bindings["provider_schema_identity"],
         "canonical_schema_sha256": None if schema_bindings is None else schema_bindings["canonical_schema_sha256"],
@@ -2331,8 +2335,16 @@ def _git_boundary_identity(workdir: str) -> dict[str, Any] | None:
     return _worktree_call("_git_boundary_identity", workdir)
 
 
-def _worktree_snapshot(workdir: str, *, legacy: bool = False) -> dict[str, Any] | None:
-    return _worktree_call("_worktree_snapshot", workdir, legacy=legacy)
+def _worktree_snapshot(
+    workdir: str, *, legacy: bool = False, explain_unsupported: bool = False,
+) -> dict[str, Any] | None:
+    try:
+        return _worktree_call(
+            "_worktree_snapshot", workdir, legacy=legacy,
+            explain_unsupported=explain_unsupported,
+        )
+    except _WORKTREE_HELPER._UnsupportedWorktreeError as exc:
+        raise WorktreeBaselineError(str(exc)) from None
 
 
 _WORKTREE_FACADE_DEFAULTS = {
@@ -4213,6 +4225,7 @@ def create_state(
                     project_boundary=state["project_boundary"],
                     schema_bindings=schema_bindings,
                     state_schema=state["schema_version"],
+                    explain_worktree_rejection=True,
                 )
                 next_state["sequence"] = state["sequence"] + 1
                 next_state["previous_state_sha256"] = sha
@@ -4263,6 +4276,7 @@ def create_state(
             command, origin, 1, command_sha=digest(command_raw),
             command_identity=command_info, stage_sha=stage_sha, stage_identity=stage_info,
             schema_bindings=schema_bindings,
+            explain_worktree_rejection=True,
         )
         validate_state(state)
         _raw, sha = write_atomic(job, STATE_NAME, state)
