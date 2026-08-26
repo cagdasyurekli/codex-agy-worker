@@ -1657,7 +1657,11 @@ def run(context: dict[str, object]) -> None:
         # original lease but before the extended lease must succeed.
         extended_job, extended_bin, extended_calls, _extended_fake, _extended_command = fixture(
             "selector-extension", idle_seconds=0.50,
-            hard_seconds=1.20, max_seconds=2.20,
+            # Extending by one second is intentionally rejected with less
+            # than one second left on the current hard lease.  Leave two
+            # seconds for the child to schedule and the selector to publish
+            # its first progress observation on a loaded macOS runner.
+            hard_seconds=3.00, max_seconds=4.00,
         )
         original_extension_selector = MODULE.selectors.DefaultSelector
         original_print_json = MODULE.print_json
@@ -1677,10 +1681,13 @@ def run(context: dict[str, object]) -> None:
         MODULE.print_json = lambda value: extension_output.append(value)
         prior_heartbeat_count = os.environ.get("FAKE_DIRECT_HEARTBEAT_COUNT")
         prior_heartbeat_delay = os.environ.get("FAKE_DIRECT_HEARTBEAT_DELAY")
-        os.environ["FAKE_DIRECT_HEARTBEAT_COUNT"] = "14"
+        # The result remains after the original three-second lease but before
+        # the approved four-second lease, with a meaningful scheduling margin.
+        os.environ["FAKE_DIRECT_HEARTBEAT_COUNT"] = "32"
         os.environ["FAKE_DIRECT_HEARTBEAT_DELAY"] = "0.10"
+        extended_returncode: int | None = None
         try:
-            assert run_controller(extended_job, extended_bin) == 0
+            extended_returncode = run_controller(extended_job, extended_bin)
         finally:
             MODULE.selectors.DefaultSelector = original_extension_selector
             MODULE.print_json = original_print_json
@@ -1693,9 +1700,18 @@ def run(context: dict[str, object]) -> None:
             else:
                 os.environ["FAKE_DIRECT_HEARTBEAT_DELAY"] = prior_heartbeat_delay
         extended_state, _raw, _sha = MODULE.load_state(extended_job)
+        assert extended_returncode == 0, {
+            "returncode": extended_returncode,
+            "extension_applied": extension_applied,
+            "reason": extended_state["reason"],
+            "limit_kind": extended_state["limit_kind"],
+            "elapsed_seconds": extended_state["elapsed_seconds"],
+            "hard_seconds": extended_state["hard_seconds"],
+            "progress_count": extended_state["progress_count"],
+        }
         assert extension_applied and len(extension_output) == 1
-        assert extended_state["hard_seconds"] == 2.20
-        assert extended_state["elapsed_seconds"] > 1.20
+        assert extended_state["hard_seconds"] == 4.00
+        assert 3.00 < extended_state["elapsed_seconds"] < 4.00
         assert extended_state["status"] == "succeeded"
         assert extended_state["candidate_recognized"] and extended_state["result_available"]
         assert extended_calls.read_text(encoding="utf-8").splitlines() == [
