@@ -2,6 +2,10 @@
 # Offline Codex package, skill-bundle, and landing-page contract tests.
 set -uo pipefail
 
+# Contract checks use Python assertions throughout this legacy shell harness.
+# Keep inherited optimizer settings from silently disabling those checks.
+unset PYTHONOPTIMIZE
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$HERE/.."
 CI_OFFLINE="$ROOT/scripts/ci-offline.sh"
@@ -2287,211 +2291,42 @@ else
     bad "standalone resolver rejects a missing pipeline runtime"
 fi
 
-required_suite_paths=(
-    tests/test-qa-gate.sh
-    tests/test-evidence-receipt.sh
-    tests/test-evidence-report.sh
-    tests/test-agy-worker.sh
-    tests/test-update.sh
-    tests/test-reporting.sh
-    tests/test-packaging.sh
-    tests/test-doctor.sh
-    tests/test-proof-demo.sh
+governance_docs_contract() {
+    /usr/bin/python3 -I -S -B - "$CI_OFFLINE" "$ROOT/CONTRIBUTING.md" \
+        "$ROOT/.github/pull_request_template.md" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+ci = Path(sys.argv[1]).read_text(encoding="utf-8")
+contributing = Path(sys.argv[2]).read_text(encoding="utf-8")
+template = Path(sys.argv[3]).read_text(encoding="utf-8")
+suite_commands = re.findall(r"^\./tests/test-[^\s]+\.sh$", ci, re.MULTILINE)
+suite_commands += re.findall(
+    r"^/usr/bin/python3 -I -S -B tests/test-[^\s]+\.py$", ci, re.MULTILINE
 )
-governance_lists_all_suites=1
-for suite in "${required_suite_paths[@]}"; do
-    if ! grep -Fq "./$suite" "$ROOT/CONTRIBUTING.md" \
-            || ! grep -Fq "./$suite" "$ROOT/.github/pull_request_template.md"; then
-        governance_lists_all_suites=0
-    fi
-done
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py' \
-            "$ROOT/.github/pull_request_template.md"; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py' \
-            "$ROOT/.github/pull_request_template.md"; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-version-bootstrap-runner.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/scripts/version_bootstrap_runner.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-version-bootstrap-runner.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-version-initial-bootstrap-runner.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/scripts/version_initial_bootstrap_runner.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-version-initial-bootstrap-runner.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-version-recovery-1-1-12-runner.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/scripts/version_recovery_1_1_12_runner.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-version-recovery-1-1-12-runner.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-models-attestation-runner.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/scripts/models_attestation_runner.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-models-capture-runner.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/scripts/models_capture_runner.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-models-capture-runner.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-models-capture-profile.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/scripts/models_capture_profile.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-models-capture-profile.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-models-capture-1-1-12-profile.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-12-profile.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-models-capture-1-1-12-runner.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/scripts/models_capture_1_1_12_runner.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-12-runner.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-models-capture-1-1-16-version-evidence.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -x "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-16-version-evidence.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-models-capture-1-1-16-profile.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -x "$ROOT/scripts/models_capture_1_1_16_profile.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-16-profile.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-models-capture-1-1-16-runner.py' \
-            "$CI_OFFLINE" \
-        || [[ ! -x "$ROOT/scripts/models_capture_1_1_16_runner.py" ]] \
-        || [[ ! -f "$ROOT/tests/test-models-capture-1-1-16-runner.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-agy-1-1-16-activation.py' "$CI_OFFLINE" \
-        || [[ ! -f "$ROOT/tests/test-agy-1-1-16-activation.py" ]]; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-job-lifecycle.py' \
-            "$CI_OFFLINE"; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-conformance.py' \
-            "$CI_OFFLINE"; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-benchmark.py' \
-            "$CI_OFFLINE"; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-persona-evidence.py' \
-            "$CI_OFFLINE"; then
-    governance_lists_all_suites=0
-fi
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-workload-profiles.py' \
-            "$CI_OFFLINE"; then
-    governance_lists_all_suites=0
-fi
-for suite in tests/test-adoption-measurement.py tests/test-update-notifier.py; do
-    if ! grep -Fq "/usr/bin/python3 -I -S -B $suite" "$ROOT/CONTRIBUTING.md" \
-            || ! grep -Fq "/usr/bin/python3 -I -S -B $suite" \
-                "$ROOT/.github/pull_request_template.md" \
-            || ! grep -Fq "$suite" "$CI_OFFLINE"; then
-        governance_lists_all_suites=0
-    fi
-done
 
-if ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py' \
-        "$ROOT/CONTRIBUTING.md" \
-        || ! grep -Fq '/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py' \
-            "$ROOT/.github/pull_request_template.md" \
-        || ! grep -Fq 'tests/test-agy-worker-remediation.py' "$CI_OFFLINE"; then
-    governance_lists_all_suites=0
-fi
+valid = (
+    len(suite_commands) == len(set(suite_commands)) == 32
+    and all(command in contributing for command in suite_commands)
+    and template.count("./scripts/ci-offline.sh") == 1
+    and not any(command in template for command in suite_commands)
+    and "Human diff review completed" in template
+    and all(
+        phrase in template
+        for phrase in (
+            "No worker-reported command or test was treated as evidence.",
+            "No permission, authentication, privacy, or path-policy boundary was weakened.",
+            "No commit, push, merge, release, issue submission, or external setting change",
+        )
+    )
+)
+if not valid:
+    raise SystemExit(1)
+PY
+}
 
-if [[ "$governance_lists_all_suites" == "1" ]] \
+if governance_docs_contract \
         && grep -Fq 'The thirty-two offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
@@ -2503,9 +2338,9 @@ if [[ "$governance_lists_all_suites" == "1" ]] \
         && grep -Fq 'logs/' "$ROOT/PRIVACY.md" \
         && grep -Fq 'GitHub Issues' "$ROOT/SUPPORT.md" \
         && grep -Fq 'not legal advice' "$ROOT/TERMS.md"; then
-    ok "governance docs require all thirty-two suites and disclose public policy boundaries"
+    ok "governance keeps one canonical PR gate, targeted diagnostics, and public policy boundaries"
 else
-    bad "governance docs require all thirty-two suites and disclose public policy boundaries"
+    bad "governance keeps one canonical PR gate, targeted diagnostics, and public policy boundaries"
 fi
 
 if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
