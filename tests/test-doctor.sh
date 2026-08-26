@@ -665,7 +665,9 @@ for specification in \
     'scripts/persona_registry.py:executable' \
     'scripts/workload_profiles.py:executable' \
     'scripts/model_selection.py:executable' \
+    'scripts/agy_dispatch_worktree.py:data' \
     'schemas/worker-result.schema.json:data' \
+    'schemas/worker-result.provider.schema.json:data' \
     'schemas/evidence-receipt.schema.json:data' \
     'schemas/persona-run-manifest.schema.json:data' \
     'schemas/persona-transition-approval.schema.json:data' \
@@ -684,6 +686,7 @@ for specification in \
         fixture="$TMP/$label-fixture"
         cp -R "$BASE_FIXTURE" "$fixture"
         artifact="$fixture/runtime/$dependency_path"
+        data_mode_contract=1
         rm -f "$artifact"
         case "$wrong_type" in
             directory) mkdir "$artifact" ;;
@@ -694,6 +697,32 @@ for specification in \
                 cp "$BASE_FIXTURE/runtime/$dependency_path" "$artifact"
                 if [[ "$dependency_class" == executable ]]; then
                     chmod -x "$artifact"
+                elif [[ "$dependency_path" == scripts/agy_dispatch_worktree.py ]]; then
+                    for helper_mode in 0600 0640 0642 0646 0664 0666; do
+                        resolver_fixture="$TMP/$label-$helper_mode-resolver"
+                        chmod "$helper_mode" "$artifact"
+                        run_doctor "$fixture" "$label-$helper_mode" --format json
+                        data_doctor_rc=$?
+                        cp -R "$ROOT/skills/agy-worker" "$resolver_fixture"
+                        chmod "$helper_mode" "$resolver_fixture/runtime/$dependency_path"
+                        PATH="$TMP/no-network-bin:$PATH" \
+                            NETWORK_MARKER="$TMP/$label-$helper_mode.network" \
+                            bash "$resolver_fixture/scripts/resolve-pipeline.sh" \
+                            > "$TMP/$label-$helper_mode-resolver.out" \
+                            2> "$TMP/$label-$helper_mode-resolver.err"
+                        data_resolver_rc=$?
+                        if [[ "$data_doctor_rc" != 3 ]] \
+                                || ! assert_json_contract "$TMP/$label-$helper_mode.out" not-ready 3 \
+                                || ! grep -Fq '"id": "runtime_bundle", "status": "not-ready", "detail": "incomplete"' \
+                                    "$TMP/$label-$helper_mode.out" \
+                                || [[ "$data_resolver_rc" != 2 ]] \
+                                || [[ -s "$TMP/$label-$helper_mode-resolver.out" ]] \
+                                || ! grep -Fq 'complete agy-worker skill bundle' \
+                                    "$TMP/$label-$helper_mode-resolver.err" \
+                                || [[ -e "$TMP/$label-$helper_mode.network" ]]; then
+                            data_mode_contract=0
+                        fi
+                    done
                 else
                     chmod +x "$artifact"
                 fi
@@ -705,6 +734,7 @@ for specification in \
                 && assert_json_contract "$TMP/$label.out" not-ready 3 \
                 && grep -Fq '"id": "runtime_bundle", "status": "not-ready", "detail": "incomplete"' \
                     "$TMP/$label.out" \
+                && [[ "$data_mode_contract" == 1 ]] \
                 && ! grep -Fq "$TMP" "$TMP/$label.out" "$TMP/$label.err"; then
             ok "doctor rejects $wrong_type for $dependency_class $dependency_path"
         else
@@ -761,6 +791,7 @@ for dependency in \
     'scripts/persona_registry.py:persona-registry-helper' \
     'scripts/workload_profiles.py:profile-helper' \
     'scripts/candidate_state.py:candidate-state-helper' \
+    'scripts/agy_dispatch_worktree.py:worktree-snapshot-helper' \
     'scripts/job_lifecycle.py:lifecycle-helper' \
     'scripts/model_selection.py:model-resolver' \
     'schemas/worker-result.schema.json:schema' \

@@ -33,6 +33,11 @@ worker-used output, print, mode, model, sandbox, and add-directory flags. This i
 not evidence that a particular account can use a model, that a provider accepted a
 request, or that a provider-side behavior remains unchanged.
 
+This observation did not retain the exact raw C-locale help bytes or their SHA-256.
+That does not block an exact matrix-version selection: the current direct-selection
+contract proceeds after its bounded structural `--help` probe. A compatible version
+drift still needs an explicit Codex disposition bound to its current raw-help digest.
+
 The locally installed executable bytes had SHA-256
 `095705beb4e4591c8ee7f8b6261473e15228f0f4b1bec58c62c966a6d4bfab30`. A bounded
 offline inspection of those bytes established the concrete `steps.JSONOutput`

@@ -58,7 +58,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The thirty-one offline suites need no agy provider call, network access, API key, or GitHub login.
+The thirty-two offline suites need no agy provider call, network access, API key, or GitHub login.
 
 ### GitHub Actions cost and quota fallback
 
@@ -79,7 +79,7 @@ If a private fork's quota is unavailable, run the same fail-fast offline suite l
 ./scripts/ci-offline.sh
 ```
 
-It runs the static checks and all thirty-one offline suites without requiring a
+It runs the static checks and all thirty-two offline suites without requiring a
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
@@ -136,10 +136,10 @@ child mode and dispatch-state snapshot boundaries. The published **v0.7.0** scop
 usability-first explore/task/project workflows and same-conversation repair. The
 published **v0.8.0** scope adds explicit notifier
 maintenance/rebind handling, bounded annotated-tag resolution, version-drift
-observations, and the exact agy 1.1.13 quota-terminal classification. The **v0.9.0
-release candidate** activates the exact agy 1.1.16 version/source/distribution and
+observations, and the exact agy 1.1.13 quota-terminal classification. The published
+**v0.9.0** scope activates the exact agy 1.1.16 version/source/distribution and
 unchanged 14-slug inventory binding, and accepts Codex 0.148.0 as an observational
-baseline. Tag and GitHub release state remain separate publication gates. The published v0.5.0
+baseline. The published v0.5.0
 scope added sanitized bug/improvement drafts with exact double confirmation,
 private-only security drafts, and the bounded metadata-only feedback aggregate and
 weekly/manual watcher. The prior v0.4.0 scope includes daily compatibility observation,
@@ -231,11 +231,31 @@ dispatch. A due or drift result asks for human compatibility review; it never up
 metadata. `review-required` is not a blanket dispatch lock: no selector or
 `--tier default` still delegates to agy's own default, and the explicitly approved
 `--literal-model` surface remains an unreconciled caller-owned pass-through. Reviewed
-`--model`/`--effort` resolution remains blocked until installed agy exactly matches
-the reviewed matrix. `not-ready` still blocks all dispatch. For a folder-only skill
+`--model`/`--effort` resolution keeps its reviewed `1.1.16` matrix evidence. Every
+direct selection uses a safe executable with bounded semantic `--version` and strict
+critical `--help` structure. An exact matrix-version match proceeds mechanically after
+that structural probe. Compatible version drift requires Codex's explicit
+`--compatibility-disposition proceed --approve-help-sha SHA256` before dispatch; the
+SHA must be the exact raw help digest just reviewed. The caller's exact resolved
+slug is unchanged and the selection record reports
+`model_availability: not_assessed`; it never claims that a drifted installation
+offers a particular model. A structurally incompatible critical interface still
+blocks reviewed direct selection. Structural acceptance, including an exact-version
+match, is not semantic approval: before every reviewed direct dispatch, Codex inspects
+the current bounded raw `agy --help` and stops if the exact caller-selected model or
+effort cannot be honored. The controller never infers that decision from provider
+prose. `not-ready` still blocks all dispatch. For a folder-only skill
 copy, resolve `PIPELINE` as shown in
 `skills/agy-worker/SKILL.md` and run `"$PIPELINE/doctor.sh"`—no checkout or fetch is
 needed.
+
+To approve compatible version drift without disclosing an executable pathname,
+inspect the bounded local `agy --help` bytes, then calculate their raw SHA-256 with
+`LC_ALL=C agy --help 2>&1 | /usr/bin/python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'` and compare its digest to the sanitized
+`raw_help_sha256` review output. Retry the same caller-selected `--model`/`--effort`
+request with `--compatibility-disposition proceed --approve-help-sha` set to that
+matching digest. A mismatch, changed help, or unavailable probe needs a fresh review;
+do not reuse an older digest.
 
 `skills/agy-worker/` is the one canonical, open-standard Agent Skill and contains its
 own Bash/Python/git runtime. A folder-only copy therefore works without the rest of
@@ -317,11 +337,13 @@ to supply a final file list, a persona, or every test command before starting.
 | Build an app, complete a project, or broadly audit-and-fix | `project` | Repository and outcome | Repo-wide worktree changes, build/test/lint measurement, up to five total provider attempts (the initial attempt plus at most four same-conversation repairs), and an assurance label. |
 | Follow a long job | async lifecycle | Job ID | Local `status`/bounded `wait`, controlled extension, or cancel state; not remote-provider truth. |
 
-Assurance labels are intentionally practical: `verified` means Codex reviewed the
-candidate and its required checks passed; `partially_verified` preserves useful work
-with exact unresolved checks; `blocked` identifies a real authorization, repository
-boundary, or execution blocker. A failed first check is a repair signal, not an
-automatic rejection or deletion.
+Assurance labels are intentionally practical: Codex uses `verified` only after its
+strict review policy is met, `partially_verified` for useful work with unresolved
+evidence, `rejected` for work it declines, and `blocked` for a genuine authority,
+repository-boundary, or execution block. After it validates the exact current
+candidate and Verification v2 binding, the controller persists Codex's declared
+label; it does not reinterpret check counts into a different disposition. A failed
+first check is a repair signal, not an automatic rejection or deletion.
 
 Before the first dispatch for a repository, the skill identifies the paths in scope
 and requires explicit approval for sending that task and any worker-read repository
@@ -352,9 +374,9 @@ Edit ONLY files under $WT/tests/. Use file tools on absolute paths.
 Do NOT run shell commands — they execute in a scratch directory, not this repo.
 The driver runs every command. Return commands_run and tests_run as empty arrays." |
   AGY_WORKER_JOB_ID="$JOB_ID" "$PIPELINE/agy-worker.sh" \
-    --mode accept-edits --tier bulk --persona bulk-test-writer \
+    --workflow task --mode accept-edits --tier bulk --persona bulk-test-writer \
     --workdir "$WT" --add-dir "$WT" > "$ENVELOPE"; then
-  echo "Dispatch failed; inspect the sanitized terminal state and choose explicit resume, restart, or stop." >&2
+  echo "Dispatch failed; inspect the sanitized terminal state/result. Resume only a candidate-free failure; handle an ERROR candidate with Verification v2, and preserve/finalize or freshly restart a CANCELED candidate." >&2
   exit 1
 fi
 
@@ -392,8 +414,11 @@ git -C "$TARGET" branch -D "$JOB_BRANCH"
 Gate failure handling is deliberately small: exits 10–14 reject the candidate, exit
 15 routes its questions to a human, and exit 64 means the driver invocation is wrong.
 A dispatch error starts no further provider call automatically; do not add a shell
-retry loop. Preserve the job or choose an explicit, hash-bound `resume` or `restart`
-through the lifecycle controller.
+retry loop. A candidate-free failed state may be eligible for SHA-approved exact
+`resume` or explicit fresh `restart`. A terminal `ERROR` with a valid candidate goes
+to `result`, driver Verification v2, then `continue` or `finalize`. A terminal
+`CANCELED` candidate goes to `result` and preservation/finalization or an explicit
+fresh `restart`; it is never resumed or continued.
 
 ### Read-only inventory example
 
@@ -491,7 +516,8 @@ profile sources.
 | Worker option | Environment equivalent | Meaning |
 |---|---|---|
 | `--workflow explore|task|project` | — | Selects read-only exploration, ordinary implementation, or project-scale iterative work. Omitted input keeps the legacy raw-mode behavior. |
-| `--max-cycles 1..5` | — | Project workflow's total provider-attempt budget; default `5`, valid only with `--workflow project`. |
+| `--max-cycles 1..2` | — | `explore` or `task` total provider-attempt budget; default `2`. |
+| `--max-cycles 1..5` | — | `project` total provider-attempt budget; default `5`. Legacy raw mode is exactly one attempt; `--max-cycles` requires an explicit workflow. |
 | `--mode plan|accept-edits` | `AGY_WORKER_MODE` | Raw agy mode for compatibility. `explore` fixes `plan`; `project` fixes `accept-edits`; `task` uses `accept-edits` unless an explicit raw mode is supplied. |
 | `--tier cheap|bulk|hard|hardest|default` | `AGY_WORKER_TIER` | explicit legacy tier; a model label is also accepted |
 | `--model EXACT_MODEL` | `AGY_WORKER_MODEL` | reviewed exact slug, or adjustable base used with effort |
@@ -510,8 +536,9 @@ Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid 
 `8` compatibility evidence unavailable · `9` idle timeout · `16` hard deadline ·
 `17` provider timeout (reserved) · `18` authentication failure (reserved) ·
 `19` provider unavailable (reserved) ·
-`20` local status unavailable · `21` resume failure · `22` cancelled ·
-`23` output oversized · `24` provider quota exhausted · `64` invalid usage.
+`20` local status, binding, or verification-copy runtime unavailable · `21` resume failure · `22` cancelled ·
+`23` output oversized · `24` provider quota exhausted · `25` provider terminal error
+with a preserved valid candidate · `26` direct-selection preflight failure · `64` invalid usage.
 
 The reserved `17`–`19` exits require an exact, version-bound reviewed signature.
 The current agy `1.1.16` signature allowlist is intentionally empty, so an unproven
@@ -524,22 +551,29 @@ only the exact, structurally valid agy `1.1.13` terminal quota shape reviewed fo
 Issue #59. Status exposes only a bounded, decreasing `retry_after_seconds`; it never
 prints the error text, conversation, prompt, model, path, envelope, or raw log. The
 worker does not sleep, retry, restart, or change the caller's model automatically.
-Other versions, altered prose, generic `429`/`RESOURCE_EXHAUSTED` text, malformed
-events, and unknown terminal errors remain `agy_failed_unclassified`.
+Wrong-version or altered quota terminals without a report remain `invalid_envelope`
+with exit `4` and `failure_stage=missing_structured_output`. The exact recognized
+`1.1.13` quota terminal remains `provider_quota_exhausted` with exit `24` when it has
+no report, with `failure_stage=missing_structured_output`.
 
-`init`, `step_update`, and terminal `result` events renew only an idle lease. They
-never prove success and never extend the hard deadline or the caller-owned maximum.
+Only provider `init`, `step_update`, and terminal `result` events can update v9
+`last_activity` to `provider_initialized`, `progress_signal`, or
+`terminal_received`. They renew only an idle lease; they never prove success or
+extend the hard deadline or the caller-owned maximum.
 The supervisor forwards the maximum as agy's `--print-timeout`, owns the shorter
 local clocks and process group, and records only sanitized elapsed/progress-age/count,
 attempt origin, terminal reason, and resume availability. It never prints progress,
 prompts, raw stderr, or a conversation ID.
 
-There is no automatic fresh retry. On a terminal dispatch failure, choose exactly one
-explicit action: `resume` from the frozen conversation when eligible, `restart` as a
-new conversation with the frozen task/selection, or preserve the job and stop.
-`status`, `wait`, `result`, `extend`, and `cancel` describe the local controller,
-not an agy/provider status or a proven remote cancellation. A locally cancelled job
-therefore reports `remote_cancel_unverified`.
+There is no automatic fresh retry or continuation. A candidate-free failed state may
+offer SHA-approved `resume` for the exact stored conversation or SHA-approved fresh
+`restart`. A valid provider `ERROR` (exit `25`) candidate is `unreviewed`: obtain it
+with `result`, supply driver Verification v2, then `continue` or `finalize`. A valid
+provider `CANCELED`/`CANCELLED` (exit `22`) candidate is preserved for `result` and
+finalization, or an explicit fresh `restart`; it is never resume- or continue-eligible.
+None of those outcomes is provider success. `status`, `wait`, `result`, `extend`, and
+`cancel` describe the local controller, not agy/provider status or proven remote
+cancellation. A locally cancelled job therefore reports `remote_cancel_unverified`.
 
 The dispatcher creates each job directory and its task, full prompt, stream, stderr,
 staged prompt, and envelope under an owner-only mask, even when the caller's mask is
@@ -558,21 +592,222 @@ race.
 ### Progress-aware local jobs
 
 `run` remains synchronous. For a long explicitly approved job, `start` returns an
-opaque job ID after the local controller handshake; `status` and bounded `wait` read
-its private state, `result` emits an envelope only after terminal success, `extend`
-requires the current state SHA and cannot exceed `--max-runtime`, and `cancel` writes
-a local request before the controller closes and reaps its process group. `resume`
-requires a terminal resume-eligible state and its SHA, and uses the exact stored
-conversation with a fixed continuation prompt. `restart` also requires that SHA but
-starts a new conversation and labels its attempt `fresh-restart`.
+opaque job ID after the local controller handshake. `status`, `wait`, `result`,
+`resume`, `restart`, `continue`, and `finalize` each default to machine-readable JSON and accept
+`--format text`; text is exactly three sanitized, driver-owned lines and excludes
+prompts, worker prose, conversation IDs, paths, and raw logs. Lines one and two carry
+the sanitized reason/failure stage and current/maximum cycle count. For an unreviewed
+current candidate, line three gives the exact bound `result` JSON command, then says
+to review it and build Verification v2 before Codex chooses an eligible `continue` or
+`finalize`; it does not present either as a controller recommendation. For a current
+candidate whose `verified`, `partially_verified`, `rejected`, or `blocked` disposition
+is already recorded, line three instead offers only an optional finalized-result JSON
+readback and says not to construct Verification v2, `continue`, or `finalize`. If
+the same current `available_actions` guard exposes `restart`, that line also prints
+its exact fresh-restart command as an alternative; it makes no recommendation to use it.
+Other states show their exact mechanically guarded command (or `none`). Every emitted action or
+stale-approval rerun command uses the caller-resolved symbolic launcher
+`"$PIPELINE/agy-worker.sh"`; export `PIPELINE` before copying and running it.
+`result` returns a
+bound schema-valid candidate only when `result_available` is true; it is not a success
+or acceptance claim. `extend` and `cancel` require the current state SHA; eligible
+`resume` uses the exact stored conversation and its current approval SHA, while
+`restart` uses that SHA but labels a new attempt `fresh-restart`.
 
-Project jobs add a driver-owned quality loop. `status` exposes the phase, current and
-maximum cycle count, check summary, and assurance state. Codex supplies strict,
-sanitized verification JSON to `continue` with the current state SHA to ask the exact
-conversation to repair an observed failure. It supplies the same JSON to `finalize`
-with `verified`, `partially_verified`, or `blocked`; a worker cannot self-assign that
-status. The controller never runs a command from that JSON and never starts a fresh
-conversation automatically.
+In this interface, **bound result** means a current candidate whose
+`result_available` field is `true`. The text surface uses that term so a recognized
+but unavailable candidate is not mistaken for a retrievable result.
+
+Lifecycle state v9 uses `dispatching` for an active initial, resume, or restart
+attempt; `attempt-failed` for a pre-candidate failure; `awaiting-verification` for a
+recognized candidate; `repairing` for an active continuation; and `repair-failed` for
+an actual failed continuation attempt. Controller terminal phases are `completed` or
+`blocked`; exact Codex driver decisions/dispositions are `verified`,
+`partially_verified`, `rejected`, or `blocked`.
+Its additive public fields include candidate recognition/source/availability, driver
+disposition, failure stage, `last_activity`, mechanically derived `available_actions`,
+and the deprecated mechanical `next_action`/safe current-SHA-command aliases,
+and privacy-bounded worktree reconciliation (`available`, `unavailable`, or
+`not_applicable`). `has_prior_candidate` is a deprecated compatibility hint, not a
+cleanliness signal. The controller captures a baseline before provider launch and a
+terminal candidate only after the provider process group is closed and reaped. Queued
+dispatch paths recompute the exact digest immediately before `Popen`; `continue` and
+`finalize` recompute it against the bound candidate. Each observation uses a bounded,
+no-follow double-manifest comparison: its topology pass binds directory names, kinds,
+directory metadata, and empty directories without re-reading regular-file content,
+while the primary observation/revalidation binds listed file bytes. It binds the Git,
+index, root, and selected-Git target facts while provider activity is
+controller-quiesced. Exact bound-root checks precede every Git enumeration. V9 also
+rejects any resolve-undo (REUC) record, malformed or duplicate resolve-undo output,
+and resolve-undo drift between its fixed listing passes. Detected drift or an
+unavailable observation fails closed.
+
+Reconciliation is only a physical-change signal. It is not a filesystem snapshot,
+FSEvents watcher, hostile same-user tamper resistance, clean-worktree/review/acceptance
+proof, or semantic recommendation. The local owner, same-UID processes, and OS
+administrators remain in the TCB; a mutation after an entry's final read is a residual
+outside the portable guarantee. V1 remains readable historical evidence only. A
+V3/V4 *current* bound result may perform its first lifecycle transition only with
+both its state SHA and the exact `migration_binding_sha256` emitted by `status`; the
+controller recomputes that binding under the transition lock. V3/V4
+`last_success_*`-only evidence remains read-only. Persisted V5/V6
+state retains its exact legacy digest; V7 retains its exact semantic-v1 digest; and
+V8 retains its explicit semantic-v1 algorithm. A V5/V6 transition proves the legacy
+digest and then atomically captures a fresh semantic-v1 V9 baseline/candidate; V7/V8
+reuse their exact proved semantic observation. New V9 state persists its snapshot
+algorithm and private stable root/Git-administration identity, which deliberately
+excludes mutable worktree, index, HEAD, ref, and object content.
+
+Every explicit `explore`, `task`, or `project` workflow has the driver-owned quality
+loop. `status` exposes the controller phase, current and maximum cycle count, check
+summary, candidate availability, and only mechanically applicable actions. Public
+`assurance` is `null` until a bound driver `finalize` records its exact disposition;
+`phase` is deprecated raw compatibility storage, while `controller_phase` is the
+current mechanical projection; neither is an assurance recommendation. `continue` and `finalize`
+require Verification v2 JSON bound to the current candidate SHA. It records bounded
+passed/failed/advisory/missing checks plus coverage, verified-findings,
+unresolved-gaps, and whether the driver completed diff review. Codex may use any of
+that review evidence—including advisory, gap, or review-driven findings—to request an
+exact-conversation `continue`; the controller preserves the bound intent rather than
+requiring a failed or missing check. Codex's `verified` policy is strict: `explore` needs complete coverage, zero unresolved gaps, zero
+failed checks, and zero missing checks; `task`/`project` need at least one passed check,
+zero failed/missing checks, and completed diff review. `finalize` accepts the exact
+Codex declaration `verified`, `partially_verified`, `rejected`, or `blocked`; a worker
+cannot self-assign any disposition. The controller never executes a command from this
+JSON or starts a fresh conversation automatically.
+
+V3/V4 `last_success_*`-only records retain an explicitly `unknown_bound_legacy`
+historical result fact. They are never promoted to a provider-success candidate,
+driver disposition, continuation, or finalization input. `result` may expose one only
+after its exact command, linked-worktree boundary, file hash/inode, and schemas bind.
+Its three-line text surface calls it historical evidence only. An unreviewed current
+bound result instead directs the driver to retrieve JSON, run its checks, construct
+Verification v2, and choose any eligible continuation or finalization itself. A
+current result with a recorded final disposition offers only optional finalized-result
+JSON readback; it does not invite another Verification v2, `continue`, or `finalize`.
+When mechanically available, it also shows the exact fresh-restart alternative.
+
+#### Reading lifecycle JSON and supplying Verification v2
+
+For new integrations, use `controller_phase` for mechanical progress and
+`driver_disposition` for the recorded Codex decision. Ignore the deprecated
+compatibility fields `phase`, `next_action`, `next_action_command`, and
+`has_prior_candidate` unless maintaining an existing integration.
+
+Read public lifecycle JSON in this order: first `status` for `state_sha256`,
+`controller_phase`, `cycle`/`max_cycles`, `failure_stage`, and
+`available_actions`; then use `candidate_sha256` only when `result_available` is
+`true`; then retrieve `result` only when its mechanically derived action is present.
+Review that bound result and build driver evidence before choosing an eligible
+`continue` or `finalize`; the controller does not choose either. If the candidate hash
+is `null`, do not construct Verification v2 for it.
+
+Driver checks that can write bytecode, caches, coverage output, generated files, or
+other artifacts must run in an isolated verification copy. Do not delete or regenerate
+artifacts in the candidate to make its snapshot match again: tracked, untracked,
+deleted, and ignored paths are all bound candidate bytes. First inspect the candidate
+read-only (including any Git-dependent diff); then create a new directory under a
+private parent and run build/test commands in that copy. The copy deliberately omits
+`.git`, so Git-dependent checks stay read-only against the original candidate and
+build/test commands run in the copy:
+
+```bash
+VERIFY_PARENT="$(mktemp -d -t agyworker-verify.XXXXXX)" || exit $?
+VERIFY_PARENT="$(CDPATH= cd -- "$VERIFY_PARENT" && pwd -P)" || exit $?
+VERIFY_DIR="$VERIFY_PARENT/candidate"
+"$PIPELINE/agy-worker.sh" verification-copy --job-id "$JOB_ID" \
+  --destination "$VERIFY_DIR" --format text
+( cd "$VERIFY_DIR" && /usr/bin/python3 -m pytest -q )
+```
+
+`verification-copy` rebinds the current result, command, schemas, root, and candidate
+before copying, preserves regular-file bytes and executable bits, and rebases every
+contained symlink to an equivalent relative target inside the copy. It rejects
+broken/outward/Git-admin links and rebinds the
+source afterward. Its destination must be new, private, canonical, and outside the
+candidate. It records no acceptance or driver result; a source drift makes both the
+copy action and `continue`/`finalize` unavailable.
+
+The bounded pre/copy/post binding assumes an owner-controlled, quiescent candidate.
+It detects ordinary source or destination-parent drift, but does not claim same-UID
+tamper resistance: a local same-UID actor could replace a regular file with an outward
+link only during a read and restore it before the later checks. A failed copy is never
+reported as created and its destination is not a usable verification workspace.
+After wrapper argument parsing, an unavailable candidate, binding failure, copy failure,
+or invalid destination returns exit `20`; malformed wrapper arguments remain exit `64`.
+
+`available_actions` is the current surface. `next_action` and
+`next_action_command` remain deprecated mechanical compatibility aliases;
+`has_prior_candidate` and raw `phase` are also retained compatibility fields. They
+are not recommendations or acceptance facts, and no current public field is removed.
+
+The canonical Verification v2 validator is the bounded
+`_validate_verification` and `_require_current_candidate_verification` implementation
+in [`skills/agy-worker/runtime/scripts/agy_dispatch.py`](skills/agy-worker/runtime/scripts/agy_dispatch.py).
+There is intentionally no standalone Verification v2 schema: the validator is the
+canonical source and accepts no unknown fields. This complete example takes the
+candidate digest from the public status surface, not a path, worker prose, or a
+locally rehashed candidate:
+
+```bash
+: "${PIPELINE:?set PIPELINE to the resolved skill runtime}"
+: "${JOB_ID:?set JOB_ID to the controller job ID}"
+: "${STATE_DIR:?set STATE_DIR to an existing private state directory}"
+test -d "$STATE_DIR" || { echo "STATE_DIR is not a directory" >&2; exit 64; }
+
+STATUS_JSON="$("$PIPELINE/agy-worker.sh" status --job-id "$JOB_ID" --format json)"
+STATE_AND_CANDIDATE="$(printf '%s\n' "$STATUS_JSON" | python3 -c '
+import json, re, sys
+status = json.load(sys.stdin)
+state_sha = status.get("state_sha256")
+candidate = status.get("candidate_sha256")
+if not isinstance(state_sha, str) or re.fullmatch(r"[0-9a-f]{64}", state_sha) is None:
+    raise SystemExit("status state SHA is unavailable")
+if status.get("result_available") is not True or not isinstance(candidate, str) or re.fullmatch(r"[0-9a-f]{64}", candidate) is None:
+    raise SystemExit("status has no current bound candidate")
+print(state_sha, candidate)
+')" || exit $?
+read -r STATE_SHA CANDIDATE_SHA <<EOF
+$STATE_AND_CANDIDATE
+EOF
+
+python3 - "$CANDIDATE_SHA" > "$STATE_DIR/verification-v2.json" <<'PY'
+import json, sys
+
+json.dump({
+    "schema_version": 2,
+    "summary": "driver reviewed the bound candidate and found one repair",
+    "passed_checks": ["unit"],
+    "failed_checks": ["targeted-regression"],
+    "advisory_checks": 0,
+    "missing_checks": 0,
+    "candidate_sha256": sys.argv[1],
+    "coverage": "partial",
+    "verified_findings": 1,
+    "unresolved_gaps": 1,
+    "diff_review_complete": True,
+}, sys.stdout, sort_keys=True, separators=(",", ":"))
+sys.stdout.write("\n")
+PY
+
+"$PIPELINE/agy-worker.sh" continue --job-id "$JOB_ID" \
+  --approve-state-sha "$STATE_SHA" < "$STATE_DIR/verification-v2.json"
+```
+
+`resume`, `restart`, `continue`, `finalize`, `cancel`, and `extend` all use a current
+`--approve-state-sha`; `wait` instead uses `--after-state-sha`, while read-only
+`status`/`result` need neither. `resume` and `restart` both show the approval flag in
+help; resume preserves the exact conversation, restart is a fresh attempt. Direct
+reviewed model selection is a separate compatibility approval:
+`--compatibility-disposition proceed --approve-help-sha SHA256`; it never changes the
+caller-selected model or authorizes lifecycle writes. Common read commands accept
+`--format json|text`, with JSON as the canonical input surface.
+
+The provider-facing envelope permits omission of report-only `commands_run` and
+`tests_run`; the controller restores omitted fields to empty arrays before requiring
+the canonical envelope, where both fields are mandatory. The worker summary is capped
+at 8,192 characters. These fields are provider claims only: non-empty command/test
+arrays are rejected by the gate and never executed.
 
 The Codex skill does not split a comprehensive task merely to fit a timer. While
 progress is fresh, it may extend the initial deadline by `2h` at 80% utilization,
@@ -632,9 +867,24 @@ matching environment variable, never both—even when equal. Repeated selectors,
 explicit empty values, tier plus any model/effort source, effort without a model,
 unknown models, and unsupported pairs fail before the task is read or a worker is
 dispatched. Model and effort may come from different sources when each has exactly
-one source. Reviewed `--model` selectors run one bounded local `agy --version`
-preflight and require the reviewed `1.1.16`; tier/default and literal behavior perform
-no such probe.
+one source. Reviewed `--model` selectors use a bounded safe-target semantic
+`agy --version` probe followed by strict critical `agy --help` interface probing.
+Every direct reviewed selection preserves the caller's exact resolved slug. An exact
+matrix-version match proceeds after the structural probe. Compatible version drift is
+review-required until Codex supplies both `--compatibility-disposition proceed` and the
+exact `--approve-help-sha` from a bounded local raw `agy --help` inspection. Codex must
+independently compare the inspected raw-help SHA with the sanitized evidence; it must
+not treat a copied digest as semantic approval. On drift review-required the selector
+prints one relation-neutral sanitized JSON evidence object to stderr with
+installed/matrix versions, relation/status, capability and raw-help digests, exact
+caller model/effort plus their sources, resolved agy model, and a safe retry selector
+fragment (argv/environment only, never prompt or path); it never prints a local
+executable path or help prose. The resulting V3 selection record binds that drift disposition,
+raw-help SHA, capabilities SHA, matrix facts, caller model/effort/provenance, and safe
+executable object. The executable binding uses a bounded no-follow descriptor digest,
+target ctime, and complete resolved path authority; only macOS's `/var` to
+`/private/var` alias is normalized. It records no model availability assessment.
+Tier/default and literal behavior perform no such probe.
 HUP, INT, or TERM during that preflight closes its exact process group and returns
 `129`, `130`, or `143` before the task is read or a selection record is published.
 
@@ -645,6 +895,12 @@ selection even if the matrix file changes later. This driver-owned record is
 provenance, not worker evidence, a QA receipt, or an acceptance path. It never
 silently escalates cost or changes model after failed tests, scope violations, or
 malformed output.
+
+If a final direct-selection reprobe fails, that frozen record is preserved only as
+local evidence: no same-job `resume` or `restart` is safe, because it would repeat
+the rejected executable/interface binding. Codex must first inspect current sanitized
+`agy --help` evidence, then create a new job using the same caller-selected model and
+effort; it must not silently rebind or replace either selection.
 
 `model-recommendation.sh` is a separate, read-only policy layer. It prints a visible
 JSON recommendation before dispatch or after a gate result, but never calls `agy`,
@@ -993,6 +1249,15 @@ and pauses ordinary monitoring until the owner explicitly runs `refresh`; refres
 rebinds only through the existing serialized uninstall/install lifecycle and never
 updates code, metadata, or a tool. A notification attempt is the final irreversible
 UI side effect and cannot be retracted.
+
+`refresh` also has one deliberately narrow migration path for the immediately prior
+v0.8.0 installation ledger. It recognizes only that exact 18-file manifest, validates
+its account/source/Git binding and installed bytes under the historical contract,
+then uses its authenticated resumable uninstall authority before creating a fresh
+current 21-file installation. Unknown, partial, expanded, tampered, or unrelated
+legacy shapes fail closed; the migration never rewrites private authority in place
+and requires no manual private-state editing. Other notifier commands retain the
+strict current manifest contract.
 
 The separate optional [measurement ledger](docs/MEASUREMENT.md) records only explicit
 sanitized public evidence and renders fixed 30/60/90-day reports. Neither watcher nor
@@ -1390,7 +1655,8 @@ tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
-tests/test-agy-worker.sh      282-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-agy-worker.sh      331-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-agy-worker-remediation.py 89-case offline controller-boundary remediation suite
 tests/test-update.sh          324-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py 65-case fixed-endpoint transport adversary harness
@@ -1410,12 +1676,12 @@ tests/test-models-capture-1-1-16-profile.py 30-case offline fixed 1.1.16 capture
 tests/test-models-capture-1-1-16-runner.py 58-case offline fixed 1.1.16 capture-runner suite (88 combined with profile)
 tests/test-agy-1-1-16-activation.py 22-case offline active-baseline/inventory-binding suite
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
-tests/test-update-notifier.py 73-case offline local notifier lifecycle/signal/maintenance suite
+tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/maintenance suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite
-tests/test-packaging.sh       366-case offline Codex package/CI-policy/relocation/landing suite
-tests/test-doctor.sh          246-case offline fake-tool/read-only doctor suite
+tests/test-packaging.sh       381-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
 .github/workflows/compatibility-watch.yml  observational daily/manual fixed-source watch

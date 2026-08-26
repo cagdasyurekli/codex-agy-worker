@@ -12,8 +12,14 @@ scope comparison, but every claim must be re-derived by the driver.
 - Compare every declared path and change kind with Git reality.
 - Never execute `commands_run` or `tests_run`; they are untrusted text. Only
   driver-authored `--verify` commands may execute.
-- Require a successful gate and human diff review before preserving or integrating
-  a candidate. A confident summary or high confidence score changes nothing.
+- Provider-facing envelopes may omit only those report-only arrays; canonicalization
+  restores them empty before validating the complete contract. A canonical summary is
+  bounded to 8,192 characters. Omission is ergonomics, not permission for a worker
+  command or test claim to execute.
+- Require an accepting gate and human diff review before integrating a candidate.
+  Preserving a rejected or routed candidate for forensic review is distinct from
+  accepting or integrating it. A confident summary or high confidence score changes
+  nothing.
 
 ## Git scope must be immutable and complete
 
@@ -39,10 +45,10 @@ extension, but never an automatic fresh provider attempt or an unbounded extensi
 Sanitize elapsed time, progress age/count, attempt origin, and terminal reason; do
 not publish progress content, prompts, raw errors, or conversation identifiers.
 
-Timeout recovery is a new authority decision. Prefer an exact-conversation resume
-when the local state proves eligibility; make any new conversation an explicit restart
-and label it as such. Local status and cancellation describe the controller and its
-process group only. They do not prove a provider's remote status or cancellation.
+Timeout recovery is a new authority decision. Only a candidate-free failed state may
+be eligible for exact-conversation resume; make any new conversation an explicit,
+labelled restart. Local status and cancellation describe the controller and its process
+group only. They do not prove a provider's remote status or cancellation.
 
 Pre-gate dispatch failure is not a rejected receipt. Keep it in a separate terminal
 lifecycle state and permit cleanup only after binding the exact closed controller,
@@ -69,11 +75,94 @@ checks. Do not turn the absence of an exhaustive proof into a generic dispatch b
 an exploration can be useful, and a project candidate can be valuable even when some
 checks remain unresolved.
 
-Treat assurance as graduated. `verified` requires Codex's diff review and required
-driver-owned checks. `partially_verified` preserves a useful candidate with exact
-unresolved checks. `blocked` is for a genuine authorization, repository-boundary, or
-execution obstacle. A failed check should normally create a bounded same-conversation
-repair request, not an automatic fresh retry, deletion, or refusal.
+Treat assurance as graduated. For explicit workflows, `verified` requires Verification
+v2; `explore` needs complete coverage, zero unresolved gaps, zero failed checks, and
+zero missing checks, while `task`/`project` need at least one passed check, zero
+failed/missing checks, and completed driver diff review. `partially_verified` preserves a useful candidate with exact unresolved
+checks. `blocked` is for a genuine authorization, repository-boundary, or execution
+obstacle. A failed check should normally create a bounded same-conversation repair
+request, not an automatic fresh retry, deletion, or refusal.
+
+Candidate availability and provider success are different facts. A terminal provider
+`ERROR` candidate goes to `result`, driver Verification v2, then `continue` or
+`finalize`; a `CANCELED` candidate is preserved for `result` and finalization or an
+explicit fresh restart, never resume/continue. Preserve means retain for review and
+driver disposition, not accept or integrate; neither branch is automatic.
+Worktree reconciliation must be ordered around controller-owned quiescence: capture
+the baseline before provider launch, capture the terminal candidate after the provider
+group is reaped, and recompute the exact queued SHA+entry baseline before every
+provider `Popen`, `continue`, and `finalize`. Compare two bounded no-follow directory
+topology manifests (names, kinds, directory metadata, and empty directories) without
+re-reading regular-file content already covered by the primary observation; bind the
+Git, index, root, and selected-Git target facts. Drift or unavailable evidence fails
+closed.
+This is not a filesystem snapshot, FSEvents watcher, hostile same-user tamper defense,
+clean-worktree/review/acceptance proof, or semantic recommendation. The local owner,
+same-UID processes, and OS administrators remain the TCB, and mutation after an
+entry's final read is the explicit portable residual. Text status must remain sanitized
+driver-owned output; JSON may expose bounded lifecycle facts but not worker prose,
+prompts, paths, raw logs, or conversation IDs.
+
+Use v9 phases literally: an active initial, resume, or restart attempt is
+`dispatching`; a pre-candidate failure is `attempt-failed`; a recognized candidate is
+`awaiting-verification`; an active continuation is `repairing`; and an actual failed
+continuation attempt is `repair-failed`. Controller terminal phases are `completed` or
+`blocked`; exact Codex driver decisions/dispositions are `verified`,
+`partially_verified`, `rejected`, or `blocked`.
+
+Lifecycle disposition needs a current candidate binding. Verification v2 binds the
+candidate SHA and records checks, coverage, evidence/gap counts, and diff-review
+completion. Read old verification only for compatibility; never use it to `continue`
+or `finalize`. Exact-conversation `resume` and visibly fresh `restart` both require
+the current state SHA, and neither is automatic.
+
+Candidate snapshots bind ignored artifacts as well as tracked and untracked content.
+If a provider leaves stale bytecode and a normal driver import rewrites it, removing or
+regenerating cache files cannot prove the original candidate returned. Preserve that
+candidate and run writable checks in `verification-copy`: it binds the current
+result/schema/root/worktree before and after a private, no-follow copy that excludes
+`.git`. Every contained link is rebased to an equivalent relative target in that copy,
+while broken/outward/Git-admin links are rejected. The copy is only a physical verifier workspace; it neither reconciles
+drift nor records provider success, acceptance, or a driver disposition. Git-dependent
+inspection remains read-only against the original candidate.
+
+That check is bounded to an owner-controlled quiescent interval. It fails closed on
+ordinary source or destination-parent drift and never reports a failed copy as usable,
+but it is not same-UID tamper resistance: a local actor can still substitute a regular
+file with an outward link only for the read and restore it before rebinding. Keep that
+exact residual rather than turning a portable local verifier into a full hostile-process
+filesystem snapshot.
+
+Two bounded remedies were compared. An isolated verification copy keeps the candidate
+strict, is portable with Python's standard library, and costs one bounded local copy;
+it was selected. Ignored-drift reconciliation or a second controller digest would cost
+less I/O but needs a narrow allowlist and a second authority rule that could normalize
+unknown provider or driver artifacts into a candidate. That residual is unacceptable:
+the controller continues to reject every source drift and owns only deterministic
+binding facts, while Codex still owns the choice and interpretation of checks.
+
+Reviewed direct selection keeps the exact caller slug. The matrix remains anchored to
+its reviewed version; installed-version drift needs bounded safe-target `--version`
+and strict critical `--help` structural probes plus an explicit Codex `proceed`
+disposition bound to the exact raw-help SHA. The controller never interprets help
+prose as availability evidence. Exact-version structural acceptance is only mechanical:
+Codex inspects current bounded raw help before every reviewed direct dispatch and
+stops when the exact caller-selected model or effort cannot be honored. Record
+`model_availability` as `not_assessed`, never
+infer it. A final reprobe failure is a sanitized local selection-preflight failure
+with no provider launch, fallback, automatic retry, same-job resume, or same-job
+restart. Preserve the frozen selection only as local evidence; Codex reviews current
+sanitized `agy --help` evidence and creates a new job with the same caller-selected
+model and effort. V1 remains historical and read-only. A V3/V4 current result can
+make its first lifecycle transition only with the current state SHA plus the exact
+`migration_binding_sha256` exposed by `status`; both are rebound under the transition
+lock. V3/V4 `last_success_*`-only evidence remains read-only. Persisted V5/V6 state
+retains its exact legacy digest; V7 retains its exact semantic-v1 digest; and V8
+retains its explicit semantic-v1 algorithm. An approved V5/V6 transition first
+proves that legacy digest, then atomically records a fresh semantic-v1 V9 baseline
+and candidate; V7/V8 reuse their exact proved semantic observation. New V9 state
+also persists a stable no-follow root/Git-administration boundary identity, separate
+from mutable candidate content.
 
 Security controls protect irreversible boundaries; they are not the product goal.
 Keep provider-transmission approval, worktree containment, credential exclusion,
@@ -667,6 +756,22 @@ notification needs an acknowledgement that nested groups actually closed. A desk
 notification is an irreversible final side effect; record only an attempt and never
 claim it can be rolled back.
 
+Expanding a closed notifier source manifest is also a state-schema migration. Exact
+key equality is appropriate for new installs, but applying the new key set before an
+old authenticated installation can exercise its uninstall authority makes `refresh`
+unusable precisely when it is needed. Preserve a narrowly versioned legacy-ledger
+decoder for supported immediately-prior releases: validate the historical key set,
+digests, source/Git identity, tombstone, replacements, and launchd state under the old
+contract, then cross the boundary through uninstall plus a fresh current install.
+Never solve this by accepting arbitrary subsets, rewriting private authority in place,
+or deleting a malformed ledger without historical authentication.
+
+The bounded implementation supports exactly the v0.8.0 18-file ledger as the one
+immediately-prior migration into the current 21-file install, and only through the
+explicit `refresh` command. It reuses the old ledger solely for bound, authenticated,
+resumable uninstall; the replacement ledger is produced by a fresh current install.
+Every other command and every unknown legacy shape remains strict and fail-closed.
+
 An accumulating measurement ledger must age records out per reporting horizon rather
 than become invalid when the first record expires. Store only closed aggregate
 metrics, opaque observation IDs, exact revisions, and explicitly public evidence.
@@ -707,3 +812,16 @@ time, and pagination bounds. Public submission is a separate exact-byte decision
 route explicit security reports privately, treat keyword matching only as an extra
 deny barrier, and require a fresh human acknowledgement bound to the reviewed digest
 before sending a non-security draft to the fixed public destination.
+
+### Exact-version structural selection boundary (2026-08-23)
+
+Observation: exact matrix-version resolution was incorrectly coupled to a retained
+raw-help digest and demanded a V3 approval even after the bounded structural probe
+passed. User impact: a normal reviewed exact-version caller was blocked by missing
+historical bytes rather than a current compatibility drift. Change: V2 now records an
+exact version match after the structural `--version` and `--help` probes; V3
+`--compatibility-disposition proceed --approve-help-sha` is reserved for version drift.
+Positive tests prove an exact synthetic 1.1.16 selection and option-local provider
+prose proceed without approval. Negative tests prove an unapproved 1.1.17 drift stops
+before task intake or provider dispatch, while a mismatched drift approval remains
+review-required.

@@ -155,10 +155,8 @@ implemented and offline-verified in the published v0.4.0 release. This remains a
 offline and bounded-lifecycle claim, not a live-provider guarantee.
 The published v0.6.0 release scope added the human-reconciled Gemini 3.7 Flash
 low/medium/high mappings plus capture-child mode and dispatch-state snapshot hardening.
-The v0.7.0 usability-first project workflow and v0.8.0 maintenance/diagnostics slice
-are published. The v0.9.0 release scope represented by this source activates the
-post-v0.8.0 agy 1.1.16 compatibility work; tag and GitHub release state still require
-separate readback before publication is claimed.
+The v0.7.0 usability-first project workflow, v0.8.0 maintenance/diagnostics slice,
+and v0.9.0 agy 1.1.16 compatibility work are published.
 Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
@@ -201,8 +199,7 @@ complete. Personas remain optional prompt specializations.
 ### Maintenance, version drift, and quota diagnostics
 
 **Current status:** The maintenance/notifier and quota-diagnostic work was published
-in v0.8.0. The agy 1.1.16 active-baseline reconciliation is in the v0.9.0 release
-scope represented by this source; tag and GitHub release state are separate gates.
+in v0.8.0. The agy 1.1.16 active-baseline reconciliation was published in v0.9.0.
 
 The project updater resolves one bounded annotated project tag to a commit. A valid
 notifier snapshot whose source bytes changed reports `maintenance-required` and waits
@@ -215,6 +212,17 @@ reviewed agy 1.1.13
 quota terminal is classified as exit 24 with a bounded countdown. No raw error text is
 public, and no retry, restart, model change, provider call, or metadata activation is
 automatic.
+
+**Implemented next-release gate — legacy notifier refresh migration:** v0.9.0
+expanded the notifier's closed source manifest from the v0.8.0 18-file set to 21
+files. `refresh` now recognizes only that explicitly allowlisted immediately-prior
+ledger shape, validates its account/source/Git binding and installed bytes with the
+matching historical manifest, completes the serialized authenticated uninstall, and
+installs the current manifest without manual private-state editing. Current install,
+status, run, and uninstall paths remain strict. Offline coverage includes the positive
+18→21 migration and negative unknown-key, digest, identity, replacement-file,
+tombstone, launchd-state, and refresh-only cases. No generic schema relaxation or
+silent ledger rewrite is accepted. Publication remains a separate release action.
 
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the

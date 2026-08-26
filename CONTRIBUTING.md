@@ -27,7 +27,7 @@ Run the canonical offline CI body before requesting review:
 
 It is fail-fast, requires no network or provider call, does not intentionally inspect
 account-HOME contents, externalizes temporary bytecode, and runs the static checks plus
-all thirty-one offline suites. Ambient local tools may still consult ordinary user
+all thirty-two offline suites. Ambient local tools may still consult ordinary user
 configuration. For a quota-unavailable
 private fork this is evidence to attach to review, not a replacement for the protected
 GitHub `test` check; manually dispatch the exact committed range after Actions becomes
@@ -43,6 +43,7 @@ targeted diagnosis:
 /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py
 /usr/bin/python3 -I -S -B tests/test-workload-profiles.py
 ./tests/test-agy-worker.sh
+/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py
 ./tests/test-update.sh
 /usr/bin/python3 -I -S -B tests/test-adoption-measurement.py
 /usr/bin/python3 -I -S -B tests/test-update-notifier.py

@@ -52,6 +52,8 @@ announce 'data-only workload profiles suite'
 /usr/bin/python3 -I -S -B tests/test-workload-profiles.py
 announce 'dispatcher suite'
 ./tests/test-agy-worker.sh
+announce 'dispatcher remediation suite'
+/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py
 announce 'updater suite'
 ./tests/test-update.sh
 announce 'adoption measurement suite'
