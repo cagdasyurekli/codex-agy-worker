@@ -825,3 +825,18 @@ Positive tests prove an exact synthetic 1.1.16 selection and option-local provid
 prose proceed without approval. Negative tests prove an unapproved 1.1.17 drift stops
 before task intake or provider dispatch, while a mismatched drift approval remains
 review-required.
+
+## Route context and verification through one authority
+
+Large reference files are opt-in context, not a default startup bundle. Route a task
+through one relevant `REPO_MAP` row, open only the matching lesson or public-doc
+section, and use a fresh Graphify index only for a narrow relationship or impact gap.
+The map owns human intent and verification routing; Graphify owns machine-derived
+edges. Generated graph data remains ignored local cache, but Git ignore alone does not
+exclude it from provider reads. Use a clean disposable worktree or explicit file scope.
+
+The same single-authority rule applies to verification. During iteration, run the
+owning focused suite. Once bytes are stable, run the canonical `ci-offline.sh` gate
+once and bind review to that candidate. PR templates should request the canonical gate
+and exact focused evidence instead of copying every suite command; mechanical tests
+should derive the inventory from the runner rather than enforce duplicate checklists.
