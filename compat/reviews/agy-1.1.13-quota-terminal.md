@@ -7,8 +7,9 @@ owner-reviewed Codex session retained only a bounded projection of repeated agy 
 terminal events: one `result`, the exact observed result-key set, `status=ERROR`, an
 empty response, string error type, numeric duration, integer turn count, object usage
 and schema fields, and reset durations `4h51m54s`, `4h51m53s`, and `4h50m17s`.
-Controller state retained the same conversation for explicit resume but reported exit
-5 `agy_failed_unclassified`.
+Controller state retained the same conversation for explicit resume. For this exact
+1.1.13 shape with no report, it records `provider_quota_exhausted`, exit `24`, and
+`failure_stage=missing_structured_output`.
 
 The public Antigravity project reports the canonical message family as
 `Individual quota reached. Contact your administrator to enable overages. Resets in
@@ -22,4 +23,5 @@ inputs.
 The public result is exit 24 `provider_quota_exhausted` and an optional bounded
 `retry_after_seconds` countdown. It excludes error text, prompt, conversation, model,
 path, source, envelope, and raw logs. It never authorizes automatic retry, restart,
-sleep, or model selection. Other versions and shapes remain unclassified.
+sleep, or model selection. Other-version or altered-shape terminals with no report
+are `invalid_envelope`, exit `4`, and `failure_stage=missing_structured_output`.

@@ -65,6 +65,7 @@ PORTABLE_FILES = (
     ("schemas/benchmark-result.schema.json", 0o644),
     ("schemas/evidence-receipt.schema.json", 0o644),
     ("schemas/worker-result.schema.json", 0o644),
+    ("schemas/worker-result.provider.schema.json", 0o644),
 )
 BENCHMARK_TREE_FILES = {
     "manifest.json",

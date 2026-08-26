@@ -502,12 +502,30 @@ if [[ $? == 64 && ! -e "$mismatch_target" ]]; then ok "selection and advisory mi
 mkdir -p "$TMP/selection-bin"
 cat > "$TMP/selection-bin/agy" <<'SH'
 #!/usr/bin/env bash
-[[ "$*" == "--version" ]] || exit 97
-printf '1.1.16\n'
+case "$*" in
+    --version)
+        printf '1.1.16\n'
+        ;;
+    --help)
+        printf '%s\n' \
+            '  --add-dir  Add a directory to the workspace' \
+            '  --conversation  Resume a previous conversation by ID' \
+            '  --disable-slash-commands  Disable slash command expansion' \
+            '  --json-schema  Enforce structured output' \
+            '  --mode  Set execution mode (accept-edits, plan)' \
+            '  --model  Select the model' \
+            '  --output-format  Output format (text, json, stream-json)' \
+            '  --print  Run one prompt non-interactively' \
+            '  --print-timeout  Bound print-mode waiting' \
+            '  --sandbox  Enable terminal restrictions'
+        ;;
+    *) exit 97 ;;
+esac
 SH
 chmod +x "$TMP/selection-bin/agy"
 PATH="$TMP/selection-bin:$PATH" "$ROOT/model-selection.sh" \
-    --model gemini-3.6-flash --effort high > "$TMP/direct-selection.json"
+    --model gemini-3.6-flash --effort high \
+    > "$TMP/direct-selection.json"
 "$ROOT/model-recommendation.sh" --stage pre-dispatch \
     --selected-model gemini-3.6-flash --selected-effort high \
     --evidence batched-mechanical > "$TMP/direct-recommendation.json"

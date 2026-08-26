@@ -16,8 +16,27 @@ WORKER="$ROOT/agy-worker.sh"
 RECOMMENDER="$ROOT/model-recommendation.sh"
 SELECTOR="$ROOT/model-selection.sh"
 TMP="$(mktemp -d -t agyworker-dispatch.XXXXXX)"
+tmp_identity() {
+    python3 - "$1" <<'PY'
+import os
+import stat
+import sys
+
+try:
+    info = os.lstat(sys.argv[1])
+except OSError as exc:
+    print(f"unavailable errno={exc.errno}")
+else:
+    print(
+        f"exists dev={info.st_dev} ino={info.st_ino} "
+        f"mode={stat.S_IMODE(info.st_mode):o} uid={info.st_uid} gid={info.st_gid}"
+    )
+PY
+}
 if [[ "${KEEP_AGY_WORKER_TEST_TMP:-0}" == "1" ]]; then
-    trap 'printf "kept test tmp: %s\n" "$TMP" >&2' EXIT
+    TMP_START_IDENTITY="$(tmp_identity "$TMP")"
+    printf 'test tmp identity at startup: %s; %s\n' "$TMP" "$TMP_START_IDENTITY" >&2
+    trap 'TMP_EXIT_IDENTITY="$(tmp_identity "$TMP")"; if [[ "$TMP_EXIT_IDENTITY" == "$TMP_START_IDENTITY" ]]; then printf "test tmp identity at exit: unchanged; %s\n" "$TMP_EXIT_IDENTITY" >&2; else printf "test tmp identity at exit: changed-or-unavailable; startup=%s exit=%s\n" "$TMP_START_IDENTITY" "$TMP_EXIT_IDENTITY" >&2; fi; printf "kept test tmp: %s\n" "$TMP" >&2' EXIT
 else
     trap 'rm -rf "$TMP"' EXIT
 fi
@@ -195,9 +214,49 @@ git -C "$TMP/repo" -c user.name='agy-worker test' -c user.email='test@example.in
 git -C "$TMP/repo" worktree add --detach -q "$TMP/project-worktree" HEAD
 chmod 0755 "$TMP/logs"
 LOGS_REAL="$(cd "$TMP/logs" && pwd -P)"
+
+# Help is an informational CLI surface, never a result-envelope path.  It must
+# succeed before log/state setup for the top level and every public subcommand;
+# malformed use remains a normal 64 with no stdout JSON.
+help_ok=1
+for help_command in '' run start status wait result extend cancel resume restart continue finalize; do
+    help_out="$TMP/help-${help_command:-top}.out"
+    help_err="$TMP/help-${help_command:-top}.err"
+    if [[ -n "$help_command" ]]; then
+        "$WORKER" "$help_command" --help > "$help_out" 2> "$help_err"
+    else
+        "$WORKER" --help > "$help_out" 2> "$help_err"
+    fi
+    help_rc=$?
+    if [[ "$help_rc" != 0 || -s "$help_out" ]] || ! grep -Fq 'usage: agy-worker.sh' "$help_err"; then
+        help_ok=0
+    fi
+done
+"$WORKER" status --not-a-real-option > "$TMP/help-invalid.out" 2> "$TMP/help-invalid.err"
+invalid_help_rc=$?
+private_unknown='--not-a-real-option=/private/unknown-argument'
+"$WORKER" "$private_unknown" > "$TMP/help-private-run.out" 2> "$TMP/help-private-run.err"
+private_run_rc=$?
+"$WORKER" status "$private_unknown" > "$TMP/help-private-control.out" 2> "$TMP/help-private-control.err"
+private_control_rc=$?
+if [[ "$help_ok" == 1 && "$invalid_help_rc" == 64 && ! -s "$TMP/help-invalid.out" ]] \
+    && grep -Fxq 'Stdout contracts: run emits a worker result envelope; start and lifecycle controls emit' "$TMP/help-top.err" \
+    && grep -Fxq 'control JSON, with status/wait/resume/restart/continue/finalize accepting --format text;' "$TMP/help-top.err" \
+    && grep -Fxq 'result emits its bound worker envelope unless --format text. A non-zero run exit means' "$TMP/help-top.err" \
+    && [[ "$private_run_rc" == 64 && "$private_control_rc" == 64 ]] \
+    && [[ ! -s "$TMP/help-private-run.out" && ! -s "$TMP/help-private-control.out" ]] \
+    && grep -Fq 'agy-worker.sh: invalid usage; run --help for usage' "$TMP/help-private-run.err" \
+    && grep -Fq 'agy-worker.sh: invalid usage; run --help for usage' "$TMP/help-private-control.err" \
+    && ! grep -Fq -- "$private_unknown" "$TMP/help-private-run.err" \
+    && ! grep -Fq -- "$private_unknown" "$TMP/help-private-control.err"; then
+    ok "top-level help distinguishes worker and lifecycle stdout; invalid usage is sanitized"
+else
+    bad "help stdout contract or sanitized invalid usage"
+fi
 cat > "$TMP/bin/agy" <<'FAKE'
 #!/usr/bin/env bash
 set -u
+FAKE_EXECUTABLE_CONTENT_SENTINEL=round-two-binding-original
 FAKE_CALLS_FILE="${FAKE_CALLS_FILE:-/dev/null}"
 FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-/dev/null}"
 if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
@@ -207,6 +266,8 @@ if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
         quota113) printf '1.1.13\n' ;;
         prefixed) printf 'agy 1.1.16\n' ;;
         drift) printf '1.1.11\n' ;;
+        drift117) printf '1.1.17\n' ;;
+        drift999) printf '9.9.9\n' ;;
         empty) : ;;
         malformed) printf 'version 1.1.16\n' ;;
         oversize) i=0; while [[ $i -lt 140 ]]; do printf x; i=$((i+1)); done; printf '\n' ;;
@@ -258,6 +319,117 @@ if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
         hang) sleep 10 ;;
         *) exit 24 ;;
     esac
+    exit 0
+fi
+if [[ "${1:-}" == "--help" && $# -eq 1 ]]; then
+    printf 'help\n' >> "$FAKE_CALLS_FILE"
+    case "${FAKE_HELP_MODE:-ready}" in
+        ready)
+            cat >&2 <<'HELP'
+Usage of agy:
+  --add-dir                       Add a directory to the workspace
+  --conversation                  Resume a previous conversation by ID
+  --disable-slash-commands        Disable slash command expansion
+  --json-schema                   Optional JSON schema path
+  --mode                          Set execution mode (accept-edits, plan)
+  --model                         Select a model
+  --output-format                 Output format (text, json, stream-json)
+  --print                         Run a prompt
+  --print-timeout                 Timeout for print mode
+  --sandbox                       Run sandboxed
+HELP
+            ;;
+        locale-sensitive)
+            locale_label="inherited-${LC_ALL:-unset}"
+            [[ "${LC_ALL:-}" == "C" ]] && locale_label="canonical-C"
+            cat >&2 <<HELP
+Usage of agy:
+  --add-dir                       Add a directory to the workspace ($locale_label)
+  --conversation                  Resume a previous conversation by ID
+  --disable-slash-commands        Disable slash command expansion
+  --json-schema                   Optional JSON schema path
+  --mode                          Set execution mode (accept-edits, plan)
+  --model                         Select a model
+  --output-format                 Output format (text, json, stream-json)
+  --print                         Run a prompt
+  --print-timeout                 Timeout for print mode
+  --sandbox                       Run sandboxed
+HELP
+            ;;
+        missing) printf '%s\n' 'Usage of agy:' >&2 ;;
+        duplicate) printf '%s\n' '  --model                         Duplicate model' >&2; cat >&2 <<'HELP'
+  --add-dir                       Add a directory to the workspace
+  --conversation                  Resume a previous conversation by ID
+  --disable-slash-commands        Disable slash command expansion
+  --json-schema                   Optional JSON schema path
+  --mode                          Set execution mode (accept-edits, plan)
+  --model                         Select a model
+  --output-format                 Output format (text, json, stream-json)
+  --print                         Run a prompt
+  --print-timeout                 Timeout for print mode
+  --sandbox                       Run sandboxed
+HELP
+            ;;
+        malformed) printf '%s\n' ' --model                          Select a model' >&2 ;;
+        semantic) cat >&2 <<'HELP'
+Usage of agy:
+  --add-dir                       Add a directory to the workspace
+  --conversation                  Resume a previous conversation by ID
+  --disable-slash-commands        Disable slash command expansion
+  --json-schema                   Optional JSON schema path
+  --mode                          Set execution mode (accept-edits, plan)
+  --model                         Select a model (not available in this build)
+  --output-format                 Output format (text, json, stream-json)
+  --print                         Run a prompt
+  --print-timeout                 Timeout for print mode
+  --sandbox                       Run sandboxed
+HELP
+            ;;
+        utf8) printf '\377\n' >&2 ;;
+        nul) printf 'x\000\n' >&2 ;;
+        oversize) i=0; while [[ $i -lt 70000 ]]; do printf x >&2; i=$((i+1)); done ;;
+        fail) exit 23 ;;
+        hang) sleep 10 ;;
+        *) exit 24 ;;
+    esac
+    if [[ -n "${FAKE_MUTATE_EXECUTABLE:-}" ]]; then
+        printf '#!/usr/bin/env bash\nexit 97\n' > "$FAKE_MUTATE_EXECUTABLE"
+        chmod 0755 "$FAKE_MUTATE_EXECUTABLE"
+    fi
+    if [[ -n "${FAKE_MUTATE_EXECUTABLE_SAME_LENGTH:-}" ]]; then
+        python3 -B - "$FAKE_MUTATE_EXECUTABLE_SAME_LENGTH" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+before = path.stat()
+raw = path.read_bytes()
+old = b"FAKE_EXECUTABLE_CONTENT_SENTINEL=round-two-binding-" + b"original"
+new = b"FAKE_EXECUTABLE_CONTENT_SENTINEL=round-two-binding-" + b"replaced"
+if len(old) != len(new) or raw.count(old) != 1:
+    raise SystemExit(97)
+path.write_bytes(raw.replace(old, new))
+os.chmod(path, 0o755)
+os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+marker = os.environ.get("FAKE_MUTATION_MARKER")
+if marker:
+    Path(marker).touch()
+PY
+    [[ $? == 0 ]] || exit 97
+    fi
+    if [[ -n "${FAKE_REPLACE_EXECUTABLE_SYMLINK:-}" ]]; then
+        replacement="${FAKE_REPLACE_EXECUTABLE_SYMLINK}.round-two-replacement"
+        rm -f "$replacement"
+        ln -s "${FAKE_EXECUTABLE_SYMLINK_TARGET:?}" "$replacement"
+        mv -f "$replacement" "$FAKE_REPLACE_EXECUTABLE_SYMLINK"
+    fi
+    if [[ -n "${FAKE_MUTATE_EXECUTABLE_MODE:-}" ]]; then
+        chmod 0775 "$FAKE_MUTATE_EXECUTABLE_MODE"
+    fi
+    if [[ -n "${FAKE_MUTATE_EXECUTABLE_PARENT:-}" ]]; then
+        chmod 0775 "$FAKE_MUTATE_EXECUTABLE_PARENT"
+    fi
     exit 0
 fi
 printf 'worker\n' >> "$FAKE_CALLS_FILE"
@@ -357,6 +529,13 @@ case "${FAKE_DISPATCH_MODE:-result}" in
         ;;
     heartbeat-success)
         printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+        if [[ -n "${FAKE_HEARTBEAT_BARRIER_READY:-}" \
+                && -n "${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" ]]; then
+            : > "$FAKE_HEARTBEAT_BARRIER_READY"
+            while [[ ! -e "$FAKE_HEARTBEAT_BARRIER_RELEASE" ]]; do
+                sleep 0.01
+            done
+        fi
         heartbeat_count="${FAKE_HEARTBEAT_COUNT:-8}"
         heartbeat_delay="${FAKE_HEARTBEAT_DELAY:-0.10}"
         heartbeat_index=0
@@ -404,6 +583,8 @@ if [[ "${FAKE_DISPATCH_MODE:-result}" == "result" ]]; then
 fi
 if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
+elif [[ "${FAKE_WORKER_VERIFIED:-0}" == "1" ]]; then
+    envelope='{"status":"completed","summary":"Verified private-worker-prose-sentinel","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 else
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 fi
@@ -426,6 +607,14 @@ run_worker() {
     FAKE_CALLS_FILE="$TMP/$job.calls" \
     FAKE_WORKER_CALLS_FILE="$TMP/$job.worker-calls" \
     FAKE_VERSION_MODE="${FAKE_VERSION_MODE:-ready}" \
+    FAKE_HELP_MODE="${FAKE_HELP_MODE:-ready}" \
+    FAKE_MUTATE_EXECUTABLE="${FAKE_MUTATE_EXECUTABLE:-}" \
+    FAKE_MUTATE_EXECUTABLE_SAME_LENGTH="${FAKE_MUTATE_EXECUTABLE_SAME_LENGTH:-}" \
+    FAKE_REPLACE_EXECUTABLE_SYMLINK="${FAKE_REPLACE_EXECUTABLE_SYMLINK:-}" \
+    FAKE_EXECUTABLE_SYMLINK_TARGET="${FAKE_EXECUTABLE_SYMLINK_TARGET:-}" \
+    FAKE_MUTATE_EXECUTABLE_MODE="${FAKE_MUTATE_EXECUTABLE_MODE:-}" \
+    FAKE_MUTATE_EXECUTABLE_PARENT="${FAKE_MUTATE_EXECUTABLE_PARENT:-}" \
+    FAKE_MUTATION_MARKER="${FAKE_MUTATION_MARKER:-}" \
     FAKE_CHILD_PID_FILE="${FAKE_CHILD_PID_FILE:-}" \
     FAKE_PROBE_PGID_FILE="${FAKE_PROBE_PGID_FILE:-}" \
     FAKE_PROBE_PARENT_PID_FILE="${FAKE_PROBE_PARENT_PID_FILE:-}" \
@@ -443,6 +632,7 @@ run_worker() {
     FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
     FAKE_ERROR_LINE="${FAKE_ERROR_LINE:-}" \
     FAKE_QUOTA_ERROR="${FAKE_QUOTA_ERROR:-}" \
+    FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
@@ -452,8 +642,26 @@ run_worker() {
 echo "agy-worker.sh offline test suite"
 echo
 
+"$WORKER" --help > "$TMP/help.out" 2> "$TMP/help.err"
+help_rc=$?
+if [[ "$help_rc" == 0 && ! -s "$TMP/help.out" ]] \
+        && grep -Fqx 'Workflow cycle limits: explore/task 1..2 (default 2); project 1..5 (default 5).' \
+            "$TMP/help.err" \
+        && grep -Fqx -- '--max-cycles requires an explicit workflow; legacy raw mode remains one attempt.' \
+            "$TMP/help.err"; then
+    ok "help states workflow-specific cycle limits"
+else
+    bad "help workflow-specific cycle limits"
+fi
+
 printf 'small task\n' | run_worker tier --tier cheap > "$TMP/tier.out" 2> "$TMP/tier.err"
 rc=$?
+if [[ "$rc" != "0" ]]; then
+    # Keep the first synthetic dispatch actionable in remote CI.  This fixture
+    # contains no provider prose or credentials; later cases intentionally keep
+    # their captured diagnostics private.
+    tail -n 5 "$TMP/tier.err" >&2
+fi
 expect_exit "--tier cheap produces an envelope" 0 "$rc"
 if [[ "$(<"$TMP/tier.model")" == "gemini-3.6-flash-low" ]]; then
     ok "--tier is resolved after CLI parsing"
@@ -581,25 +789,26 @@ fi
 assert_direct_result() {
     local name="$1" job="$2" expected="$3" user_model="$4" user_effort="$5"
     local model_source="${6:-cli}" effort_source="${7:-}"
+    local expected_schema="${8:-2}"
     if [[ "$(<"$TMP/$job.model")" == "$expected" ]] \
             && [[ "$(wc -l < "$TMP/$job.worker-calls" | tr -d ' ')" == "1" ]] \
             && python3 - "$TMP/$job.argv" "$TMP/logs/$job/selection.json" \
-                "$TMP/$job.calls" "$expected" "$user_model" "$user_effort" "$model_source" "$effort_source" <<'PY'
+                "$TMP/$job.calls" "$expected" "$user_model" "$user_effort" "$model_source" "$effort_source" "$expected_schema" <<'PY'
 import json
 import os
 import stat
 import sys
 
-argv_path, selection_path, calls_path, expected, user_model, user_effort, model_source, effort_source = sys.argv[1:]
+argv_path, selection_path, calls_path, expected, user_model, user_effort, model_source, effort_source, expected_schema = sys.argv[1:]
 parts = [part for part in open(argv_path, "rb").read().split(b"\0") if part]
-assert open(calls_path, encoding="ascii").read().splitlines() == ["version", "worker"]
+assert open(calls_path, encoding="ascii").read().splitlines() == ["version", "help", "version", "help", "version", "help", "worker"]
 assert parts.count(b"--model") == 1
 index = parts.index(b"--model")
 assert parts[index + 1].decode() == expected
 assert b"--effort" not in parts
 assert b"--thinking-level" not in parts
 record = json.load(open(selection_path, encoding="utf-8"))
-assert record["schema_version"] == 1
+assert record["schema_version"] == int(expected_schema)
 assert record["kind"] == "agy-worker-selection"
 assert record["user_model"] == user_model
 assert record.get("user_effort", "") == user_effort
@@ -608,6 +817,31 @@ assert record.get("user_effort_source", "") == effort_source
 assert record["resolved_agy_model"] == expected
 assert record["installed_agy_version"] == "1.1.16"
 assert record["matrix_agy_version"] == "1.1.16"
+assert record["version_relation"] == "match"
+assert record["critical_interface_probe_version"] == 1
+assert record["critical_interface_status"] == "compatible"
+if record["schema_version"] == 3:
+    assert record["compatibility_status"] == "critical-interface-compatible-version-drift"
+    assert record["version_relation"] == "drift"
+    assert record["compatibility_disposition"] == "proceed"
+    assert record["approved_help_sha256"] == record["help_sha256"]
+    assert len(record["compatibility_decision_sha256"]) == 64
+    assert "reviewed_help_sha256" not in record
+else:
+    assert record["schema_version"] == 2
+    assert record["compatibility_status"] == "reviewed-version-match"
+    assert "reviewed_help_sha256" not in record
+    assert not ({"compatibility_disposition", "approved_help_sha256", "compatibility_decision_sha256"} & set(record))
+assert record["model_availability"] == "not_assessed"
+assert len(record["critical_capabilities_sha256"]) == 64
+assert len(record["help_sha256"]) == 64
+binding = record["probed_executable"]
+assert set(binding) == {"path_sha256", "target_lstat", "content_sha256", "symlink_chain", "components"}
+assert len(binding["path_sha256"]) == 64
+assert len(binding["content_sha256"]) == 64
+assert binding["target_lstat"]["inode"] > 0
+assert binding["target_lstat"]["ctime_ns"] > 0
+assert all("path" not in key or key == "path_sha256" for item in [binding, *binding["symlink_chain"], *binding["components"]] for key in item)
 assert len(record["matrix_sha256"]) == 64
 assert len(record["matrix_source_revision"]) == 40
 assert stat.S_IMODE(os.stat(selection_path).st_mode) & 0o077 == 0
@@ -615,8 +849,97 @@ PY
     then ok "$name"; else bad "$name"; fi
 }
 
+# An exact matrix-version match proceeds after the bounded structural probe; it
+# does not need a raw-help approval.  The standalone selector remains a public
+# surface, so its private executable path must never appear in its JSON stdout.
+printf 'exact-version structural help may dispatch\n' | \
+    AGY_TEST_WORKER="$WORKER" run_worker exact-version-unseen-help --model gemini-3.6-flash --effort high \
+    > "$TMP/exact-version-unseen-help.out" 2> "$TMP/exact-version-unseen-help.err"
+rc=$?
+if [[ "$rc" == 0 ]]; then
+    assert_direct_result "exact-version structural probe proceeds without approval" \
+        exact-version-unseen-help gemini-3.6-flash-high gemini-3.6-flash high cli cli 2
+else
+    bad "exact-version structural probe boundary (exit $rc)"
+fi
+# An exact-version help line may explicitly negate --model.  It must be an
+# option-local structural match; the controller does not infer availability
+# from provider prose.
+printf 'help prose requires Codex, not controller, semantic interpretation\n' | \
+    AGY_TEST_WORKER="$WORKER" FAKE_VERSION_MODE=ready FAKE_HELP_MODE=semantic \
+    run_worker help-option-negation --model gemini-3.6-flash --effort high \
+    > "$TMP/help-option-negation.out" 2> "$TMP/help-option-negation.err"
+rc=$?
+if [[ "$rc" == 0 ]]; then
+    assert_direct_result "exact-version option prose does not override structural compatibility" \
+        help-option-negation gemini-3.6-flash-high gemini-3.6-flash high cli cli 2
+else
+    bad "exact-version option prose structural boundary (exit $rc)"
+fi
+LOCALE_HELP_SHA="$(LC_ALL=C FAKE_HELP_MODE=locale-sensitive PATH="$TMP/bin:$PATH" \
+    "$TMP/bin/agy" --help 2>&1 | /usr/bin/python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+LC_ALL=POSIX FAKE_VERSION_MODE=drift117 FAKE_HELP_MODE=locale-sensitive PATH="$TMP/bin:$PATH" \
+    "$SELECTOR" --model gemini-3.6-flash --effort high \
+    --compatibility-disposition proceed --approve-help-sha "$LOCALE_HELP_SHA" \
+    > "$TMP/direct-selector-public.json" 2> "$TMP/direct-selector-public.err"
+rc=$?
+if [[ "$rc" == 0 ]] && python3 - "$TMP/direct-selector-public.json" "$TMP/bin/agy" \
+        "$LOCALE_HELP_SHA" <<'PY'
+import json, sys
+payload = open(sys.argv[1], "rb").read()
+record = json.loads(payload)
+assert sys.argv[2].encode() not in payload
+assert record["schema_version"] == 3
+assert record["installed_agy_version"] == "1.1.17"
+assert record["version_relation"] == "drift"
+assert record["help_sha256"] == record["approved_help_sha256"] == sys.argv[3]
+assert "path" not in record["probed_executable"]
+assert set(record["probed_executable"]) == {"path_sha256", "target_lstat", "content_sha256", "symlink_chain", "components"}
+PY
+then
+    ok "direct selector pins the documented C-locale help digest and exposes no executable path"
+else
+    bad "direct selector locale/hash parity or executable binding"
+fi
+
+if PYTHONDONTWRITEBYTECODE=1 python3 -B - "$ROOT" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "skills" / "agy-worker" / "runtime" / "scripts"))
+import model_selection
+
+original_platform = model_selection.sys.platform
+try:
+    model_selection.sys.platform = "darwin"
+    assert model_selection._path_sha256("/var/run/agy") == model_selection._path_sha256("/private/var/run/agy")
+    assert model_selection._path_sha256("/variety/run/agy") != model_selection._path_sha256("/private/variety/run/agy")
+finally:
+    model_selection.sys.platform = original_platform
+PY
+then
+    ok "only the documented macOS /var alias has a normalized executable path digest"
+else
+    bad "macOS executable path alias normalization boundary"
+fi
+
 pair_index=0
-while IFS='|' read -r pair_model pair_effort pair_resolved; do
+direct_pairs=(
+    'gemini-3.7-flash|low|gemini-3.7-flash-low'
+    'gemini-3.7-flash|medium|gemini-3.7-flash-medium'
+    'gemini-3.7-flash|high|gemini-3.7-flash-high'
+    'gemini-3.6-flash|low|gemini-3.6-flash-low'
+    'gemini-3.6-flash|medium|gemini-3.6-flash-medium'
+    'gemini-3.6-flash|high|gemini-3.6-flash-high'
+    'gemini-3.5-flash|low|gemini-3.5-flash-low'
+    'gemini-3.5-flash|medium|gemini-3.5-flash-medium'
+    'gemini-3.5-flash|high|gemini-3.5-flash-high'
+    'gemini-3.1-pro|low|gemini-3.1-pro-low'
+    'gemini-3.1-pro|high|gemini-3.1-pro-high'
+)
+for direct_pair in "${direct_pairs[@]}"; do
+    IFS='|' read -r pair_model pair_effort pair_resolved <<< "$direct_pair"
     pair_index=$((pair_index+1))
     for source_mode in cli-cli cli-env env-cli env-env; do
         pair_job="direct-pair-$pair_index-$source_mode"
@@ -653,19 +976,7 @@ while IFS='|' read -r pair_model pair_effort pair_resolved; do
             bad "reviewed pair $pair_model/$pair_effort accepts $source_mode (exit $rc)"
         fi
     done
-done <<'EOF'
-gemini-3.7-flash|low|gemini-3.7-flash-low
-gemini-3.7-flash|medium|gemini-3.7-flash-medium
-gemini-3.7-flash|high|gemini-3.7-flash-high
-gemini-3.6-flash|low|gemini-3.6-flash-low
-gemini-3.6-flash|medium|gemini-3.6-flash-medium
-gemini-3.6-flash|high|gemini-3.6-flash-high
-gemini-3.5-flash|low|gemini-3.5-flash-low
-gemini-3.5-flash|medium|gemini-3.5-flash-medium
-gemini-3.5-flash|high|gemini-3.5-flash-high
-gemini-3.1-pro|low|gemini-3.1-pro-low
-gemini-3.1-pro|high|gemini-3.1-pro-high
-EOF
+done
 
 exact_index=0
 for exact_model in \
@@ -673,7 +984,8 @@ for exact_model in \
     gemini-3.6-flash-low gemini-3.6-flash-medium gemini-3.6-flash-high \
     gemini-3.5-flash-low gemini-3.5-flash-medium gemini-3.5-flash-high \
     gemini-3.1-pro-low gemini-3.1-pro-high \
-    claude-sonnet-4-6 claude-opus-4-6-thinking gpt-oss-120b-medium; do
+    claude-sonnet-4-6 claude-opus-4-6-thinking gpt-oss-120b-medium
+do
     exact_index=$((exact_index+1))
     for exact_source in cli env; do
         exact_job="direct-exact-$exact_index-$exact_source"
@@ -809,9 +1121,17 @@ printf 'tier env effort cli\n' | AGY_WORKER_TIER=bulk \
     > "$TMP/tier-env-effort-cli.out" 2> "$TMP/tier-env-effort-cli.err"
 assert_env_reject "environment tier conflicts with CLI effort" tier-env-effort-cli "$?"
 
+selector_fixture_has_no_bytecode() {
+    ! find "$1/runtime/scripts" -type f -name '*.pyc' -print -quit | grep -q . \
+        && [[ ! -d "$1/runtime/scripts/__pycache__" ]]
+}
+
 make_selector_fixture() {
-    local destination="$1" mode="$2"
-    cp -R "$ROOT/skills/agy-worker" "$destination"
+    local destination="$1" mode="$2" source="${3:-$ROOT/skills/agy-worker}"
+    cp -R "$source" "$destination"
+    # Test fixtures must start from source bytes, not an ambient interpreter cache.
+    # This is deliberately fixture-local; it never deletes checkout/cache inputs.
+    rm -rf "$destination/runtime/scripts/__pycache__"
     case "$mode" in
         clean) ;;
         disabled|missing-output)
@@ -868,6 +1188,23 @@ PY
     esac
 }
 
+fixture_cache_source="$TMP/selector-fixture-cache-source"
+fixture_cache_destination="$TMP/selector-fixture-cache-destination"
+cp -R "$ROOT/skills/agy-worker" "$fixture_cache_source"
+mkdir -p "$fixture_cache_source/runtime/scripts/__pycache__"
+python3 -m py_compile "$fixture_cache_source/runtime/scripts/model_selection.py"
+make_selector_fixture "$fixture_cache_destination" clean "$fixture_cache_source"
+fixture_cache_baseline=1
+selector_fixture_has_no_bytecode "$fixture_cache_destination" || fixture_cache_baseline=0
+python3 -m py_compile "$fixture_cache_destination/runtime/scripts/model_selection.py"
+fixture_cache_generated=1
+selector_fixture_has_no_bytecode "$fixture_cache_destination" && fixture_cache_generated=0
+if [[ "$fixture_cache_baseline" == 1 && "$fixture_cache_generated" == 1 ]]; then
+    ok "selector fixtures exclude ambient bytecode but detect fixture-generated bytecode"
+else
+    bad "selector fixture bytecode baseline or generated-bytecode detection"
+fi
+
 expect_compat_reject() {
     local name="$1" fixture="$2" job="$3" want="$4" version_mode="$5" calls_want="$6"
     printf 'compatibility rejection\n' | AGY_TEST_WORKER="$fixture/runtime/agy-worker.sh" \
@@ -899,12 +1236,417 @@ done
 
 VERSION_FIXTURE="$TMP/selector-version-probes"
 make_selector_fixture "$VERSION_FIXTURE" clean
-expect_compat_reject "installed version drift requires review" \
-    "$VERSION_FIXTURE" version-drift-installed 7 drift 1
+printf 'version drift needs Codex review before task intake\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift117 \
+    run_worker version-drift-installed --model gemini-3.6-flash --effort high \
+    > "$TMP/version-drift-installed.out" 2> "$TMP/version-drift-installed.err"
+rc=$?
+if [[ "$rc" == 7 && "$(cat "$TMP/version-drift-installed.calls")" == $'version\nhelp' \
+        && ! -s "$TMP/version-drift-installed.worker-calls" \
+        && ! -e "$TMP/logs/version-drift-installed/task.txt" ]] \
+        && ! grep -Eq 'Usage of agy:|Select a model|currently unavailable|/tmp|/Users' "$TMP/version-drift-installed.err"
+then
+    ok "installed version drift is review-required before task intake or provider dispatch"
+else
+    bad "installed version drift review-required boundary"
+fi
+# The approval digest is a public product fact, not an out-of-band shell hash.
+# It must name only bounded compatibility evidence and never the executable,
+# help prose, prompt, repository, or credentials.
+HELP_SHA="$(python3 - "$TMP/version-drift-installed.err" <<'PY'
+import json
+import sys
+raw = open(sys.argv[1], encoding="utf-8").read().splitlines()
+prefix = "model-selection: review-required "
+assert len(raw) == 1 and raw[0].startswith(prefix), raw
+value = json.loads(raw[0][len(prefix):])
+assert value == {
+    "schema_version": 1,
+    "kind": "agy-worker-compatibility-review-evidence",
+    "installed_agy_version": "1.1.17",
+    "matrix_agy_version": "1.1.16",
+    "version_relation": "drift",
+    "compatibility_status": "direct-selection-review-required",
+    "critical_interface_status": "compatible",
+    "critical_capabilities_sha256": value["critical_capabilities_sha256"],
+    "raw_help_sha256": value["raw_help_sha256"],
+    "user_model": "gemini-3.6-flash",
+    "user_model_source": "cli",
+    "user_effort": "high",
+    "user_effort_source": "cli",
+    "resolved_agy_model": "gemini-3.6-flash-high",
+    "retry_selection_arguments": [
+        "--model", "gemini-3.6-flash", "--effort", "high",
+        "--compatibility-disposition", "proceed", "--approve-help-sha", value["raw_help_sha256"],
+    ],
+    "retry_selection_environment": {},
+    "approval": {"compatibility_disposition": None, "approve_help_sha256": None},
+}
+assert all(isinstance(value[key], str) and len(value[key]) == 64 for key in (
+    "critical_capabilities_sha256", "raw_help_sha256",
+))
+assert not any(secret in raw[0] for secret in ("/tmp", "/Users", "Usage of agy:", "version drift needs"))
+assert "selected_model" not in value and "selected_effort" not in value
+print(value["raw_help_sha256"])
+PY
+)"
+if [[ -n "$HELP_SHA" ]]; then
+    ok "version drift publishes bounded sanitized approval evidence from product output"
+else
+    bad "version drift approval evidence shape"
+fi
+
+# A drift review must preserve exactly where each caller selector came from.
+# The retry fragment is deliberately limited to selector argv/environment plus
+# the newly observed approval digest: task text, paths, and ambient secrets are
+# not review evidence.
+assert_drift_retry_selection() {
+    local name="$1" error_file="$2" expected_model="$3" expected_model_source="$4"
+    local expected_effort="$5" expected_effort_source="$6" expected_resolved="$7"
+    if python3 - "$error_file" "$expected_model" "$expected_model_source" \
+            "$expected_effort" "$expected_effort_source" "$expected_resolved" <<'PY'
+import json
+import sys
+
+path, model, model_source, effort, effort_source, resolved = sys.argv[1:]
+line = open(path, encoding="utf-8").read().strip()
+prefix = "model-selection: review-required "
+assert line.startswith(prefix)
+value = json.loads(line[len(prefix):])
+assert value["user_model"] == model
+assert value["user_model_source"] == model_source
+assert value["resolved_agy_model"] == resolved
+if effort:
+    assert value["user_effort"] == effort
+    assert value["user_effort_source"] == effort_source
+else:
+    assert "user_effort" not in value and "user_effort_source" not in value
+args = value["retry_selection_arguments"]
+env = value["retry_selection_environment"]
+assert isinstance(args, list) and all(isinstance(item, str) for item in args)
+assert isinstance(env, dict) and set(env) <= {"AGY_WORKER_MODEL", "AGY_WORKER_EFFORT"}
+expected_args = []
+expected_env = {}
+if model_source == "cli":
+    expected_args += ["--model", model]
+else:
+    expected_env["AGY_WORKER_MODEL"] = model
+if effort:
+    if effort_source == "cli":
+        expected_args += ["--effort", effort]
+    else:
+        expected_env["AGY_WORKER_EFFORT"] = effort
+expected_args += ["--compatibility-disposition", "proceed", "--approve-help-sha", value["raw_help_sha256"]]
+assert args == expected_args and env == expected_env
+assert not ({"selected_model", "selected_effort"} & set(value))
+assert not any(token in line for token in ("prompt-secret", "/private/", "ambient-secret"))
+PY
+    then
+        ok "$name"
+    else
+        bad "$name"
+    fi
+}
+
+printf 'prompt-secret env model and effort\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift117 \
+    AGY_WORKER_MODEL=gemini-3.6-flash AGY_WORKER_EFFORT=high \
+    AGY_WORKER_UNRELATED_SECRET=ambient-secret run_worker version-drift-env \
+    > "$TMP/version-drift-env.out" 2> "$TMP/version-drift-env.err"
+rc=$?
+if [[ "$rc" == 7 ]]; then
+    assert_drift_retry_selection "drift evidence preserves environment model and effort provenance" \
+        "$TMP/version-drift-env.err" gemini-3.6-flash environment high environment gemini-3.6-flash-high
+else
+    bad "environment drift evidence preflight (exit $rc)"
+fi
+
+printf 'prompt-secret mixed selector provenance\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift117 \
+    AGY_WORKER_EFFORT=high AGY_WORKER_UNRELATED_SECRET=ambient-secret \
+    run_worker version-drift-mixed --model gemini-3.6-flash \
+    > "$TMP/version-drift-mixed.out" 2> "$TMP/version-drift-mixed.err"
+rc=$?
+if [[ "$rc" == 7 ]]; then
+    assert_drift_retry_selection "drift evidence preserves mixed CLI/environment provenance" \
+        "$TMP/version-drift-mixed.err" gemini-3.6-flash cli high environment gemini-3.6-flash-high
+else
+    bad "mixed drift evidence preflight (exit $rc)"
+fi
+
+printf 'prompt-secret fixed selector\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift117 \
+    AGY_WORKER_UNRELATED_SECRET=ambient-secret run_worker version-drift-fixed \
+    --model gemini-3.6-flash-high \
+    > "$TMP/version-drift-fixed.out" 2> "$TMP/version-drift-fixed.err"
+rc=$?
+if [[ "$rc" == 7 ]]; then
+    assert_drift_retry_selection "drift evidence keeps exact compound as resolved rather than caller base" \
+        "$TMP/version-drift-fixed.err" gemini-3.6-flash-high cli '' '' gemini-3.6-flash-high
+else
+    bad "fixed drift evidence preflight (exit $rc)"
+fi
+
+printf 'approved version drift preserves the caller selection\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift117 \
+    run_worker version-drift-approved --model gemini-3.6-flash --effort high \
+    --compatibility-disposition proceed --approve-help-sha "$HELP_SHA" \
+    > "$TMP/version-drift-approved.out" 2> "$TMP/version-drift-approved.err"
+rc=$?
+if [[ "$rc" == 0 ]] && python3 - "$TMP/logs/version-drift-approved/selection.json" \
+        "$TMP/version-drift-approved.argv" "$TMP/version-drift-approved.calls" "$HELP_SHA" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+argv = [item for item in open(sys.argv[2], "rb").read().split(b"\0") if item]
+calls = open(sys.argv[3], encoding="ascii").read().splitlines()
+assert calls == ["version", "help", "version", "help", "version", "help", "worker"]
+assert record["schema_version"] == 3
+assert record["compatibility_disposition"] == "proceed"
+assert record["approved_help_sha256"] == record["help_sha256"] == sys.argv[4]
+assert len(record["compatibility_decision_sha256"]) == 64
+assert argv[argv.index(b"--model") + 1] == b"gemini-3.6-flash-high"
+assert b"--effort" not in argv and b"--thinking-level" not in argv
+PY
+then
+    ok "explicit Codex disposition binds exact help SHA and preserves model effort argv"
+else
+    bad "approved direct version drift binding"
+fi
+# A review-required selection consumes no task bytes and leaves no controller
+# reservation, so the exact job id can be retried with its public digest.
+retry_job="version-drift-retry"
+printf 'review then exact same job retry\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift117 \
+    run_worker "$retry_job" --model gemini-3.6-flash --effort high \
+    > "$TMP/$retry_job.out" 2> "$TMP/$retry_job.err"
+retry_rc=$?
+RETRY_HELP_SHA="$(python3 - "$TMP/$retry_job.err" <<'PY'
+import json
+import sys
+line = open(sys.argv[1], encoding="utf-8").read().strip()
+prefix = "model-selection: review-required "
+assert line.startswith(prefix)
+print(json.loads(line[len(prefix):])["raw_help_sha256"])
+PY
+)"
+retry_cleanup_ok=0
+[[ ! -e "$TMP/logs/$retry_job" ]] && retry_cleanup_ok=1
+rm -f "$TMP/$retry_job.calls"
+printf 'approved exact same job retry\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift117 \
+    run_worker "$retry_job" --model gemini-3.6-flash --effort high \
+    --compatibility-disposition proceed --approve-help-sha "$RETRY_HELP_SHA" \
+    > "$TMP/$retry_job-approved.out" 2> "$TMP/$retry_job-approved.err"
+retry_approved_rc=$?
+if [[ "$retry_rc" == 7 && "$retry_cleanup_ok" == 1 && "$retry_approved_rc" == 0 \
+        && -f "$TMP/logs/$retry_job/selection.json" \
+        && "$(cat "$TMP/$retry_job.calls")" == $'version\nhelp\nversion\nhelp\nversion\nhelp\nworker' ]]; then
+    ok "review-required cleanup permits exact same job-id approval retry without provider before approval"
+else
+    bad "review-required job cleanup or same-id retry boundary"
+fi
+for approval_case in missing-help-sha stale-help-sha malformed-help-sha uppercase-disposition duplicate-disposition; do
+    approval_args=(--model gemini-3.6-flash --effort high)
+    approval_exit=64
+    case "$approval_case" in
+        missing-help-sha)
+            approval_args+=(--compatibility-disposition proceed)
+            approval_exit=7 ;;
+        stale-help-sha)
+            approval_args+=(--compatibility-disposition proceed --approve-help-sha "$(printf '0%.0s' {1..64})")
+            approval_exit=7 ;;
+        malformed-help-sha)
+            approval_args+=(--compatibility-disposition proceed --approve-help-sha "NOT-A-SHA") ;;
+        uppercase-disposition)
+            approval_args+=(--compatibility-disposition PROCEED --approve-help-sha "$HELP_SHA") ;;
+        duplicate-disposition)
+            approval_args+=(--compatibility-disposition proceed --compatibility-disposition proceed --approve-help-sha "$HELP_SHA") ;;
+    esac
+    approval_job="approval-$approval_case"
+    printf 'invalid compatibility approval must remain pre-task\n' | \
+        AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift117 \
+        run_worker "$approval_job" "${approval_args[@]}" \
+        > "$TMP/$approval_job.out" 2> "$TMP/$approval_job.err"
+    rc=$?
+    if [[ "$rc" == "$approval_exit" && ! -s "$TMP/$approval_job.worker-calls" \
+            && ! -e "$TMP/logs/$approval_job/task.txt" ]]; then
+        ok "$approval_case is rejected before task intake and provider dispatch"
+    else
+        bad "$approval_case rejection boundary (exit $rc)"
+    fi
+done
+printf 'far version drift keeps the exact requested model\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" FAKE_VERSION_MODE=drift999 \
+    run_worker version-drift-999 --model gemini-3.7-flash --effort high \
+    --compatibility-disposition proceed --approve-help-sha "$HELP_SHA" \
+    > "$TMP/version-drift-999.out" 2> "$TMP/version-drift-999.err"
+rc=$?
+if [[ "$rc" == 0 ]] && python3 - "$TMP/logs/version-drift-999/selection.json" \
+        "$TMP/version-drift-999.argv" "$TMP/version-drift-999.calls" <<'PY'
+import json
+import sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+argv = [item for item in open(sys.argv[2], "rb").read().split(b"\0") if item]
+calls = open(sys.argv[3], encoding="ascii").read().splitlines()
+assert calls == ["version", "help", "version", "help", "version", "help", "worker"]
+assert calls.count("worker") == 1
+assert record["schema_version"] == 3
+assert record["installed_agy_version"] == "9.9.9"
+assert record["version_relation"] == "drift"
+assert record["compatibility_disposition"] == "proceed"
+assert record["resolved_agy_model"] == "gemini-3.7-flash-high"
+assert argv[argv.index(b"--model") + 1] == b"gemini-3.7-flash-high"
+assert b"--effort" not in argv and b"--thinking-level" not in argv
+PY
+then
+    ok "9.9.9 drift preserves the caller's exact model and effort resolution"
+else
+    bad "9.9.9 drift exact model preservation"
+fi
 for version_mode in fail empty malformed oversize hang; do
     expect_compat_reject "$version_mode version evidence is unavailable" \
         "$VERSION_FIXTURE" "version-$version_mode" 8 "$version_mode" 1
 done
+
+for help_mode in missing duplicate malformed semantic utf8 nul oversize fail hang; do
+    help_job="help-$help_mode"
+    help_version_mode=ready
+    [[ "$help_mode" != semantic ]] || help_version_mode=drift117
+    printf 'help interface failure must not read this task\n' | \
+        AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+        FAKE_VERSION_MODE="$help_version_mode" FAKE_HELP_MODE="$help_mode" \
+        run_worker "$help_job" --model gemini-3.6-flash --effort high \
+        > "$TMP/$help_job.out" 2> "$TMP/$help_job.err"
+    rc=$?
+    help_calls=0
+    [[ ! -f "$TMP/$help_job.calls" ]] || help_calls="$(wc -l < "$TMP/$help_job.calls" | tr -d ' ')"
+    help_expected=8
+    if [[ "$help_mode" == semantic ]]; then
+        # Option-local prose is evidence for Codex's review, not a controller
+        # semantic decision.  Under version drift it reaches the same
+        # review-required boundary as other structurally compatible drift.
+        help_expected=7
+    fi
+    if [[ "$rc" == "$help_expected" && "$help_calls" == 2 && ! -s "$TMP/$help_job.worker-calls" \
+            && ! -e "$TMP/logs/$help_job/task.txt" ]]; then
+        ok "$help_mode help preflight is pre-provider and task-unread"
+    else
+        bad "$help_mode help preflight (exit $rc/calls $help_calls, wanted $help_expected/2)"
+    fi
+done
+
+cp "$TMP/bin/agy" "$TMP/bin/agy.binding-original"
+printf 'executable binding drift must not read this task\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+    FAKE_MUTATE_EXECUTABLE="$TMP/bin/agy" \
+    run_worker executable-binding-drift --model gemini-3.6-flash --effort high \
+    > "$TMP/executable-binding-drift.out" 2> "$TMP/executable-binding-drift.err"
+rc=$?
+if [[ "$rc" == 8 \
+        && "$(cat "$TMP/executable-binding-drift.calls")" == $'version\nhelp' \
+        && ! -s "$TMP/executable-binding-drift.worker-calls" \
+        && ! -e "$TMP/logs/executable-binding-drift/task.txt" ]]; then
+    ok "executable binding drift stops before task read or provider dispatch"
+else
+    bad "executable binding drift pre-provider boundary"
+fi
+mv "$TMP/bin/agy.binding-original" "$TMP/bin/agy"
+chmod 0755 "$TMP/bin/agy"
+
+# The first `--help` probe mutates the executable in-place without changing its
+# inode, byte length, mode, uid/gid, or mtime.  Every lifecycle origin reaches
+# the one controller launch routine below, so this initial dispatch proves the
+# shared direct-selection launch binding fails before task intake or provider IO.
+cp "$TMP/bin/agy" "$TMP/bin/agy.content-original"
+CONTENT_MUTATION_MARKER="$TMP/executable-content-binding-drift.mutated"
+printf 'same-length executable mutation must not read this task\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+    FAKE_MUTATE_EXECUTABLE_SAME_LENGTH="$TMP/bin/agy" \
+    FAKE_MUTATION_MARKER="$CONTENT_MUTATION_MARKER" \
+    run_worker executable-content-binding-drift --model gemini-3.6-flash --effort high \
+    > "$TMP/executable-content-binding-drift.out" 2> "$TMP/executable-content-binding-drift.err"
+rc=$?
+if [[ "$rc" == 8 && -f "$CONTENT_MUTATION_MARKER" \
+        && ! -s "$TMP/executable-content-binding-drift.worker-calls" \
+        && ! -e "$TMP/logs/executable-content-binding-drift/task.txt" ]]; then
+    ok "same-length restored-mtime executable mutation stops before task or provider"
+else
+    bad "same-length restored-mtime executable mutation boundary"
+fi
+mv "$TMP/bin/agy.content-original" "$TMP/bin/agy"
+chmod 0755 "$TMP/bin/agy"
+
+# A replaced final symlink can resolve to exactly the same executable object.
+# Target-only comparison accepted that topology change; the frozen binding must
+# retain the symlink entry and every checked component as well.
+cp "$TMP/bin/agy" "$TMP/bin/agy.real"
+cp "$TMP/bin/agy" "$TMP/bin/agy.other"
+chmod 0755 "$TMP/bin/agy.real" "$TMP/bin/agy.other"
+rm "$TMP/bin/agy"
+ln -s "agy.real" "$TMP/bin/agy"
+printf 'same-target symlink replacement must not read this task\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+    FAKE_REPLACE_EXECUTABLE_SYMLINK="$TMP/bin/agy" \
+    FAKE_EXECUTABLE_SYMLINK_TARGET="$TMP/bin/agy.real" \
+    run_worker executable-symlink-same-target-drift --model gemini-3.6-flash --effort high \
+    > "$TMP/executable-symlink-same-target-drift.out" 2> "$TMP/executable-symlink-same-target-drift.err"
+rc=$?
+if [[ "$rc" == 8 \
+        && "$(cat "$TMP/executable-symlink-same-target-drift.calls")" == $'version\nhelp' \
+        && ! -s "$TMP/executable-symlink-same-target-drift.worker-calls" \
+        && ! -e "$TMP/logs/executable-symlink-same-target-drift/task.txt" ]]; then
+    ok "atomic same-target executable symlink replacement stops before task or provider"
+else
+    bad "atomic same-target executable symlink replacement boundary"
+fi
+
+printf 'different executable target must not read this task\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+    FAKE_REPLACE_EXECUTABLE_SYMLINK="$TMP/bin/agy" \
+    FAKE_EXECUTABLE_SYMLINK_TARGET="$TMP/bin/agy.other" \
+    run_worker executable-symlink-different-target --model gemini-3.6-flash --effort high \
+    > "$TMP/executable-symlink-different-target.out" 2> "$TMP/executable-symlink-different-target.err"
+rc=$?
+if [[ "$rc" == 8 && ! -s "$TMP/executable-symlink-different-target.worker-calls" \
+        && ! -e "$TMP/logs/executable-symlink-different-target/task.txt" ]]; then
+    ok "different executable symlink target stops before task or provider"
+else
+    bad "different executable symlink target boundary"
+fi
+
+printf 'unsafe executable mode must not read this task\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+    FAKE_MUTATE_EXECUTABLE_MODE="$TMP/bin/agy.other" \
+    run_worker executable-unsafe-mode --model gemini-3.6-flash --effort high \
+    > "$TMP/executable-unsafe-mode.out" 2> "$TMP/executable-unsafe-mode.err"
+rc=$?
+if [[ "$rc" == 8 && ! -s "$TMP/executable-unsafe-mode.worker-calls" \
+        && ! -e "$TMP/logs/executable-unsafe-mode/task.txt" ]]; then
+    ok "unsafe executable mode stops before task or provider"
+else
+    bad "unsafe executable mode boundary"
+fi
+chmod 0755 "$TMP/bin/agy.other"
+
+printf 'unsafe executable parent must not read this task\n' | \
+    AGY_TEST_WORKER="$VERSION_FIXTURE/runtime/agy-worker.sh" \
+    FAKE_MUTATE_EXECUTABLE_PARENT="$TMP/bin" \
+    run_worker executable-parent-authority-drift --model gemini-3.6-flash --effort high \
+    > "$TMP/executable-parent-authority-drift.out" 2> "$TMP/executable-parent-authority-drift.err"
+rc=$?
+if [[ "$rc" == 8 && ! -s "$TMP/executable-parent-authority-drift.worker-calls" \
+        && ! -e "$TMP/logs/executable-parent-authority-drift/task.txt" ]]; then
+    ok "unsafe executable parent authority stops before task or provider"
+else
+    bad "unsafe executable parent authority boundary"
+fi
+chmod 0755 "$TMP/bin"
+# The path-chain negatives intentionally leave a symlink fixture behind.  The
+# remaining legacy probe tests need the original regular fake executable, not
+# that adversarial fixture's selected target.
+rm "$TMP/bin/agy"
+cp "$TMP/bin/agy.real" "$TMP/bin/agy"
+chmod 0755 "$TMP/bin/agy"
 
 SECONDS=0
 expect_compat_reject "continuous-stream version evidence is bounded" \
@@ -973,8 +1715,8 @@ run_child_stream_probe() {
         && ! -s "$TMP/$job.out" && ! -s "$TMP/$job.worker-calls" \
         && "$(<"$TMP/$job.err")" == "model-selection: evidence-unavailable - agy version probe failed or was oversized" \
         && ! -e "$TMP/logs/$job/task.txt" \
-        && ! -e "$TMP/logs/$job/selection.json" \
-        && ! -d "$VERSION_FIXTURE/runtime/scripts/__pycache__" ]]
+        && ! -e "$TMP/logs/$job/selection.json" ]] \
+        && selector_fixture_has_no_bytecode "$VERSION_FIXTURE"
 }
 
 if run_child_stream_probe version-child-stream; then
@@ -1056,8 +1798,8 @@ for signal_case in HUP INT TERM; do
             && ! -e "$TMP/logs/$signal_job/task.txt" \
             && ! -e "$TMP/logs/$signal_job/selection.json" \
             && "$signal_artifacts" == 0 \
-            && "$signal_cleanup" == 0 \
-            && ! -d "$VERSION_FIXTURE/runtime/scripts/__pycache__" ]]; then
+            && "$signal_cleanup" == 0 ]] \
+            && selector_fixture_has_no_bytecode "$VERSION_FIXTURE"; then
         ok "$signal_case interrupts the version probe with exit $signal_exit, no group, and no artifacts"
     else
         bad "$signal_case version-probe cleanup (ready $signal_ready/exit $rc/calls $signal_calls/artifacts $signal_artifacts/cleanup $signal_cleanup)"
@@ -1134,12 +1876,12 @@ printf 'prefixed semantic version\n' | AGY_TEST_WORKER="$VERSION_FIXTURE/runtime
 rc=$?
 if [[ "$rc" == 0 ]]; then
     assert_direct_result "documented prefixed agy version is accepted" version-prefixed \
-        gemini-3.6-flash-high gemini-3.6-flash high cli cli
+        gemini-3.6-flash-high gemini-3.6-flash high cli cli 2
 else
     bad "documented prefixed agy version is accepted (exit $rc)"
 fi
 
-VALID_DIRECT_RECORD="$TMP/logs/direct-pair-1-cli-cli/selection.json"
+VALID_DIRECT_RECORD="$TMP/logs/version-prefixed/selection.json"
 VALID_TIER_RECORD="$TMP/logs/legacy-tier-1/selection.json"
 ARTIFACT_CASES="$TMP/selection-artifacts"
 mkdir -p "$ARTIFACT_CASES"
@@ -1152,6 +1894,62 @@ import sys
 direct = json.load(open(sys.argv[1], encoding="utf-8"))
 tier = json.load(open(sys.argv[2], encoding="utf-8"))
 root = Path(sys.argv[3])
+assert direct["schema_version"] == 2
+assert not ({"compatibility_disposition", "approved_help_sha256", "compatibility_decision_sha256"} & set(direct))
+
+v2_only = {
+    "version_relation", "compatibility_status", "critical_interface_probe_version",
+    "critical_interface_status", "critical_capabilities_sha256", "help_sha256",
+    "model_availability", "probed_executable",
+}
+v3_only = {
+    "compatibility_disposition", "approved_help_sha256", "compatibility_decision_sha256",
+}
+legacy_direct = {key: value for key, value in direct.items() if key not in v2_only | v3_only}
+legacy_direct["schema_version"] = 1
+
+# Historical V2 records remain decodable, but a missing descriptor digest must
+# make the current launch rebind fail closed rather than becoming trusted data.
+legacy_v2_binding = copy.deepcopy(direct)
+for key in v3_only:
+    legacy_v2_binding.pop(key, None)
+legacy_v2_binding["schema_version"] = 2
+legacy_v2_binding["probed_executable"].pop("content_sha256")
+legacy_v2_binding["probed_executable"]["target_lstat"].pop("ctime_ns")
+for item in legacy_v2_binding["probed_executable"]["symlink_chain"]:
+    item["lstat"].pop("ctime_ns")
+for item in legacy_v2_binding["probed_executable"]["components"]:
+    item["lstat"].pop("ctime_ns")
+
+historical_v2_drift = copy.deepcopy(legacy_v2_binding)
+historical_v2_drift.update({
+    "installed_agy_version": "1.1.17",
+    "version_relation": "drift",
+    "compatibility_status": "critical-interface-compatible-version-drift",
+})
+
+v3_drift = copy.deepcopy(direct)
+v3_drift.update({
+    "schema_version": 3,
+    "installed_agy_version": "1.1.17",
+    "version_relation": "drift",
+    "compatibility_status": "critical-interface-compatible-version-drift",
+    "compatibility_disposition": "proceed",
+    "approved_help_sha256": direct["help_sha256"],
+})
+decision_fields = (
+    "compatibility_disposition", "approved_help_sha256", "help_sha256",
+    "critical_capabilities_sha256", "installed_agy_version", "matrix_agy_version",
+    "matrix_sha256", "matrix_source_revision", "selection_mode", "user_model",
+    "user_model_source", "resolved_agy_model", "probed_executable",
+)
+decision = {key: v3_drift[key] for key in decision_fields}
+if v3_drift["selection_mode"] == "model-effort":
+    decision["user_effort"] = v3_drift["user_effort"]
+    decision["user_effort_source"] = v3_drift["user_effort_source"]
+v3_drift["compatibility_decision_sha256"] = __import__("hashlib").sha256(
+    json.dumps(decision, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii"),
+).hexdigest()
 
 cases = {
     "three-key-direct": {
@@ -1164,6 +1962,22 @@ cases = {
     "direct-invalid-source": {**direct, "user_model_source": "worker"},
     "direct-invalid-sha": {**direct, "matrix_sha256": "z" * 64},
     "direct-extra-field": {**direct, "applied": False},
+    "v1-direct": legacy_direct,
+    "v2-legacy-executable-binding": legacy_v2_binding,
+    "v2-historical-drift": historical_v2_drift,
+    "v2-historical-drift-with-v3-decision": {
+        **historical_v2_drift, "compatibility_disposition": "proceed",
+    },
+    "v2-missing-help-digest": {key: value for key, value in direct.items() if key != "help_sha256"},
+    "v2-contradictory-relation": {**direct, "version_relation": "drift"},
+    "v2-extra-field": {**direct, "model_availability_detail": "not assessed"},
+    "v2-tampered-binding": {**direct, "probed_executable": {
+        **direct["probed_executable"], "target_lstat": {**direct["probed_executable"]["target_lstat"], "inode": 0},
+    }},
+    "v3-approved-drift": v3_drift,
+    "v3-model-decision-transplant": {**v3_drift, "resolved_agy_model": "gemini-3.1-pro-high"},
+    "v3-effort-decision-transplant": {**v3_drift, "user_effort": "medium"},
+    "v3-source-decision-transplant": {**v3_drift, "user_model_source": "environment"},
 }
 for name, value in cases.items():
     (root / f"{name}.json").write_text(json.dumps(value) + "\n", encoding="utf-8")
@@ -1182,6 +1996,9 @@ expect_invalid_selection_record() {
     if [[ "$got" == 64 && ! -s "$path.invalid.out" ]]; then ok "$name"; else bad "$name (exit $got)"; fi
 }
 expect_valid_selection_record "runtime validator accepts a complete direct artifact" "$VALID_DIRECT_RECORD"
+expect_valid_selection_record "runtime validator preserves v1 direct artifact compatibility" "$ARTIFACT_CASES/v1-direct.json"
+expect_valid_selection_record "runtime validator reads a legacy v2 executable binding without trusting it for launch" "$ARTIFACT_CASES/v2-legacy-executable-binding.json"
+expect_valid_selection_record "runtime validator preserves historical v2 drift as read-only evidence" "$ARTIFACT_CASES/v2-historical-drift.json"
 expect_valid_selection_record "runtime validator accepts a complete tier artifact" "$VALID_TIER_RECORD"
 expect_invalid_selection_record "runtime validator rejects a three-key direct artifact" "$ARTIFACT_CASES/three-key-direct.json"
 expect_invalid_selection_record "runtime validator rejects tier records carrying direct fields" "$ARTIFACT_CASES/tier-with-direct-fields.json"
@@ -1189,6 +2006,25 @@ expect_invalid_selection_record "runtime validator rejects missing direct proven
 expect_invalid_selection_record "runtime validator rejects an invalid source" "$ARTIFACT_CASES/direct-invalid-source.json"
 expect_invalid_selection_record "runtime validator rejects an invalid matrix SHA" "$ARTIFACT_CASES/direct-invalid-sha.json"
 expect_invalid_selection_record "runtime validator rejects extra artifact fields" "$ARTIFACT_CASES/direct-extra-field.json"
+expect_invalid_selection_record "runtime validator rejects incomplete v2 interface evidence" "$ARTIFACT_CASES/v2-missing-help-digest.json"
+expect_invalid_selection_record "runtime validator rejects contradictory v2 version relation" "$ARTIFACT_CASES/v2-contradictory-relation.json"
+expect_invalid_selection_record "runtime validator rejects a historical v2 drift with v3 approval fields" "$ARTIFACT_CASES/v2-historical-drift-with-v3-decision.json"
+expect_invalid_selection_record "runtime validator rejects extra v2 fields" "$ARTIFACT_CASES/v2-extra-field.json"
+expect_invalid_selection_record "runtime validator rejects tampered v2 executable binding" "$ARTIFACT_CASES/v2-tampered-binding.json"
+expect_valid_selection_record "runtime validator accepts an approved v3 drift decision" "$ARTIFACT_CASES/v3-approved-drift.json"
+expect_invalid_selection_record "runtime validator rejects a v3 model decision transplant" "$ARTIFACT_CASES/v3-model-decision-transplant.json"
+expect_invalid_selection_record "runtime validator rejects a v3 effort decision transplant" "$ARTIFACT_CASES/v3-effort-decision-transplant.json"
+expect_invalid_selection_record "runtime validator rejects a v3 source decision transplant" "$ARTIFACT_CASES/v3-source-decision-transplant.json"
+
+"$SELECTOR" --verify-record-executable "$ARTIFACT_CASES/v2-legacy-executable-binding.json" \
+    > "$ARTIFACT_CASES/v2-legacy-executable-binding.verify.out" \
+    2> "$ARTIFACT_CASES/v2-legacy-executable-binding.verify.err"
+legacy_v2_verify_rc=$?
+if [[ "$legacy_v2_verify_rc" == 64 && ! -s "$ARTIFACT_CASES/v2-legacy-executable-binding.verify.out" ]]; then
+    ok "legacy v2 executable binding decodes but cannot authorize a current launch"
+else
+    bad "legacy v2 executable binding launch authority (exit $legacy_v2_verify_rc)"
+fi
 
 RETRY_FIXTURE="$TMP/selector-retry-freeze"
 make_selector_fixture "$RETRY_FIXTURE" clean
@@ -1215,7 +2051,9 @@ expected = open(sha_path, encoding="ascii").read().strip()
 assert selection["resolved_agy_model"] == "gemini-3.6-flash-high"
 assert selection["matrix_sha256"] == expected
 assert hashlib.sha256(open(matrix_path, "rb").read()).hexdigest() != expected
-assert open(calls_path).read().splitlines() == ["version", "worker"]
+calls = open(calls_path).read().splitlines()
+assert calls == ["version", "help", "version", "help", "version", "help", "worker"]
+assert calls.count("worker") == 1
 assert open(workers_path).read().splitlines() == ["worker"]
 PY
 then
@@ -1668,6 +2506,7 @@ control_worker() {
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
         FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
+        FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
         "$WORKER" "$action" --job-id "$job" "$@"
 }
 start_worker() {
@@ -1684,6 +2523,7 @@ start_worker() {
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
         FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
+        FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
         "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$workdir" "$@"
 }
 
@@ -1709,7 +2549,7 @@ fi
 
 printf 'heartbeat completes\n' | FAKE_DISPATCH_MODE=heartbeat-success \
     FAKE_HEARTBEAT_COUNT=8 FAKE_HEARTBEAT_DELAY=0.10 \
-    run_worker heartbeat-success --idle-timeout 1s --hard-timeout 2s --max-runtime 3s \
+    run_worker heartbeat-success --idle-timeout 1s --hard-timeout 3s --max-runtime 4s \
     > "$TMP/heartbeat-success.out" 2> "$TMP/heartbeat-success.err"
 rc=$?
 if [[ "$rc" == 0 ]] && python3 - "$TMP/logs/heartbeat-success/dispatch-state.json" <<'PY'
@@ -1727,7 +2567,7 @@ else
 fi
 
 printf 'idle must fail\n' | FAKE_DISPATCH_MODE=idle \
-    run_worker idle-timeout --idle-timeout 1s --hard-timeout 2s --max-runtime 3s \
+    run_worker idle-timeout --idle-timeout 1s --hard-timeout 3s --max-runtime 4s \
     > "$TMP/idle-timeout.out" 2> "$TMP/idle-timeout.err"
 rc=$?
 if [[ "$rc" == 9 ]] && [[ "$(status_field "$TMP/idle-timeout.err" reason)" == idle_timeout ]]; then
@@ -1737,7 +2577,7 @@ else
 fi
 
 printf 'malformed heartbeat must not count\n' | FAKE_DISPATCH_MODE=malformed-heartbeat \
-    run_worker malformed-heartbeat --idle-timeout 1s --hard-timeout 2s --max-runtime 3s \
+    run_worker malformed-heartbeat --idle-timeout 1s --hard-timeout 3s --max-runtime 4s \
     > "$TMP/malformed-heartbeat.out" 2> "$TMP/malformed-heartbeat.err"
 rc=$?
 if [[ "$rc" == 9 ]] && python3 - "$TMP/malformed-heartbeat.err" <<'PY'
@@ -1813,6 +2653,7 @@ for value in (first, later):
     assert value["status"] == "failed"
     assert value["exit_code"] == 24
     assert value["reason"] == "provider_quota_exhausted"
+    assert value["failure_stage"] == "missing_structured_output"
     assert value["resume_available"] is True
     assert "conversation_id" not in value
     assert "provider_retry_after_seconds" not in value
@@ -1832,9 +2673,10 @@ printf 'same text wrong version\n' | FAKE_DISPATCH_MODE=quota-error FAKE_EXIT_CO
     run_worker quota-wrong-version > "$TMP/quota-wrong-version.out" \
     2> "$TMP/quota-wrong-version.err"
 quota_wrong_version_rc=$?
-if [[ "$quota_wrong_version_rc" == 5 \
-        && "$(status_field "$TMP/quota-wrong-version.err" reason)" == agy_failed_unclassified ]]; then
-    ok "quota terminal is not inferred for an unreviewed agy version"
+if [[ "$quota_wrong_version_rc" == 4 \
+        && "$(status_field "$TMP/quota-wrong-version.err" reason)" == invalid_envelope \
+        && "$(status_field "$TMP/quota-wrong-version.err" failure_stage)" == missing_structured_output ]]; then
+    ok "unreviewed quota terminal without a report is an invalid-envelope failure"
 else
     bad "version-bound quota terminal classification"
 fi
@@ -1845,9 +2687,10 @@ printf 'altered quota prose\n' | FAKE_VERSION_MODE=quota113 \
     run_worker quota-altered --literal-model claude-opus-4-6-thinking \
     > "$TMP/quota-altered.out" 2> "$TMP/quota-altered.err"
 quota_altered_rc=$?
-if [[ "$quota_altered_rc" == 5 \
-        && "$(status_field "$TMP/quota-altered.err" reason)" == agy_failed_unclassified ]]; then
-    ok "free-form quota prose remains unclassified"
+if [[ "$quota_altered_rc" == 4 \
+        && "$(status_field "$TMP/quota-altered.err" reason)" == invalid_envelope \
+        && "$(status_field "$TMP/quota-altered.err" failure_stage)" == missing_structured_output ]]; then
+    ok "free-form quota prose without a report is an invalid-envelope failure"
 else
     bad "free-form quota prose classification boundary"
 fi
@@ -1988,7 +2831,13 @@ for bad_version in ([], {}, "01.1.13", "1.1", "1.1.123456"):
 state = json.loads((root / "logs" / "quota-terminal" / module.STATE_NAME).read_text(encoding="utf-8"))
 state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
+for field in module.STATE_V5_FIELDS:
+    state.pop(field)
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS}:
+    state.pop(field)
 state["schema_version"] = 3
+state["phase"] = None
+state["assurance"] = None
 migrated = module.validate_state(state)
 assert migrated["provider_retry_after_seconds"] is None
 assert migrated["provider_retry_observed_epoch"] is None
@@ -2002,7 +2851,7 @@ fi
 HARD_SIDE_EFFECT="$TMP/hard-side-effect"
 printf 'hard limit must win\n' | FAKE_DISPATCH_MODE=heartbeat-forever \
     FAKE_SIDE_EFFECT_FILE="$HARD_SIDE_EFFECT" \
-    run_worker hard-timeout --idle-timeout 1s --hard-timeout 1s --max-runtime 3s \
+    run_worker hard-timeout --idle-timeout 1s --hard-timeout 3s --max-runtime 5s \
     > "$TMP/hard-timeout.out" 2> "$TMP/hard-timeout.err"
 rc=$?
 sleep 1
@@ -2061,7 +2910,8 @@ else
     bad "foreground signal ownership/process-group cleanup"
 fi
 
-printf 'async status wait result\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+printf 'private-task-prompt-sentinel\n' | FAKE_DISPATCH_MODE=heartbeat-success \
+    FAKE_WORKER_VERIFIED=1 \
     FAKE_HEARTBEAT_COUNT=12 FAKE_HEARTBEAT_DELAY=0.10 \
     start_worker async-success --idle-timeout 1s --hard-timeout 3s --max-runtime 3s \
     > "$TMP/async-success.start" 2> "$TMP/async-success.start.err"
@@ -2074,25 +2924,65 @@ control_worker wait async-success --after-state-sha "$async_sha" --timeout 1s \
 wait_rc=$?
 terminal_wait_rc=64
 result_rc=64
+result_json_rc=64
+result_text_rc=64
+status_text_rc=64
+wait_text_rc=64
 if [[ "$wait_rc" == 0 ]] && wait_terminal async-success "$TMP/async-success.wait"; then
     terminal_wait_rc=0
     control_worker result async-success > "$TMP/async-success.result"
     result_rc=$?
+    control_worker result async-success --format json > "$TMP/async-success.result-json"
+    result_json_rc=$?
+    control_worker result async-success --format text > "$TMP/async-success.result-text"
+    result_text_rc=$?
+    control_worker status async-success --format text > "$TMP/async-success.status-text"
+    status_text_rc=$?
+    async_terminal_sha="$(status_sha "$TMP/async-success.wait")"
+    control_worker wait async-success --after-state-sha "$async_terminal_sha" \
+        --timeout 1s --format text > "$TMP/async-success.wait-text"
+    wait_text_rc=$?
 fi
 if [[ "$rc" == 0 && "$status_rc" == 0 && "$wait_rc" == 0 \
-        && "$terminal_wait_rc" == 0 && "$result_rc" == 0 ]] \
-        && python3 - "$TMP/async-success.status" "$TMP/async-success.wait" "$TMP/async-success.result" <<'PY'
+        && "$terminal_wait_rc" == 0 && "$result_rc" == 0 \
+        && "$result_json_rc" == 0 && "$result_text_rc" == 0 \
+        && "$status_text_rc" == 0 && "$wait_text_rc" == 0 ]] \
+        && cmp -s "$TMP/async-success.result" "$TMP/async-success.result-json" \
+        && python3 - "$TMP/async-success.status" "$TMP/async-success.wait" \
+            "$TMP/async-success.result" "$TMP/async-success.result-text" \
+            "$TMP/async-success.status-text" "$TMP/async-success.wait-text" "$TMP" <<'PY'
 import json
 import sys
-first, changed, result = (json.load(open(path, encoding="utf-8")) for path in sys.argv[1:])
+first = json.load(open(sys.argv[1], encoding="utf-8"))
+changed = json.load(open(sys.argv[2], encoding="utf-8"))
+result = json.load(open(sys.argv[3], encoding="utf-8"))
 assert first["status"] in {"queued", "running"}
+assert first["next_action"] == "wait"
+assert first["next_action_command"] == (
+    '"$PIPELINE/agy-worker.sh" wait --job-id async-success --after-state-sha '
+    + first["state_sha256"] + " --format text"
+)
 assert changed["state_sha256"] != first["state_sha256"] or changed["status"] == "succeeded"
+assert changed["next_action"] == "result"
+assert changed["next_action_command"] == '"$PIPELINE/agy-worker.sh" result --job-id async-success --format json'
 assert result["status"] == "completed"
+for path in sys.argv[4:7]:
+    lines = open(path, encoding="utf-8").read().splitlines()
+    assert len(lines) == 3
+    assert lines[0] == "Provider attempt: succeeded; reason: none; failure stage: none; bound result available: yes; driver disposition: unreviewed."
+    assert lines[1] == f"Driver evidence: 0 passed, 0 failed, 0 advisory, 0 missing; cycle: {changed['cycle']}/{changed['max_cycles']}."
+    assert lines[2] == 'Next safe action: retrieve current bound result JSON with "$PIPELINE/agy-worker.sh" result --job-id async-success --format json; review it and run driver checks, construct Verification v2, then no further driver decision is currently listed.'
+    text = "\n".join(lines)
+    for sentinel in (
+        "private-task-prompt-sentinel", "Verified private-worker-prose-sentinel",
+        "fake-conversation-01", sys.argv[7],
+    ):
+        assert sentinel not in text
 PY
 then
-    ok "start/status/wait/result expose only bounded local controller state and a terminal valid envelope"
+    ok "status/wait/result formats preserve JSON and expose three sanitized driver-owned text lines"
 else
-    bad "async start/status/wait/result lifecycle"
+    bad "async status/wait/result format and privacy lifecycle"
 fi
 
 startup_stress=0
@@ -2119,10 +3009,18 @@ fi
 
 printf 'extend active deadline\n' | FAKE_DISPATCH_MODE=heartbeat-success \
     FAKE_HEARTBEAT_COUNT=2 FAKE_HEARTBEAT_DELAY=1.00 \
-    start_worker extend-active --idle-timeout 2s --hard-timeout 2s --max-runtime 4s \
+    start_worker extend-active --idle-timeout 2s --hard-timeout 3s --max-runtime 5s \
     > "$TMP/extend-active.start" 2> "$TMP/extend-active.start.err"
-sleep 0.20
-control_worker status extend-active > "$TMP/extend-active.status"
+extend_ready=0
+for (( extend_index=0; extend_index<200; extend_index++ )); do
+    control_worker status extend-active > "$TMP/extend-active.status"
+    if [[ "$(status_field "$TMP/extend-active.status" status)" == "running" \
+            && "$(status_field "$TMP/extend-active.status" progress_count)" -ge 1 ]]; then
+        extend_ready=1
+        break
+    fi
+    sleep 0.01
+done
 extend_sha="$(status_sha "$TMP/extend-active.status")"
 control_worker extend extend-active --approve-state-sha "$(printf '0%.0s' {1..64})" --by 1s \
     > "$TMP/extend-active.stale" 2>&1
@@ -2133,17 +3031,22 @@ over_max_rc=$?
 control_worker extend extend-active --approve-state-sha "$extend_sha" --by 1s \
     > "$TMP/extend-active.extend"
 extend_rc=$?
-sleep 2
+wait_terminal extend-active "$TMP/extend-active.extend"
+extend_terminal_rc=$?
 control_worker result extend-active > "$TMP/extend-active.result"
 result_rc=$?
-if [[ "$stale_extend_rc" == 64 && "$over_max_rc" == 64 \
-        && "$extend_rc" == 0 && "$result_rc" == 0 ]] && python3 - \
+if [[ "$extend_ready" == 1 && "$stale_extend_rc" == 64 \
+        && "$over_max_rc" == 64 && "$extend_rc" == 0 \
+        && "$extend_terminal_rc" == 0 && "$result_rc" == 0 ]] \
+        && grep -Fqx 'agy-dispatch: deadline extension exceeds max runtime' "$TMP/extend-active.over-max" \
+        && python3 - \
         "$TMP/extend-active.extend" "$TMP/extend-active.result" <<'PY'
 import json
 import sys
 extended = json.load(open(sys.argv[1], encoding="utf-8"))
 result = json.load(open(sys.argv[2], encoding="utf-8"))
-assert extended["hard_seconds"] == 3.0
+assert extended["hard_seconds"] == 4.0
+assert extended["max_seconds"] == 5.0
 assert result["status"] == "completed"
 PY
 then
@@ -2258,6 +3161,14 @@ if [[ "$cancel_rc" == 0 ]]; then
     control_worker wait cancel-active --after-state-sha "$cancel_after" --timeout 2s \
         > "$TMP/cancel-active.wait"
     wait_rc=$?
+    # A successful wait may observe the approved cancel-requested transition
+    # before the controller reaps its local process group and terminalizes.
+    # Follow the current SHA through the existing fixed bound; do not accept a
+    # non-terminal state if that terminal transition never arrives.
+    if [[ "$wait_rc" == 0 ]]; then
+        wait_terminal cancel-active "$TMP/cancel-active.wait"
+        wait_rc=$?
+    fi
 fi
 if [[ "$cancel_rc" == 0 && "$wait_rc" == 0 ]] && python3 - "$TMP/cancel-active.wait" <<'PY'
 import json
@@ -2266,6 +3177,14 @@ state = json.load(open(sys.argv[1], encoding="utf-8"))
 assert state["status"] == "cancelled"
 assert state["reason"] == "cancelled"
 assert state["remote_cancel_unverified"] is True
+assert state["candidate_recognized"] is False
+assert state["result_available"] is False
+assert state["driver_disposition"] == "not_applicable"
+# A no-candidate local cancel must terminalize without the potentially slow
+# repository reconciliation that follows a report-bearing completion.
+assert state["worktree_reconciliation"] == "unavailable"
+assert state["worktree_changes_present"] is None
+assert state["worktree_changed_since_dispatch"] is None
 PY
 then
     ok "concurrent cancel is state-SHA-gated, reaps the local process group, and does not claim remote cancellation"
@@ -2342,8 +3261,11 @@ assert spec.loader is not None
 spec.loader.exec_module(module)
 job = Path(job_text).resolve()
 job.mkdir(mode=0o700)
+workdir = job.parent / "state-snapshot-workdir"
+workdir.mkdir(mode=0o700)
+subprocess.run(["git", "init", "-q", str(workdir)], check=True)
 command = {
-    "job_id": "state-snapshot", "workdir": str(job),
+    "job_id": "state-snapshot", "workdir": str(workdir),
     "idle_seconds": 1.0, "hard_seconds": 2.0, "max_seconds": 3.0,
     "workflow": "legacy", "max_cycles": 1,
 }
@@ -2352,6 +3274,10 @@ state = module.initial_state(
     command_identity=(1, 1, os.getuid(), os.getgid(), 0o600),
     stage_sha=None, stage_identity=None,
 )
+assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 9
+assert state["worktree_root_identity"] is not None
+assert state["worktree_baseline"] is not None
+assert state["worktree_snapshot_algorithm"] == module.WORKTREE_SNAPSHOT_SEMANTIC_V1
 module.write_atomic(job, module.STATE_NAME, state)
 done = job / "writer.done"
 blocked = job / "writer.blocked"
@@ -2479,21 +3405,23 @@ else
     bad "orphaned dispatch continuation boundary"
 fi
 
-printf 'resume conversation\n' | FAKE_DISPATCH_MODE=conversation-fail \
-    run_worker resume-case --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+printf 'private-resume-task-sentinel\n' | FAKE_DISPATCH_MODE=conversation-fail \
+    run_worker resume-case --idle-timeout 1s --hard-timeout 4s --max-runtime 8s \
     > "$TMP/resume-case.out" 2> "$TMP/resume-case.err"
 rc=$?
 resume_sha="$(status_sha "$TMP/resume-case.err")"
 FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
-    control_worker resume resume-case --approve-state-sha "$resume_sha" \
+    control_worker resume resume-case --approve-state-sha "$resume_sha" --format text \
     > "$TMP/resume-case.resume"
 resume_rc=$?
-wait_terminal resume-case "$TMP/resume-case.resume"
+control_worker status resume-case > "$TMP/resume-case.resume-status"
+wait_terminal resume-case "$TMP/resume-case.resume-status"
 resume_wait_rc=$?
 control_worker result resume-case > "$TMP/resume-case.result"
 result_rc=$?
-if [[ "$rc" == 5 && "$resume_rc" == 0 && "$resume_wait_rc" == 0 && "$result_rc" == 0 ]] && python3 - \
-        "$TMP/resume-case.argv" "$TMP/resume-case.resume" <<'PY'
+if [[ "$rc" == 4 && "$resume_rc" == 0 && "$resume_wait_rc" == 0 && "$result_rc" == 0 ]] && python3 - \
+        "$TMP/resume-case.argv" "$TMP/resume-case.resume-status" \
+        "$TMP/resume-case.resume" "$TMP/resume-case.err" "$TMP" <<'PY'
 import json
 import sys
 argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
@@ -2503,11 +3431,29 @@ assert argv[argv.index(b"--conversation") + 1] == b"fake-conversation-01"
 assert b"Continue the existing bounded task" in argv[-1]
 assert state["attempt_origin"] == "conversation-resume"
 assert state["attempt"] == 2
+assert state["next_action"] == "result"
+assert state["next_action_command"] == '"$PIPELINE/agy-worker.sh" result --job-id resume-case --format json'
+text = open(sys.argv[3], encoding="utf-8").read()
+assert len(text.splitlines()) == 3
+failed = json.load(open(sys.argv[4], encoding="utf-8"))
+assert failed["next_action"] == "none"
+assert failed["next_action_command"] is None
+assert [item["action"] for item in failed["available_actions"]] == ["resume", "restart"]
+assert failed["available_actions"][0]["command"] == (
+    '"$PIPELINE/agy-worker.sh" resume --job-id resume-case --approve-state-sha '
+    + failed["state_sha256"] + " --format text"
+)
+assert failed["available_actions"][1]["command"] == (
+    '"$PIPELINE/agy-worker.sh" restart --job-id resume-case --approve-state-sha '
+    + failed["state_sha256"] + " --format text"
+)
+for sentinel in ("private-resume-task-sentinel", "fake-conversation-01", sys.argv[5]):
+    assert sentinel not in text
 PY
 then
-    ok "resume uses the exact private conversation and fixed continuation prompt without re-resolving selection"
+    ok "resume text succeeds with the exact private conversation and no private output"
 else
-    bad "conversation resume contract"
+    bad "conversation resume format and privacy contract"
 fi
 
 printf 'restart without conversation\n' | FAKE_DISPATCH_MODE=conversation-fail \
@@ -2547,20 +3493,199 @@ FAKE_DISPATCH_MODE=heartbeat-success control_worker resume resume-unavailable \
 resume_rc=$?
 resume_unavailable_calls="$(wc -l < "$TMP/resume-unavailable.calls" | tr -d ' ')"
 if [[ "$resume_rc" == 21 && "$resume_unavailable_calls" == 1 ]]; then
-    ok "resume failure does not start a new provider call"
+    resume_unavailable_ok=1
 else
-    bad "resume failure must not redispatch (exit $resume_rc, calls $resume_unavailable_calls)"
+    resume_unavailable_ok=0
 fi
 
 project_feedback() {
-    printf '%s\n' '{"schema_version":1,"summary":"driver checks found one repairable failure","passed_checks":["lint"],"failed_checks":["unit-tests"],"advisory_checks":0,"missing_checks":0}'
+    python3 - "$TMP/logs/$1/dispatch-state.json" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({"schema_version": 2, "summary": "driver checks found one repairable failure",
+    "passed_checks": ["lint"], "failed_checks": ["unit-tests"], "advisory_checks": 0,
+    "missing_checks": 0, "candidate_sha256": state["result_sha256"], "coverage": "partial",
+    "verified_findings": 0, "unresolved_gaps": 1, "diff_review_complete": True}, separators=(",", ":")))
+PY
 }
 project_verified_feedback() {
-    printf '%s\n' '{"schema_version":1,"summary":"driver checks passed","passed_checks":["lint","unit-tests"],"failed_checks":[],"advisory_checks":0,"missing_checks":0}'
+    python3 - "$TMP/logs/$1/dispatch-state.json" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({"schema_version": 2, "summary": "driver checks passed",
+    "passed_checks": ["lint", "unit-tests"], "failed_checks": [], "advisory_checks": 0,
+    "missing_checks": 0, "candidate_sha256": state["result_sha256"], "coverage": "complete",
+    "verified_findings": 0, "unresolved_gaps": 0, "diff_review_complete": True}, separators=(",", ":")))
+PY
 }
 project_missing_feedback() {
-    printf '%s\n' '{"schema_version":1,"summary":"one required driver check is missing","passed_checks":["lint"],"failed_checks":[],"advisory_checks":0,"missing_checks":1}'
+    python3 - "$TMP/logs/$1/dispatch-state.json" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+print(json.dumps({"schema_version": 2, "summary": "one required driver check is missing",
+    "passed_checks": ["lint"], "failed_checks": [], "advisory_checks": 0,
+    "missing_checks": 1, "candidate_sha256": state["result_sha256"], "coverage": "partial",
+    "verified_findings": 0, "unresolved_gaps": 1, "diff_review_complete": True}, separators=(",", ":")))
+PY
 }
+
+if PYTHONDONTWRITEBYTECODE=1 python3 -B - \
+        "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" "$TMP" <<'PY'
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shlex
+import stat
+import subprocess
+import sys
+
+source = Path(sys.argv[1]).resolve()
+root = Path(sys.argv[2]).resolve()
+spec = importlib.util.spec_from_file_location("agy_dispatch_v2_continue_parity", source)
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+
+repo = root / "historical-v2-direct-repo"; repo.mkdir()
+subprocess.run(["git", "init", "-q", str(repo)], check=True)
+job = (root / "historical-v2-direct-job"); job.mkdir(mode=0o700); job = job.resolve()
+provider_schema = source.parent.parent / "schemas" / "worker-result.provider.schema.json"
+matrix, matrix_sha, matrix_version, matrix_revision = module.MODEL_SELECTION.load_policy()
+resolved_model, selection_mode = module.MODEL_SELECTION.resolve_model(
+    matrix, "gemini-3.7-flash", "high",
+)
+selection = {
+    "schema_version": 2, "kind": "agy-worker-selection", "selection_mode": selection_mode,
+    "user_model": "gemini-3.7-flash", "user_model_source": "cli",
+    "user_effort": "high", "user_effort_source": "cli",
+    "resolved_agy_model": resolved_model,
+    "installed_agy_version": "9.9.9",
+    "matrix_sha256": matrix_sha, "matrix_agy_version": matrix_version,
+    "matrix_source_revision": matrix_revision, "version_relation": "drift",
+    "compatibility_status": "critical-interface-compatible-version-drift",
+    "critical_interface_probe_version": 1, "critical_interface_status": "compatible",
+    "critical_capabilities_sha256": "a" * 64, "help_sha256": "b" * 64,
+    "model_availability": "not_assessed",
+    "probed_executable": {
+        "path_sha256": "c" * 64,
+        "target_lstat": {
+            "device": 1, "inode": 1, "mode": stat.S_IFREG | 0o755,
+            "uid": os.geteuid(), "gid": os.getegid(), "size": 1,
+            "mtime_ns": 1,
+        },
+        "symlink_chain": [], "components": [],
+    },
+}
+module.MODEL_SELECTION.validate_selection_record(selection)
+selection_path = job / "selection.json"
+module.MODEL_SELECTION.publish_record(selection_path, selection)
+selection_raw, selection_info = module.read_regular(
+    selection_path, module.MAX_COMMAND_BYTES, "fixture selection",
+)
+command = {
+    "schema_version": 4, "kind": "agy-worker-dispatch-command",
+    "job_id": "historical-v2-direct", "workdir": str(repo),
+    "argv": [
+        "agy", "--json-schema", str(provider_schema), "--model", resolved_model,
+        "--print", "task",
+    ],
+    "agy_version": matrix_version, "agy_version_observed": True,
+    "selection_path": str(selection_path),
+    "selection_sha256": module.digest(selection_raw),
+    "selection_identity": list(module._identity(selection_info)),
+    "idle_seconds": 2, "hard_seconds": 10, "max_seconds": 20, "notice_seconds": 3,
+    "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+    "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+}
+module.write_atomic(job, module.COMMAND_NAME, command)
+state, _initial_sha = module.create_state(job, "initial", resume=False)
+candidate = {
+    "status": "completed", "summary": "historical-v2-direct-candidate",
+    "files_changed": [], "commands_run": [], "tests_run": [], "risks": [],
+    "open_questions": [], "confidence": 0.9, "requires_human": False,
+}
+envelope = job / "envelope.json"
+candidate_raw = json.dumps(candidate, ensure_ascii=True, indent=2).encode("ascii") + b"\n"
+envelope.write_bytes(candidate_raw); envelope.chmod(0o600)
+_bound, envelope_info = module.read_regular(envelope, 1024 * 1024, "fixture envelope")
+snapshot = module._worktree_snapshot(str(repo)); assert snapshot is not None
+state.update({
+    "status": "succeeded", "exit_code": 0, "finished_epoch": 1.0,
+    "conversation_id": "historical-v2-conversation", "result_path": str(envelope),
+    "result_sha256": module.digest(candidate_raw),
+    "result_identity": list(module._identity(envelope_info)),
+    "candidate_recognized": True, "candidate_source": "provider_success",
+    "result_available": True, "candidate_worktree_sha256": snapshot["sha256"],
+    "candidate_worktree_entries": snapshot["entries"],
+    "driver_disposition": "unreviewed", "phase": "awaiting-verification",
+    "assurance": "pending", "continue_available": True, "resume_available": False,
+    "next_action": "driver_review",
+})
+_raw, sha = module.write_atomic(job, module.STATE_NAME, state)
+public = module.public_status(state, sha, job=job)
+assert [item["action"] for item in public["available_actions"]] == [
+    "result", "verification-copy", "finalize",
+]
+verification = {
+    "schema_version": 2, "summary": "driver found a bounded defect",
+    "passed_checks": [], "failed_checks": ["fixture"],
+    "advisory_checks": 0, "missing_checks": 0,
+    "candidate_sha256": state["result_sha256"], "coverage": "partial",
+    "verified_findings": 1, "unresolved_gaps": 1, "diff_review_complete": True,
+}
+before = (job / module.STATE_NAME).read_bytes()
+delivered = subprocess.run(
+    [sys.executable, str(source), "result", "--job-dir", str(job)],
+    check=True, stdout=subprocess.PIPE,
+)
+assert json.loads(delivered.stdout)["summary"] == candidate["summary"]
+assert (job / module.STATE_NAME).read_bytes() == before
+
+marker = root / "historical-v2-direct-provider-called"
+bin_dir = root / "historical-v2-direct-bin"; bin_dir.mkdir()
+fake = bin_dir / "agy"
+fake.write_text("#!/bin/sh\n: > " + shlex.quote(str(marker)) + "\nexit 99\n", encoding="utf-8")
+fake.chmod(0o755)
+environment = dict(os.environ); environment["PATH"] = f"{bin_dir}{os.pathsep}{environment.get('PATH', '')}"
+rejected = subprocess.run(
+    [sys.executable, str(source), "continue", "--job-dir", str(job),
+     "--approve-state-sha", sha],
+    input=json.dumps(verification).encode("utf-8"), env=environment,
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+)
+assert rejected.returncode == 64 and not rejected.stdout
+assert b"dispatch direct selection lacks approved compatibility disposition" in rejected.stderr
+assert (job / module.STATE_NAME).read_bytes() == before
+assert not (job / "continue-staged").exists() and not marker.exists()
+try:
+    module.create_state(
+        job, "conversation-continue", resume=True,
+        approve_sha=sha, verification=verification,
+    )
+except module.DispatchError as exc:
+    assert str(exc) == "dispatch direct selection lacks approved compatibility disposition"
+else:
+    raise AssertionError("historical V2 drift selection authorized a continuation")
+assert (job / module.STATE_NAME).read_bytes() == before
+assert not (job / "continue-staged").exists() and not marker.exists()
+
+finalized = subprocess.run(
+    [sys.executable, str(source), "finalize", "--job-dir", str(job),
+     "--approve-state-sha", sha, "--assurance", "partially_verified"],
+    input=json.dumps(verification).encode("utf-8"), check=True, stdout=subprocess.PIPE,
+)
+assert json.loads(finalized.stdout)["driver_disposition"] == "partially_verified"
+assert not marker.exists()
+PY
+then
+    historical_v2_parity_ok=1
+else
+    historical_v2_parity_ok=0
+fi
+if [[ "$resume_unavailable_ok" == 1 && "$historical_v2_parity_ok" == 1 ]]; then
+    ok "resume and historical V2 drift recovery reject provider launch while preserving result/finalize"
+else
+    bad "resume or historical V2 drift recovery action parity"
+fi
 
 printf 'project workflow initial implementation\n' | FAKE_DISPATCH_MODE=heartbeat-success \
     FAKE_HEARTBEAT_COUNT=2 AGY_TEST_WORKDIR="$TMP/project-worktree" start_worker project-cycles --workflow project \
@@ -2577,7 +3702,7 @@ assert value["workflow"] == "project"
 assert value["status"] == "succeeded"
 assert value["phase"] == "awaiting-verification"
 assert value["cycle"] == 1 and value["max_cycles"] == 5
-assert value["assurance"] == "pending"
+assert value["assurance"] is None
 assert value["resume_available"] is False and value["continue_available"] is True
 assert value["check_counts"] == {"passed": 0, "failed": 0, "advisory": 0, "missing": 0}
 PY
@@ -2595,58 +3720,82 @@ printf 'project missing verification repair\n' | FAKE_DISPATCH_MODE=heartbeat-su
 wait_terminal project-missing-check "$TMP/project-missing-check.start"
 control_worker status project-missing-check > "$TMP/project-missing-check.status"
 project_missing_sha="$(status_sha "$TMP/project-missing-check.status")"
-project_missing_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
-    control_worker continue project-missing-check --approve-state-sha "$project_missing_sha" \
+project_missing_feedback project-missing-check | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    control_worker continue project-missing-check --approve-state-sha "$project_missing_sha" --format text \
     > "$TMP/project-missing-check.continue" 2> "$TMP/project-missing-check.continue.err"
 project_missing_rc=$?
-wait_terminal project-missing-check "$TMP/project-missing-check.continue"
-project_missing_wait_rc=$?
 control_worker status project-missing-check > "$TMP/project-missing-check.status"
+wait_terminal project-missing-check "$TMP/project-missing-check.status"
+project_missing_wait_rc=$?
 project_missing_calls="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
 if [[ "$project_missing_rc" == 0 && "$project_missing_wait_rc" == 0 \
         && "$project_missing_calls" == 2 ]] \
-        && python3 - "$TMP/project-missing-check.status" <<'PY'
+        && python3 - "$TMP/project-missing-check.status" \
+            "$TMP/project-missing-check.continue" "$TMP" <<'PY'
 import json, sys
 value = json.load(open(sys.argv[1], encoding="utf-8"))
 assert value["cycle"] == 2
 assert value["attempt_origin"] == "conversation-continue"
-assert value["check_counts"] == {"passed": 1, "failed": 0, "advisory": 0, "missing": 1}
+assert value["check_counts"] == {"passed": 0, "failed": 0, "advisory": 0, "missing": 0}
+assert value["next_action"] == "result"
+assert value["next_action_command"] == '"$PIPELINE/agy-worker.sh" result --job-id project-missing-check --format json'
+text = open(sys.argv[2], encoding="utf-8").read()
+assert len(text.splitlines()) == 3
+assert text.splitlines()[1] == "Driver evidence: 1 passed, 0 failed, 0 advisory, 1 missing; cycle: 2/5."
+for sentinel in ("one required driver check is missing", "lint", "fake-conversation-01", sys.argv[3]):
+    assert sentinel not in text
 PY
 then
-    ok "project continuation treats a missing required check as repairable verification feedback"
+    ok "project continuation text keeps trigger evidence while the replacement candidate resets stored evidence"
 else
-    bad "project continuation missing-check repair contract"
+    bad "project continuation format and privacy contract"
 fi
 
 project_missing_sha="$(status_sha "$TMP/project-missing-check.status")"
 project_missing_calls_before_finalize="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
-project_missing_feedback | control_worker finalize project-missing-check \
+project_missing_feedback project-missing-check | control_worker finalize project-missing-check \
     --approve-state-sha "$project_missing_sha" --assurance partially-verified \
     > /dev/null 2>&1
 project_hyphen_assurance_rc=$?
-project_missing_feedback | control_worker finalize project-missing-check \
-    --approve-state-sha "$project_missing_sha" --assurance partially_verified \
+project_missing_feedback project-missing-check | control_worker finalize project-missing-check \
+    --approve-state-sha "$project_missing_sha" --assurance partially_verified --format text \
     > "$TMP/project-missing-check.finalize" 2> "$TMP/project-missing-check.finalize.err"
 project_partial_assurance_rc=$?
+control_worker status project-missing-check > "$TMP/project-missing-check.finalized-status"
 project_missing_calls_after_finalize="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
 if [[ "$project_hyphen_assurance_rc" == 64 && "$project_partial_assurance_rc" == 0 \
         && "$project_missing_calls_after_finalize" == "$project_missing_calls_before_finalize" ]] \
-        && python3 - "$TMP/project-missing-check.finalize" <<'PY'
+        && python3 - "$TMP/project-missing-check.finalized-status" \
+            "$TMP/project-missing-check.finalize" "$TMP" <<'PY'
 import json, sys
 value = json.load(open(sys.argv[1], encoding="utf-8"))
 assert value["phase"] == "completed"
 assert value["assurance"] == "partially_verified"
 assert value["check_counts"] == {"passed": 1, "failed": 0, "advisory": 0, "missing": 1}
+assert value["next_action"] == "result"
+assert value["next_action_command"] == '"$PIPELINE/agy-worker.sh" result --job-id project-missing-check --format json'
+lines = open(sys.argv[2], encoding="utf-8").read().splitlines()
+assert len(lines) == 3
+assert lines[0] == "Provider attempt: succeeded; reason: none; failure stage: none; bound result available: yes; driver disposition: partially_verified."
+assert lines[1] == f"Driver evidence: 1 passed, 0 failed, 0 advisory, 1 missing; cycle: {value['cycle']}/{value['max_cycles']}."
+assert lines[2] == (
+    'Next safe action: optional finalized result JSON readback with "$PIPELINE/agy-worker.sh" result --job-id project-missing-check --format json; '
+    'driver disposition is already recorded; do not construct Verification v2, continue, or finalize. '
+    'Available fresh restart command: "$PIPELINE/agy-worker.sh" restart --job-id project-missing-check --approve-state-sha '
+    + value["state_sha256"] + " --format text."
+)
+for sentinel in ("one required driver check is missing", "lint", "fake-conversation-01", sys.argv[3]):
+    assert sentinel not in "\n".join(lines)
 PY
 then
-    ok "project partial assurance uses the exact underscore contract without a provider call"
+    ok "project finalization text is three-line, driver-owned, and invokes no provider"
 else
-    bad "project partial assurance underscore contract"
+    bad "project finalization format and assurance contract"
 fi
 
 project_cycle_ok=1
 for project_cycle in 2 3 4 5; do
-    project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    project_feedback project-cycles | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
         control_worker continue project-cycles --approve-state-sha "$project_sha" \
         > "$TMP/project-cycles.$project_cycle" 2> "$TMP/project-cycles.$project_cycle.err"
     project_continue_rc=$?
@@ -2655,7 +3804,7 @@ for project_cycle in 2 3 4 5; do
     project_sha="$(status_sha "$TMP/project-cycles.status")"
     [[ "$project_continue_rc" == 0 ]] || project_cycle_ok=0
 done
-project_feedback | control_worker continue project-cycles --approve-state-sha "$project_sha" \
+project_feedback project-cycles | control_worker continue project-cycles --approve-state-sha "$project_sha" \
     > "$TMP/project-cycles.exhausted" 2> "$TMP/project-cycles.exhausted.err"
 project_exhausted_rc=$?
 project_calls="$(wc -l < "$TMP/project-cycles.calls" | tr -d ' ')"
@@ -2682,10 +3831,10 @@ wait_terminal project-final "$TMP/project-final.start"
 control_worker status project-final > "$TMP/project-final.status"
 project_final_sha="$(status_sha "$TMP/project-final.status")"
 project_final_calls_before="$(wc -l < "$TMP/project-final.calls" | tr -d ' ')"
-project_verified_feedback | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
+project_verified_feedback project-final | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
     --assurance verified > "$TMP/project-final.finalize" 2> "$TMP/project-final.finalize.err"
 project_finalize_rc=$?
-project_verified_feedback | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
+project_verified_feedback project-final | control_worker finalize project-final --approve-state-sha "$project_final_sha" \
     --assurance verified > /dev/null 2>&1
 project_finalize_stale_rc=$?
 project_final_calls_after="$(wc -l < "$TMP/project-final.calls" | tr -d ' ')"
@@ -2713,8 +3862,15 @@ mkdir -p "$TMP/project-worktree/internal-link-target"
 ln -s "$TMP/project-worktree/internal-link-target" "$TMP/project-worktree/internal-link"
 printf 'internal link\n' | AGY_TEST_WORKDIR="$TMP/project-worktree" run_worker project-internal --workflow project > "$TMP/project-internal.out" 2> "$TMP/project-internal.err"
 project_internal_rc=$?
-if [[ "$project_outward_rc" == 64 && "$project_internal_rc" == 0 ]]; then
-    ok "project workflow rejects outward symlinks while allowing contained links"
+ln -s .git "$TMP/project-worktree/admin"
+printf 'Git admin alias\n' | AGY_TEST_WORKDIR="$TMP/project-worktree" run_worker project-internal-git-alias --workflow project > "$TMP/project-internal-git-alias.out" 2> "$TMP/project-internal-git-alias.err"
+project_internal_git_alias_rc=$?
+rm "$TMP/project-worktree/admin"
+if [[ "$project_outward_rc" == 64 && "$project_internal_rc" == 0 \
+        && "$project_internal_git_alias_rc" == 64 \
+        && ! -e "$TMP/logs/project-internal-git-alias/task.txt" \
+        && ! -e "$TMP/project-internal-git-alias.called" ]]; then
+    ok "project workflow rejects Git-admin aliases while allowing ordinary contained links"
 else
     bad "project worktree symlink boundary"
 fi
@@ -2726,6 +3882,52 @@ if [[ "$project_main_rc" == 64 && ! -e "$TMP/logs/project-main-reject/task.txt" 
     ok "project workflow requires a linked-worktree Git marker file"
 else
     bad "project workflow main-checkout boundary"
+fi
+
+# The preflight binds only the linked-worktree root marker.  A nested Git
+# marker is rejected as an authority boundary before worker/provider setup;
+# its kind and contents must not be inspected as worktree input.
+project_nested_git_ok=1
+for project_nested_kind in file directory symlink special; do
+    project_nested_dir="$TMP/project-worktree/nested-$project_nested_kind"
+    project_nested_marker="$project_nested_dir/.git"
+    mkdir -p "$project_nested_dir"
+    case "$project_nested_kind" in
+        file) printf 'nested marker\n' > "$project_nested_marker" ;;
+        directory) mkdir "$project_nested_marker"; printf 'secret\n' > "$project_nested_marker/secret" ;;
+        symlink) ln -s "$TMP/project-outside" "$project_nested_marker" ;;
+        special) mkfifo "$project_nested_marker" ;;
+    esac
+    printf 'nested Git marker\n' | AGY_TEST_WORKDIR="$TMP/project-worktree" \
+        run_worker "project-nested-git-$project_nested_kind" --workflow project \
+        > "$TMP/project-nested-git-$project_nested_kind.out" \
+        2> "$TMP/project-nested-git-$project_nested_kind.err"
+    project_nested_rc=$?
+    [[ "$project_nested_rc" == 64 && ! -e "$TMP/logs/project-nested-git-$project_nested_kind/task.txt" ]] \
+        || project_nested_git_ok=0
+    rm -rf "$project_nested_dir"
+done
+if [[ "$project_nested_git_ok" == 1 ]]; then
+    ok "project shell preflight rejects every nested Git marker before provider setup"
+else
+    bad "project shell nested Git marker boundary"
+fi
+
+# On a case-insensitive volume `.GIT` aliases the canonical marker lookup.
+# Directory-entry spelling, not that later lookup, must reject it before the
+# launcher can create task/provider artifacts.
+project_casefold_nested_dir="$TMP/project-worktree/nested-casefold"
+mkdir -p "$project_casefold_nested_dir"
+printf 'nested alias marker\n' > "$project_casefold_nested_dir/.GIT"
+printf 'casefold nested Git marker\n' | AGY_TEST_WORKDIR="$TMP/project-worktree" \
+    run_worker project-nested-git-casefold --workflow project \
+    > "$TMP/project-nested-git-casefold.out" 2> "$TMP/project-nested-git-casefold.err"
+project_casefold_nested_rc=$?
+rm -rf "$project_casefold_nested_dir"
+if [[ "$project_casefold_nested_rc" == 64 && ! -e "$TMP/logs/project-nested-git-casefold/task.txt" ]]; then
+    ok "project shell preflight rejects casefold nested .GIT aliases before provider setup"
+else
+    bad "project shell casefold nested Git marker boundary"
 fi
 
 cp "$TMP/project-worktree/.git" "$TMP/project-marker.saved"
@@ -2740,7 +3942,7 @@ import json, sys
 value = json.load(open(sys.argv[1], encoding="utf-8"))
 assert value["status"] == "failed"
 assert value["phase"] == "blocked"
-assert value["assurance"] == "blocked"
+assert value["assurance"] is None
 assert value["continue_available"] is False
 PY
 then
@@ -2765,7 +3967,7 @@ import json, sys
 value = json.load(open(sys.argv[1], encoding="utf-8"))
 assert value["status"] == "failed"
 assert value["phase"] == "blocked"
-assert value["assurance"] == "blocked"
+assert value["assurance"] is None
 assert value["has_prior_candidate"] is False
 PY
 then
@@ -2787,7 +3989,7 @@ cp "$TMP/logs/project-between-cycle-drift/dispatch-state.json" \
 mv "$TMP/project-worktree/.git" "$TMP/project-between-cycle-drift.marker"
 printf 'gitdir: between-cycle-tamper\n' > "$TMP/project-worktree/.git"
 project_between_calls_before="$(wc -l < "$TMP/project-between-cycle-drift.worker-calls" | tr -d ' ')"
-project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+project_feedback project-between-cycle-drift | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
     control_worker continue project-between-cycle-drift --approve-state-sha "$project_between_sha" \
     > "$TMP/project-between-cycle-drift.continue" 2> "$TMP/project-between-cycle-drift.continue.err"
 project_between_rc=$?
@@ -2836,7 +4038,7 @@ finally:
 PY
     fi
     calls_before="$(wc -l < "$TMP/$job.worker-calls" | tr -d ' ')"
-    project_feedback | control_worker continue "$job" --approve-state-sha "$approved_sha" \
+    project_feedback "$job" | control_worker continue "$job" --approve-state-sha "$approved_sha" \
         > "$TMP/$job.continue" 2> "$TMP/$job.continue.err"
     continue_rc=$?
     calls_after="$(wc -l < "$TMP/$job.worker-calls" | tr -d ' ')"
@@ -2894,7 +4096,7 @@ PY
 )"
 cp "$PROJECT_ORPHAN_JOB/dispatch-state.json" "$TMP/project-orphan-preserve.state-before"
 project_orphan_calls_before="$(wc -l < "$TMP/project-orphan-preserve.worker-calls" | tr -d ' ')"
-project_feedback | control_worker continue project-orphan-preserve \
+project_feedback project-orphan-preserve | control_worker continue project-orphan-preserve \
     --approve-state-sha "$project_orphan_sha" > /dev/null 2>&1
 project_orphan_continue_rc=$?
 control_worker resume project-orphan-preserve \
@@ -2903,7 +4105,7 @@ project_orphan_resume_rc=$?
 control_worker restart project-orphan-preserve \
     --approve-state-sha "$project_orphan_sha" > /dev/null 2>&1
 project_orphan_restart_rc=$?
-project_feedback | control_worker finalize project-orphan-preserve \
+project_feedback project-orphan-preserve | control_worker finalize project-orphan-preserve \
     --approve-state-sha "$project_orphan_sha" --assurance partially_verified > /dev/null 2>&1
 project_orphan_finalize_rc=$?
 control_worker result project-orphan-preserve > /dev/null 2>&1
@@ -2932,26 +4134,91 @@ job = Path(sys.argv[2])
 state, _raw, _sha = module.load_state(job)
 for field in module.STATE_PROJECT_FIELDS:
     state.pop(field)
+for field in module.STATE_V5_FIELDS:
+    state.pop(field)
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS}:
+    state.pop(field)
 state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
 state["schema_version"] = 1
 module.write_atomic(job, module.STATE_NAME, state)
 PY
+legacy_v1_bytecode_manifest() {
+    PYTHONDONTWRITEBYTECODE=1 python3 -B - "$ROOT/skills/agy-worker/runtime/scripts" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+for path in sorted(root.rglob("*")):
+    if path.name == "__pycache__" or path.suffix in {".pyc", ".pyo"}:
+        if path.is_file():
+            print(path.relative_to(root), hashlib.sha256(path.read_bytes()).hexdigest())
+        elif path.is_dir():
+            print(path.relative_to(root), "directory")
+PY
+}
+legacy_v1_bytecode_manifest > "$TMP/legacy-v1.bytecode-before"
 legacy_v1_calls_before="$(wc -l < "$TMP/resume-case.worker-calls" | tr -d ' ')"
 control_worker status resume-case > "$TMP/legacy-v1.status"
 legacy_v1_status_rc=$?
 control_worker result resume-case > "$TMP/legacy-v1.result"
 legacy_v1_result_rc=$?
 legacy_v1_sha="$(status_sha "$TMP/legacy-v1.status")"
+cp "$LEGACY_V1_JOB/dispatch-state.json" "$TMP/legacy-v1.state-before"
 control_worker resume resume-case --approve-state-sha "$legacy_v1_sha" > /dev/null 2>&1
 legacy_v1_resume_rc=$?
-control_worker restart resume-case --approve-state-sha "$legacy_v1_sha" > /dev/null 2>&1
+legacy_v1_resume_unchanged=1
+cmp -s "$TMP/legacy-v1.state-before" "$LEGACY_V1_JOB/dispatch-state.json" \
+    || legacy_v1_resume_unchanged=0
+control_worker restart resume-case --approve-state-sha "$legacy_v1_sha" --format json \
+    > "$TMP/legacy-v1.restart" 2> "$TMP/legacy-v1.restart.err"
 legacy_v1_restart_rc=$?
+legacy_v1_restart_unchanged=1
+cmp -s "$TMP/legacy-v1.state-before" "$LEGACY_V1_JOB/dispatch-state.json" \
+    || legacy_v1_restart_unchanged=0
+PYTHONDONTWRITEBYTECODE=1 python3 -B - "$LEGACY_V1_JOB/selection.json" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_bytes(path.read_bytes() + b" ")
+PY
+control_worker result resume-case > /dev/null 2>&1
+legacy_v1_tampered_result_rc=$?
+legacy_v1_tamper_unchanged=1
+cmp -s "$TMP/legacy-v1.state-before" "$LEGACY_V1_JOB/dispatch-state.json" \
+    || legacy_v1_tamper_unchanged=0
+legacy_v1_bytecode_manifest > "$TMP/legacy-v1.bytecode-after"
+legacy_v1_bytecode_unchanged=1
+cmp -s "$TMP/legacy-v1.bytecode-before" "$TMP/legacy-v1.bytecode-after" \
+    || legacy_v1_bytecode_unchanged=0
 legacy_v1_calls_after="$(wc -l < "$TMP/resume-case.worker-calls" | tr -d ' ')"
 if [[ "$legacy_v1_status_rc" == 0 && "$legacy_v1_result_rc" == 0 \
-        && "$legacy_v1_resume_rc" == 21 && "$legacy_v1_restart_rc" == 64 \
-        && "$legacy_v1_calls_after" == "$legacy_v1_calls_before" ]]; then
-    ok "legacy v1 state remains readable across status, result, resume, and restart surfaces"
+        && "$legacy_v1_resume_rc" == 21 && "$legacy_v1_resume_unchanged" == 1 \
+        && "$legacy_v1_restart_rc" == 64 && "$legacy_v1_restart_unchanged" == 1 \
+        && "$legacy_v1_tampered_result_rc" == 20 && "$legacy_v1_tamper_unchanged" == 1 \
+        && "$legacy_v1_bytecode_unchanged" == 1 \
+        && "$legacy_v1_calls_after" == "$legacy_v1_calls_before" ]] \
+        && PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status" \
+            "$LEGACY_V1_JOB/dispatch-state.json" \
+            "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" <<'PY'
+import importlib.util
+import json, sys
+from pathlib import Path
+old = json.load(open(sys.argv[1], encoding="utf-8"))
+stored = json.load(open(sys.argv[2], encoding="utf-8"))
+spec = importlib.util.spec_from_file_location("agy_dispatch_legacy_assert", sys.argv[3])
+module = importlib.util.module_from_spec(spec); assert spec.loader is not None; spec.loader.exec_module(module)
+assert old["next_action"] == "result"
+assert old["next_action_command"] == '"$PIPELINE/agy-worker.sh" result --job-id resume-case --format json'
+assert old["phase"] is None and old["assurance"] is None
+assert [item["action"] for item in old["available_actions"]] == ["result"]
+assert stored["schema_version"] == 1
+assert stored["attempt"] == old["attempt"] == 2
+assert stored["attempt_origin"] == old["attempt_origin"]
+PY
+then
+    ok "legacy v1 reads safely, rejects selection drift, and remains result-only without recovery authority"
 else
     bad "legacy v1 control-state compatibility"
 fi
@@ -2967,9 +4234,11 @@ module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
 job = Path(job_text)
 before = (job / module.STATE_NAME).read_bytes()
 state, _raw, sha = module.load_state(job)
-verification = {"schema_version": 1, "summary": "retryable injected write failure",
+verification = {"schema_version": 2, "summary": "retryable injected write failure",
     "passed_checks": ["lint"], "failed_checks": ["unit"],
-    "advisory_checks": 0, "missing_checks": 0}
+    "advisory_checks": 0, "missing_checks": 0,
+    "candidate_sha256": state["result_sha256"], "coverage": "partial",
+    "verified_findings": 0, "unresolved_gaps": 1, "diff_review_complete": True}
 original = module.write_atomic
 def fail_state_write(target, name, value):
     if name == module.STATE_NAME:
@@ -3035,12 +4304,12 @@ printf 'project concurrent decision fixture\n' | FAKE_DISPATCH_MODE=heartbeat-su
 wait_terminal project-concurrent-decision "$TMP/project-concurrent-decision.start"
 control_worker status project-concurrent-decision > "$TMP/project-concurrent-decision.status"
 project_concurrent_sha="$(status_sha "$TMP/project-concurrent-decision.status")"
-( project_feedback | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+( project_feedback project-concurrent-decision | FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
     control_worker continue project-concurrent-decision --approve-state-sha "$project_concurrent_sha" \
     > "$TMP/project-concurrent-decision.continue" 2> /dev/null; \
     printf '%s\n' "$?" > "$TMP/project-concurrent-decision.continue.rc" ) &
 project_concurrent_continue_pid=$!
-( project_feedback | control_worker finalize project-concurrent-decision \
+( project_feedback project-concurrent-decision | control_worker finalize project-concurrent-decision \
     --approve-state-sha "$project_concurrent_sha" --assurance partially_verified \
     > "$TMP/project-concurrent-decision.finalize" 2> /dev/null; \
     printf '%s\n' "$?" > "$TMP/project-concurrent-decision.finalize.rc" ) &
@@ -3070,13 +4339,18 @@ control_worker status project-cancel-repair > "$TMP/project-cancel-repair.status
 project_cancel_sha="$(status_sha "$TMP/project-cancel-repair.status")"
 project_cancel_barrier_ready="$TMP/project-cancel-repair.barrier-ready"
 project_cancel_barrier_release="$TMP/project-cancel-repair.barrier-release"
-project_feedback | FAKE_DISPATCH_MODE=heartbeat-forever \
+project_feedback project-cancel-repair | FAKE_DISPATCH_MODE=heartbeat-forever \
     FAKE_HEARTBEAT_BARRIER_READY="$project_cancel_barrier_ready" \
     FAKE_HEARTBEAT_BARRIER_RELEASE="$project_cancel_barrier_release" \
     control_worker continue project-cancel-repair --approve-state-sha "$project_cancel_sha" \
     > "$TMP/project-cancel-repair.continue" 2> "$TMP/project-cancel-repair.continue.err"
 project_cancel_barrier_observed=0
-for (( project_cancel_index=0; project_cancel_index<200; project_cancel_index++ )); do
+# Controller ownership is acknowledged before its strict candidate/worktree
+# preflight.  Under full-suite scheduling that bounded preflight can outlive a
+# two-second fixture poll even though the public startup handshake remains
+# healthy.  Observe the same five-second bound as spawn(); do not manufacture
+# progress or weaken the provider hard deadline.
+for (( project_cancel_index=0; project_cancel_index<500; project_cancel_index++ )); do
     if [[ -e "$project_cancel_barrier_ready" ]]; then
         control_worker status project-cancel-repair > "$TMP/project-cancel-repair.running"
         if [[ "$(status_field "$TMP/project-cancel-repair.running" progress_count)" -ge 1 ]]; then
@@ -3090,8 +4364,11 @@ project_cancel_rc=64
 project_cancel_wait_rc=64
 project_cancel_finalize_rc=64
 project_cancel_result_rc=64
+project_cancel_latency_ok=0
+project_cancel_preserved_rc=64
 if [[ "$project_cancel_barrier_observed" == 1 ]]; then
     project_cancel_running_sha="$(status_sha "$TMP/project-cancel-repair.running")"
+    project_cancel_started_epoch="$(python3 -c 'import time; print(time.time())')"
     control_worker cancel project-cancel-repair --approve-state-sha "$project_cancel_running_sha" \
         > "$TMP/project-cancel-repair.cancel"
     project_cancel_rc=$?
@@ -3100,15 +4377,46 @@ fi
 if [[ "$project_cancel_rc" == 0 ]] \
         && wait_terminal project-cancel-repair "$TMP/project-cancel-repair.cancel"; then
     project_cancel_wait_rc=0
+    if python3 - "$project_cancel_started_epoch" \
+            "$TMP/logs/project-cancel-repair/dispatch-state.json" <<'PY'
+import json
+import sys
+started = float(sys.argv[1])
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+# Measure the terminal state transition itself. The subsequent public wait
+# deliberately rebinds candidate actions and can include a bounded Git scan.
+assert 0 <= state["finished_epoch"] - started < 2.0
+PY
+    then
+        project_cancel_latency_ok=1
+    fi
+    if python3 - "$TMP/logs/project-cancel-repair/dispatch-state.json" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert (state["status"], state["reason"]) == ("cancelled", "cancelled")
+assert state["candidate_recognized"] is True
+assert state["candidate_source"] == "provider_success"
+assert state["result_available"] is True
+assert state["driver_disposition"] == "unreviewed"
+# A local repair cancellation adds no new provider candidate/worktree fact.
+# Preserve the old exact binding and let result/finalize rebind it on use.
+assert state["worktree_reconciliation"] == "unavailable"
+PY
+    then
+        project_cancel_preserved_rc=0
+    fi
     project_cancel_terminal_sha="$(status_sha "$TMP/project-cancel-repair.cancel")"
-    project_feedback | control_worker finalize project-cancel-repair \
+    project_feedback project-cancel-repair | control_worker finalize project-cancel-repair \
         --approve-state-sha "$project_cancel_terminal_sha" --assurance partially_verified \
         > "$TMP/project-cancel-repair.finalize"
     project_cancel_finalize_rc=$?
     control_worker result project-cancel-repair > "$TMP/project-cancel-repair.result"
     project_cancel_result_rc=$?
 fi
-if [[ "$project_cancel_wait_rc" == 0 && "$project_cancel_finalize_rc" == 0 \
+if [[ "$project_cancel_wait_rc" == 0 && "$project_cancel_latency_ok" == 1 \
+        && "$project_cancel_preserved_rc" == 0 \
+        && "$project_cancel_finalize_rc" == 0 \
         && "$project_cancel_result_rc" == 0 ]]; then
     ok "cancelled repair can partially finalize and return the prior bound success"
 else
