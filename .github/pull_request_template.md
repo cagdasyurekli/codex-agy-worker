@@ -13,41 +13,11 @@
 
 <!-- Include exact summaries; mark unrun checks and explain why. -->
 
-- [ ] `./tests/test-qa-gate.sh`
-- [ ] `./tests/test-evidence-receipt.sh`
-- [ ] `./tests/test-evidence-report.sh`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-benchmark.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-persona-evidence.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-workload-profiles.py`
-- [ ] `./tests/test-agy-worker.sh`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py`
-- [ ] `./tests/test-update.sh`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-adoption-measurement.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-update-notifier.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py`
-- [ ] `./tests/test-reporting.sh`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-feedback-triage.py`
-- [ ] `./tests/test-packaging.sh`
-- [ ] `./tests/test-doctor.sh`
-- [ ] `/usr/bin/python3 -I -S -B tests/test-conformance.py`
-- [ ] `./tests/test-proof-demo.sh`
-- [ ] Bash and Python syntax checks
-- [ ] `git diff --check`
-- [ ] Human diff review completed
+- [ ] Owning focused checks were used during iteration; commands and summaries are listed below.
+- [ ] Stable candidate: `./scripts/ci-offline.sh` passed, including syntax/compile and `git diff --check`.
+- [ ] Human diff review completed.
+
+Focused checks and exact summaries:
 
 ## Safety and release
 

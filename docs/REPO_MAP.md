@@ -1,8 +1,23 @@
 # Repository map
 
-This is a concise, hand-maintained map of the repository. Update it when entry points,
-trust boundaries, ownership, or test-suite responsibility changes. It is not generated
-from Graphify or another indexer.
+This is the human-maintained routing and intent map. Update it when entry points,
+trust boundaries, ownership, or test-suite responsibility changes. Keep implementation
+detail in source and durable rationale in `docs/lessons_learned.md`.
+
+Use one relevant row to choose the canonical source and owning check; do not preload
+this whole file. A fresh local Graphify index complements the map only for cross-file
+relationships, paths, and impact analysis. Query it narrowly, then verify material
+edges against the mapped source and tests. Generated `graphify-out/` data is ignored
+local cache, not repository authority, and must not be copied into this map. The
+ignore rule removes Git noise only; keep the cache out of provider context by using a
+clean disposable worktree or an explicit file scope for dispatch.
+
+| Need | Start here | Add Graphify only when |
+|---|---|---|
+| Change one component | Its ownership row and owning suite below | Impact crosses unclear call/import boundaries |
+| Understand lifecycle or trust | The relevant flow and trust-boundary bullets | A path between three or more components is unclear |
+| Update public claims | The mapped source, then the exact README/docs section | Never; source and rendered copy are authoritative |
+| Find historical rationale | One matching lesson heading via `rg` | Never; Graphify is structural, not decision history |
 
 ## Core delegation flow
 
@@ -300,7 +315,7 @@ does not establish same-user tamper resistance.
 | `.github/workflows/feedback-watch.yml` | Weekly/manual Linux metadata-only feedback aggregate; read-only GitHub permissions, no raw issue content in logs or prompts, and no issue mutations | packaging policy tests plus GitHub Actions observation |
 | `README.md` | User setup, examples, current capabilities and limitations | review plus relevant offline suites |
 | `docs/ROADMAP.md` | Dependency-ordered product slices with explicit implemented or deferred status; published v0.5.0 feedback, v0.6.0 Gemini 3.7/hardening, v0.7.0 usability-first, v0.8.0 maintenance/version/quota, and v0.9.0 agy 1.1.16 compatibility scopes. The next-release code gate includes a fail-closed v0.8.0 18-file → current 21-file notifier-ledger refresh migration with positive and adversarial offline coverage; publication remains a separate action. Source, tests, and README remain current-behavior authority, while future tag, release, and live-provider state remain separately verifiable. | human review; publication claims remain prohibited until their gates complete |
-| `AGENTS.md`, `docs/lessons_learned.md`, this file | Durable contributor rules and architecture | `agents-md-auditor` after material changes |
+| `AGENTS.md`, `docs/lessons_learned.md`, this file | Durable contributor rules, context routing, and architecture rationale | `agents-md-auditor` after material changes plus packaging policy checks |
 
 ## Trust boundaries
 

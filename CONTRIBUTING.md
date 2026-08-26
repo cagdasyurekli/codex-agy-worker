@@ -1,8 +1,10 @@
 # Contributing
 
-Thank you for helping improve `codex-agy-worker`. Start with [README.md](README.md),
-[the repository map](docs/REPO_MAP.md), and
-[the architectural lessons](docs/lessons_learned.md).
+Thank you for helping improve `codex-agy-worker`. Human contributors should open
+only the section relevant to the change: [README.md](README.md) for user-facing
+behavior, the matching [repository-map](docs/REPO_MAP.md) row for ownership and tests,
+or the matching [architectural lesson](docs/lessons_learned.md) when prior rationale
+is needed.
 
 ## Before opening a change
 
@@ -19,7 +21,12 @@ when introducing a new gate check.
 
 ## Verify locally
 
-Run the canonical offline CI body before requesting review:
+During implementation, run the owning focused suite from the relevant
+[`REPO_MAP`](docs/REPO_MAP.md) row. Do not repeatedly run the full suite while the
+same candidate bytes are unchanged.
+
+Once the candidate is stable, run the canonical offline CI body once before
+requesting review:
 
 ```bash
 ./scripts/ci-offline.sh
@@ -31,8 +38,9 @@ all thirty-two offline suites. Ambient local tools may still consult ordinary us
 configuration. For a quota-unavailable
 private fork this is evidence to attach to review, not a replacement for the protected
 GitHub `test` check; manually dispatch the exact committed range after Actions becomes
-available and before publication. The expanded command inventory is retained below for
-targeted diagnosis:
+available and before publication. The expanded command inventory is retained below
+for targeted diagnosis. A focused pass accelerates iteration but does not replace the
+stable-candidate full gate:
 
 ```bash
 ./tests/test-qa-gate.sh

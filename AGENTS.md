@@ -15,8 +15,10 @@ is not known before dispatch. Do not require a persona for broad exploration. Pe
 are optional prompt specializations, not capability or approval gates. A broad report
 is useful but is never an exhaustive-security or completeness claim.
 
-Read the Codex quick start in `README.md` first. Use the relevant `REPO_MAP` row or
-lesson heading when needed; do not load full histories without a task-specific reason.
+Start with this file and task-relevant source. Use `rg` to open only the relevant
+row in `docs/REPO_MAP.md` or heading in `docs/lessons_learned.md`; do not preload the
+full README, repository map, lessons, roadmap, or test history. Read `README.md` only
+when the task changes or verifies user-facing behavior or claims.
 
 ## Quality and boundaries
 
@@ -84,8 +86,11 @@ and `verify-job.sh` remain the evidence primitives: do not weaken their checks m
 to obtain a green result. A gate rejection may feed the project repair loop, but only
 Codex's driver-owned checks determine `verified` versus `partially_verified` delivery.
 
-Before review, run `CONTRIBUTING.md`'s complete offline list plus syntax/compile and
-`git diff --check`; run `./ground-truth.sh` for agy behavior. Keep suites offline and
+During implementation, run the owning focused suite from the relevant repository-map
+row. Once candidate bytes are stable, run `./scripts/ci-offline.sh` once before review;
+it already includes every offline suite, syntax/compile checks, and `git diff --check`.
+Reuse that exact-candidate result instead of repeating an unchanged full run. Run
+`./ground-truth.sh` when agy behavior or claims are in scope. Keep suites offline and
 add positive and negative coverage for every new hard boundary.
 
 After material changes to commands, workflow behavior, trust boundaries, tests, or
@@ -129,6 +134,12 @@ sole acceptor of its change; use an independent diff/test review for material wo
 
 Use RTK for supported shell and Git commands and run
 `rtk hook check <exact command...>` before promoting a rewrite. Use `rtk proxy` when
-exact output or shell semantics require it. Use Graphify only when a current graph
-materially improves an architecture/data-flow question; query first and verify every
-material edge against source and tests.
+exact output or shell semantics require it.
+
+`docs/REPO_MAP.md` owns human-maintained intent, entry points, trust boundaries, and
+the owning verification command. Graphify is an ignored local machine index for
+cross-file relationships, paths, and impact analysis. Never load both as competing
+inventories: route with one relevant map row, then use a narrow current-graph query
+only when relationships materially help. Check graph freshness and verify every
+material edge against source and tests; never add generated `graphify-out/` artifacts
+to Git or an agy prompt.

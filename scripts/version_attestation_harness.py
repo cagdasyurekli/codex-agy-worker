@@ -596,22 +596,6 @@ def fake_controller_argv(root: Path) -> list[str]:
     return [sys.executable, "-I", "-S", "-B", "-c", FAKE_CONTROLLER_SOURCE, str(root)]
 
 
-def _wait_marker(path: Path, timeout: float = 1.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            value = path.stat()
-        except FileNotFoundError:
-            time.sleep(0.005)
-            continue
-        return (
-            stat.S_ISREG(value.st_mode)
-            and value.st_uid == os.getuid()
-            and _mode(value) == 0o600
-        )
-    return False
-
-
 def _private_case(parent: Path, name: str) -> Path:
     case = parent / name
     case.mkdir(mode=0o700)
