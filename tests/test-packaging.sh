@@ -2367,8 +2367,8 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/SKILL.md" \
-        && grep -Fq 'tests/test-agy-worker.sh      331-case' "$ROOT/README.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (331 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
+        && grep -Fq 'tests/test-agy-worker.sh      332-case' "$ROOT/README.md" \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (332 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
         && grep -Fq 'tests/test-agy-worker-remediation.py 89-case' "$ROOT/README.md" \
         && grep -Fq 'EXPECTED_CHECKS = 89' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (89 focused cases)' "$ROOT/docs/REPO_MAP.md" \

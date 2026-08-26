@@ -1655,7 +1655,7 @@ tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
-tests/test-agy-worker.sh      331-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-agy-worker.sh      332-case offline dispatcher/installer/routing/lifecycle suite
 tests/test-agy-worker-remediation.py 89-case offline controller-boundary remediation suite
 tests/test-update.sh          324-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
@@ -1702,6 +1702,9 @@ trust boundaries. Keep one-off run history and release notes out of `AGENTS.md`.
   on a best-effort basis. Fixed-POSIX-path evidence runners and the macOS-only
   LaunchAgent notifier are outside that claim.
 - Single worker backend: agy; no alternative worker backend is implemented.
+- Partial/promisor Git clones are unsupported. `start` rejects them synchronously
+  with a sanitized diagnostic before it writes queued lifecycle state or launches a
+  provider; use a full clone for the disposable worker worktree.
 - One audited worktree per job. User-supplied `--add-dir` roots outside `--workdir`
   are rejected; multi-repository mutation is intentionally unsupported.
 - `bulk-test-writer` has been exercised but has not yet produced an accepted real job;
