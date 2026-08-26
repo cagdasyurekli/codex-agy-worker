@@ -3161,6 +3161,14 @@ if [[ "$cancel_rc" == 0 ]]; then
     control_worker wait cancel-active --after-state-sha "$cancel_after" --timeout 2s \
         > "$TMP/cancel-active.wait"
     wait_rc=$?
+    # A successful wait may observe the approved cancel-requested transition
+    # before the controller reaps its local process group and terminalizes.
+    # Follow the current SHA through the existing fixed bound; do not accept a
+    # non-terminal state if that terminal transition never arrives.
+    if [[ "$wait_rc" == 0 ]]; then
+        wait_terminal cancel-active "$TMP/cancel-active.wait"
+        wait_rc=$?
+    fi
 fi
 if [[ "$cancel_rc" == 0 && "$wait_rc" == 0 ]] && python3 - "$TMP/cancel-active.wait" <<'PY'
 import json

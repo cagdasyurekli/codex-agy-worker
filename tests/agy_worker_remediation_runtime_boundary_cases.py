@@ -397,7 +397,11 @@ def run(context: dict[str, object]) -> None:
             os.environ["PATH"] = previous_path
         acknowledged = json.loads(spawn_output.getvalue())
         assert acknowledged["status"] == "queued"
-        handshake_state, _raw, _sha = MODULE.load_state(spawn_job)
+        # The child may atomically replace state as its slow preflight ends.
+        # Read the public asynchronous handoff through the state lock, just as
+        # spawn(), status, and wait do, so an approved replacement cannot be
+        # misreported as external tampering on macOS.
+        handshake_state, _raw, _sha = MODULE.read_state_snapshot(spawn_job)
         assert handshake_state["status"] == "queued"
         assert type(handshake_state["controller_pid"]) is int
         assert handshake_state["started_epoch"] is None
@@ -407,7 +411,7 @@ def run(context: dict[str, object]) -> None:
         ).splitlines()
         spawn_deadline = time.monotonic() + 12.0
         while time.monotonic() < spawn_deadline:
-            spawned, _raw, _sha = MODULE.load_state(spawn_job)
+            spawned, _raw, _sha = MODULE.read_state_snapshot(spawn_job)
             if spawned["status"] in MODULE.TERMINAL:
                 break
             time.sleep(0.02)
