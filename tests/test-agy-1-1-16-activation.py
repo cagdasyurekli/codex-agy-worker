@@ -98,14 +98,15 @@ def _() -> None:
         assert canonical(name).read_bytes() == portable(name).read_bytes()
 
 
-@test("distribution tuple is exact")
+@test("newer distribution observation does not activate the baseline")
 def _() -> None:
     value = json.loads(canonical("agy-distribution-manifest.json").read_text())
     assert value == {
-        "version": VERSION,
-        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.16-6607970839166976/darwin-arm/cli_mac_arm64.tar.gz",
-        "sha512": "fa3a94a7d9d96cb367bf643ecf0da3b4d6b45f3e390ec6db1d699fdac4f7750894617152fc3c1695712a36eee926fff4f00ff4a44d372b3f604cfc9ec6fdbea6",
+        "version": "1.1.22",
+        "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.22-5711547746615296/darwin-arm/cli_mac_arm64.tar.gz",
+        "sha512": "a8121185bd1c3455410ad41e88e2030ea237d496b8e40ccde313bf611c0551840fddf450b45c8e1a2575d9863c990b3324f19eef0f479936df8bfc6e4e80d30b",
     }
+    assert canonical("agy-verified-version.txt").read_text() == VERSION + "\n"
 
 
 @test("matrix byte digest is exact")

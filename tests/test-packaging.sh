@@ -103,6 +103,13 @@ paths.update((
     "tests/test-models-capture-1-1-16-version-evidence.py",
     "tests/test-models-capture-1-1-16-profile.py",
     "tests/test-models-capture-1-1-16-runner.py",
+    "scripts/models_capture_1_1_22_version_evidence.py",
+    "scripts/models_capture_1_1_22_profile.py",
+    "scripts/models_capture_1_1_22_runner.py",
+    "tests/test-models-capture-1-1-22.py",
+    "tests/test-models-capture-1-1-22-version-evidence.py",
+    "tests/test-models-capture-1-1-22-profile.py",
+    "tests/test-models-capture-1-1-22-runner.py",
     "tests/test-agy-1-1-16-activation.py",
 ))
 for relative in sorted(paths):
@@ -295,6 +302,9 @@ required = (
     "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py",
     "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py",
     "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-version-evidence.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-profile.py",
+    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-runner.py",
     "/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py",
     "./tests/test-reporting.sh",
     "/usr/bin/python3 -I -S -B tests/test-feedback-triage.py",
@@ -1144,7 +1154,7 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.10.0"
+assert manifest["version"] == "0.11.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -2518,7 +2528,7 @@ suite_commands += re.findall(
 )
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 32
+    len(suite_commands) == len(set(suite_commands)) == 35
     and all(command in contributing for command in suite_commands)
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
@@ -2538,7 +2548,7 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The thirty-two offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The thirty-five offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
@@ -2578,8 +2588,8 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/SKILL.md" \
-        && grep -Fq 'tests/test-agy-worker.sh      332-case' "$ROOT/README.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (332 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
+        && grep -Fq 'tests/test-agy-worker.sh      334-case' "$ROOT/README.md" \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (334 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
         && grep -Fq 'tests/test-agy-worker-remediation.py 89-case' "$ROOT/README.md" \
         && grep -Fq 'EXPECTED_CHECKS = 89' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (89 focused cases)' "$ROOT/docs/REPO_MAP.md" \
@@ -2656,6 +2666,20 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
             "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-16-runner.py` (58 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline.' \
+            "$ROOT/AGENTS.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-22-version-evidence.py 45-case' \
+            "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-22-version-evidence.py` (45 offline cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-22-profile.py 30-case' \
+            "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-22-profile.py` (30 offline cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-22-runner.py 58-case' \
+            "$ROOT/README.md" \
+        && grep -Fq 'tests/test-models-capture-1-1-22-runner.py` (58 offline cases' \
+            "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-agy-1-1-16-activation.py` (22 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-agy-1-1-16-activation.py 22-case' "$ROOT/README.md" \
@@ -2681,6 +2705,9 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_16_profile.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_16_runner.py" ]] \
+        && [[ -x "$ROOT/scripts/models_capture_1_1_22_version_evidence.py" ]] \
+        && [[ -x "$ROOT/scripts/models_capture_1_1_22_profile.py" ]] \
+        && [[ -x "$ROOT/scripts/models_capture_1_1_22_runner.py" ]] \
         && grep -Fq 'EXPECTED_VERSION = "1.1.16"' \
             "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" \
         && grep -Fq 'private raw `captured` evidence' \
@@ -2713,6 +2740,14 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         && grep -Fq 'a586927552d90295529f3059989a2a8c36c234d41b8f79d61c1c89edbf829e00' \
             "$ROOT/compat/reviews/agy-1.1.16.md" \
         && grep -Fq 'same fourteen exact slugs' "$ROOT/compat/reviews/agy-1.1.16.md" \
+        && [[ -f "$ROOT/compat/reviews/agy-1.1.22.md" ]] \
+        && grep -Fq 'cab32a092e67b5199c1777e45f65623f703a94812b75a0732e7b3156302e9f77' \
+            "$ROOT/compat/reviews/agy-1.1.22.md" \
+        && grep -Fq 'failure_classified: false' \
+            "$ROOT/compat/reviews/agy-1.1.22.md" \
+        && grep -Fq 'does **not** activate 1.1.22' \
+            "$ROOT/compat/reviews/agy-1.1.22.md" \
+        && ! grep -Fq 'same fourteen' "$ROOT/compat/reviews/agy-1.1.22.md" \
         && [[ -f "$ROOT/compat/reviews/codex-0.148.0.md" ]] \
         && grep -Fq '3ba0f711642a888aec92a611a3f3b2211157ff89' \
             "$ROOT/compat/reviews/codex-0.148.0.md" \

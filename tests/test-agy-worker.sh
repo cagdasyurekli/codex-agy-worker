@@ -510,6 +510,9 @@ case "${FAKE_DISPATCH_MODE:-result}" in
         sleep 10
         exit 0
         ;;
+    empty-success)
+        exit 0
+        ;;
     heartbeat-forever)
         printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
         if [[ -n "${FAKE_HEARTBEAT_BARRIER_READY:-}" \
@@ -577,6 +580,7 @@ if [[ "${FAKE_EXIT_CODE:-0}" != "0" ]]; then
     [[ -z "${FAKE_ERROR_LINE:-}" ]] || printf '%s\n' "$FAKE_ERROR_LINE" >&2
     exit "$FAKE_EXIT_CODE"
 fi
+[[ -z "${FAKE_WARNING_LINE:-}" ]] || printf '%s\n' "$FAKE_WARNING_LINE" >&2
 status="${FAKE_AGY_STATUS:-SUCCESS}"
 if [[ "${FAKE_DISPATCH_MODE:-result}" == "result" ]]; then
     printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
@@ -585,6 +589,8 @@ if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
 elif [[ "${FAKE_WORKER_VERIFIED:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"Verified private-worker-prose-sentinel","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
+elif [[ "${FAKE_UTF8_SUMMARY:-0}" == "1" ]]; then
+    envelope='{"status":"completed","summary":"café 😀","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 else
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 fi
@@ -631,8 +637,10 @@ run_worker() {
     FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
     FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
     FAKE_ERROR_LINE="${FAKE_ERROR_LINE:-}" \
+    FAKE_WARNING_LINE="${FAKE_WARNING_LINE:-}" \
     FAKE_QUOTA_ERROR="${FAKE_QUOTA_ERROR:-}" \
     FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
+    FAKE_UTF8_SUMMARY="${FAKE_UTF8_SUMMARY:-0}" \
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
@@ -2628,6 +2636,39 @@ then
     ok "oversized stream events fail closed and never renew the idle lease"
 else
     bad "oversized event heartbeat boundary"
+fi
+
+printf 'exit-zero empty output\n' | FAKE_DISPATCH_MODE=empty-success \
+    run_worker empty-success > "$TMP/empty-success.out" 2> "$TMP/empty-success.err"
+rc=$?
+if [[ "$rc" == 3 && ! -s "$TMP/empty-success.out" \
+        && "$(status_field "$TMP/empty-success.err" reason)" == empty_output ]]; then
+    ok "worker rejects exit-zero empty provider output"
+else
+    bad "worker exit-zero empty-output classification"
+fi
+
+printf 'benign print-mode diagnostics\n' | \
+    FAKE_WARNING_LINE='permission that headless mode cannot prompt for; file write reported failure after content was already written' \
+    FAKE_UTF8_SUMMARY=1 run_worker benign-print-diagnostics \
+    > "$TMP/benign-print-diagnostics.out" 2> "$TMP/benign-print-diagnostics.err"
+rc=$?
+if [[ "$rc" == 0 ]] && python3 - "$TMP/benign-print-diagnostics.out" \
+        "$TMP/logs/benign-print-diagnostics/dispatch-state.json" <<'PY'
+import json
+import sys
+
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+assert result["status"] == "completed"
+assert result["summary"] == "café 😀"
+assert state["status"] == "succeeded"
+assert state["reason"] is None
+PY
+then
+    ok "successful structured output ignores stderr diagnostics and preserves UTF-8"
+else
+    bad "structured-output diagnostic and UTF-8 boundary"
 fi
 
 for classified_case in authentication_text provider_text unknown_text; do
