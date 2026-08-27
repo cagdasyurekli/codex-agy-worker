@@ -152,11 +152,12 @@ default/literal routing, bounded updater, gate-envelope, lifecycle-Git-output,
 Actions-checkout hardening, and the progress-aware per-job dispatch lifecycle. A
 source checkout alone is not proof of publication; verify the exact reviewed tag and
 release state separately.
-The **v0.11.0 source candidate** records agy 1.1.22 as a non-activating observation,
+The **approved v0.11.0 observation-only release scope** records agy 1.1.22 as a
+non-activating observation,
 Codex 0.150.1 as observation-only, and pins `actions/checkout` v6.0.2 by commit. The
 required single no-retry 1.1.22 account inventory call failed without classifiable
-inventory evidence, so the active agy baseline remains 1.1.16 and publication is
-blocked pending an explicit scope decision or new separately authorized evidence. Its
+inventory evidence. The owner explicitly approved publication of this reduced scope;
+that decision does not activate 1.1.22, so the active agy baseline remains 1.1.16. Its
 bounded dogfood record includes accepted Flash-high task/explore and Pro-high task
 candidates plus a rejected Pro-high project candidate; Codex-owned review, tests, and
 exact-head CI remain the acceptance authority. This describes release scope, not proof

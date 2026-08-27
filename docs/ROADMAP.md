@@ -136,13 +136,13 @@ behavior into broader agy `1.1.16` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
-### v0.11.0 release candidate and dogfood record
+### v0.11.0 observation-only release scope and dogfood record
 
-**Status:** Source candidate blocked before publication. The required single no-retry
-1.1.22 account observation failed without inventory evidence; the active baseline
-therefore remains 1.1.16. Publishing a reduced scope or authorizing new evidence is a
-separate user decision, in addition to exact merged `main`, protected CI, annotated
-tag, and GitHub Release readback gates.
+**Status:** Reduced observation-only scope explicitly approved for publication. The
+required single no-retry 1.1.22 account observation failed without inventory evidence;
+the approval does not activate it, so the active baseline remains 1.1.16. A source
+checkout alone is not publication evidence: exact merged `main`, protected CI,
+annotated tag, and GitHub Release readback remain required gates.
 
 This candidate records agy `1.1.22` as a non-activating compatibility observation,
 Codex `0.150.1` as observation-only, pins `actions/checkout` v6.0.2 by immutable
