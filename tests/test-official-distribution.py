@@ -29,11 +29,11 @@ if SPEC is None or SPEC.loader is None:
 distribution = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(distribution)
 
-VERSION = "1.1.16"
-SHA512 = "fa3a94a7d9d96cb367bf643ecf0da3b4d6b45f3e390ec6db1d699fdac4f7750894617152fc3c1695712a36eee926fff4f00ff4a44d372b3f604cfc9ec6fdbea6"
+VERSION = "1.1.22"
+SHA512 = "a8121185bd1c3455410ad41e88e2030ea237d496b8e40ccde313bf611c0551840fddf450b45c8e1a2575d9863c990b3324f19eef0f479936df8bfc6e4e80d30b"
 ARCHIVE_URL = (
     "https://storage.googleapis.com/antigravity-public/antigravity-cli/"
-    "1.1.16-6607970839166976/darwin-arm/cli_mac_arm64.tar.gz"
+    "1.1.22-5711547746615296/darwin-arm/cli_mac_arm64.tar.gz"
 )
 
 
@@ -526,7 +526,7 @@ def _() -> None:
 def _() -> None:
     expect_error(
         "invalid archive policy",
-        lambda: parse(url=replace_url("1.1.16-", "1.1.9-")),
+        lambda: parse(url=replace_url("1.1.22-", "1.1.9-")),
     )
 
 
@@ -534,7 +534,7 @@ def _() -> None:
 def _() -> None:
     expect_error(
         "invalid archive policy",
-        lambda: parse(url=replace_url("6607970839166976", "build-secret")),
+        lambda: parse(url=replace_url("5711547746615296", "build-secret")),
     )
 
 
@@ -564,13 +564,13 @@ def _() -> None:
 def _() -> None:
     value = parse()
     status, detail = distribution.evaluate_manifest(value, "1.1.9", value)
-    assert status == 3 and "1.1.16" in detail and "1.1.9" in detail
+    assert status == 3 and "1.1.22" in detail and "1.1.9" in detail
 
 
 @test("same-version archive build drift is drift-review")
 def _() -> None:
     observed = parse()
-    snapshot = parse(url=replace_url("6607970839166976", "6607970839166975"))
+    snapshot = parse(url=replace_url("5711547746615296", "6607970839166975"))
     assert distribution.evaluate_manifest(observed, VERSION, snapshot)[0] == 3
 
 
@@ -597,6 +597,23 @@ def _() -> None:
             0,
             VERSION,
         )
+        assert [call[0].full_url for call in opener.calls] == [distribution.MANIFEST_URL]
+
+
+@test("observed 1.1.22 against active 1.1.16 is drift-review")
+def _() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        (root / "compat").mkdir()
+        (root / "compat" / "agy-verified-version.txt").write_text(
+            "1.1.16\n", encoding="ascii"
+        )
+        (root / "compat" / "agy-distribution-manifest.json").write_bytes(
+            manifest_bytes()
+        )
+        opener = FakeOpener(FakeResponse(manifest_bytes()))
+        status, detail = distribution.check_production_manifest(root=root, opener=opener)
+        assert status == 3 and "1.1.22" in detail and "1.1.16" in detail
         assert [call[0].full_url for call in opener.calls] == [distribution.MANIFEST_URL]
 
 

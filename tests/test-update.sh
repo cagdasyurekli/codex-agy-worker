@@ -1061,10 +1061,10 @@ rc=$?
 snapshot_ignored_pyc "$TMP/ignored-pyc-after"
 printf '%s\n' "$MANIFEST_TEST_OUTPUT"
 MANIFEST_RESULT="$(printf '%s\n' "$MANIFEST_TEST_OUTPUT" | tail -1)"
-if [[ "$rc" == 0 && "$MANIFEST_RESULT" == "MANIFEST_TEST_RESULT passed=64 failed=0" ]]; then
-    pass=$((pass+64))
+if [[ "$rc" == 0 && "$MANIFEST_RESULT" == "MANIFEST_TEST_RESULT passed=65 failed=0" ]]; then
+    pass=$((pass+65))
 else
-    bad "official distribution policy tests (expected 64 controlled passes)"
+    bad "official distribution policy tests (expected 65 controlled passes)"
 fi
 if cmp -s "$TMP/ignored-pyc-before" "$TMP/ignored-pyc-after"; then
     ok "official distribution policy tests create no ignored bytecode"
