@@ -39,16 +39,17 @@ separately authorized mutation path.
 - Fixed `darwin_arm64` distribution manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
 - Installed interface evidence: `./ground-truth.sh`
 
-The verified baseline is agy `1.1.16` at reviewed source revision
-`efa16f096dc02fb654b7e86958d268195284d014`. The official release/tag/source,
-retained version binding, separately authorized single-call JSON capture, strict
-fourteen-slug inventory, and existing representative single-selector behavior were
-human-reconciled in [`reviews/agy-1.1.16.md`](reviews/agy-1.1.16.md). The active matrix binds every
+The verified active baseline remains agy `1.1.16` at reviewed source revision
+`efa16f096dc02fb654b7e86958d268195284d014`; its accepted inventory is reconciled in
+[`reviews/agy-1.1.16.md`](reviews/agy-1.1.16.md). The separate official 1.1.22
+release/source/distribution and failed single-call account observation are recorded in
+[`reviews/agy-1.1.22.md`](reviews/agy-1.1.22.md) without activation. The active matrix binds every
 adjustable pair to one exact advertised compound slug and records fixed choices as
 non-adjustable. It neither forwards `--effort` nor attests the effective provider
 backend; silent fallback could not be independently excluded.
 
-The complete `1.1.12` reconciliation remains historical evidence in
+The complete active `1.1.16` reconciliation and historical `1.1.12` reconciliation
+remain in [`reviews/agy-1.1.16.md`](reviews/agy-1.1.16.md) and
 [`reviews/agy-1.1.12.md`](reviews/agy-1.1.12.md). The earlier `1.1.16` interface
 observation is retained in
 [`reviews/agy-1.1.16-interface.md`](reviews/agy-1.1.16-interface.md). It records
@@ -63,7 +64,7 @@ in [`reviews/agy-1.1.13-quota-terminal.md`](reviews/agy-1.1.13-quota-terminal.md
 It authorizes only the exact version/shape classifier and sanitized countdown; it is
 not a general quota/rate-limit signature, baseline update, or retry authority.
 
-`agy-distribution-manifest.json` records the observed `1.1.16` version, exact Google
+`agy-distribution-manifest.json` records the observed `1.1.22` version, exact Google
 Storage archive URL, and lowercase SHA-512 tuple. It is an observational snapshot,
 not an authoritative baseline, signature, or permission to download the archive.
 The checker fetches only the fixed small manifest, rejects redirects and malformed
@@ -100,10 +101,10 @@ baseline. For agy, a future version or source change disables reviewed pair
 resolution until another human reconciliation is accepted. Codex drift remains
 observation-only and never disables agy dispatch.
 
-agy `1.1.16` is reconciled in the checked-in metadata. Its successful capture remains
-`captured` evidence rather than self-authorizing output: the active update follows
-from the separate human review of exact official release/source, retained
-version/executable binding, strict reconciled inventory, and canonical matrix bytes.
+agy `1.1.22` is retained as non-activating observation metadata. Its single authorized
+capture ended `child-failed` with no classified or interpreted inventory, so it cannot
+advance the active version, source, binding, or matrix. Another account call is not
+authorized by this record.
 Ordinary version-independent literal model pass-through and agy-owned default
 selection remain independent of that matrix; reviewed model/effort resolution still
 depends on an exact accepted version/source/digest binding.

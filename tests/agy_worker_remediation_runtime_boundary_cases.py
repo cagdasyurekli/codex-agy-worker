@@ -296,7 +296,7 @@ def run(context: dict[str, object]) -> None:
         # slow exact version/help probe therefore cannot consume the provider
         # hard or idle lease; the provider still gets its full bounded window.
         expired_job, expired_bin, expired_calls, _expired_fake, _expired_command = fixture(
-            "deadline-preflight", idle_seconds=0.01, hard_seconds=0.50, max_seconds=5,
+            "deadline-preflight", idle_seconds=0.25, hard_seconds=0.50, max_seconds=5,
         )
         previous_delay = os.environ.get("FAKE_DIRECT_HELP_DELAY")
         os.environ["FAKE_DIRECT_HELP_DELAY"] = "0.75"
@@ -316,7 +316,7 @@ def run(context: dict[str, object]) -> None:
         # local launch guard, not provider execution.  Simulate a slow safe
         # Git path without relaxing any provider timeout.
         scan_job, scan_bin, scan_calls, _scan_fake, _scan_command = fixture(
-            "deadline-worktree-scan", idle_seconds=0.01, hard_seconds=0.50, max_seconds=5,
+            "deadline-worktree-scan", idle_seconds=0.25, hard_seconds=0.50, max_seconds=5,
         )
         original_baseline = MODULE._bound_worktree_baseline
 

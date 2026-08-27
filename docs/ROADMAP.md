@@ -104,7 +104,8 @@ The accepted agy `1.1.16` reconciliation combines documented `--effort` and
 machine-readable `models` surfaces with one separately authorized, version-bound JSON
 model capture. The exact unchanged 14-slug list, its SHA-256, reviewed source
 revision, inventory binding, and bounded behavior limits live in
-[`../compat/reviews/agy-1.1.16.md`](../compat/reviews/agy-1.1.16.md). The complete
+[`../compat/reviews/agy-1.1.16.md`](../compat/reviews/agy-1.1.16.md). The separate
+[`1.1.22` observation](../compat/reviews/agy-1.1.22.md) is non-activating, and the
 [`1.1.12` reconciliation](../compat/reviews/agy-1.1.12.md) remains historical evidence.
 Agent and plugin
 catalogs were not part of that bounded review and remain outside this contract.
@@ -121,7 +122,7 @@ behavior into broader agy `1.1.16` promises:
   documented commands and validate their expected semantic output; neither an unknown
   subcommand's exit code nor generic usage text is compatibility evidence.
 - Do not assume agy's separate `--model` and `--effort` flags compose safely.
-  The current bounded `1.1.16` JSON inventory advertises the same compound slugs.
+  The current bounded `1.1.16` JSON inventory advertises the compound slugs.
   Official `1.1.16` source and documentation were human-reconciled, but
   this repository has not yet completed evidence that establishes dual-selector
   composition or precedence. G1 therefore resolves a verified base/effort pair to
@@ -134,6 +135,39 @@ behavior into broader agy `1.1.16` promises:
 
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
+
+### v0.11.0 observation-only release scope and dogfood record
+
+**Status:** Reduced observation-only scope explicitly approved for publication. The
+required single no-retry 1.1.22 account observation failed without inventory evidence;
+the approval does not activate it, so the active baseline remains 1.1.16. A source
+checkout alone is not publication evidence: exact merged `main`, protected CI,
+annotated tag, and GitHub Release readback remain required gates.
+
+This candidate records agy `1.1.22` as a non-activating compatibility observation,
+Codex `0.150.1` as observation-only, pins `actions/checkout` v6.0.2 by immutable
+commit, and aligns the Codex plugin manifest to `0.11.0` source metadata.
+
+The release campaign also exercised the public worker surface against this repository:
+
+- A Flash-high `task` produced the checkout-pin candidate and a separate Flash-high
+  `explore` produced a read-only repository inventory. Codex reviewed material claims,
+  ran the owning checks, and retained no exhaustive-coverage claim.
+- A Pro-high `task` produced the Codex compatibility candidate. Codex independently
+  corrected, tested, reviewed, and accepted the exact candidate that reached protected
+  CI.
+- A Pro-high `project` for the agy reconciliation produced physical edits but no valid
+  structured envelope. One bounded same-conversation repair repeated the same contract
+  failure. The candidate was rejected; there was no automatic retry or model change,
+  and the approved Codex fallback rebuilt and verified the slice.
+- The 1.1.22 help surface exposes slash-command/skill expansion but no reviewed isolated
+  owner-private skill root. The campaign therefore did not modify `~/.gemini` or claim a
+  headless `/skill-name` canary.
+
+These observations keep provider terminal state, structured output, physical diff,
+Receipt/gate state, and Codex disposition separate. They establish bounded workflow
+exercise, not a general model ranking, provider-quality guarantee, persona promotion,
+or proof that delegation reduces Codex allowance usage.
 
 ### Historical v0.2.0 release scope
 
@@ -165,10 +199,10 @@ exact fixed GitHub REST paths with no ambient proxy or redirect path, and a boun
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
 ambient-Git transport path and is not claimed hardened by this slice. The agy
-`1.1.16` reconciliation advances the exact version/source/distribution, inventory,
-and matrix bindings after one separately authorized no-retry JSON capture and human
-offline review; all fourteen slugs remain unchanged from the accepted 1.1.12
-inventory. P2-B/P2-C remain deferred. Ordinary agy-owned default
+`1.1.16` reconciliation remains the exact active version/source/inventory/matrix
+binding. The separately reviewed 1.1.22 release/source/distribution is observational;
+its one authorized no-retry JSON capture failed without inventory evidence and did not
+advance metadata. P2-B/P2-C remain deferred. Ordinary agy-owned default
 dispatch and explicitly approved literal pass-through remain operational during
 future version drift; reviewed model/effort resolution stays fail-closed.
 
@@ -211,7 +245,8 @@ notifier snapshot whose source bytes changed reports `maintenance-required` and 
 for an explicit owner `refresh`; malformed or unsafe state remains inert. The earlier
 agy 1.1.16 interface observation remains a historical non-activating record; the later
 exact capture, inventory binding, and human reconciliation activate the 1.1.16
-baseline and unchanged 14-slug matrix. Codex 0.150.1 is an observational baseline
+baseline and unchanged 14-slug matrix. The later 1.1.22 failed capture is retained as
+non-activating evidence. Codex 0.150.1 is an observational baseline
 with no agy authority. For Issue #59, only the exact
 reviewed agy 1.1.13
 quota terminal is classified as exit 24 with a bounded countdown. No raw error text is
@@ -358,6 +393,12 @@ history. The runner cannot authorize an account call, accept inventory, or advan
 metadata; strict offline normalization and the separate human reconciliation accepted
 the unchanged fourteen-slug inventory and activated the 1.1.16 bindings.
 
+The fixed `1.1.22` chain repeats the same reviewed design with exact
+version/source/distribution and self-pins. One separately authorized no-retry account
+capture launched exactly one child and exited `1`; its private streams and sanitized
+unclassified failure record were retained. No inventory was interpreted, no retry was
+made, and the 1.1.22 bindings were not activated.
+
 The historical authorized no-retry `1.1.12` capture established eleven slugs. A later
 separately authorized no-retry capture completed with child exit `0`, one Popen,
 empty post-child scratch, and an exact marker/record digest chain. Strict offline
@@ -454,18 +495,17 @@ provenance, code-signing verification, or OS attestation.
   version/archive URL/SHA-512 tuple, and never requests the archive. Its checked-in
   tuple is an observational same-version change detector, not a verified release,
   source revision, signature, or baseline. Official release, source, documentation,
-  and distribution evidence expose `1.1.16`. They were inputs to the separately
-  accepted human reconciliation; the canary alone did not advance the reviewed
-  `1.1.16` baseline or activate G1.
+  and distribution evidence expose `1.1.22`. They are non-activating review inputs;
+  the canary and failed capture did not advance the reviewed `1.1.16` baseline or
+  activate a 1.1.22 G1 matrix.
 - **Baseline advancement:** A maintainer may advance either verified baseline only
   after reconciling official docs, release notes, and source; regenerating the local
   `./ground-truth.sh` evidence for agy and equivalent documented Codex CLI inventory;
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. agy `1.1.16` was advanced only after
-  its official evidence, retained version binding, successful account capture,
-  strict reconciled inventory, and offline gates were human-reviewed. Any later
+  The watch never performs this reconciliation. agy `1.1.16` remains active because
+  1.1.22 lacks a successful account capture and strict reconciled inventory. Any later
   version or source movement returns the result to
   drift-review until another reconciliation is accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
@@ -1153,6 +1193,36 @@ checks remain mandatory; age alone never authorizes deletion.
 - **Size:** M.
 - **Done/exit criteria:** Implement only after lifecycle usage supplies evidence that
   manual cleanup is a recurring problem.
+
+#### P2-D — Driver-side Codex usage observation
+
+**Status:** [Feature request #69](https://github.com/cagdasyurekli/codex-agy-worker/issues/69);
+release-external and not implemented in v0.11.0.
+
+- **User job:** Observe the Codex orchestration cost around an explicitly selected main
+  task and explicit subagent tasks, then run a separately approved directional A/B
+  protocol without claiming billing or quota savings.
+- **Intended surface:** `codex-usage-report.sh --thread-id ID
+  [--subagent-thread-id ID ...] [--account-usage] [--session FILE ...]`.
+- **Primary source:** An explicitly approved, Codex-version-bound
+  `account/usage/read(threadId)` observation. If `threadUsage` is absent, report
+  `unavailable`; never derive credit, price, or remaining quota from token counters.
+- **Session boundary:** Read only explicitly named session files and allowlisted
+  `token_count`/lifecycle fields. Never scan `~/.codex`, emit raw session content,
+  prompts, tool arguments, repository text, account identity, paths, or thread IDs.
+- **Report semantics:** Keep input, cached input, net-new input, output, reasoning-output
+  subset, tool/wait counts, measurement window, main task, subagent tasks, agy usage,
+  Codex usage, and rate-limit observation distinct. Aggregate only when every task is
+  explicitly supplied.
+- **A/B boundary:** Use three matched fresh-task repetitions with frozen repository
+  base, prompt, Codex model/effort, acceptance checks, time budget, and agy model/effort.
+  No subagents or concurrent Codex work. Every provider/account-backed run requires
+  separate approval and is never auto-started.
+- **Acceptance:** Fail closed for unknown Codex protocol versions, counter reset or
+  regression, duplicates, malformed JSON, missing rate limits, `threadUsage: null`, and
+  directory-scan attempts. Negative tests reject money/quota inference, sensitive-field
+  leakage, automatic routing changes, and general model/delegation claims. Without
+  comparable credit data, label results `directional`.
 
 ### Deferred or rejected
 

@@ -58,7 +58,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The thirty-two offline suites need no agy provider call, network access, API key, or GitHub login.
+The thirty-five offline suites need no agy provider call, network access, API key, or GitHub login.
 
 ### GitHub Actions cost and quota fallback
 
@@ -79,7 +79,7 @@ If a private fork's quota is unavailable, run the same fail-fast offline suite l
 ./scripts/ci-offline.sh
 ```
 
-It runs the static checks and all thirty-two offline suites without requiring a
+It runs the static checks and all thirty-five offline suites without requiring a
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
@@ -152,6 +152,16 @@ default/literal routing, bounded updater, gate-envelope, lifecycle-Git-output,
 Actions-checkout hardening, and the progress-aware per-job dispatch lifecycle. A
 source checkout alone is not proof of publication; verify the exact reviewed tag and
 release state separately.
+The **approved v0.11.0 observation-only release scope** records agy 1.1.22 as a
+non-activating observation,
+Codex 0.150.1 as observation-only, and pins `actions/checkout` v6.0.2 by commit. The
+required single no-retry 1.1.22 account inventory call failed without classifiable
+inventory evidence. The owner explicitly approved publication of this reduced scope;
+that decision does not activate 1.1.22, so the active agy baseline remains 1.1.16. Its
+bounded dogfood record includes accepted Flash-high task/explore and Pro-high task
+candidates plus a rejected Pro-high project candidate; Codex-owned review, tests, and
+exact-head CI remain the acceptance authority. This describes release scope, not proof
+that a v0.11.0 tag or GitHub Release exists.
 P2-B and P2-C remain deferred because their required live terminal-event and
 recurring-accumulation evidence does not exist.
 Source, tests, and this README remain
@@ -184,11 +194,12 @@ POSIX-compatible Bash/Python/Git environment and some canonical evidence command
 fixed POSIX paths. Native Windows is untested; WSL or another compatible environment
 may work on a best-effort basis. The optional daily notifier is specifically a macOS
 LaunchAgent.
-The active reviewed model/effort matrix is bound to agy `1.1.16`. Its exact official
-release/source, retained snapshot, separately authorized single-call account capture,
-unchanged 14-slug inventory, and pair-to-compound-slug mappings are reconciled in
-[`compat/reviews/agy-1.1.16.md`](compat/reviews/agy-1.1.16.md). The complete
-[`1.1.12` reconciliation](compat/reviews/agy-1.1.12.md) remains historical evidence,
+The active reviewed model/effort matrix remains bound to agy `1.1.16`; its exact
+accepted evidence and pair-to-compound-slug mappings are reconciled in
+[`compat/reviews/agy-1.1.16.md`](compat/reviews/agy-1.1.16.md). The separate
+[`1.1.22` observation](compat/reviews/agy-1.1.22.md) records official evidence and the
+bounded failed account capture without activating metadata. The complete
+[`1.1.12`](compat/reviews/agy-1.1.12.md) reconciliation remains historical evidence,
 and the earlier
 [`1.1.16` interface observation](compat/reviews/agy-1.1.16-interface.md) records the
 non-activating evidence that triggered the later capture and review. The agy-owned
@@ -545,7 +556,8 @@ Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid 
 with a preserved valid candidate · `26` direct-selection preflight failure · `64` invalid usage.
 
 The reserved `17`–`19` exits require an exact, version-bound reviewed signature.
-The current agy `1.1.16` signature allowlist is intentionally empty, so an unproven
+The accepted agy `1.1.16` baseline and observed `1.1.22` surface have no reviewed
+signature allowlist, so an unproven
 provider timeout, authentication error, or provider outage remains
 `agy_failed_unclassified` with exit `5`; the supervisor does not infer a reason from
 free-form stderr.
@@ -1404,6 +1416,15 @@ baseline/matrix. One separately authorized no-retry capture succeeded; its raw m
 became input to strict offline normalization and human reconciliation, never activation
 authority by itself.
 
+The `1.1.22` observation repeats that fixed-contract design in
+`models_capture_1_1_22_version_evidence.py`,
+`models_capture_1_1_22_profile.py`, and
+`models_capture_1_1_22_runner.py`. The production files differ from the reviewed
+1.1.16 design only in exact version/source/distribution/binding constants and their
+self-pins plus fail-closed nonzero-stream preservation. The separately authorized
+no-retry account capture launched one child, exited `1`, and produced no classifiable
+inventory. It was not retried; 1.1.22 therefore did not advance the active baseline.
+
 After process-group closure, every capture-owned TMP/XDG/cwd directory must again be
 the same empty directory or publication fails closed. Successful bounded exit-zero
 execution publishes otherwise uninterpreted private mode-`0600` stdout/stderr, exact
@@ -1414,8 +1435,12 @@ select a model, route work, or prove a provider backend. Output interpretation,
 including authentication, license, permission, quota, rate-limit, interactive, and
 inventory semantics, belongs to later offline reconciliation. Capture itself rejects
 nonzero, overflow, timeout, identity/scratch drift, or publication failure with no
-final marker. There is no login helper, prompt, retry, fallback, task dispatch, or
-provider job. The CLI prints only sanitized JSON containing the private artifact
+final marker. A completed bounded nonzero child preserves mode-`0600` raw streams and
+a sanitized `child-failed` record in the owner-private root before returning failure;
+the record explicitly leaves failure classification false. Earlier-stage failures do
+not manufacture stream evidence. There is no login helper, prompt, retry, fallback,
+task dispatch, or provider job. On success the CLI prints only sanitized JSON
+containing the private artifact
 root, capture SHA-256, and `captured` status; it never prints raw streams or the
 account HOME. All checked-in coverage uses synthetic account roots; this runner's
 presence neither performs nor authorizes a real-account call. Source-contract
@@ -1432,11 +1457,14 @@ retried or reconstructed. Its historical hashes and claim limits remain recorded
 [`compat/reviews/agy-1.1.12.md`](compat/reviews/agy-1.1.12.md). The separately
 authorized 1.1.16 capture normalized to the same fourteen slugs; its exact bindings
 and activation decision are recorded in
-[`compat/reviews/agy-1.1.16.md`](compat/reviews/agy-1.1.16.md).
+[`compat/reviews/agy-1.1.16.md`](compat/reviews/agy-1.1.16.md). The separately
+authorized 1.1.22 capture failed before inventory interpretation and is recorded as a
+non-activating observation in
+[`compat/reviews/agy-1.1.22.md`](compat/reviews/agy-1.1.22.md).
 
-The human-reviewed agy baseline is `1.1.16` at source revision
-`efa16f096dc02fb654b7e86958d268195284d014`. The checked-in distribution tuple
-remains an observational change detector rather than a trust root: a same-version
+The human-reviewed active agy baseline remains `1.1.16` at source revision
+`efa16f096dc02fb654b7e86958d268195284d014`. The checked-in 1.1.22 distribution tuple
+is an observational drift detector rather than a trust root: a same-version
 archive build, URL, or SHA-512 change requires review and cannot itself activate or
 advance compatibility metadata.
 
@@ -1528,8 +1556,9 @@ to GitHub or feeds issue text to an agent.
 
 ## agy behaviour worth knowing
 
-Most facts below were measured on macOS with agy 1.1.9 on 2026-08-01. The current
-1.1.16 model reconciliation and historical 1.1.12 record are separate. Run
+Most facts below were measured on macOS with agy 1.1.9 on 2026-08-01. The active
+1.1.16 model reconciliation, blocked 1.1.22 observation, and historical 1.1.12 record
+are separate. Run
 `./ground-truth.sh` against
 your own install rather than treating historical observations as a current contract.
 Its default interface phase calls only `agy --version` and `agy --help`; use
@@ -1539,8 +1568,10 @@ account-owned agy state such as models, agents, plugins, and local permissions.
 - **`--print` must be built last.** The prompt is its argument value; agy ignores stdin
   in print mode and will read the next flag as the message. `agy --print --sandbox "x"`
   sends the literal string `--sandbox` as the prompt.
-- **Exit 0 does not mean success.** agy exits 0 with empty stdout when a tool needed a
-  permission headless mode cannot prompt for. The reason goes to stderr only.
+- **Exit 0 plus empty output does not mean success.** agy 1.1.18 fixed one dropped
+  state-stream case and 1.1.20 stopped treating benign tool/permission errors as fatal
+  print-mode failures. The worker still rejects any exit-zero empty stream and accepts
+  a terminal result only through its bounded structured envelope.
 - **`--agent` silently disables `--json-schema`.** `result.structured_output` comes back
   null and the worker answers in prose. agy also accepts *any* `--agent` name without
   error, so a typo yields a default worker that believes it is a specialist.
@@ -1631,6 +1662,9 @@ scripts/models_capture_1_1_12_runner.py fixed 1.1.12 explicit-account capture-on
 scripts/models_capture_1_1_16_version_evidence.py fixed 1.1.16 source/snapshot version-only evidence bridge
 scripts/models_capture_1_1_16_profile.py fixed 1.1.16 process-inert capture profile bridge
 scripts/models_capture_1_1_16_runner.py fixed 1.1.16 explicit-account capture-only bridge
+scripts/models_capture_1_1_22_version_evidence.py fixed 1.1.22 source/snapshot version-only evidence bridge
+scripts/models_capture_1_1_22_profile.py fixed 1.1.22 process-inert capture profile bridge
+scripts/models_capture_1_1_22_runner.py fixed 1.1.22 explicit-account capture-only bridge
 scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
 scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
@@ -1659,9 +1693,9 @@ tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
-tests/test-agy-worker.sh      332-case offline dispatcher/installer/routing/lifecycle suite
+tests/test-agy-worker.sh      334-case offline dispatcher/installer/routing/lifecycle suite
 tests/test-agy-worker-remediation.py 89-case offline controller-boundary remediation suite
-tests/test-update.sh          324-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
+tests/test-update.sh          325-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py 65-case fixed-endpoint transport adversary harness
 tests/test-compatibility-probe.py test-only timeout/output/signal/version adversary harness
@@ -1678,6 +1712,9 @@ tests/test-models-capture-1-1-12-runner.py 56-case offline fixed 1.1.12 capture-
 tests/test-models-capture-1-1-16-version-evidence.py 45-case offline fixed 1.1.16 version-evidence suite
 tests/test-models-capture-1-1-16-profile.py 30-case offline fixed 1.1.16 capture-profile suite
 tests/test-models-capture-1-1-16-runner.py 58-case offline fixed 1.1.16 capture-runner suite (88 combined with profile)
+tests/test-models-capture-1-1-22-version-evidence.py 45-case offline fixed 1.1.22 version-evidence suite
+tests/test-models-capture-1-1-22-profile.py 30-case offline fixed 1.1.22 capture-profile suite
+tests/test-models-capture-1-1-22-runner.py 58-case offline fixed 1.1.22 capture-runner suite (88 combined with profile)
 tests/test-agy-1-1-16-activation.py 22-case offline active-baseline/inventory-binding suite
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
 tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/maintenance suite
