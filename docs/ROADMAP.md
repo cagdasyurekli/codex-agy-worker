@@ -156,7 +156,10 @@ offline and bounded-lifecycle claim, not a live-provider guarantee.
 The published v0.6.0 release scope added the human-reconciled Gemini 3.7 Flash
 low/medium/high mappings plus capture-child mode and dispatch-state snapshot hardening.
 The v0.7.0 usability-first project workflow, v0.8.0 maintenance/diagnostics slice,
-and v0.9.0 agy 1.1.16 compatibility work are published.
+v0.9.0 agy 1.1.16 compatibility work, and v0.10.0 lifecycle, recovery, verification,
+and Codex-owned assurance scope are published. Immutable historical v0.10.0 tag bytes
+cannot be rewritten; this source alignment establishes repository truth without
+retroactively altering that published tag.
 Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
@@ -183,14 +186,14 @@ labels, or state.
 ### Usability-first project workflow
 
 **Current status:** Implemented, offline-verified, and published in v0.7.0.
-The product is moving from a mechanical-task admission model to three explicit Codex
+The product provides three explicit Codex
 workflows: read-only `explore`, implementation `task`, and repo-wide iterative
 `project`. Unknown final file lists, broad architecture work, missing initial test
 commands, and omission of a persona are not admission failures.
 
-Project jobs will bind a bounded local cycle count and let Codex provide strict,
+Project jobs bind a bounded local cycle count and let Codex provide strict,
 sanitized, driver-owned verification JSON to `continue` the exact conversation after
-an observed check failure. `finalize` will record only Codex's `verified`,
+an observed check failure. `finalize` records only Codex's `verified`,
 `partially_verified`, or `blocked` assurance conclusion; it will not execute the JSON
 as a command or allow agy to self-assign quality. A useful unresolved candidate is
 preserved for review instead of being silently retried, discarded, or presented as
@@ -200,6 +203,8 @@ complete. Personas remain optional prompt specializations.
 
 **Current status:** The maintenance/notifier and quota-diagnostic work was published
 in v0.8.0. The agy 1.1.16 active-baseline reconciliation was published in v0.9.0.
+The legacy notifier refresh migration, bounded lifecycle recovery, driver-owned
+verification, and Codex-owned assurance scope were published in v0.10.0.
 
 The project updater resolves one bounded annotated project tag to a commit. A valid
 notifier snapshot whose source bytes changed reports `maintenance-required` and waits
@@ -213,16 +218,16 @@ quota terminal is classified as exit 24 with a bounded countdown. No raw error t
 public, and no retry, restart, model change, provider call, or metadata activation is
 automatic.
 
-**Implemented next-release gate — legacy notifier refresh migration:** v0.9.0
+**Published v0.10.0 scope — legacy notifier refresh migration:** v0.9.0
 expanded the notifier's closed source manifest from the v0.8.0 18-file set to 21
-files. `refresh` now recognizes only that explicitly allowlisted immediately-prior
+files. In v0.10.0, `refresh` recognizes only that explicitly allowlisted immediately-prior
 ledger shape, validates its account/source/Git binding and installed bytes with the
 matching historical manifest, completes the serialized authenticated uninstall, and
 installs the current manifest without manual private-state editing. Current install,
 status, run, and uninstall paths remain strict. Offline coverage includes the positive
 18→21 migration and negative unknown-key, digest, identity, replacement-file,
 tombstone, launchd-state, and refresh-only cases. No generic schema relaxation or
-silent ledger rewrite is accepted. Publication remains a separate release action.
+silent ledger rewrite is accepted.
 
 The provider-independent inventory parser is also implemented offline. It treats
 each line as one semantic inventory entry, requires complete one-time coverage of the
@@ -545,8 +550,7 @@ provenance, code-signing verification, or OS attestation.
 
 ### G1 — Explicit Model & Effort Selection
 
-**Status:** Implemented, merged, and offline-verified; release remains separately
-approval-gated.
+**Status:** Implemented, offline-verified, and published in v0.2.0.
 
 - **User job:** Select an exact advertised agy model or a verified base-model/effort
   pair directly, without disguising the choice as a tier or allowing a recommendation
@@ -649,8 +653,7 @@ approval-gated.
 
 #### P0-A — Evidence Receipt v1
 
-**Status:** Implemented, merged, and offline-verified; release remains separately
-approval-gated.
+**Status:** Implemented, offline-verified, and published in v0.2.0.
 
 - **User job:** Preserve what the driver checked, against which immutable base and
   policy, and what the gate concluded without sharing source, prompts, raw logs, or
@@ -755,8 +758,7 @@ receipt or creating chronology ambiguity.
 
 #### P0-B — Human Report renderer
 
-**Status:** Implemented, merged, and offline-verified; release remains separately
-approval-gated. Receipt-only selection and recommendation-record
+**Status:** Implemented, offline-verified, and published in v0.2.0. Receipt-only selection and recommendation-record
 validation is side-effect-free; canonical recommendation generation remains only an
 explicit pre-gate publication-input check.
 

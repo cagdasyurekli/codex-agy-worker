@@ -139,7 +139,11 @@ maintenance/rebind handling, bounded annotated-tag resolution, version-drift
 observations, and the exact agy 1.1.13 quota-terminal classification. The published
 **v0.9.0** scope activates the exact agy 1.1.16 version/source/distribution and
 unchanged 14-slug inventory binding, and accepts Codex 0.148.0 as an observational
-baseline. The published v0.5.0
+baseline. The published **v0.10.0** scope includes the lifecycle, recovery,
+verification, and Codex-owned assurance scope, including the legacy notifier 18→21 file
+refresh migration, bounded lifecycle recovery, and driver-owned verification. Immutable
+historical v0.10.0 tag bytes cannot be rewritten; this source and package alignment
+establishes repository truth without retroactively altering that published tag. The published v0.5.0
 scope added sanitized bug/improvement drafts with exact double confirmation,
 private-only security drafts, and the bounded metadata-only feedback aggregate and
 weekly/manual watcher. The prior v0.4.0 scope includes daily compatibility observation,
@@ -1680,7 +1684,7 @@ tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/ma
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite
-tests/test-packaging.sh       381-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       390-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
