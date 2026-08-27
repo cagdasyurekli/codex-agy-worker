@@ -20,11 +20,12 @@ interface evidence only; it is not proof of provider, sandbox, or project behavi
 
 ## Decision and limits
 
-Codex `0.148.0` is accepted as the current observational compatibility baseline.
-`compat/codex-verified-version.txt` and `compat/codex-upstream-head.txt` bind the
-stable tag and exact release commit above, so a later stable tag or a changed exact
-tag reference is reported as drift-review. This activation is limited to compatibility
-metadata; it does not infer future-version behavior.
+At its 2026-08-20 review, Codex `0.148.0` was accepted as the observational
+compatibility baseline. It is superseded by the separately reviewed `0.150.1` record.
+At that review, `compat/codex-verified-version.txt` and
+`compat/codex-upstream-head.txt` bound the stable tag and exact release commit above;
+while active, a later stable tag or a changed peeled release commit would have been
+reported as drift-review. The active metadata no longer binds this superseded record.
 
 Codex compatibility is observation-only. This record does not gate agy dispatch,
 resolve a model or effort, alter user-selected options, authenticate, send a request,

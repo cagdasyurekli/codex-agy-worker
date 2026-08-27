@@ -193,9 +193,9 @@ and the earlier
 [`1.1.16` interface observation](compat/reviews/agy-1.1.16-interface.md) records the
 non-activating evidence that triggered the later capture and review. The agy-owned
 default and explicit literal pass-through remain version-independent.
-Codex `0.148.0` is the accepted observational Codex baseline; it does not grant agy
+Codex `0.150.1` is the accepted observational Codex baseline; it does not grant agy
 dispatch or model-selection authority. See
-[`compat/reviews/codex-0.148.0.md`](compat/reviews/codex-0.148.0.md).
+[`compat/reviews/codex-0.150.1.md`](compat/reviews/codex-0.150.1.md).
 
 Before spending provider quota, run the offline doctor against the repository you
 plan to delegate:
