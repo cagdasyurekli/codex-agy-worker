@@ -137,7 +137,7 @@ path = Path(sys.argv[1])
 info = path.lstat()
 assert stat.S_ISREG(info.st_mode)
 data = path.read_bytes()
-assert sha256(data).hexdigest() == "8a8a96b8e9681ecc73780088cca5b0c6dacee68dc5b19e9770a7b6c69f62bacc"
+assert sha256(data).hexdigest() == "0b6ac792577aea2da8ef9985caf600516eb8721ca8e3925c02eb58e0df74b894"
 text = data.decode("utf-8")
 required = (
     "  pull_request:\n",
@@ -148,7 +148,7 @@ required = (
     "    timeout-minutes: 60\n",
     "      base_sha:\n",
     "      head_sha:\n",
-    "      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
+    "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
     "          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.ref }}\n",
     "      - name: committed diff hygiene\n",
     "          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name == 'workflow_dispatch' && 'push' || github.event_name }}\n",
@@ -161,6 +161,61 @@ assert all(text.count(item) == 1 for item in required)
 assert "  push:\n" not in text
 assert "git fetch" not in text
 assert "run: git diff --check\n" not in text
+assert "actions/checkout@v4" not in text
+PY
+}
+
+workflow_checkout_policy_contract() {
+    python3 - "$1" <<'PY'
+from pathlib import Path
+import stat
+import sys
+
+target = Path(sys.argv[1])
+if target.is_file():
+    workflow_files = [target]
+elif target.is_dir():
+    workflow_files = sorted(set(target.glob("*.yml")) | set(target.glob("*.yaml")))
+else:
+    raise AssertionError(f"Invalid target: {target}")
+
+assert len(workflow_files) > 0, "No workflows found"
+PINNED = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+EXPECTED_BLOCKS = {
+    "compatibility-watch.yml": (
+        f"      - uses: {PINNED}\n"
+        "        with:\n"
+        "          persist-credentials: false\n"
+    ),
+    "feedback-watch.yml": (
+        f"      - uses: {PINNED}\n"
+        "        with:\n"
+        "          persist-credentials: false\n"
+    ),
+    "test.yml": (
+        f"      - uses: {PINNED}\n"
+        "        with:\n"
+        "          fetch-depth: 0\n"
+        "          persist-credentials: false\n"
+        "          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.ref }}\n"
+    ),
+}
+
+if target.is_dir():
+    assert set(EXPECTED_BLOCKS).issubset({path.name for path in workflow_files})
+
+for w in workflow_files:
+    info = w.lstat()
+    assert stat.S_ISREG(info.st_mode)
+    text = w.read_text(encoding="utf-8")
+    checkout_count = text.casefold().count("actions/checkout@")
+    expected = EXPECTED_BLOCKS.get(w.name)
+    if expected is None:
+        assert checkout_count == 0, f"{w.name} has an ungoverned checkout reference"
+        continue
+    assert checkout_count == 1, f"{w.name} expected 1 checkout reference, found {checkout_count}"
+    assert text.count(expected) == 1, f"{w.name} checkout block differs from policy"
+    assert text.count("persist-credentials:") == 1, f"{w.name} credential policy is ambiguous"
 PY
 }
 
@@ -274,6 +329,7 @@ run_ci_check() {
 }
 
 if ci_workflow_contract "$ROOT/.github/workflows/test.yml" \
+        && workflow_checkout_policy_contract "$ROOT/.github/workflows" \
         && ci_helper_contract "$ROOT/scripts/ci-diff-check.sh" \
             "$ROOT/scripts/ci_diff_check.py" \
         && ci_offline_contract "$CI_OFFLINE" \
@@ -419,6 +475,160 @@ if ! ci_workflow_contract "$TMP/persisted-checkout-credentials.yml" 2>/dev/null;
     ok "workflow policy rejects persisted checkout credentials"
 else
     bad "workflow policy rejects persisted checkout credentials"
+fi
+
+cp "$ROOT/.github/workflows/test.yml" "$TMP/mutable-checkout-tag.yml"
+python3 - "$TMP/mutable-checkout-tag.yml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+assert text.count(old) == 1
+path.write_text(text.replace(old, "actions/checkout@v4"), encoding="utf-8")
+PY
+if ! ci_workflow_contract "$TMP/mutable-checkout-tag.yml" 2>/dev/null \
+        && ! workflow_checkout_policy_contract "$TMP/mutable-checkout-tag.yml" 2>/dev/null; then
+    ok "workflow policy rejects a mutable checkout tag"
+else
+    bad "workflow policy rejects a mutable checkout tag"
+fi
+
+cp "$ROOT/.github/workflows/test.yml" "$TMP/different-checkout-sha.yml"
+python3 - "$TMP/different-checkout-sha.yml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+assert text.count(old) == 1
+path.write_text(text.replace(old, "actions/checkout@1111111111111111111111111111111111111111"), encoding="utf-8")
+PY
+if ! ci_workflow_contract "$TMP/different-checkout-sha.yml" 2>/dev/null \
+        && ! workflow_checkout_policy_contract "$TMP/different-checkout-sha.yml" 2>/dev/null; then
+    ok "workflow policy rejects a different checkout SHA"
+else
+    bad "workflow policy rejects a different checkout SHA"
+fi
+
+cp "$ROOT/.github/workflows/test.yml" "$TMP/extra-unprotected-checkout.yml"
+python3 - "$TMP/extra-unprotected-checkout.yml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "      - name: committed diff hygiene\n"
+assert text.count(old) == 1
+path.write_text(
+    text.replace(old, "      - uses: \"Actions/Checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd\"\n" + old),
+    encoding="utf-8",
+)
+PY
+if ! ci_workflow_contract "$TMP/extra-unprotected-checkout.yml" 2>/dev/null \
+        && ! workflow_checkout_policy_contract "$TMP/extra-unprotected-checkout.yml" 2>/dev/null; then
+    ok "workflow policy rejects a quoted case-variant extra checkout step"
+else
+    bad "workflow policy rejects a quoted case-variant extra checkout step"
+fi
+
+mkdir "$TMP/workflow-policy-mutations"
+for wf in "$ROOT/.github/workflows"/*.yml; do
+    cp "$wf" "$TMP/workflow-policy-mutations/"
+done
+
+python3 - "$TMP/workflow-policy-mutations/compatibility-watch.yml" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+p.write_text(t.replace("actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd", "actions/checkout@v4"), encoding="utf-8")
+PY
+if ! workflow_checkout_policy_contract "$TMP/workflow-policy-mutations" 2>/dev/null; then
+    ok "workflow checkout policy rejects mutable checkout tag in any workflow"
+else
+    bad "workflow checkout policy rejects mutable checkout tag in any workflow"
+fi
+cp "$ROOT/.github/workflows/compatibility-watch.yml" "$TMP/workflow-policy-mutations/compatibility-watch.yml"
+
+python3 - "$TMP/workflow-policy-mutations/feedback-watch.yml" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+p.write_text(t.replace("actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd", "actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), encoding="utf-8")
+PY
+if ! workflow_checkout_policy_contract "$TMP/workflow-policy-mutations" 2>/dev/null; then
+    ok "workflow checkout policy rejects different checkout SHA in any workflow"
+else
+    bad "workflow checkout policy rejects different checkout SHA in any workflow"
+fi
+cp "$ROOT/.github/workflows/feedback-watch.yml" "$TMP/workflow-policy-mutations/feedback-watch.yml"
+
+python3 - "$TMP/workflow-policy-mutations/compatibility-watch.yml" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+p.write_text(
+    t.replace("          persist-credentials: false\n", "          fetch-depth: 1 # persist-credentials: false\n"),
+    encoding="utf-8",
+)
+PY
+if ! workflow_checkout_policy_contract "$TMP/workflow-policy-mutations" 2>/dev/null; then
+    ok "workflow checkout policy rejects a credential marker hidden in a comment"
+else
+    bad "workflow checkout policy rejects a credential marker hidden in a comment"
+fi
+cp "$ROOT/.github/workflows/compatibility-watch.yml" "$TMP/workflow-policy-mutations/compatibility-watch.yml"
+
+python3 - "$TMP/workflow-policy-mutations/feedback-watch.yml" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+old = "        with:\n          persist-credentials: false\n"
+new = (
+    "        env:\n"
+    "          CHECKOUT_PERSIST_CREDENTIALS: \"false\" # persist-credentials: false\n"
+)
+assert t.count(old) == 1
+p.write_text(t.replace(old, new), encoding="utf-8")
+PY
+if ! workflow_checkout_policy_contract "$TMP/workflow-policy-mutations" 2>/dev/null; then
+    ok "workflow checkout policy rejects credentials mis-scoped under env"
+else
+    bad "workflow checkout policy rejects credentials mis-scoped under env"
+fi
+cp "$ROOT/.github/workflows/feedback-watch.yml" "$TMP/workflow-policy-mutations/feedback-watch.yml"
+
+python3 - "$TMP/workflow-policy-mutations/feedback-watch.yml" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+p.write_text(t.replace("      - name: Summarize", "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd\n      - name: Summarize"), encoding="utf-8")
+PY
+if ! workflow_checkout_policy_contract "$TMP/workflow-policy-mutations" 2>/dev/null; then
+    ok "workflow checkout policy rejects extra unprotected checkout step in any workflow"
+else
+    bad "workflow checkout policy rejects extra unprotected checkout step in any workflow"
+fi
+
+python3 - "$TMP/workflow-policy-mutations/unexpected.yaml" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text(
+    'jobs:\n  unexpected:\n    steps:\n      - uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"\n',
+    encoding="utf-8",
+)
+PY
+if ! workflow_checkout_policy_contract "$TMP/workflow-policy-mutations" 2>/dev/null; then
+    ok "workflow checkout policy rejects checkout in an unexpected YAML workflow"
+else
+    bad "workflow checkout policy rejects checkout in an unexpected YAML workflow"
 fi
 
 mkdir "$TMP/ci-range-repo"
@@ -1477,13 +1687,14 @@ required = (
     '    runs-on: ubuntu-latest\n',
     '  contents: read\n',
     '  issues: read\n',
+    '      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd\n',
     '          persist-credentials: false\n',
     '          GH_TOKEN: ${{ github.token }}\n',
     '          GH_PROMPT_DISABLED: "1"\n',
     'summary="$(./feedback-triage.sh fetch)"\n',
     'Read-only aggregate: no issue writes, comments, labels, closes, creates, dispatches, or agent input."\n',
 )
-forbidden = ('--paginate', 'issue create', 'issue comment', 'issue edit', 'issue close', 'gh api repos')
+forbidden = ('--paginate', 'issue create', 'issue comment', 'issue edit', 'issue close', 'gh api repos', 'actions/checkout@v4')
 assert all(text.count(item) == 1 for item in required)
 assert not any(item in text for item in forbidden)
 PY
