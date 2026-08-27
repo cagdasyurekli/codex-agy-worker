@@ -123,7 +123,7 @@ def tag_ref(
 def annotated_tag(
     revision: str = "c" * 40,
     *,
-    tag: str = "rust-v0.148.0",
+    tag: str = "rust-v0.150.1",
     tag_revision: str = "d" * 40,
     kind: str = "commit",
 ) -> dict[str, Any]:
@@ -179,17 +179,17 @@ check(
 )
 def codex_stable_tag_is_canonical() -> bool:
     opener = Opener(
-        response(release("rust-v0.148.0")),
-        response(tag_ref("d" * 40, tag="rust-v0.148.0", kind="tag")),
+        response(release("rust-v0.150.1")),
+        response(tag_ref("d" * 40, tag="rust-v0.150.1", kind="tag")),
         response(annotated_tag()),
     )
     result = MODULE.latest_evidence("codex", opener=opener)
     return (
-        result == ("codex", "0.148.0", "c" * 40)
+        result == ("codex", "0.150.1", "c" * 40)
         and [call[0] for call in opener.calls]
         == [
             "https://api.github.com/repos/openai/codex/releases/latest",
-            "https://api.github.com/repos/openai/codex/git/ref/tags/rust-v0.148.0",
+            "https://api.github.com/repos/openai/codex/git/ref/tags/rust-v0.150.1",
             "https://api.github.com/repos/openai/codex/git/tags/" + "d" * 40,
         ]
         and rejects(
@@ -197,8 +197,8 @@ def codex_stable_tag_is_canonical() -> bool:
             lambda: MODULE.latest_evidence(
                 "codex",
                 opener=Opener(
-                    response(release("rust-v0.148.0")),
-                    response(tag_ref("d" * 40, tag="rust-v0.148.0", kind="tag")),
+                    response(release("rust-v0.150.1")),
+                    response(tag_ref("d" * 40, tag="rust-v0.150.1", kind="tag")),
                     response(annotated_tag(kind="tree")),
                 ),
             ),
@@ -211,10 +211,10 @@ check(
     "codex lightweight stable tag stops at exact commit ref",
     lambda: collect(
         "codex",
-        release("rust-v0.148.0"),
-        tag_ref("c" * 40, tag="rust-v0.148.0"),
+        release("rust-v0.150.1"),
+        tag_ref("c" * 40, tag="rust-v0.150.1"),
     )[0]
-    == ("codex", "0.148.0", "c" * 40),
+    == ("codex", "0.150.1", "c" * 40),
 )
 def project_release_path_is_bounded() -> bool:
     large_release = {

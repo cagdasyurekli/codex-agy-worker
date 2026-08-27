@@ -131,7 +131,7 @@ git -C "$CODEX_UPSTREAM_SOURCE" config user.name test
 printf 'reviewed Codex upstream\n' > "$CODEX_UPSTREAM_SOURCE/README.md"
 git -C "$CODEX_UPSTREAM_SOURCE" add README.md
 git -C "$CODEX_UPSTREAM_SOURCE" commit -qm 'reviewed Codex upstream fixture'
-git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.148.0
+git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.150.1
 CODEX_UPSTREAM_HEAD="$(git -C "$CODEX_UPSTREAM_SOURCE" rev-parse HEAD)"
 git init -q --bare "$CODEX_UPSTREAM_REMOTE"
 git -C "$CODEX_UPSTREAM_SOURCE" remote add publish "$CODEX_UPSTREAM_REMOTE"
@@ -163,7 +163,7 @@ case "${FAKE_CODEX_MODE:-version}" in
   usage) printf 'Usage: codex [OPTIONS]\n'; exit 0 ;;
   fail) exit 7 ;;
 esac
-printf '%s\n' "${FAKE_CODEX_OUTPUT:-codex-cli ${FAKE_CODEX_VERSION:-0.148.0}}"
+printf '%s\n' "${FAKE_CODEX_OUTPUT:-codex-cli ${FAKE_CODEX_VERSION:-0.150.1}}"
 STUB
 cat > "$TMP/bin/python3" <<'STUB'
 #!/usr/bin/env bash
@@ -207,8 +207,8 @@ case "${1:-}" in
         case "${FAKE_CODEX_OFFICIAL_MODE:-unchanged}" in
           unavailable) exit 2 ;;
           malformed) printf '%s\n' 'credential-bearing malformed official bytes'; exit 0 ;;
-          drift) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.149.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
-          *) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.148.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
+          drift) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.151.0}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
+          *) printf 'codex\t%s\t%s\n' "${FAKE_CODEX_OFFICIAL_VERSION:-0.150.1}" "${FAKE_CODEX_OFFICIAL_HEAD:-$FAKE_CODEX_HEAD}" ;;
         esac
         ;;
       *) exit 2 ;;
@@ -618,13 +618,13 @@ expect_exit "future compatibility review date is inconclusive" 2 "$rc"
 if grep -Fq 'evidence-unavailable' "$TMP/future-review.out"; then ok "future review date is identified"; else bad "future review date is identified"; fi
 git -C "$CLIENT" checkout -q -- compat/agy-last-reviewed.txt
 
-git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.149.0
-git -C "$CODEX_UPSTREAM_SOURCE" push -q publish rust-v0.149.0
+git -C "$CODEX_UPSTREAM_SOURCE" tag rust-v0.151.0
+git -C "$CODEX_UPSTREAM_SOURCE" push -q publish rust-v0.151.0
 PATH="$TMP/bin:$PATH" FAKE_CODEX_OFFICIAL_MODE=drift \
     "$CLIENT/update.sh" check > "$TMP/codex-stable-drift.out" 2> "$TMP/codex-stable-drift.err"
 rc=$?
 expect_exit "Codex stable release drift requires review" 3 "$rc"
-if grep -Fq 'official 0.149.0; verified 0.148.0' "$TMP/codex-stable-drift.out"; then
+if grep -Fq 'official 0.151.0; verified 0.150.1' "$TMP/codex-stable-drift.out"; then
     ok "Codex stable release drift is reported separately"
 else
     bad "Codex stable release drift is reported separately"

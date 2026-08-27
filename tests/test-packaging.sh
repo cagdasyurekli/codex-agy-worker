@@ -2716,8 +2716,19 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         && [[ -f "$ROOT/compat/reviews/codex-0.148.0.md" ]] \
         && grep -Fq '3ba0f711642a888aec92a611a3f3b2211157ff89' \
             "$ROOT/compat/reviews/codex-0.148.0.md" \
-        && grep -Fq 'Codex `0.148.0` is accepted as the current observational compatibility baseline.' \
+        && grep -Fq 'At its 2026-08-20 review, Codex `0.148.0` was accepted as the observational' \
             "$ROOT/compat/reviews/codex-0.148.0.md" \
+        && grep -Fq 'It is superseded by the separately reviewed `0.150.1` record.' \
+            "$ROOT/compat/reviews/codex-0.148.0.md" \
+        && [[ -f "$ROOT/compat/reviews/codex-0.150.1.md" ]] \
+        && grep -Fq '90854393966b21e9ebfd21b122334eb09a20c93d' \
+            "$ROOT/compat/reviews/codex-0.150.1.md" \
+        && grep -Fq 'Codex `0.150.1` is accepted as the current observational compatibility baseline.' \
+            "$ROOT/compat/reviews/codex-0.150.1.md" \
+        && grep -Fq 'does not gate agy dispatch' \
+            "$ROOT/compat/reviews/codex-0.150.1.md" \
+        && grep -Fq 'add Codex as a second worker backend' \
+            "$ROOT/compat/reviews/codex-0.150.1.md" \
         && ! grep -Fqr 'models_capture_1_1_12' "$ROOT/skills/agy-worker/runtime"; then
     ok "historical and active compatibility records preserve the activation boundary"
 else

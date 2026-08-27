@@ -211,7 +211,7 @@ notifier snapshot whose source bytes changed reports `maintenance-required` and 
 for an explicit owner `refresh`; malformed or unsafe state remains inert. The earlier
 agy 1.1.16 interface observation remains a historical non-activating record; the later
 exact capture, inventory binding, and human reconciliation activate the 1.1.16
-baseline and unchanged 14-slug matrix. Codex 0.148.0 remains an observational baseline
+baseline and unchanged 14-slug matrix. Codex 0.150.1 is an observational baseline
 with no agy authority. For Issue #59, only the exact
 reviewed agy 1.1.13
 quota terminal is classified as exit 24 with a bounded countdown. No raw error text is
