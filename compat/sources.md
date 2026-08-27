@@ -80,14 +80,14 @@ evidence is inconclusive.
 - Official changelog: https://developers.openai.com/codex/changelog
 - Official CLI reference: https://developers.openai.com/codex/cli/reference
 
-The verified baseline is Codex CLI `0.148.0`. Its official stable tag
-`rust-v0.148.0` resolves to release commit
-`3ba0f711642a888aec92a611a3f3b2211157ff89`. The moving official `main` branch is
+The verified baseline is Codex CLI `0.150.1`. Its official annotated stable tag
+`rust-v0.150.1` resolves to release commit
+`90854393966b21e9ebfd21b122334eb09a20c93d`. The moving official `main` branch is
 review context, not a daily compatibility fingerprint. The installed macOS arm64 CLI
 and the maintained `exec`, sandbox, and `--add-dir` surfaces were reconciled in
-[`reviews/codex-0.148.0.md`](reviews/codex-0.148.0.md). Codex compatibility
+[`reviews/codex-0.150.1.md`](reviews/codex-0.150.1.md). Codex compatibility
 metadata is observation-only and never gates agy dispatch, resolves an agy model,
-or changes a caller selection.
+changes a caller selection, or creates a second worker backend.
 
 ## Advancing a baseline
 
