@@ -2528,7 +2528,7 @@ suite_commands += re.findall(
 )
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 35
+    len(suite_commands) == len(set(suite_commands)) == 37
     and all(command in contributing for command in suite_commands)
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
@@ -2548,7 +2548,7 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The thirty-five offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The thirty-seven offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \

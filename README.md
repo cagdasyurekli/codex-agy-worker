@@ -58,7 +58,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The thirty-five offline suites need no agy provider call, network access, API key, or GitHub login.
+The thirty-seven offline suites need no agy provider call, network access, API key, or GitHub login.
 
 ### GitHub Actions cost and quota fallback
 
@@ -79,7 +79,7 @@ If a private fork's quota is unavailable, run the same fail-fast offline suite l
 ./scripts/ci-offline.sh
 ```
 
-It runs the static checks and all thirty-five offline suites without requiring a
+It runs the static checks and all thirty-seven offline suites without requiring a
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
@@ -1646,6 +1646,7 @@ ground-truth.sh               safe live agy version/help facts; --account explic
 update.sh                     explicit release + agy/Codex compatibility check/apply
 bug-report.sh                 sanitized local draft/preview/optional submission
 feedback-triage.sh            bounded metadata-only feedback aggregate
+codex-usage-report.sh         privacy-safe, version-pinned Codex CLI 0.150.1 usage observer
 compat/                       per-tool baselines, reviewed evidence, and active exact matrix
 scripts/compatibility.py      stdlib metadata/matrix validation and exact resolution
 scripts/compatibility_probe.py bounded process-group supervisor for fixed evidence/version probes
@@ -1665,6 +1666,8 @@ scripts/models_capture_1_1_16_runner.py fixed 1.1.16 explicit-account capture-on
 scripts/models_capture_1_1_22_version_evidence.py fixed 1.1.22 source/snapshot version-only evidence bridge
 scripts/models_capture_1_1_22_profile.py fixed 1.1.22 process-inert capture profile bridge
 scripts/models_capture_1_1_22_runner.py fixed 1.1.22 explicit-account capture-only bridge
+scripts/models_capture_1_1_22_classifier.py fixed 1.1.22 sidecar failure classifier
+scripts/codex_usage_report.py       Codex 0.150.1 app-server usage observation script
 scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
 scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
 scripts/agy_inventory.py      bounded exact-line semantic parser for private inventory evidence
@@ -1715,12 +1718,14 @@ tests/test-models-capture-1-1-16-runner.py 58-case offline fixed 1.1.16 capture-
 tests/test-models-capture-1-1-22-version-evidence.py 45-case offline fixed 1.1.22 version-evidence suite
 tests/test-models-capture-1-1-22-profile.py 30-case offline fixed 1.1.22 capture-profile suite
 tests/test-models-capture-1-1-22-runner.py 58-case offline fixed 1.1.22 capture-runner suite (88 combined with profile)
+tests/test-models-capture-1-1-22-classifier.py fixed 1.1.22 sidecar failure classifier suite
 tests/test-agy-1-1-16-activation.py 22-case offline active-baseline/inventory-binding suite
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
 tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/maintenance suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite
+tests/test-codex-usage-report.py   Codex usage observation and privacy suite
 tests/test-packaging.sh       390-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite

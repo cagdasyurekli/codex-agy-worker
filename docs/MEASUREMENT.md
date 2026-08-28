@@ -100,3 +100,66 @@ measurement ledger. Seeing either one run successfully is therefore not evidence
 30/60/90 data is accumulating. A collector must fail closed rather than fabricate an
 observation when the local result, exact repository revision, or public run URL cannot
 be reconciled.
+
+## Manual three-run A/B measurement protocol (Codex orchestration usage)
+
+To measure the orchestration overhead and token consumption of direct Codex task execution
+versus delegated `agy-worker` execution, use the privacy-safe `codex-usage-report.sh` tool
+with this manual three-run protocol. This protocol is strictly manual; do not build an
+automatic task executor.
+
+### 1. Preparation and controlled conditions
+
+Freeze all independent variables across both conditions:
+- **Baseline repository commit:** identical base SHA in disposable worktrees.
+- **Task prompt and scope:** identical user prompt and declared file scope.
+- **Codex model & effort:** identical driver model and reasoning effort.
+- **Verification commands & budget:** identical driver test suite and time budget.
+- **No subagents or concurrent background tasks:** ensure single-agent execution.
+
+### 2. Execution of three matched repetitions
+
+Run three fresh, independent trials for each condition:
+- **Condition A (Direct Codex):** Execute the task directly in Codex across 3 fresh runs (`A1`, `A2`, `A3`).
+- **Condition B (Delegated agy-worker):** Dispatch the task via `agy-worker.sh` across 3 fresh runs (`B1`, `B2`, `B3`).
+
+For each run, note its thread ID. Codex Desktop session files may be mode `0644`; never
+change or pass that live file directly. If session counters are needed, copy the one
+explicit file into a temporary owner-private (`0700`) directory, set the copy to mode
+`0600`, pass only that absolute copied path, and delete the copy after observation.
+
+### 3. Usage observation extraction
+
+Run `codex-usage-report.sh` for each condition and run:
+
+```bash
+# Example for Condition A, Run 1
+./codex-usage-report.sh \
+  --task main=THREAD_A1 \
+  --session main=/path/to/private/session_a1.jsonl \
+  --account-usage \
+  --format text
+
+# Example for Condition B, Run 1
+./codex-usage-report.sh \
+  --task main=THREAD_B1 \
+  --session main=/path/to/private/session_b1.jsonl \
+  --account-usage \
+  --format text
+```
+
+### 4. Analysis and limitations
+
+Compare the resulting token breakdowns:
+- **Input tokens:** total input, cached input, net-new input, and cache-write input.
+- **Output tokens:** total output tokens and reasoning output tokens (reasoning is a subset of output and must not be double-counted).
+- **Latest phase window:** the most recent validated `last_token_usage` counters, kept
+  separate from cumulative session totals.
+- **Structural tool activity:** allowlisted tool call counts and wait counts.
+- **Per-thread usage estimate:** estimated credits in integer micros from exact
+  `threadUsage` responses (explicitly labeled `provider_estimate`); account-level
+  observation remains rate limits only.
+
+**Strict boundaries:**
+- Token-only comparisons are **directional only**.
+- Never infer dollar/USD costs, pricing, or remaining billing quota from token numbers or estimates without official billing receipts.

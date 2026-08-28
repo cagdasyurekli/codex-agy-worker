@@ -191,6 +191,33 @@ snapshot, and version evidence before atomically creating one owner-private cano
 profile. It never invokes agy, a provider, a network client, a shell, or a Git
 command; preparing a profile does not authorize a capture.
 
+`scripts/models_capture_1_1_22_classifier.py` is the separate sidecar maintenance
+tool for diagnosing sanitized 1.1.22 models capture failure evidence. It requires an
+explicit owner-private (`0700`) directory path, never scans for evidence, and enforces
+strict fail-closed checks on permissions, topology, and artifact hashes. Its output is
+a mode-`0600` canonical JSON record containing only the classified category, origin,
+hashes, and enforced limitations. It excludes all raw stderr/stdout text, error prose,
+absolute filesystem paths, and account identifiers, and grants no activation, retry,
+or routing authority.
+
+`codex-usage-report.sh` observes Codex orchestration usage locally via the live,
+bounded stdio JSONL protocol of the version-pinned Codex CLI 0.150.1 app-server. Before
+observation it checks the exact CLI version and the SHA-256 of the CLI-generated
+experimental combined schema; drift fails closed.
+It requires explicit `--task LABEL=THREAD_ID` arguments and optional owner-private
+(`0600`) `--session LABEL=ABS_FILE` inputs. The tool strictly redacts all sensitive
+data: prompts, message text, raw logs, thread IDs, account emails/identities, cwd, and
+file paths are never emitted. The tool never scans for sessions; it opens only the
+explicit path, validates its private metadata, and inspects allowlisted structural
+fields. Output reports categorize input, cached input,
+net-new input, cache-write, output, and reasoning separately; reasoning is a subset of
+output and is never double-counted. When the app-server supplies a per-thread estimated
+credit value, it is emitted only as integer micros labeled `provider_estimate`; absent
+values remain unavailable. Account-wide observation is limited to rate-limit fields and
+does not invent an aggregate credit value. Rate-limit observations remain separate, and the tool never
+infers USD/currency or remaining billing quota. All process groups are reaped on exit or
+timeout. Token comparisons are directional only.
+
 ## Support and changes
 
 Questions about this disclosure can be opened through the route in

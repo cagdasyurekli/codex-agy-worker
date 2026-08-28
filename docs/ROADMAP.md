@@ -1196,14 +1196,13 @@ checks remain mandatory; age alone never authorizes deletion.
 
 #### P2-D — Driver-side Codex usage observation
 
-**Status:** [Feature request #69](https://github.com/cagdasyurekli/codex-agy-worker/issues/69);
-release-external and not implemented in v0.11.0.
+**Status:** Implemented in first delivery slice (GitHub issue #69); paired with sidecar failure classifier (GitHub issue #72).
 
 - **User job:** Observe the Codex orchestration cost around an explicitly selected main
   task and explicit subagent tasks, then run a separately approved directional A/B
   protocol without claiming billing or quota savings.
-- **Intended surface:** `codex-usage-report.sh --thread-id ID
-  [--subagent-thread-id ID ...] [--account-usage] [--session FILE ...]`.
+- **Intended surface:** `codex-usage-report.sh --task LABEL=THREAD_ID
+  [--session LABEL=ABS_FILE]... [--account-usage] [--format json|text]`.
 - **Primary source:** An explicitly approved, Codex-version-bound
   `account/usage/read(threadId)` observation. If `threadUsage` is absent, report
   `unavailable`; never derive credit, price, or remaining quota from token counters.

@@ -108,12 +108,16 @@ announce 'fixed 1.1.22 models capture profile builder'
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-profile.py
 announce 'fixed 1.1.22 models capture runner'
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-runner.py
+announce 'fixed 1.1.22 models capture failure classifier'
+/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-classifier.py
 announce '1.1.16 activation binding'
 /usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py
 announce 'reporting suite'
 ./tests/test-reporting.sh
 announce 'feedback triage suite'
 /usr/bin/python3 -I -S -B tests/test-feedback-triage.py
+announce 'Codex usage observation suite'
+/usr/bin/python3 -I -S -B tests/test-codex-usage-report.py
 announce 'Codex distribution suite'
 ./tests/test-packaging.sh
 announce 'read-only doctor suite'
