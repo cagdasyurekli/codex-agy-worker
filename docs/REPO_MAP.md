@@ -255,8 +255,13 @@ does not establish same-user tamper resistance.
   A skill-folder-only copy resolves `runtime/` without the repository or a network
   fetch. Repository-root commands are compatibility wrappers; `install.sh` copies the
   same bundle and adds a local `.pipeline-root` marker so checkout maintenance remains
-  available. `.codex-plugin/plugin.json` describes the same skill for local package
-  validation; GitHub clone plus explicit install is the supported public path.
+  available. `.codex-plugin/plugin.json` and `.agents/plugins/marketplace.json`
+  describe that same root package: the marketplace source is exactly `.` and may not
+  introduce a copied `plugins/` skill or runtime. `docs/MARKETPLACE.md` records the
+  local contract; adding it to Codex remains separately approved. The tested public
+  installation paths are the Git-backed Codex marketplace and GitHub clone plus
+  explicit install; neither installation authorizes provider dispatch or repository
+  transmission.
 - `doctor.sh` delegates to the canonical bundled doctor. It reads only its fixed
   portable agy version/source/date metadata plus bounded semantic tool/repository
   probes, emits no paths or raw command output, and neither dispatches nor repairs.
@@ -311,9 +316,9 @@ does not establish same-user tamper resistance.
 | `codex-usage-report.sh`, `skills/agy-worker/runtime/codex-usage-report.sh`, `scripts/codex_usage_report.py`, `skills/agy-worker/runtime/scripts/codex_usage_report.py` | Root compatibility entry plus privacy-safe, version-pinned Codex CLI 0.150.1 usage observation; exact generated-schema digest preflight; live bounded JSONL stdio app-server protocol with independently drained streams and process-group cleanup; thread-bound response validation; separate cumulative and latest-phase reporting of input, cached input, net-new input, cache-write, output, and reasoning (subset); explicit owner-private session-file parsing; strict redaction of cwd, prompts, messages, raw logs, thread IDs, account IDs, and paths; estimated credits as provider estimates without inferring money/quota. | `tests/test-codex-usage-report.py` |
 | `bug-report.sh`, `scripts/bug-report.py`, `.github/ISSUE_TEMPLATE/` | Local privacy filtering, exact double confirmation for public bug/improvement submission, explicit private-only security drafts, fixed-destination issue submission, and conservative non-proof keyword barrier | `tests/test-reporting.sh` (47 cases) |
 | `feedback-triage.sh`, `scripts/feedback-triage.py`, `.github/workflows/feedback-watch.yml` | Explicit or weekly bounded read-only aggregate over fixed public issue metadata; raw issue content is not requested, surfaced, or agent input; no GitHub writes | `tests/test-feedback-triage.py` (26 cases) plus packaging workflow policy |
-| `.codex-plugin/plugin.json` | Codex skills-only package identity retained for local validation; not a public listing | `tests/test-packaging.sh` (396 cases) plus platform validators |
+| `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `docs/MARKETPLACE.md` | Codex skills-only package identity plus a root-source (`.`) repo marketplace contract. The entry names the one canonical `skills/agy-worker/` bundle/runtime and is not installation or publication evidence. | `tests/test-packaging.sh` (396 cases) plus platform validators |
 | `PRIVACY.md`, `TERMS.md`, `SUPPORT.md` | Public data disclosure, project policy, and support route | `tests/test-packaging.sh` (396 cases) plus review |
-| `docs/index.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (396 cases) plus rendered review |
+| `docs/index.md`, `docs/VERIFYING_AGENT_OUTPUT.md`, `docs/_layouts/`, `docs/_config.yml`, `docs/sitemap.xml` | Static GitHub Pages landing, source-grounded verification tutorial, canonical metadata, and sitemap; enabling Pages and submitting the sitemap through Search Console remain external | `tests/test-packaging.sh` (396 cases) plus rendered review |
 | `docs/assets/brand/`, `scripts/validate-brand-assets.py` | Approved light/dark master marks, pixel-hinted micro variants, favicon PNGs, social preview, and dependency-free asset validation | `tests/test-packaging.sh` (396 cases) plus rendered review |
 | `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/pull_request_template.md` | Contribution workflow, private vulnerability route, conduct enforcement, and review checklist | human review plus relevant offline suites |
 | `.github/workflows/test.yml`, `scripts/ci-offline.sh`, `scripts/ci-diff-check.sh`, `scripts/ci_diff_check.py`, `scripts/ci_timing.py`, `scripts/ci_sharding.py` | Required `test` verifies exact full macOS offline coverage via four parallel fail-closed shards (`dispatcher`, `dispatcher-remediation`, `other-a`, `other-b`) on PRs (and explicit exact-SHA manual dispatch), cancels stale same-PR runs, and does not repeat the suite after a normal merge. Each shard checks out the exact immutable head SHA, runs committed-range diff hygiene and its registered stage subset, and emits a mode-0600 no-overwrite privacy-safe receipt; GitHub retains the uploaded workflow artifact for one day under repository Actions access. The aggregate `test` job runs with `if: always()` and succeeds only when all four unique shard receipts exist, all producer jobs succeeded, all match the expected head and inventory, and every canonical stage appears exactly once. Lower CI wall time from parallelization does not mean lower compute, token usage, cost, or weaker verification. Canonical local runner `./scripts/ci-offline.sh` continues to run all static checks and thirty-nine offline suites by default without network or provider calls; `--timing-report` observes monotonic wall time. | `tests/test-ci-sharding.py` (79 cases) and `tests/test-ci-timing.py` (44 cases) plus packaging policy tests and GitHub Actions |
@@ -383,9 +388,11 @@ does not establish same-user tamper resistance.
 - A plugin install is local enablement, not consent to send repository content.
   Dispatch through agy can expose the approved prompt and worker-read files to
   Google/Gemini; the skill must obtain explicit approval for that named scope first.
-- The Codex package manifest is not publication evidence. This project is distributed
-  from its public GitHub repository and does not maintain Claude or marketplace
-  catalogs.
+- The Codex package manifest and repo-scoped marketplace descriptor are not
+  publication evidence. The root-source marketplace entry exposes no copied skill or
+  runtime, and installation or external catalog enablement remains a separate owner
+  action. This project is distributed from its public GitHub repository and does not
+  maintain Claude catalogs.
 - README and Pages copy may describe only the checks this repository actually runs:
   independent Git-scope inspection and driver-owned verification. Passing them is not
   proof of general correctness or security. GitHub About fields, topics, homepage,

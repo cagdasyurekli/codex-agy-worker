@@ -19,6 +19,10 @@ prove general correctness or security, and it does not commit, push, merge, or
 release anything.
 </div>
 
+New to evidence-gated delegation? Start with
+[how to verify AI coding-agent changes without trusting the worker report](VERIFYING_AGENT_OUTPUT.md),
+then run the offline proof below.
+
 ## What it is for
 
 - Backfilling tests across many files.
@@ -91,6 +95,7 @@ metadata, or social-preview settings. Those remain deliberate repository-owner
 actions.
 
 [Read the full documentation](https://github.com/cagdasyurekli/codex-agy-worker#readme),
+[follow the verification tutorial](VERIFYING_AGENT_OUTPUT.md),
 [review the planned roadmap](https://github.com/cagdasyurekli/codex-agy-worker/blob/main/docs/ROADMAP.md), or
 [inspect the source and offline tests](https://github.com/cagdasyurekli/codex-agy-worker).
 Roadmap entries are proposals, not current product capabilities.
