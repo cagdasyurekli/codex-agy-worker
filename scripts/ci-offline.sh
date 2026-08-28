@@ -7,10 +7,33 @@ script_dir="${0%/*}"
 root="$(cd "$script_dir/.." && pwd -P)"
 cd "$root"
 
-[[ "$#" == 0 ]] || {
+timing_report=""
+timing_nonce=""
+if [[ "$#" -eq 0 ]]; then
+    :
+elif [[ "$#" -eq 2 && "$1" == "--timing-report" ]]; then
+    timing_report="$2"
+    [[ -n "$timing_report" ]] || {
+        printf '%s\n' 'ci offline: rejected arguments' >&2
+        exit 2
+    }
+elif [[ "$#" -eq 1 && "$1" == --timing-report=* ]]; then
+    timing_report="${1#--timing-report=}"
+    [[ -n "$timing_report" ]] || {
+        printf '%s\n' 'ci offline: rejected arguments' >&2
+        exit 2
+    }
+elif [[ "$#" -eq 2 && "$1" == "--timing-child" \
+        && "${#2}" -eq 64 && "$2" != *[!0-9a-f]* ]]; then
+    timing_nonce="$2"
+else
     printf '%s\n' 'ci offline: rejected arguments' >&2
     exit 2
-}
+fi
+
+if [[ -n "$timing_report" ]]; then
+    exec /usr/bin/python3 -I -S -B "$root/scripts/ci_timing.py" run --timing-report "$timing_report"
+fi
 
 pycache="$(mktemp -d -t agyworker-ci-pycache.XXXXXX)" || exit 1
 cleanup() {
@@ -20,6 +43,9 @@ trap cleanup EXIT HUP INT TERM
 
 announce() {
     printf '==> %s\n' "$1"
+    if [[ -n "$timing_nonce" ]]; then
+        printf '@@agy-worker-ci-timing:%s:%s\n' "$timing_nonce" "$1"
+    fi
 }
 
 announce 'working-tree diff hygiene'

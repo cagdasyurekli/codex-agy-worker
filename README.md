@@ -83,7 +83,13 @@ It runs the static checks and all thirty-seven offline suites without requiring 
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
-tree, and `git diff --check` evidence. This is local evidence only: it never satisfies
+tree, and `git diff --check` evidence. On a clean tracked/untracked worktree, an
+optional `--timing-report <PATH>` argument records ordered per-stage observational
+monotonic wall time in a mode-0600, no-overwrite JSON report bound to the exact HEAD
+SHA and canonical inventory digest;
+it contains no paths, commands, environment values, logs, credentials, provider data,
+timestamps, or host identity, and does not claim reduced compute, lower provider
+usage, or weaker acceptance. This is local evidence only: it never satisfies
 the protected GitHub `test` check. After availability returns, manually dispatch the
 exact comparison before publishing or releasing unless the repository owner explicitly
 changes the protection policy. The daily compatibility watch remains macOS-specific;
