@@ -80,6 +80,28 @@ raise SystemExit(0 if valid else 1)
 PY
 }
 
+project_log_root_is_external() {
+    python3 -I -S -B - "$1" "$2" <<'PY'
+import os
+import sys
+
+log_dir, workdir = sys.argv[1:3]
+try:
+    if not log_dir or not workdir or "\0" in log_dir or "\0" in workdir:
+        raise ValueError
+    resolved_log = os.path.realpath(log_dir)
+    resolved_workdir = os.path.realpath(workdir)
+    if not os.path.isabs(resolved_log) or not os.path.isabs(resolved_workdir):
+        raise ValueError
+    if resolved_log == resolved_workdir:
+        raise ValueError
+    if os.path.commonpath([resolved_workdir, resolved_log]) == resolved_workdir:
+        raise ValueError
+except (TypeError, UnicodeError, ValueError, OSError):
+    raise SystemExit(64)
+PY
+}
+
 usage() {
     local usage_exit="${1:-64}"
     cat >&2 <<'EOF'
@@ -453,6 +475,21 @@ if (( idle_seconds > hard_seconds || hard_seconds > max_seconds )); then
     exit 64
 fi
 
+if [[ "$workflow" == "project" ]]; then
+    # Resolve the existing worktree and the prospective physical log path before
+    # mkdir.  realpath intentionally follows existing symlink ancestors and
+    # resolves relative spellings while allowing a missing final log path.
+    [[ -d "$workdir" ]] || { echo "agy-worker.sh: --workdir not a directory: $workdir" >&2; exit 64; }
+    prospective_workdir="$(CDPATH= cd -- "$workdir" 2>/dev/null && pwd -P)" || {
+        echo "agy-worker.sh: --workdir cannot be resolved safely" >&2
+        exit 64
+    }
+    if ! project_log_root_is_external "$LOG_DIR" "$prospective_workdir"; then
+        echo "agy-worker.sh: project log root cannot be inside the target workdir" >&2
+        exit 64
+    fi
+fi
+
 mkdir -p "$LOG_DIR" 2>/dev/null || {
     echo "agy-worker.sh: log root cannot be created safely" >&2
     exit 64
@@ -491,6 +528,12 @@ fi
 cd "$workdir"
 
 if [[ "$workflow" == "project" ]]; then
+    # Repeat the physical containment decision after creation and canonical
+    # resolution so an observed path race cannot authorize provider execution.
+    if ! project_log_root_is_external "$LOG_DIR" "$workdir"; then
+        echo "agy-worker.sh: project log root cannot be inside the target workdir" >&2
+        exit 64
+    fi
     python3 -I -S -B - "$workdir" <<'PY'
 import os
 import stat

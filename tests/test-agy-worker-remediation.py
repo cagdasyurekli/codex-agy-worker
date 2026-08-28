@@ -32,7 +32,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 89
+EXPECTED_CHECKS = 90
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 
@@ -3221,6 +3221,7 @@ with tempfile.TemporaryDirectory() as temporary:
     def current_candidate_fixture(
         label: str, *, selection: bool = False, staged: bool = False,
         wrapper_addressable: bool = False, workflow: str = "task", linked: bool = False,
+        inside_worktree: bool = False,
     ) -> tuple[Path, dict, str, Path]:
         """Create one schema-bound terminal candidate without any provider call."""
         repo = root / f"current-candidate-{label}-repo"
@@ -3239,7 +3240,12 @@ with tempfile.TemporaryDirectory() as temporary:
             repo.mkdir()
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
         job_id = f"current-{label}"
-        job = root / (job_id if wrapper_addressable else f"current-candidate-{label}-job")
+        if inside_worktree:
+            logs_dir = repo / "logs"
+            logs_dir.mkdir(mode=0o700, exist_ok=True)
+            job = logs_dir / job_id
+        else:
+            job = root / (job_id if wrapper_addressable else f"current-candidate-{label}-job")
         job.mkdir(mode=0o700); job = job.resolve()
         schema = root / f"current-candidate-{label}-provider.json"; provider_schema(schema)
         selection_path = None
