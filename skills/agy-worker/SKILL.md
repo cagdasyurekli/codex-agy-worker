@@ -18,6 +18,15 @@ unless the user has already approved that exact transmission. Do not put credent
 private keys, unrelated local files, raw worker logs, or local controller state in the
 prompt.
 
+Before every provider-launch attempt (initial start/run, resume, continue, and restart), tell the user in one or two concise user-facing sentences what task is being sent to AGY.
+Include a short public-safe task label, caller-selected model information, caller-selected effort when separately selectable, and the exact resolved model slug.
+For default selection where no model is selected or the default tier is used, state truthfully that the provider default model is used and that model or effort is unresolved, without inventing a resolved slug or thinking level.
+For fixed/compound/literal models where effort is not separately selectable, state that accurately without inferring backend reasoning or inventing a thinking level.
+The notice must precede every dispatch attempt and remain accurate afterward.
+If preflight fails before provider launch, explicitly state that the task was not sent to AGY.
+If provider reach is genuinely uncertain, state that it is unverified rather than claiming success.
+Direct model and effort selection remain caller-owned; recommendations are advisory.
+
 Resolve the installed skill instead of guessing a checkout path:
 
 ```bash
@@ -88,14 +97,14 @@ paths in the prompt and pass `--workdir "$WT" --add-dir "$WT"`.
 
 ## Dispatch and measure quality
 
-For a normal task, dispatch once and keep stdout only when exit status is zero:
+For a normal task, emit the mandatory user-facing notice, dispatch once, and keep stdout only when exit status is zero:
 
 ```bash
 printf '%s\n' "$TASK" | "$PIPELINE/agy-worker.sh" \
   --workflow task --workdir "$WT" --add-dir "$WT" > "$STATE_DIR/envelope.json"
 ```
 
-For an explicit workflow, start the local controller when its state must safely track
+For an explicit workflow, emit the mandatory user-facing notice and start the local controller when its state must safely track
 multiple same-conversation repair cycles:
 
 ```bash
@@ -121,8 +130,9 @@ Codex owns quality measurement:
    worker prose back through this channel. V1 is readable compatibility data, never
    authority for `continue` or `finalize`.
 4. For any explicit `explore`, `task`, or `project` candidate, if a driver check fails
-   or is missing and the cycle budget remains, continue the exact conversation; do not
-   silently start a new provider attempt:
+   or is missing and the cycle budget remains, emit the mandatory user-facing notice
+   for the continuation attempt and continue the exact conversation; do not silently
+   start a new provider attempt:
 
 ```bash
 "$PIPELINE/agy-worker.sh" continue --job-id "$JOB_ID" \
@@ -147,7 +157,8 @@ validates the enum and current bindings, then persists that exact Codex declarat
 does not derive a different label from the verification counters. A bounded repair may
 be requested for advisory, coverage-gap, or review-driven evidence as well as a failed
 or missing check. Keep partial work for review; do not delete it simply because a
-quality check failed. `restart` starts a new conversation and needs explicit user direction.
+quality check failed. `restart` starts a new conversation, requires explicit user direction,
+and must be preceded by the mandatory user-facing notice.
 
 The provider-facing envelope may omit only `commands_run` and `tests_run`; the
 controller restores those omissions to empty arrays, then requires the canonical
@@ -204,7 +215,8 @@ evidence and create a new job using the same caller-selected model and effort.
 
 No automatic fresh retry or continuation exists. A candidate-free failed state other
 than `selection_preflight_failed` may allow `resume --approve-state-sha SHA` into the
-exact stored conversation or explicit fresh `restart --approve-state-sha SHA`. A terminal provider `ERROR` (exit `25`) with a
+exact stored conversation (preceded by the mandatory user-facing notice) or explicit
+fresh `restart --approve-state-sha SHA` (also preceded by the notice). A terminal provider `ERROR` (exit `25`) with a
 valid candidate requires `result`, driver Verification v2, then `continue` or
 `finalize`; it is never resumed. A `CANCELED`/`CANCELLED` candidate (exit `22`) is
 preserved for `result` and finalization, or explicit fresh restart; it is never resumed
