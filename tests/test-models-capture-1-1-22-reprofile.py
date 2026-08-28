@@ -1640,6 +1640,110 @@ class ModelsCapture1122ReprofileTests(unittest.TestCase):
             self.assertEqual(len(observed), 2)
             self.assertEqual(observed[0], observed[1])
 
+    def test_87_failed_capture_parent_nlink_drift_reprofiles_account_home_only(self) -> None:
+        """A failed-capture-style child may change only diagnostic capture-parent nlink."""
+        with tempfile.TemporaryDirectory() as _base:
+            base = os.path.realpath(_base)
+            os.chmod(base, 0o700)
+            tree = self._synthetic_tree(base, account_nlink_delta=1)
+            failed_capture = os.path.join(tree["parent"], "agy-models-capture-1-1-22.failed")
+            os.mkdir(failed_capture, 0o700)
+            mod = reprofile["_get_profile_mod"]()
+            original = mod._from_request
+            try:
+                prior_parent_identity = dataclasses.asdict(
+                    tree["prior_profile"].capture_parent_identity
+                )
+
+                def failed_capture_view(request: dict) -> tuple[object, str]:
+                    current, output = original(request)
+                    return (
+                        dataclasses.replace(
+                            current,
+                            capture_parent_identity=dataclasses.replace(
+                                current.capture_parent_identity,
+                                nlink=prior_parent_identity["nlink"] + 1,
+                            ),
+                        ),
+                        output,
+                    )
+
+                # Some filesystems do not expose child creation through directory
+                # nlink, so bind the deterministic failed-capture observation that
+                # triggered the regression while retaining the real residual root.
+                mod._from_request = failed_capture_view
+                request = canonical({
+                    "prior_profile_path": tree["prior_path"],
+                    "prior_profile_sha256": tree["prior_sha"],
+                    "output_path": tree["output_path"],
+                })
+                result = reprofile["prepare"](request, PollCounter())
+                self.assertEqual(result["changed_fields"], ["account_home_identity.nlink"])
+
+                with open(tree["output_path"], "rb") as stream:
+                    published = profile_mod["CaptureProfile"].from_bytes(stream.read())
+                self.assertEqual(
+                    dataclasses.asdict(published.capture_parent_identity),
+                    prior_parent_identity,
+                )
+                self.assertNotEqual(
+                    published.account_home_identity.nlink,
+                    tree["prior_profile"].account_home_identity.nlink,
+                )
+
+                validation = canonical({
+                    "prior_profile_path": tree["prior_path"],
+                    "prior_profile_sha256": tree["prior_sha"],
+                    "output_path": tree["output_path"],
+                    "profile_path": tree["output_path"],
+                    "profile_sha256": result["new_profile_sha256"],
+                })
+                self.assertEqual(reprofile["validate"](validation)["status"], "valid")
+            finally:
+                mod._from_request = original
+                self._restore_globals(tree)
+
+    def test_88_capture_parent_authority_drift_remains_rejected(self) -> None:
+        """Only positive capture-parent nlink drift is diagnostic; stable fields remain exact."""
+        with tempfile.TemporaryDirectory() as _base:
+            base = os.path.realpath(_base)
+            os.chmod(base, 0o700)
+            tree = self._synthetic_tree(base, account_nlink_delta=1)
+            mod = reprofile["_get_profile_mod"]()
+            original = mod._from_request
+            try:
+                for field in ("dev", "gid", "ino", "mode", "uid", "nlink"):
+                    def drift(request: dict, changed_field: str = field) -> tuple[object, str]:
+                        current, output = original(request)
+                        identity = current.capture_parent_identity
+                        value = 0 if changed_field == "nlink" else (
+                            0o755 if changed_field == "mode" else getattr(identity, changed_field) + 1
+                        )
+                        return (
+                            dataclasses.replace(
+                                current,
+                                capture_parent_identity=dataclasses.replace(
+                                    identity,
+                                    **{changed_field: value},
+                                ),
+                            ),
+                            output,
+                        )
+
+                    mod._from_request = drift
+                    request = canonical({
+                        "prior_profile_path": tree["prior_path"],
+                        "prior_profile_sha256": tree["prior_sha"],
+                        "output_path": tree["output_path"],
+                    })
+                    with self.subTest(field=field):
+                        with self.assertRaises(reprofile["ReprofileError"]):
+                            reprofile["prepare"](request, PollCounter())
+                        self.assertFalse(os.path.exists(tree["output_path"]))
+            finally:
+                mod._from_request = original
+                self._restore_globals(tree)
+
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.TextTestRunner(verbosity=1).run(

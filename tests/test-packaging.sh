@@ -2725,7 +2725,7 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
             "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-16-runner.py` (58 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; reprofile: 86 offline.' \
+        && grep -Fq 'Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; reprofile: 88 offline.' \
             "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-capture-1-1-22-version-evidence.py 45-case' \
             "$ROOT/README.md" \
