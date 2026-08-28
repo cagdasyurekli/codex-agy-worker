@@ -147,7 +147,7 @@ path = Path(sys.argv[1])
 info = path.lstat()
 assert stat.S_ISREG(info.st_mode)
 data = path.read_bytes()
-assert sha256(data).hexdigest() == "43ba324dd11e0fff65aac156e96720d598baf66326621487d37da55ba3c27bb5"
+assert sha256(data).hexdigest() == "b61b97c538bafa8eeea377f76647122ec04c21aca06f36a9746132854cdf005d"
 text = data.decode("utf-8")
 required = (
     "name: test\n",
@@ -172,7 +172,7 @@ required = (
     "          (umask 077 && mkdir \"$RECEIPT_DIR\")\n",
     "          chmod 0700 \"$RECEIPT_DIR\"\n",
     "          ./scripts/ci-offline.sh --shard \"${{ matrix.shard }}\" --receipt \"$RECEIPT_DIR/${{ matrix.shard }}.json\"\n",
-    "      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb99baeddf\n",
+    "      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n",
     "          name: shard-receipt-${{ matrix.shard }}\n",
     "          path: ${{ runner.temp }}/agyworker-shard-receipt-${{ matrix.shard }}/${{ matrix.shard }}.json\n",
     "          retention-days: 1\n",
@@ -181,7 +181,7 @@ required = (
     "    if: always()\n",
     "    needs: [shard]\n",
     "      - name: download shard receipts\n",
-    "        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16\n",
+    "        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n",
     "          pattern: shard-receipt-*\n",
     "          path: ${{ runner.temp }}/downloaded-shard-receipts\n",
     "      - name: verify aggregate shard receipts\n",
