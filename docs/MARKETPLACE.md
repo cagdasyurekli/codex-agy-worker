@@ -19,6 +19,19 @@ installed runtime bytes. `install.sh` remains the explicit local skill-installat
 path; its copied skill bundle must remain byte-identical to the source bundle (apart
 from the local `.pipeline-root` marker).
 
+After reviewing the repository source, add its Git-backed marketplace and install the
+plugin with:
+
+```bash
+codex plugin marketplace add cagdasyurekli/codex-agy-worker
+codex plugin add codex-agy-worker@codex-agy-worker
+```
+
+Start a new Codex session after installation. This enables the local plugin only; it
+does not authorize a provider call or transmission of repository content. Before
+dispatch, the skill still requires approval for the exact repository/path scope sent
+through `agy` to Google/Gemini unless that transmission was already approved.
+
 Validate the package manifest before a release-oriented review with the installed
 plugin-creator skill's `scripts/validate_plugin.py`, passing this repository root as
 its argument. For example, from that skill directory:
@@ -27,6 +40,8 @@ its argument. For example, from that skill directory:
 python3 scripts/validate_plugin.py <repository-root>
 ```
 
-That validation is local package-shape evidence only. Adding this repository as a
-marketplace, installing it into Codex, or publishing it remains a separately approved
-external action.
+That validator is local package-shape evidence only. Before documenting the commands
+above, the repository was also fetched at an immutable public Git commit in disposable
+Codex state; marketplace add/list, plugin install/remove, resolver discovery, and
+source-installed skill parity passed. This does not prove future snapshots, provider
+behavior, task quality, or general correctness.

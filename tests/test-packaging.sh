@@ -3064,6 +3064,10 @@ if [[ "$brand_valid_rc" == "0" ]] \
         && grep -Fq 'canonical_url: "https://cagdasyurekli.github.io/codex-agy-worker/VERIFYING_AGENT_OUTPUT.html"' "$ROOT/docs/VERIFYING_AGENT_OUTPUT.md" \
         && grep -Fq 'A Codex Agent Skill for bounded Antigravity CLI delegation' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq '## Quick start' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq 'codex plugin marketplace add cagdasyurekli/codex-agy-worker' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq 'codex plugin add codex-agy-worker@codex-agy-worker' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq 'git clone https://github.com/cagdasyurekli/codex-agy-worker.git' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq 'does not authorize a provider dispatch or repository transmission' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq './proof-demo.sh' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq 'read [PRIVACY.md](PRIVACY.md) before use' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq '<picture>' "$ROOT/README.md" \

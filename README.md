@@ -21,15 +21,29 @@ blocked.
 Requires a POSIX-compatible environment with Bash, Python 3, git, Codex CLI, and
 `agy` on `PATH`. Native Windows is untested; WSL may work on a best-effort basis.
 
+Install the Agent Skill from its Git-backed Codex marketplace:
+
+```bash
+codex plugin marketplace add cagdasyurekli/codex-agy-worker
+codex plugin add codex-agy-worker@codex-agy-worker
+```
+
+Start a new Codex session after installation. The marketplace packages the same
+canonical `skills/agy-worker/` bundle; it does not duplicate or download a second
+runtime when the skill runs.
+
+Or review and install directly from GitHub:
+
 ```bash
 git clone https://github.com/cagdasyurekli/codex-agy-worker.git
 cd codex-agy-worker
 ./install.sh
 ```
 
-Review the commit before installation. The marketplace manifest is being prepared,
-but GitHub clone plus `./install.sh` remains the verified installation path until a
-published Git source is tested end to end.
+Review the selected source commit before either installation path. The marketplace
+flow was tested from an immutable Git commit with isolated Codex state, including
+add, discovery, install, removal, and exact installed-skill byte parity. Installation
+does not authorize a provider dispatch or repository transmission.
 
 ### Try the evidence boundary offline
 
@@ -345,10 +359,10 @@ compatibility wrappers for clone users. `install.sh` copies the same bundle and 
 a local pointer so checkout-only maintenance commands remain available; it does not
 rewrite the public `SKILL.md`.
 
-The repository retains `.codex-plugin/plugin.json` so the Codex skills-only package
-shape can be validated locally. A repo marketplace contract is prepared separately;
-GitHub clone plus `./install.sh` remains the verified distribution path until its
-published Git-source installation has been tested end to end.
+The repository retains `.codex-plugin/plugin.json` and the root-source
+`.agents/plugins/marketplace.json` contract for the same Codex skills-only package.
+The marketplace and GitHub clone paths resolve the one canonical skill bundle; see
+[the marketplace contract and verification boundary](docs/MARKETPLACE.md).
 
 The portable Agent Skill can also be copied through the third-party skills CLI:
 

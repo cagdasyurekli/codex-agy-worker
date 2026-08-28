@@ -258,8 +258,10 @@ does not establish same-user tamper resistance.
   available. `.codex-plugin/plugin.json` and `.agents/plugins/marketplace.json`
   describe that same root package: the marketplace source is exactly `.` and may not
   introduce a copied `plugins/` skill or runtime. `docs/MARKETPLACE.md` records the
-  local contract; adding it to Codex remains separately approved. GitHub clone plus
-  explicit install remains the supported public path.
+  local contract; adding it to Codex remains separately approved. The tested public
+  installation paths are the Git-backed Codex marketplace and GitHub clone plus
+  explicit install; neither installation authorizes provider dispatch or repository
+  transmission.
 - `doctor.sh` delegates to the canonical bundled doctor. It reads only its fixed
   portable agy version/source/date metadata plus bounded semantic tool/repository
   probes, emits no paths or raw command output, and neither dispatches nor repairs.
