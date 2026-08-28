@@ -504,7 +504,7 @@ cat > "$TMP/selection-bin/agy" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
     --version)
-        printf '1.1.16\n'
+        printf '1.1.22\n'
         ;;
     --help)
         printf '%s\n' \

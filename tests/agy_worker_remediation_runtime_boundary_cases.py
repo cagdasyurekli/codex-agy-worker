@@ -56,7 +56,7 @@ def run(context: dict[str, object]) -> None:
             fake = bin_dir / "agy"
             fake.write_text(
                 "#!/bin/sh\n"
-                "if [ \"${1:-}\" = --version ] && [ \"$#\" = 1 ]; then printf 'version\\n' >> " + shlex.quote(str(calls)) + "; printf '1.1.16\\n'; exit 0; fi\n"
+                "if [ \"${1:-}\" = --version ] && [ \"$#\" = 1 ]; then printf 'version\\n' >> " + shlex.quote(str(calls)) + "; printf '1.1.22\\n'; exit 0; fi\n"
                 "if [ \"${1:-}\" = --help ] && [ \"$#\" = 1 ]; then printf 'help\\n' >> " + shlex.quote(str(calls)) + "; sleep \"${FAKE_DIRECT_HELP_DELAY:-0}\"; cat >&2 <<'HELP'\n" + help_text + "HELP\nexit 0\nfi\n"
                 "printf 'provider\\n' >> " + shlex.quote(str(calls)) + "\nprintf '%s\\n' \"$@\" > " + shlex.quote(str(args)) + "\npwd > " + shlex.quote(str(cwd)) + "\n"
                 + "if [ -n \"${FAKE_DIRECT_HEARTBEAT_COUNT:-}\" ]; then\n"
@@ -89,7 +89,7 @@ def run(context: dict[str, object]) -> None:
             command = {
                 "schema_version": 4, "kind": "agy-worker-dispatch-command", "job_id": f"direct-{label}",
                 "workdir": str(repo), "argv": ["agy", "--sandbox", "--mode", "accept-edits", "--add-dir", str(repo), "--json-schema", str(schema), "--model", "gemini-3.6-flash-high", "--print", "task"],
-                "agy_version": "1.1.16", "agy_version_observed": True,
+                "agy_version": "1.1.22", "agy_version_observed": True,
                 "selection_path": str(selection_path), "selection_sha256": MODULE.digest(raw), "selection_identity": list(MODULE._identity(info)),
                 "idle_seconds": idle_seconds, "hard_seconds": hard_seconds, "max_seconds": max_seconds, "notice_seconds": 3,
                 "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": workflow,
