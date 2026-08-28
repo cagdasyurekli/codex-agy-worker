@@ -113,6 +113,8 @@ paths.update((
     "tests/test-models-capture-1-1-22-version-evidence.py",
     "tests/test-models-capture-1-1-22-profile.py",
     "tests/test-models-capture-1-1-22-runner.py",
+    "scripts/models_capture_1_1_22_reprofile.py",
+    "tests/test-models-capture-1-1-22-reprofile.py",
     "tests/test-agy-1-1-16-activation.py",
 ))
 for relative in sorted(paths):
@@ -2585,7 +2587,7 @@ suite_commands += re.findall(
 )
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 37
+    len(suite_commands) == len(set(suite_commands)) == 38
     and all(command in contributing for command in suite_commands)
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
@@ -2605,7 +2607,7 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The thirty-seven offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The thirty-eight offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
@@ -2723,7 +2725,7 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
             "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-16-runner.py` (58 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline.' \
+        && grep -Fq 'Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; reprofile: 86 offline.' \
             "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-capture-1-1-22-version-evidence.py 45-case' \
             "$ROOT/README.md" \
@@ -2765,6 +2767,7 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_22_version_evidence.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_22_profile.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_22_runner.py" ]] \
+        && [[ -x "$ROOT/scripts/models_capture_1_1_22_reprofile.py" ]] \
         && grep -Fq 'EXPECTED_VERSION = "1.1.16"' \
             "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" \
         && grep -Fq 'private raw `captured` evidence' \
