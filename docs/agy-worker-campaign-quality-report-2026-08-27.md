@@ -224,3 +224,31 @@ The classified evidence outcome is:
   original `authentication`, `quota`, `service`, `timeout`, and `unknown` outcomes.
 - **Classification detail:** The single matching versioned ruleset (`agy-1.1.22-failure-rules-v1`) recognized local CLI log/crash output permission denial and loopback bind permission denial in the local sandbox/environment. Under that bounded ruleset the retained evidence is categorized as `local_environment`; this diagnostic label does not claim the provider was contacted or prove an underlying provider/account state.
 - **Authority boundary:** This classification is diagnostic maintenance evidence only; it does not retry the child, alter the non-activating status of agy 1.1.22, advance the model matrix or inventory binding, or grant activation/routing authority.
+
+## Addendum — 2026-08-28: Usage observation and exact-head CI delivery slices
+
+PR #75 merged the privacy-safe Codex usage observer and 1.1.22 failure sidecar as
+commit `a08d4c0ce7eedd4dbdcdc3e1258b46d901f6134b`; Issues #69 and #72 were then
+closed. PR #76 merged the non-activating CI timing slice as commit
+`db299ae2344194b5451bbfd9c0eabd741c0d057c`; its exact PR head was protected by
+the required `test` check.
+
+Three owner-private observations of that exact merged timing commit retained the
+same 42-stage inventory digest
+`0cb887d9a401f35042bfc490e4a63f3d7b043242199adb3c96c4501b1840ebb2` and
+completed the unchanged full gate successfully. Total observed durations were
+1375.042067, 1398.661908, and 1523.133890 seconds. The frozen shard partition was
+based on median stage-group durations: dispatcher 440.844744 seconds, dispatcher
+remediation 427.802947 seconds, other-a 266.216220 seconds, and other-b
+266.214177 seconds. These are local observational wall times, not compute, token,
+provider-usage, or cost savings.
+
+The #73B delivery slice adds four exact-PR-head shard jobs and one fail-closed
+aggregate `test` check. Every canonical stage remains assigned exactly once; each
+shard emits a bounded privacy-safe receipt, and missing, duplicate, failed,
+cancelled, skipped, malformed, wrong-head, or wrong-inventory evidence is rejected.
+Uploaded GitHub workflow artifacts are retained for one day under repository
+Actions access. The canonical zero-argument local gate remains unchanged and runs
+all stages. Focused pre-PR evidence comprised 44 timing cases, 79 sharding cases,
+and 392 packaging/policy cases; final protected acceptance remains the exact-head
+PR check rather than this report.

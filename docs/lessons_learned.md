@@ -890,3 +890,21 @@ digest. Raw commands, file paths, logs, environment variables,
 timestamps, and host identity are strictly excluded. The default fail-fast gate behavior
 and full suite inventory remain unchanged, and timing reports are explicitly distinct
 from CI sharding or acceptance decisions.
+
+### Exact-PR-head fail-closed CI sharding and receipt verification (2026-08-28)
+
+Observation: Parallelizing a long-running offline CI gate across shard jobs reduces PR turnaround time,
+but sharded workflows must not silently drop stages, reuse cross-run artifacts, weaken checkout
+immutability, or conflate lower wall time with lower total compute or weaker acceptance.
+Change: Four frozen shard IDs and stage memberships (`dispatcher`, `dispatcher-remediation`, `other-a`,
+`other-b`) partition the canonical 42-stage inventory. In CI, each shard checks out the exact immutable
+head SHA (`github.event.pull_request.head.sha` for pull requests or validated `head_sha` for manual dispatch),
+enforces committed diff hygiene, executes its stage subset, and emits a local mode-0600 shard receipt
+binding the schema, exact head SHA, inventory digest, shard ID, expected and observed stage lists, and outcome.
+The required aggregate `test` job runs with `if: always()` and verifies that all four shard receipts exist,
+all producer jobs succeeded, all receipts bind the identical expected head and inventory, no duplicate shard
+or stage exists, and every canonical stage appears exactly once. GitHub retains the privacy-safe uploaded
+receipt artifacts for one day under repository Actions access. Any failure, cancellation, skip, missing receipt,
+or schema mismatch fails closed. Local `./scripts/ci-offline.sh` retains its default all-stage execution, and
+lower CI wall time is explicitly documented as not reducing total compute, provider usage, tokens, cost, or
+verification rigor.

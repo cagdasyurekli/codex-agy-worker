@@ -5,6 +5,9 @@ set -uo pipefail
 # Contract checks use Python assertions throughout this legacy shell harness.
 # Keep inherited optimizer settings from silently disabling those checks.
 unset PYTHONOPTIMIZE
+# Repository-facing Python probes must not leave import caches behind. The dedicated
+# negative-control subshell below explicitly unsets this when testing leak detection.
+export PYTHONDONTWRITEBYTECODE=1
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$HERE/.."
@@ -144,31 +147,63 @@ path = Path(sys.argv[1])
 info = path.lstat()
 assert stat.S_ISREG(info.st_mode)
 data = path.read_bytes()
-assert sha256(data).hexdigest() == "0b6ac792577aea2da8ef9985caf600516eb8721ca8e3925c02eb58e0df74b894"
+assert sha256(data).hexdigest() == "43ba324dd11e0fff65aac156e96720d598baf66326621487d37da55ba3c27bb5"
 text = data.decode("utf-8")
 required = (
+    "name: test\n",
     "  pull_request:\n",
     "  workflow_dispatch:\n",
     "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n",
     "  cancel-in-progress: true\n",
     "permissions:\n  contents: read\n",
     "    timeout-minutes: 60\n",
+    "    timeout-minutes: 10\n",
     "      base_sha:\n",
     "      head_sha:\n",
-    "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n",
-    "          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.ref }}\n",
+    "      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}\n",
+    "          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}\n",
     "      - name: committed diff hygiene\n",
     "          AGY_WORKER_CI_EVENT_NAME: ${{ github.event_name == 'workflow_dispatch' && 'push' || github.event_name }}\n",
     "          AGY_WORKER_CI_BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}\n",
     "          AGY_WORKER_CI_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}\n",
     "        run: ./scripts/ci-diff-check.sh\n",
-    "      - name: full offline suite and static checks\n        run: ./scripts/ci-offline.sh\n",
+    "      - name: shard offline suite\n",
+    "          RECEIPT_DIR: ${{ runner.temp }}/agyworker-shard-receipt-${{ matrix.shard }}\n",
+    "          (umask 077 && mkdir \"$RECEIPT_DIR\")\n",
+    "          chmod 0700 \"$RECEIPT_DIR\"\n",
+    "          ./scripts/ci-offline.sh --shard \"${{ matrix.shard }}\" --receipt \"$RECEIPT_DIR/${{ matrix.shard }}.json\"\n",
+    "      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb99baeddf\n",
+    "          name: shard-receipt-${{ matrix.shard }}\n",
+    "          path: ${{ runner.temp }}/agyworker-shard-receipt-${{ matrix.shard }}/${{ matrix.shard }}.json\n",
+    "          retention-days: 1\n",
+    "  test:\n",
+    "    name: test\n",
+    "    if: always()\n",
+    "    needs: [shard]\n",
+    "      - name: download shard receipts\n",
+    "        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16\n",
+    "          pattern: shard-receipt-*\n",
+    "          path: ${{ runner.temp }}/downloaded-shard-receipts\n",
+    "      - name: verify aggregate shard receipts\n",
+    "          PRODUCER_RESULT: ${{ needs.shard.result }}\n",
+    "          RECEIPTS_DIR: ${{ runner.temp }}/downloaded-shard-receipts\n",
+    "          /usr/bin/python3 -I -S -B scripts/ci_sharding.py verify-aggregate \\\n            --receipts-dir \"${RECEIPTS_DIR}\" \\\n            --expected-head \"${AGY_WORKER_CI_HEAD_SHA}\" \\\n            --producer-result \"${PRODUCER_RESULT}\"\n",
 )
-assert all(text.count(item) == 1 for item in required)
+assert all(text.count(item) >= 1 for item in required)
 assert "  push:\n" not in text
 assert "git fetch" not in text
 assert "run: git diff --check\n" not in text
 assert "actions/checkout@v4" not in text
+assert "\r" not in text
+assert not text.endswith(("# timeout-minutes: 1\n", "# byte binding\n"))
+assert "? if\n" not in text
+assert "!policy" not in text
+assert "&policy" not in text
+assert "*policy" not in text
+assert "continue-on-error: true" not in text
+assert "mktemp -d -t agyworker-shard-receipt" not in text
+assert "/tmp/agyworker-shard-receipt" not in text
+assert text.count("timeout-minutes:") == 2
 PY
 }
 
@@ -204,8 +239,13 @@ EXPECTED_BLOCKS = {
         "        with:\n"
         "          fetch-depth: 0\n"
         "          persist-credentials: false\n"
-        "          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.ref }}\n"
+        "          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}\n"
     ),
+}
+EXPECTED_COUNTS = {
+    "compatibility-watch.yml": 1,
+    "feedback-watch.yml": 1,
+    "test.yml": 2,
 }
 
 if target.is_dir():
@@ -217,12 +257,13 @@ for w in workflow_files:
     text = w.read_text(encoding="utf-8")
     checkout_count = text.casefold().count("actions/checkout@")
     expected = EXPECTED_BLOCKS.get(w.name)
+    count = EXPECTED_COUNTS.get(w.name, 1)
     if expected is None:
         assert checkout_count == 0, f"{w.name} has an ungoverned checkout reference"
         continue
-    assert checkout_count == 1, f"{w.name} expected 1 checkout reference, found {checkout_count}"
-    assert text.count(expected) == 1, f"{w.name} checkout block differs from policy"
-    assert text.count("persist-credentials:") == 1, f"{w.name} credential policy is ambiguous"
+    assert checkout_count == count, f"{w.name} expected {count} checkout reference(s), found {checkout_count}"
+    assert text.count(expected) == count, f"{w.name} checkout block differs from policy"
+    assert text.count("persist-credentials:") == count, f"{w.name} credential policy is ambiguous"
 PY
 }
 
@@ -312,7 +353,7 @@ required = (
     "./tests/test-doctor.sh",
     "/usr/bin/python3 -I -S -B tests/test-conformance.py",
     "./tests/test-proof-demo.sh",
-    "repository bytecode hygiene",
+    "if announce 'repository bytecode hygiene'; then",
     "find . -type d -name __pycache__ -print -quit",
 )
 assert all(text.count(item) == 1 for item in required)
@@ -346,6 +387,7 @@ if ci_workflow_contract "$ROOT/.github/workflows/test.yml" \
         && [[ -x "$ROOT/scripts/ci-diff-check.sh" ]] \
         && [[ -x "$ROOT/scripts/ci_diff_check.py" ]] \
         && [[ -x "$ROOT/scripts/ci_timing.py" ]] \
+        && [[ -x "$ROOT/scripts/ci_sharding.py" ]] \
         && [[ -x "$ROOT/scripts/ci-offline.sh" ]]; then
     ok "PR CI verifies the exact committed range, cancels stale runs, and uses the canonical offline runner"
 else
@@ -364,6 +406,12 @@ else
     bad "CI timing telemetry records monotonic wall time, validates schema, and publishes owner-private reports"
 fi
 
+if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-sharding.py"; then
+    ok "CI sharding partition invariants, receipt publication, and fail-closed aggregate validation"
+else
+    bad "CI sharding partition invariants, receipt publication, and fail-closed aggregate validation"
+fi
+
 workflow_mutations="$TMP/workflow-mutations"
 mkdir "$workflow_mutations"
 python3 - "$ROOT/.github/workflows/test.yml" "$workflow_mutations" <<'PY'
@@ -379,16 +427,18 @@ def replace_once(old: bytes, new: bytes) -> bytes:
 
 mutations = {
     "job-if.yml": replace_once(b"  test:\n", b"  test:\n    if: false\n"),
-    "step-if.yml": replace_once(b"        env:\n", b"        if: false\n        env:\n"),
+    "step-if.yml": replace_once(b"      - name: committed diff hygiene\n        env:\n", b"      - name: committed diff hygiene\n        if: false\n        env:\n"),
     "job-continue-on-error.yml": replace_once(
         b"    timeout-minutes: 60\n",
         b"    timeout-minutes: 60\n    continue-on-error: true\n",
     ),
     "step-continue-on-error.yml": replace_once(
-        b"        env:\n", b"        continue-on-error: true\n        env:\n"
+        b"      - name: committed diff hygiene\n        env:\n",
+        b"      - name: committed diff hygiene\n        continue-on-error: true\n        env:\n",
     ),
     "step-timeout.yml": replace_once(
-        b"        env:\n", b"        timeout-minutes: 1\n        env:\n"
+        b"      - name: committed diff hygiene\n        env:\n",
+        b"      - name: committed diff hygiene\n        timeout-minutes: 1\n        env:\n",
     ),
     "commented-timeout.yml": canonical + b"\n# timeout-minutes: 1\n",
     "duplicate-timeout.yml": replace_once(
@@ -485,8 +535,8 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 old = "          persist-credentials: false\n"
-assert text.count(old) == 1
-path.write_text(text.replace(old, ""), encoding="utf-8")
+assert text.count(old) == 2
+path.write_text(text.replace(old, "", 1), encoding="utf-8")
 PY
 if ! ci_workflow_contract "$TMP/persisted-checkout-credentials.yml" 2>/dev/null; then
     ok "workflow policy rejects persisted checkout credentials"
@@ -502,8 +552,8 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 old = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-assert text.count(old) == 1
-path.write_text(text.replace(old, "actions/checkout@v4"), encoding="utf-8")
+assert text.count(old) == 2
+path.write_text(text.replace(old, "actions/checkout@v4", 1), encoding="utf-8")
 PY
 if ! ci_workflow_contract "$TMP/mutable-checkout-tag.yml" 2>/dev/null \
         && ! workflow_checkout_policy_contract "$TMP/mutable-checkout-tag.yml" 2>/dev/null; then
@@ -520,8 +570,8 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 old = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-assert text.count(old) == 1
-path.write_text(text.replace(old, "actions/checkout@1111111111111111111111111111111111111111"), encoding="utf-8")
+assert text.count(old) == 2
+path.write_text(text.replace(old, "actions/checkout@1111111111111111111111111111111111111111", 1), encoding="utf-8")
 PY
 if ! ci_workflow_contract "$TMP/different-checkout-sha.yml" 2>/dev/null \
         && ! workflow_checkout_policy_contract "$TMP/different-checkout-sha.yml" 2>/dev/null; then
@@ -2602,7 +2652,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (89 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 391 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 392 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
@@ -2615,9 +2665,9 @@ else
     bad "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
 fi
 
-bootstrap_preflight_line="$(grep -nF 'repository-only version bootstrap runtime preflight' \
+bootstrap_preflight_line="$(grep -nF "if announce 'repository-only version bootstrap runtime preflight'; then" \
     "$CI_OFFLINE" | cut -d: -f1)"
-bootstrap_suite_line="$(grep -nF 'repository-only version bootstrap runner' \
+bootstrap_suite_line="$(grep -nF "if announce 'repository-only version bootstrap runner'; then" \
     "$CI_OFFLINE" | cut -d: -f1)"
 if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-version-attestation-runner.py  165-case' "$ROOT/README.md" \

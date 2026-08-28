@@ -21,7 +21,7 @@ sys.dont_write_bytecode = True
 MAX_REPORT_BYTES = 64 * 1024
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
-ANNOUNCE_RE = re.compile(rb"^announce '([^']+)'$")
+ANNOUNCE_RE = re.compile(rb"^(?:if\s+)?announce '([^']+)'(?:;\s*then)?$")
 CONTROL_LABEL = b"@@agy-worker-ci-timing:"
 INTEGRITY_STATEMENT = (
     "Unsigned local record; schema-valid content can be rewritten and is not "
