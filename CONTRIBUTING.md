@@ -34,7 +34,7 @@ requesting review:
 
 It is fail-fast, requires no network or provider call, does not intentionally inspect
 account-HOME contents, externalizes temporary bytecode, and runs the static checks plus
-all thirty-five offline suites. Ambient local tools may still consult ordinary user
+all thirty-seven offline suites. Ambient local tools may still consult ordinary user
 configuration. For a quota-unavailable
 private fork this is evidence to attach to review, not a replacement for the protected
 GitHub `test` check; manually dispatch the exact committed range after Actions becomes
@@ -71,9 +71,11 @@ stable-candidate full gate:
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-version-evidence.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-profile.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-runner.py
+/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-classifier.py
 /usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py
 ./tests/test-reporting.sh
 /usr/bin/python3 -I -S -B tests/test-feedback-triage.py
+/usr/bin/python3 -I -S -B tests/test-codex-usage-report.py
 ./tests/test-packaging.sh
 ./tests/test-doctor.sh
 /usr/bin/python3 -I -S -B tests/test-conformance.py

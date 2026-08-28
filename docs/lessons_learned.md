@@ -847,3 +847,31 @@ owning focused suite. Once bytes are stable, run the canonical `ci-offline.sh` g
 once and bind review to that candidate. PR templates should request the canonical gate
 and exact focused evidence instead of copying every suite command; mechanical tests
 should derive the inventory from the runner rather than enforce duplicate checklists.
+
+### Driver-side usage observation and token accounting boundaries (2026-08-28)
+
+Observation: Measuring Codex orchestration overhead around delegation must not rely on
+loose heuristics, automatic background executors, or unverified billing claims.
+Change: `codex-usage-report.sh` pins Codex CLI 0.150.1 and an exact experimental
+app-server schema digest, communicates over the live bounded JSONL stdio protocol (which
+has request IDs but no `jsonrpc` member), drains both child streams with independent limits,
+process-group cleanup, and reads explicit session files under owner-private mode 0600.
+All sensitive fields (cwd, prompts, messages, raw logs, thread IDs, account identities,
+and file paths) are strictly redacted. Token accounting keeps input, cached input, net-new
+input, cache-write, output, and reasoning distinct, with the latest validated phase window
+separate from cumulative totals; reasoning is reported as a subset of
+output and is never double-counted. Exact per-thread usage may emit estimated credits in
+integer micros labeled `provider_estimate`; account-wide observation emits rate limits,
+not invented credit totals, and token comparisons are labeled directional.
+
+### Sidecar failure classification of non-activating evidence (2026-08-28)
+
+Observation: Diagnosing a failed account-backed observation must not alter the historical
+runner's execution semantics or silently retry provider requests.
+Change: `models_capture_1_1_22_classifier.py` is an independent sidecar maintenance tool
+that operates on an explicit owner-private evidence root. It enforces strict structural,
+permission, and hash integrity checks, and matches sanitized stderr against versioned
+rulesets. Exactly one matching category (authentication, provider_permission, quota,
+service, timeout, local_environment) is permitted; multiple or zero matches resolve to
+unknown. The output is a mode-0600 record containing only category, origin, hashes, and
+enforced limits, with raw prose and absolute paths excluded and no activation authority granted.
