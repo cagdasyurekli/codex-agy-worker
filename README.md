@@ -1741,6 +1741,26 @@ output, not its own recollection.
 
 ---
 
+## SWE-bench Workflow Study v1
+
+The `swebench-workflow-study.sh` tool lets users import explicit, sanitized, matched experiment results and learn which agy-worker usage method is most token/cost efficient per accepted solution. It operates entirely offline without live provider usage.
+
+```bash
+# Prepare from an explicit sanitized plan
+./swebench-workflow-study.sh prepare --root /path/to/results --plan /path/to/plan.json
+
+# Import pre-gathered result records
+./swebench-workflow-study.sh import --root /path/to/results --records /path/to/results.jsonl
+
+# Generate the completeness report
+./swebench-workflow-study.sh report --root /path/to/results
+
+# Advise on a strict matched Pareto rule against codex-only
+./swebench-workflow-study.sh advise --root /path/to/results
+```
+
+The result root must be outside the checkout or relocated skill bundle, owned by the caller, mode `0700`, and empty at prepare time. Plan and records inputs must each be caller-owned, mode `0600`, one-link regular files; the tool opens them without following symlinks. Each command accepts only the exact prior stage and publishes one flat canonical mode-`0600` no-overwrite artifact. Plans contain closed nonempty budgets and sorted opaque task commitments. Imports require exact bindings, a closed pre-subject failure classification, complete driver/reviewer acceptance gates, and separate Codex and agy token/cost observations with explicit unavailable states. `accepted_solution` is checked as a derivation, not trusted as an independent claim. Report and advice revalidate the complete hash-linked chain; the report derives all planned-task, planned-cell, and accepted-solution denominators. Advice is deterministic and recommendation-only; it evaluates strict task-paired Pareto non-regression over every planned cell, requires complete comparable primary telemetry, and publishes `applied`, dispatch, model-change, and effort-change authority as `false`. It never dispatches, evaluates, retries, routes, changes authority, or runs provider code. It never influences `qa-gate` acceptance.
+
 ## Layout
 
 ```
@@ -1750,6 +1770,7 @@ qa-gate.sh                    verify an envelope against the repo — the eviden
 verify-job.sh                 run the gate and durably publish Evidence Receipt v1
 evidence-report.sh            render a validated receipt as bounded text or Markdown
 benchmark.sh                  prepare/run/report fixed provider-independent benchmarks
+swebench-workflow-study.sh    prepare/import/report/advise explicit offline matched results
 persona-evidence.sh           validate/report fixed persona evidence records
 profile.sh                    list/show fixed non-executable workload profiles
 proof-demo.sh                 offline starter proof of one gate pass and one rejection
@@ -1810,6 +1831,7 @@ tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/mutation suite
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
+tests/test-swebench-workflow-study.py 50-case offline lifecycle/privacy/Pareto/relocation suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite

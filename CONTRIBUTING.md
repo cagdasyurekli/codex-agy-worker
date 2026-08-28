@@ -54,6 +54,7 @@ stable-candidate full gate:
 ./tests/test-evidence-receipt.sh
 ./tests/test-evidence-report.sh
 /usr/bin/python3 -I -S -B tests/test-benchmark.py
+/usr/bin/python3 -I -S -B tests/test-swebench-workflow-study.py
 /usr/bin/python3 -I -S -B tests/test-persona-evidence.py
 /usr/bin/python3 -I -S -B tests/test-job-lifecycle.py
 /usr/bin/python3 -I -S -B tests/test-workload-profiles.py

@@ -49,6 +49,7 @@ doctor_runtime_complete() {
         verify-job.sh \
         evidence-report.sh \
         benchmark.sh \
+        swebench-workflow-study.sh \
         persona-evidence.sh \
         profile.sh \
         model-recommendation.sh \
@@ -59,6 +60,7 @@ doctor_runtime_complete() {
         scripts/evidence_receipt.py \
         scripts/evidence_report.py \
         scripts/benchmark.py \
+        scripts/swebench_workflow_study.py \
         scripts/persona_registry.py \
         scripts/workload_profiles.py \
         scripts/recommendation_record.py \
@@ -96,6 +98,9 @@ doctor_runtime_complete() {
         schemas/job-state.schema.json \
         schemas/benchmark-plan.schema.json \
         schemas/benchmark-result.schema.json \
+        schemas/swebench-workflow-study-plan.schema.json \
+        schemas/swebench-workflow-study-report.schema.json \
+        schemas/swebench-workflow-study-advisory.schema.json \
         schemas/persona-dispatch.schema.json \
         schemas/persona-human-review.schema.json \
         schemas/persona-run-evidence.schema.json \

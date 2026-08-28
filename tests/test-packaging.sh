@@ -1443,6 +1443,21 @@ else
     bad "root and portable packages include offline Benchmark v1"
 fi
 
+if [[ -x "$ROOT/swebench-workflow-study.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/swebench-workflow-study.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/swebench_workflow_study.py" ]] \
+        && grep -Fq 'swebench-workflow-study.sh' "$ROOT/skills/agy-worker/scripts/resolve-pipeline.sh" \
+        && grep -Fq 'scripts/swebench_workflow_study.py' "$ROOT/skills/agy-worker/runtime/doctor.sh" \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/swebench-workflow-study-plan.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/swebench-workflow-study-report.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/swebench-workflow-study-advisory.schema.json" ]] \
+        && grep -Fq '"additionalProperties":false' "$ROOT/skills/agy-worker/runtime/schemas/swebench-workflow-study-plan.schema.json" \
+        && grep -Fq '"exact_bindings_verified"' "$ROOT/skills/agy-worker/runtime/schemas/swebench-workflow-study-report.schema.json"; then
+    ok "root and portable packages include SWE-bench Workflow Study v1"
+else
+    bad "root and portable packages include SWE-bench Workflow Study v1"
+fi
+
 if python3 - "$ROOT" "$TMP" <<'PY'
 import copy
 import hashlib
@@ -1600,6 +1615,7 @@ required_runtime_dependencies=(
     verify-job.sh
     evidence-report.sh
     benchmark.sh
+    swebench-workflow-study.sh
     persona-evidence.sh
     profile.sh
     model-recommendation.sh
@@ -1610,6 +1626,7 @@ required_runtime_dependencies=(
     scripts/evidence_receipt.py
     scripts/evidence_report.py
     scripts/benchmark.py
+    scripts/swebench_workflow_study.py
     scripts/persona_registry.py
     scripts/workload_profiles.py
     scripts/recommendation_record.py
@@ -1630,6 +1647,9 @@ required_runtime_dependencies=(
     schemas/job-state.schema.json
     schemas/benchmark-plan.schema.json
     schemas/benchmark-result.schema.json
+    schemas/swebench-workflow-study-plan.schema.json
+    schemas/swebench-workflow-study-report.schema.json
+    schemas/swebench-workflow-study-advisory.schema.json
     schemas/persona-dispatch.schema.json
     schemas/persona-human-review.schema.json
     schemas/persona-run-evidence.schema.json
@@ -1755,12 +1775,14 @@ for specification in \
     'verify-job.sh:executable' \
     'evidence-report.sh:executable' \
     'benchmark.sh:executable' \
+    'swebench-workflow-study.sh:executable' \
     'persona-evidence.sh:executable' \
     'profile.sh:executable' \
     'scripts/validate-envelope.py:executable' \
     'scripts/evidence_receipt.py:executable' \
     'scripts/evidence_report.py:executable' \
     'scripts/benchmark.py:executable' \
+    'scripts/swebench_workflow_study.py:executable' \
     'scripts/persona_registry.py:executable' \
     'scripts/workload_profiles.py:executable' \
     'scripts/recommendation_record.py:executable' \
@@ -1774,6 +1796,9 @@ for specification in \
     'schemas/job-state.schema.json:data' \
     'schemas/benchmark-plan.schema.json:data' \
     'schemas/benchmark-result.schema.json:data' \
+    'schemas/swebench-workflow-study-plan.schema.json:data' \
+    'schemas/swebench-workflow-study-report.schema.json:data' \
+    'schemas/swebench-workflow-study-advisory.schema.json:data' \
     'schemas/persona-run-manifest.schema.json:data' \
     'schemas/persona-transition-approval.schema.json:data' \
     'schemas/workload-profile.schema.json:data' \
@@ -1889,6 +1914,14 @@ if grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
     ok "CI and public docs expose only provider-independent Benchmark v1"
 else
     bad "CI and public docs expose only provider-independent Benchmark v1"
+fi
+
+if grep -Fq '/usr/bin/python3 -I -S -B tests/test-swebench-workflow-study.py' "$CI_OFFLINE" \
+        && grep -Fq 'SWE-bench Workflow Study v1' "$ROOT/README.md" \
+        && grep -Fq 'never influences `qa-gate` acceptance' "$ROOT/README.md" ; then
+    ok "CI and public docs expose SWE-bench Workflow Study v1"
+else
+    bad "CI and public docs expose SWE-bench Workflow Study v1"
 fi
 
 if grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
