@@ -527,9 +527,14 @@ and worker-read content through agy to Google/Gemini. Keep local logs private an
 privacy, support, and usage terms public alongside the GitHub distribution.
 
 Keep distribution surfaces no broader than the maintained product. A Codex package
-manifest can validate local package shape without creating a listing; do not retain
-Claude or marketplace catalogs after choosing a GitHub-first, Codex-only product.
-GitHub Pages enablement and search-console ownership are external state changes with
+manifest and an explicitly approved repo marketplace descriptor can validate one local
+root package without creating a listing. Bind the marketplace entry name to the plugin
+manifest and require source `.`: a `plugins/` copy, second skill, second runtime,
+escaping path, or symlinked source turns a simple discovery surface into an unreviewed
+second distribution. Installed-skill bytes must still match the canonical source.
+Neither descriptor installs, publishes, or enables an external catalog; those remain
+owner actions. Do not retain Claude catalogs after choosing a GitHub-first, Codex-only
+product. GitHub Pages enablement and search-console ownership are external state changes with
 their own approval and verification. Use accurate natural-language landing copy, a
 canonical URL, and a sitemap that the owner explicitly submits through Search Console;
 do not trade the project's evidence boundary for keyword stuffing or unsupported

@@ -1220,13 +1220,121 @@ assert not ({"apps", "mcpServers", "hooks"} & manifest.keys())
 PY
 then ok "Codex plugin is a skills-only package with public legal links"; else bad "Codex plugin is a skills-only package with public legal links"; fi
 
-if [[ ! -e "$ROOT/.claude-plugin" ]] \
-        && [[ ! -e "$ROOT/CLAUDE.md" ]] \
-        && [[ ! -e "$ROOT/.agents/plugins/marketplace.json" ]] \
-        && [[ ! -e "$ROOT/docs/MARKETPLACE.md" ]]; then
-    ok "removed Claude and marketplace distribution surfaces stay absent"
+if python3 - "$ROOT" "$TMP/marketplace-contract" <<'PY'
+import json
+from pathlib import Path
+import shutil
+import stat
+import sys
+
+source_root = Path(sys.argv[1])
+fixture = Path(sys.argv[2])
+shutil.copytree(source_root / ".agents", fixture / ".agents")
+shutil.copytree(source_root / ".codex-plugin", fixture / ".codex-plugin")
+shutil.copytree(source_root / "skills", fixture / "skills")
+
+
+def require_regular(path: Path) -> None:
+    info = path.lstat()
+    assert stat.S_ISREG(info.st_mode), path
+
+
+def require_directory(path: Path) -> None:
+    info = path.lstat()
+    assert stat.S_ISDIR(info.st_mode), path
+
+
+def validate(root: Path) -> None:
+    marketplace_path = root / ".agents/plugins/marketplace.json"
+    manifest_path = root / ".codex-plugin/plugin.json"
+    require_regular(marketplace_path)
+    require_regular(manifest_path)
+    marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert set(marketplace) == {"name", "interface", "plugins"}
+    assert marketplace["name"] == "codex-agy-worker"
+    assert marketplace["interface"] == {"displayName": "Codex agy Worker"}
+    assert isinstance(marketplace["plugins"], list) and len(marketplace["plugins"]) == 1
+    entry = marketplace["plugins"][0]
+    assert set(entry) == {"name", "source", "policy", "category"}
+    assert entry["name"] == manifest["name"] == "codex-agy-worker"
+    assert entry["source"] == {"source": "local", "path": "."}
+    assert entry["policy"] == {
+        "installation": "AVAILABLE", "authentication": "ON_INSTALL"
+    }
+    assert entry["category"] == "Developer Tools"
+    assert manifest["skills"] == "./skills/"
+
+    skill_root = root / "skills/agy-worker"
+    runtime_root = skill_root / "runtime"
+    require_directory(root)
+    require_directory(root / "skills")
+    require_directory(skill_root)
+    require_directory(runtime_root)
+    require_regular(skill_root / "SKILL.md")
+    assert [path.relative_to(root).as_posix() for path in root.rglob("SKILL.md")] == [
+        "skills/agy-worker/SKILL.md"
+    ]
+    assert [path.relative_to(root).as_posix() for path in root.rglob("runtime") if path.is_dir()] == [
+        "skills/agy-worker/runtime"
+    ]
+    assert not (root / "plugins").exists()
+
+
+def rejected(root: Path) -> bool:
+    try:
+        validate(root)
+    except (AssertionError, FileNotFoundError, IsADirectoryError, json.JSONDecodeError):
+        return True
+    return False
+
+
+validate(fixture)
+marketplace_path = fixture / ".agents/plugins/marketplace.json"
+manifest_path = fixture / ".codex-plugin/plugin.json"
+original_marketplace = marketplace_path.read_bytes()
+original_manifest = manifest_path.read_bytes()
+
+payload = json.loads(original_marketplace)
+payload["plugins"][0]["name"] = "wrong-name"
+marketplace_path.write_text(json.dumps(payload), encoding="utf-8")
+assert rejected(fixture), "marketplace must reject a plugin-manifest name mismatch"
+
+marketplace_path.write_bytes(original_marketplace)
+manifest_path.unlink()
+assert rejected(fixture), "marketplace must reject a missing plugin manifest"
+manifest_path.symlink_to(source_root / ".codex-plugin/plugin.json")
+assert rejected(fixture), "marketplace must reject a symlinked plugin manifest"
+manifest_path.unlink()
+manifest_path.write_bytes(original_manifest)
+
+payload = json.loads(original_marketplace)
+payload["plugins"][0]["source"]["path"] = "../escape"
+marketplace_path.write_text(json.dumps(payload), encoding="utf-8")
+assert rejected(fixture), "marketplace must reject a source-path escape"
+
+linked_source = fixture / "linked-source"
+linked_source.symlink_to(fixture / "skills", target_is_directory=True)
+payload["plugins"][0]["source"]["path"] = "linked-source"
+marketplace_path.write_text(json.dumps(payload), encoding="utf-8")
+assert rejected(fixture), "marketplace must reject a symlinked source path"
+
+marketplace_path.write_bytes(original_marketplace)
+linked_source.unlink()
+source_root_link = fixture.parent / "marketplace-root-symlink"
+source_root_link.symlink_to(fixture, target_is_directory=True)
+assert rejected(source_root_link), "marketplace must reject a symlinked root source"
+source_root_link.unlink()
+duplicate = fixture / "plugins/codex-agy-worker/skills"
+duplicate.parent.mkdir(parents=True)
+shutil.copytree(fixture / "skills", duplicate)
+assert rejected(fixture), "marketplace must reject duplicate skill/runtime sources"
+PY
+then
+    ok "root-source marketplace binds one canonical package and rejects source/name/layout mutants"
 else
-    bad "removed Claude and marketplace distribution surfaces stay absent"
+    bad "root-source marketplace contract"
 fi
 
 if python3 - "$ROOT" <<'PY'
@@ -2461,6 +2569,38 @@ installed_root=""
 if [[ "$rc" == "0" ]]; then
     installed_root="$(bash "$TMP/installed/agy-worker/scripts/resolve-pipeline.sh" 2>/dev/null)"
 fi
+
+marketplace_installed_parity() {
+    python3 - "$1" "$2" "$3" <<'PY'
+from hashlib import sha256
+from pathlib import Path
+import shutil
+import sys
+
+source = Path(sys.argv[1]) / "skills/agy-worker"
+installed = Path(sys.argv[2])
+tampered = Path(sys.argv[3])
+
+def snapshot(root: Path) -> dict[str, bytes]:
+    result = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_dir():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative == ".pipeline-root":
+            continue
+        assert not path.is_symlink(), path
+        result[relative] = sha256(path.read_bytes()).digest()
+    return result
+
+source_snapshot = snapshot(source)
+assert source_snapshot == snapshot(installed)
+shutil.copytree(installed, tampered)
+runtime = tampered / "runtime/agy-worker.sh"
+runtime.write_bytes(runtime.read_bytes() + b"\n# marketplace tamper fixture\n")
+assert source_snapshot != snapshot(tampered)
+PY
+}
 if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]]; then
     ok "standalone install resolves the checkout without rewriting SKILL.md"
 else
@@ -2485,8 +2625,10 @@ if [[ -x "$ROOT/agy-worker.sh" ]] \
         && cmp -s "$ROOT/compat/model-effort-matrix.schema.json" \
             "$TMP/installed/agy-worker/runtime/compat/model-effort-matrix.schema.json" \
         && cmp -s "$ROOT/compat/agy-model-effort-matrix.sha256" \
-            "$TMP/installed/agy-worker/runtime/compat/agy-model-effort-matrix.sha256"; then
-    ok "root wrapper and installed skill preserve runtime dispatcher authority and compatibility bytes"
+            "$TMP/installed/agy-worker/runtime/compat/agy-model-effort-matrix.sha256" \
+        && marketplace_installed_parity "$ROOT" "$TMP/installed/agy-worker" \
+            "$TMP/tampered-installed-marketplace-skill"; then
+    ok "root wrapper and installed skill preserve runtime authority, complete parity, and tamper evidence"
 else
     bad "root wrapper and installed skill preserve runtime dispatcher authority and compatibility bytes"
 fi
@@ -2916,7 +3058,14 @@ if [[ "$brand_valid_rc" == "0" ]] \
         && grep -Fq 'sizes="32x32"' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq '<picture aria-hidden="true">' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq '<loc>https://cagdasyurekli.github.io/codex-agy-worker/</loc>' "$ROOT/docs/sitemap.xml" \
+        && grep -Fq '<loc>https://cagdasyurekli.github.io/codex-agy-worker/VERIFYING_AGENT_OUTPUT.html</loc>' "$ROOT/docs/sitemap.xml" \
         && grep -Fq 'GitHub repository as the source of truth' "$ROOT/docs/index.md" \
+        && grep -Fq 'VERIFYING_AGENT_OUTPUT.md' "$ROOT/docs/index.md" \
+        && grep -Fq 'canonical_url: "https://cagdasyurekli.github.io/codex-agy-worker/VERIFYING_AGENT_OUTPUT.html"' "$ROOT/docs/VERIFYING_AGENT_OUTPUT.md" \
+        && grep -Fq 'A Codex Agent Skill for bounded Antigravity CLI delegation' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq '## Quick start' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq './proof-demo.sh' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq 'read [PRIVACY.md](PRIVACY.md) before use' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq '<picture>' "$ROOT/README.md" \
         && grep -Fq 'srcset="docs/assets/brand/logo-dark.svg"' "$ROOT/README.md" \
         && grep -Fq 'src="docs/assets/brand/logo-light.svg" alt=""' "$ROOT/README.md" \

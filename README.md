@@ -5,11 +5,62 @@
 
 # codex-agy-worker
 
-Let **Codex CLI** delegate repository exploration, features, and project-scale coding
-to **Antigravity CLI (`agy`)**. Codex owns the resulting diff review, build/test/lint
-checks, bounded same-conversation repair loop, and honest delivery status. A worker
-can discover ordinary project structure; it is not limited to mechanical edits or a
-predeclared file list.
+**A Codex Agent Skill for bounded Antigravity CLI delegation with independent
+Git-scope checks and driver-owned verification.**
+
+[![Offline test workflow](https://github.com/cagdasyurekli/codex-agy-worker/actions/workflows/test.yml/badge.svg)](https://github.com/cagdasyurekli/codex-agy-worker/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+
+Use **Codex CLI** to delegate repository exploration, features, and project-scale
+coding to **Antigravity CLI (`agy`)**. Codex—not the worker report—reviews the diff,
+runs build/test/lint checks, and decides whether the result is verified, partial, or
+blocked.
+
+## Quick start
+
+Requires a POSIX-compatible environment with Bash, Python 3, git, Codex CLI, and
+`agy` on `PATH`. Native Windows is untested; WSL may work on a best-effort basis.
+
+```bash
+git clone https://github.com/cagdasyurekli/codex-agy-worker.git
+cd codex-agy-worker
+./install.sh
+```
+
+Review the commit before installation. The marketplace manifest is being prepared,
+but GitHub clone plus `./install.sh` remains the verified installation path until a
+published Git source is tested end to end.
+
+### Try the evidence boundary offline
+
+```bash
+./proof-demo.sh
+```
+
+The demo uses two private synthetic Git repositories, invokes no provider or network,
+and changes neither this checkout nor your credentials. It demonstrates two fixed
+gate cases only; it is not a security certification or proof of general correctness.
+
+### First real task
+
+Before an agy-backed request, approve the exact repository/path content that may be
+sent through `agy` to Google/Gemini. Keep credentials and denied paths out of scope;
+read [PRIVACY.md](PRIVACY.md) before use.
+
+After installation, start a new Codex session and ask:
+
+> Use the agy-worker skill to add error-path tests for the parser modules under
+> `/absolute/path/to/project/src/`. Allow changes only under `tests/`, verify with
+> `python3 -m pytest -q tests/test_parser.py`, and preserve accepted work on a branch.
+
+Codex creates an isolated worktree, asks for provider-transmission approval when it
+has not already been granted for that exact scope, inspects the resulting diff, and
+runs driver-owned checks. A worker can discover ordinary project structure; it is not
+limited to mechanical edits or a predeclared file list.
+
+[Learn how to verify an agent candidate without trusting its report](docs/VERIFYING_AGENT_OUTPUT.md).
+
+## The evidence pipeline
 
 Bash + Python 3 + git. No Node and no MCP daemon. A deliberately started job may
 have one private, per-job local controller; it is not a shared service.
@@ -185,16 +236,16 @@ approval, tests, review, and pull request.
 
 ---
 
-## Install from GitHub
+## Installation details and compatibility
 
 ```bash
-git clone https://github.com/cagdasyurekli/codex-agy-worker.git
-cd codex-agy-worker
-./install.sh          # installs the Codex skill only; touches nothing else
 for suite in tests/test-*.sh; do "$suite"; done
 ```
 
-That loop is a shell-suite smoke check, not the complete offline gate. Run the full
+The quick-start `./install.sh` command installs the Codex skill only and touches
+nothing else. The loop above is an optional shell-suite smoke check.
+
+It is not the complete offline gate. Run the full
 shell and Python command list in [CONTRIBUTING.md](CONTRIBUTING.md) before publication.
 
 The GitHub repository is the source of truth. Review the commit you cloned before
@@ -295,8 +346,9 @@ a local pointer so checkout-only maintenance commands remain available; it does 
 rewrite the public `SKILL.md`.
 
 The repository retains `.codex-plugin/plugin.json` so the Codex skills-only package
-shape can be validated locally. It is not a marketplace listing: GitHub clone plus
-`./install.sh` is the supported distribution path.
+shape can be validated locally. A repo marketplace contract is prepared separately;
+GitHub clone plus `./install.sh` remains the verified distribution path until its
+published Git-source installation has been tested end to end.
 
 The portable Agent Skill can also be copied through the third-party skills CLI:
 

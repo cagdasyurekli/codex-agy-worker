@@ -1,0 +1,20 @@
+{
+  "name": "codex-agy-worker",
+  "interface": {
+    "displayName": "Codex agy Worker"
+  },
+  "plugins": [
+    {
+      "name": "codex-agy-worker",
+      "source": {
+        "source": "local",
+        "path": "."
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
