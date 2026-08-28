@@ -123,7 +123,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The thirty-eight offline suites need no agy provider call, network access, API key, or GitHub login.
+The thirty-nine offline suites need no agy provider call, network access, API key, or GitHub login.
 
 ### GitHub Actions cost and quota fallback
 
@@ -153,7 +153,7 @@ If a private fork's quota is unavailable, run the same fail-fast offline suite l
 ./scripts/ci-offline.sh
 ```
 
-It runs the static checks and all thirty-eight offline suites without requiring a
+It runs the static checks and all thirty-nine offline suites without requiring a
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
@@ -274,13 +274,13 @@ POSIX-compatible Bash/Python/Git environment and some canonical evidence command
 fixed POSIX paths. Native Windows is untested; WSL or another compatible environment
 may work on a best-effort basis. The optional daily notifier is specifically a macOS
 LaunchAgent.
-The active reviewed model/effort matrix remains bound to agy `1.1.16`; its exact
-accepted evidence and pair-to-compound-slug mappings are reconciled in
-[`compat/reviews/agy-1.1.16.md`](compat/reviews/agy-1.1.16.md). The separate
-[`1.1.22` observation](compat/reviews/agy-1.1.22.md) records official evidence and the
-bounded failed account capture without activating metadata. The complete
-[`1.1.12`](compat/reviews/agy-1.1.12.md) reconciliation remains historical evidence,
-and the earlier
+The active reviewed model/effort matrix is bound to agy `1.1.22`; its exact accepted
+evidence and pair-to-compound-slug mappings are reconciled in
+[`compat/reviews/agy-1.1.22-activation.md`](compat/reviews/agy-1.1.22-activation.md).
+The earlier [`1.1.22` observation](compat/reviews/agy-1.1.22.md) remains the unchanged
+historical failed-capture record. The complete [`1.1.12`](compat/reviews/agy-1.1.12.md)
+and [`1.1.16`](compat/reviews/agy-1.1.16.md) reconciliations remain historical, and the
+earlier
 [`1.1.16` interface observation](compat/reviews/agy-1.1.16-interface.md) records the
 non-activating evidence that triggered the later capture and review. The agy-owned
 default and explicit literal pass-through remain version-independent.
@@ -326,7 +326,7 @@ dispatch. A due or drift result asks for human compatibility review; it never up
 metadata. `review-required` is not a blanket dispatch lock: no selector or
 `--tier default` still delegates to agy's own default, and the explicitly approved
 `--literal-model` surface remains an unreconciled caller-owned pass-through. Reviewed
-`--model`/`--effort` resolution keeps its reviewed `1.1.16` matrix evidence. Every
+`--model`/`--effort` resolution uses its reviewed `1.1.22` matrix evidence. Every
 direct selection uses a safe executable with bounded semantic `--version` and strict
 critical `--help` structure. An exact matrix-version match proceeds mechanically after
 that structural probe. Compatible version drift requires Codex's explicit
@@ -637,8 +637,8 @@ Worker exits: `0` ok · `2` no prompt · `3` empty output · `4` schema invalid 
 with a preserved valid candidate · `26` direct-selection preflight failure · `64` invalid usage.
 
 The reserved `17`–`19` exits require an exact, version-bound reviewed signature.
-The accepted agy `1.1.16` baseline and observed `1.1.22` surface have no reviewed
-signature allowlist, so an unproven
+The active agy `1.1.22` baseline has no reviewed signature allowlist for these exits,
+so an unproven
 provider timeout, authentication error, or provider outage remains
 `agy_failed_unclassified` with exit `5`; the supervisor does not infer a reason from
 free-form stderr.
@@ -943,9 +943,11 @@ no-selector path send no model. Direct reviewed selection is intentionally stric
 ./agy-worker.sh --literal-model future-model-1.2 ...
 ```
 
-The second form resolves through the active, exact-SHA, agy-version/source-bound
-matrix to `gemini-3.6-flash-high`. Flash 3.7, 3.6, and 3.5 accept low/medium/high;
-Gemini 3.7 `minimal` is unsupported. Pro 3.1 accepts low/high and rejects medium.
+The second form resolves through the active, exact-SHA, agy-version/release-bound
+matrix to `gemini-3.6-flash-high`. Flash 3.7, 3.6, and 3.5 accept low/medium/high.
+Gemini 3.7 `minimal` is outside the reviewed inventory. Official Gemini 3.1 Pro
+supports medium effort, but the accepted account inventory has no reviewed
+`gemini-3.1-pro-medium` compound slug, so this single-compound-slug route rejects it.
 Sonnet, the Opus thinking-labelled slug, the GPT
 medium-labelled slug, and every already-compound slug are fixed exact choices and
 reject an effort input. The wrapper sends exactly one downstream `--model` and never
@@ -1553,21 +1555,26 @@ retried or reconstructed. Its historical hashes and claim limits remain recorded
 authorized 1.1.16 capture normalized to the same fourteen slugs; its exact bindings
 and activation decision are recorded in
 [`compat/reviews/agy-1.1.16.md`](compat/reviews/agy-1.1.16.md). The separately
-authorized 1.1.22 capture failed before inventory interpretation and is recorded as a
-non-activating observation in
-[`compat/reviews/agy-1.1.22.md`](compat/reviews/agy-1.1.22.md).
+authorized first 1.1.22 capture failed before inventory interpretation and remains a
+non-activating historical observation in
+[`compat/reviews/agy-1.1.22.md`](compat/reviews/agy-1.1.22.md). A later separately
+authorized single-call capture produced the accepted unchanged fourteen-slug
+inventory; its activation decision is recorded in
+[`compat/reviews/agy-1.1.22-activation.md`](compat/reviews/agy-1.1.22-activation.md).
 
-The human-reviewed active agy baseline remains `1.1.16` at source revision
-`efa16f096dc02fb654b7e86958d268195284d014`. The checked-in 1.1.22 distribution tuple
-is an observational drift detector rather than a trust root: a same-version
+The human-reviewed active agy baseline is `1.1.22` at official release commit
+`556846a4bb94117222f53846896c7eb0d645307e`. The checked-in distribution tuple is an
+observational drift detector rather than a trust root: a same-version
 archive build, URL, or SHA-512 change requires review and cannot itself activate or
 advance compatibility metadata.
 
 The G1 direct-selection surface consumes the checked-in active model/effort matrix as
 validated compatibility metadata, never as routing or gate authority. It maps eleven
 explicit base/effort pairs to exact advertised compound slugs and records three exact fixed
-choices; Pro medium is unsupported. The matrix resolves only while its agy version
-and reviewed source revision match the canonical records and its exact bytes match
+choices. Official Gemini 3.1 Pro supports medium effort, but the accepted account
+inventory lacks a reviewed `gemini-3.1-pro-medium` compound slug, so this wrapper
+rejects that pair. The matrix resolves only while its agy version and reviewed release
+revision match the canonical records and its exact bytes match
 the checked-in SHA-256. The wrapper resolves one exact model slug and never sends
 agy's separate effort flag. `qa-gate.sh` remains the sole
 acceptance authority, and model recommendations remain visible, advisory-only, and
@@ -1816,7 +1823,8 @@ tests/test-models-capture-1-1-22-profile.py 30-case offline fixed 1.1.22 capture
 tests/test-models-capture-1-1-22-runner.py 58-case offline fixed 1.1.22 capture-runner suite (88 combined with profile)
 tests/test-models-capture-1-1-22-classifier.py fixed 1.1.22 sidecar failure classifier suite
 tests/test-models-capture-1-1-22-reprofile.py 88-case offline fixed 1.1.22 nlink-only reprofile suite
-tests/test-agy-1-1-16-activation.py 22-case offline active-baseline/inventory-binding suite
+tests/test-agy-1-1-16-activation.py 8-case offline historical activation-record suite
+tests/test-agy-1-1-22-activation.py 24-case offline active-baseline/inventory-binding suite
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
 tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/maintenance suite
 tests/test-official-distribution.py  test-only stdlib manifest adversary harness

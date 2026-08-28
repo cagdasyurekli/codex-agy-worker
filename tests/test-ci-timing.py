@@ -76,7 +76,7 @@ def rejected(report: dict[str, Any]) -> bool:
     return False
 
 
-check("inventory has 43 ordered unique stage IDs", len(MODULE.STAGES) == 43 and len({x[0] for x in MODULE.STAGES}) == 43)
+check("inventory has 44 ordered unique stage IDs", len(MODULE.STAGES) == 44 and len({x[0] for x in MODULE.STAGES}) == 44)
 check("inventory digest is lowercase SHA-256", MODULE.SHA256_RE.fullmatch(MODULE.inventory_digest()) is not None)
 check("canonical shell announcement inventory matches observer", lambda: (MODULE.validate_gate_inventory(ROOT / "scripts" / "ci-offline.sh") or True))
 
