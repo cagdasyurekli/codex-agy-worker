@@ -448,7 +448,14 @@ def _validate_runner_preflight(profile_data: bytes, signals: Optional[Signals] =
 
 def _validate_prior_sources(prior_profile: object) -> object:
     """Revalidate every source, snapshot, capture-parent, version-root, exact recovery binding,
-    file identity, and self-pin through the fixed profile module, returning the rederived profile."""
+    file identity, and self-pin through the fixed profile module, returning the rederived profile.
+
+    Capture-parent link count is diagnostic under the fixed profile contract: a
+    failed capture may leave an owned child directory without changing the
+    parent's authority.  Validate the fixed stable fields, then retain the prior
+    capture-parent identity so the published profile records only the requested
+    account-HOME nlink change.
+    """
     mod = _get_profile_mod()
     request = {
         "account_home": prior_profile.account_home,
@@ -475,11 +482,19 @@ def _validate_prior_sources(prior_profile: object) -> object:
             if not isinstance(prior_value, dict) or not isinstance(rederived_value, dict):
                 raise ReprofileError("account_home_identity is invalid")
             _validate_single_field_delta(prior_dict, rederived_value)
+        elif key == "capture_parent_identity":
+            if not mod._same_capture_parent(
+                    rederived.capture_parent_identity,
+                    prior_profile.capture_parent_identity):
+                raise ReprofileError("rederived capture_parent_identity differs")
         else:
             if prior_value != rederived_value:
                 raise ReprofileError(f"rederived {key} differs")
 
-    return rederived
+    return dataclasses.replace(
+        rederived,
+        capture_parent_identity=prior_profile.capture_parent_identity,
+    )
 
 
 def prepare(data: bytes, signals: Optional[Signals] = None) -> dict:
