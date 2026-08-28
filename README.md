@@ -1445,7 +1445,11 @@ already-validated prior 1.1.22 capture profile and prepares a new profile reflec
 exactly one permitted change: `account_home_identity.nlink`. It never enumerates or
 reads account HOME contents. It reuses the fixed 1.1.22 profile module's derivation
 and bounded validation of the explicitly supplied recovery root's fixed artifact and
-scratch allowlists, and follows its publication pattern. It has no subprocess, network, Git, environment
+scratch allowlists. Capture-parent `dev`/`ino`/`uid`/`gid`/`mode` remain exact while
+positive `nlink` drift from an ordinary failed-capture artifact is diagnostic; the
+published profile retains the prior capture-parent identity bytes so the declared
+change remains account-HOME nlink only. The adapter follows the fixed publication
+pattern. It has no subprocess, network, Git, environment
 discovery, account HOME enumeration, retry, capture, inventory acceptance, routing,
 model selection, metadata update, or activation authority. It does not authorize a
 capture or renew any prior one-call authorization.
@@ -1745,7 +1749,7 @@ tests/test-models-capture-1-1-22-version-evidence.py 45-case offline fixed 1.1.2
 tests/test-models-capture-1-1-22-profile.py 30-case offline fixed 1.1.22 capture-profile suite
 tests/test-models-capture-1-1-22-runner.py 58-case offline fixed 1.1.22 capture-runner suite (88 combined with profile)
 tests/test-models-capture-1-1-22-classifier.py fixed 1.1.22 sidecar failure classifier suite
-tests/test-models-capture-1-1-22-reprofile.py 86-case offline fixed 1.1.22 nlink-only reprofile suite
+tests/test-models-capture-1-1-22-reprofile.py 88-case offline fixed 1.1.22 nlink-only reprofile suite
 tests/test-agy-1-1-16-activation.py 22-case offline active-baseline/inventory-binding suite
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
 tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/maintenance suite
