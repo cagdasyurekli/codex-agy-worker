@@ -67,11 +67,20 @@ owner's included minutes. A private fork or a future visibility change is differ
 macOS runners cost substantially more than Linux runners, so the workflow deliberately
 avoids a second full run after a normal merge.
 
-The required `test` job runs the complete macOS suite on pull requests, uses strict
-up-to-date branch protection, and cancels a superseded run for the same PR. Normal
-squash merges preserve the tested tree; the post-merge commit has a new identity but
-does not need a duplicate full-suite run. The job is also available by explicit manual
-dispatch for an exact release comparison: supply committed `base_sha` and `head_sha`.
+The required `test` aggregate job verifies four fail-closed CI shards (`dispatcher`,
+`dispatcher-remediation`, `other-a`, `other-b`) on pull requests and exact-SHA manual dispatch.
+Each shard checks out the exact immutable commit (`github.event.pull_request.head.sha` or
+validated `head_sha`), enforces committed-range diff hygiene, and runs its registered stage subset.
+Every shard emits a mode-0600 receipt binding exact HEAD SHA, canonical inventory digest,
+expected/observed stage IDs, and outcome without recording paths, commands, environment, logs, or credentials.
+GitHub retains the uploaded privacy-safe receipt artifact for one day; it is repository workflow evidence,
+not an owner-private local file after upload.
+The required aggregate `test` job with `if: always()` downloads all receipts within the run and succeeds
+only if all four unique shard receipts exist, all producers succeeded, all match expected head/inventory,
+and every canonical stage ran exactly once. Lower CI wall time from parallelization does **not** mean
+lower total compute, provider usage, token usage, cost, or weaker verification. Normal squash merges
+preserve the tested tree; the post-merge commit has a new identity but does not need a duplicate full-suite run.
+The job is also available by explicit manual dispatch for an exact release comparison: supply committed `base_sha` and `head_sha`.
 
 If a private fork's quota is unavailable, run the same fail-fast offline suite locally:
 
@@ -1732,7 +1741,9 @@ tests/test-official-distribution.py  test-only stdlib manifest adversary harness
 tests/test-reporting.sh       offline privacy/fake-gh reporting suite
 tests/test-feedback-triage.py 26-case offline metadata-only triage suite
 tests/test-codex-usage-report.py   Codex usage observation and privacy suite
-tests/test-packaging.sh       390-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-ci-timing.py       offline CI timing telemetry suite
+tests/test-ci-sharding.py     offline CI sharding partition/receipt/aggregate suite
+tests/test-packaging.sh       392-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
