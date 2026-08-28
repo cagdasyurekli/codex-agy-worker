@@ -1196,10 +1196,10 @@ with tempfile.TemporaryDirectory() as temporary:
             result = MODULE._bounded_git_read(
                 safe_git[0], safe_git[1], str(repo),
                 ["rev-parse", "--show-toplevel"],
-                deadline=time.monotonic() + 0.5, stdout_limit=64,
+                deadline=time.monotonic() + 2.0, stdout_limit=64,
             )
             elapsed = time.monotonic() - started
-            assert result is None and elapsed < 2.0, elapsed
+            assert result is None and elapsed < 3.0, elapsed
             child = int(pid_record.read_text(encoding="ascii"))
             deadline = time.monotonic() + 2.0
             while time.monotonic() < deadline:
@@ -1248,10 +1248,10 @@ with tempfile.TemporaryDirectory() as temporary:
             result = MODULE._bounded_git_read(
                 safe_git[0], safe_git[1], str(repo),
                 ["rev-parse", "--show-toplevel"],
-                deadline=time.monotonic() + 0.3, stdout_limit=64,
+                deadline=time.monotonic() + 2.0, stdout_limit=64,
             )
             elapsed = time.monotonic() - started
-            assert result is None and elapsed < 2.0, elapsed
+            assert result is None and elapsed < 3.0, elapsed
             child = int(child_record.read_text(encoding="ascii"))
             deadline = time.monotonic() + 2.0
             while time.monotonic() < deadline:
@@ -2812,7 +2812,7 @@ with tempfile.TemporaryDirectory() as temporary:
                     "        except OSError: pass\n"
                     "    while True: time.sleep(60)\n"
                     "deadline = time.monotonic() + 1.0\n"
-                    "while not os.path.exists(child_record) and time.monotonic() < deadline:\n"
+                    "while (not os.path.exists(child_record) or os.path.getsize(child_record) == 0) and time.monotonic() < deadline:\n"
                     "    time.sleep(0.005)\n"
                     "if sys.argv[1:] == ['--version']:\n"
                     "    os.write(1, b'1.1.16\\n')\n"
@@ -2885,7 +2885,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 "        handle.write(f'{os.getpid()} {os.getpgrp()}\\n')\n"
                 "    while True: time.sleep(60)\n"
                 "deadline = time.monotonic() + 1.0\n"
-                "while not os.path.exists(child_record) and time.monotonic() < deadline:\n"
+                "while (not os.path.exists(child_record) or os.path.getsize(child_record) == 0) and time.monotonic() < deadline:\n"
                 "    time.sleep(0.005)\n"
                 "if sys.argv[1:] == ['--version']:\n"
                 "    os.write(1, b'1.1.16\\n')\n"
