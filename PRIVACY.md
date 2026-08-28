@@ -219,6 +219,17 @@ hashes, and enforced limitations. It excludes all raw stderr/stdout text, error 
 absolute filesystem paths, and account identifiers, and grants no activation, retry,
 or routing authority.
 
+`scripts/models_capture_1_1_22_reprofile.py` is a separate, process-inert reprofile
+preparation adapter that accepts an already-validated prior 1.1.22 capture profile
+and produces a new profile reflecting exactly one permitted change:
+`account_home_identity.nlink`. It opens the explicitly supplied account HOME only for
+no-follow descriptor metadata; it never enumerates or reads HOME contents. Its output
+is a mode-`0600` canonical profile in a distinct owner-private output root. It has no
+subprocess, network, Git, retry, capture, inventory acceptance, routing, or activation
+authority. Recovery validation is bounded to the explicitly supplied recovery root's
+fixed artifact and scratch allowlists; it does not expand into HOME discovery.
+Reprofiling does not authorize a capture or renew any prior one-call authorization.
+
 `codex-usage-report.sh` observes Codex orchestration usage locally via the live,
 bounded stdio JSONL protocol of the version-pinned Codex CLI 0.150.1 app-server. Before
 observation it checks the exact CLI version and the SHA-256 of the CLI-generated

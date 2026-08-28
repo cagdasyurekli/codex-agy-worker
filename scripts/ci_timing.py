@@ -61,6 +61,7 @@ STAGES: tuple[tuple[str, str], ...] = (
     ("models-capture-1-1-22-version-evidence", "fixed 1.1.22 models capture version evidence"),
     ("models-capture-1-1-22-profile", "fixed 1.1.22 models capture profile builder"),
     ("models-capture-1-1-22-runner", "fixed 1.1.22 models capture runner"),
+    ("models-capture-1-1-22-reprofile", "fixed 1.1.22 models capture reprofile adapter"),
     ("models-capture-1-1-22-classifier", "fixed 1.1.22 models capture failure classifier"),
     ("agy-1-1-16-activation", "1.1.16 activation binding"),
     ("reporting", "reporting suite"),

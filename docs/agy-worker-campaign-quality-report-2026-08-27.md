@@ -225,6 +225,10 @@ The classified evidence outcome is:
 - **Classification detail:** The single matching versioned ruleset (`agy-1.1.22-failure-rules-v1`) recognized local CLI log/crash output permission denial and loopback bind permission denial in the local sandbox/environment. Under that bounded ruleset the retained evidence is categorized as `local_environment`; this diagnostic label does not claim the provider was contacted or prove an underlying provider/account state.
 - **Authority boundary:** This classification is diagnostic maintenance evidence only; it does not retry the child, alter the non-activating status of agy 1.1.22, advance the model matrix or inventory binding, or grant activation/routing authority.
 
+## Addendum — 2026-08-28: Reprofile adapter for 1.1.22
+
+On 2026-08-28, a separate process-inert reprofile adapter (`scripts/models_capture_1_1_22_reprofile.py`, Issue #79) was added to support nlink-only reprofiling for an existing 1.1.22 capture profile. It reuses the fixed 1.1.22 profile module's derivation and bounded recovery validation and follows its publication pattern, without enumerating or reading account HOME contents or launching a child. Reprofiling is process-inert and does not authorize a capture, contact a provider, or alter the non-activating status of agy 1.1.22.
+
 ## Addendum — 2026-08-28: Usage observation and exact-head CI delivery slices
 
 PR #75 merged the privacy-safe Codex usage observer and 1.1.22 failure sidecar as
