@@ -146,7 +146,7 @@ stage_in_shard() {
             ;;
         other-a)
             case "$stage" in
-                'working-tree diff hygiene'|'shell syntax'|'Python syntax'|'local job lifecycle suite'|'updater suite'|'repository-only version bootstrap runner'|'repository-only version initial bootstrap runner'|'fixed 1.1.12 version recovery runner'|'canonical models inventory attestation runner'|'explicit-account models capture profile builder'|'fixed 1.1.12 models capture profile builder'|'fixed 1.1.16 models capture profile builder'|'fixed 1.1.22 models capture version evidence'|'fixed 1.1.22 models capture profile builder'|'fixed 1.1.22 models capture runner'|'1.1.16 activation binding'|'reporting suite'|'feedback triage suite'|'Codex distribution suite'|'read-only doctor suite'|'starter proof suite') return 0 ;;
+                'working-tree diff hygiene'|'shell syntax'|'Python syntax'|'local job lifecycle suite'|'updater suite'|'repository-only version bootstrap runner'|'repository-only version initial bootstrap runner'|'fixed 1.1.12 version recovery runner'|'canonical models inventory attestation runner'|'explicit-account models capture profile builder'|'fixed 1.1.12 models capture profile builder'|'fixed 1.1.16 models capture profile builder'|'fixed 1.1.22 models capture version evidence'|'fixed 1.1.22 models capture profile builder'|'fixed 1.1.22 models capture runner'|'1.1.16 activation binding'|'1.1.22 activation binding'|'reporting suite'|'feedback triage suite'|'Codex distribution suite'|'read-only doctor suite'|'starter proof suite') return 0 ;;
                 *) return 1 ;;
             esac
             ;;
@@ -334,6 +334,10 @@ fi
 
 if announce '1.1.16 activation binding'; then
 /usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py
+fi
+
+if announce '1.1.22 activation binding'; then
+/usr/bin/python3 -I -S -B tests/test-agy-1-1-22-activation.py
 fi
 
 if announce 'reporting suite'; then

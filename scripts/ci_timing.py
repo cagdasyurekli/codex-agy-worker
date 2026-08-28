@@ -64,6 +64,7 @@ STAGES: tuple[tuple[str, str], ...] = (
     ("models-capture-1-1-22-reprofile", "fixed 1.1.22 models capture reprofile adapter"),
     ("models-capture-1-1-22-classifier", "fixed 1.1.22 models capture failure classifier"),
     ("agy-1-1-16-activation", "1.1.16 activation binding"),
+    ("agy-1-1-22-activation", "1.1.22 activation binding"),
     ("reporting", "reporting suite"),
     ("feedback-triage", "feedback triage suite"),
     ("codex-usage-report", "Codex usage observation suite"),
