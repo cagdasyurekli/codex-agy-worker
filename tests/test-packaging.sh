@@ -2691,6 +2691,120 @@ else
     bad "installed governance contract rejects every independent clause deletion"
 fi
 
+provider_notice_clauses=(
+    'Before every provider-launch attempt (initial start/run, resume, continue, and restart), tell the user in one or two concise user-facing sentences what task is being sent to AGY.'
+    'Include a short public-safe task label, caller-selected model information, caller-selected effort when separately selectable, and the exact resolved model slug.'
+    'For default selection where no model is selected or the default tier is used, state truthfully that the provider default model is used and that model or effort is unresolved, without inventing a resolved slug or thinking level.'
+    'For fixed/compound/literal models where effort is not separately selectable, state that accurately without inferring backend reasoning or inventing a thinking level.'
+    'The notice must precede every dispatch attempt and remain accurate afterward.'
+    'If preflight fails before provider launch, explicitly state that the task was not sent to AGY.'
+    'If provider reach is genuinely uncertain, state that it is unverified rather than claiming success.'
+    'Direct model and effort selection remain caller-owned; recommendations are advisory.'
+)
+
+provider_notice_skill_contract() {
+    local skill_path="$1" clause
+    for clause in "${provider_notice_clauses[@]}"; do
+        [[ "$(grep -Fxc "$clause" "$skill_path")" == "1" ]] || return 1
+    done
+}
+
+if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]] \
+        && provider_notice_skill_contract "$TMP/installed/agy-worker/SKILL.md" \
+        && provider_notice_skill_contract "$ROOT/skills/agy-worker/SKILL.md"; then
+    ok "installed skill preserves user-facing provider dispatch notice and boundary contract"
+else
+    bad "installed skill preserves user-facing provider dispatch notice and boundary contract"
+fi
+
+provider_notice_mutants_rejected=1
+provider_notice_mutant_index=0
+for clause in "${provider_notice_clauses[@]}"; do
+    provider_notice_mutant_index=$((provider_notice_mutant_index + 1))
+    mutant="$TMP/provider-notice-skill-mutant-$provider_notice_mutant_index.md"
+    if ! python3 -B - "$TMP/installed/agy-worker/SKILL.md" "$mutant" "$clause" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+clause = sys.argv[3]
+text = source.read_text(encoding="utf-8")
+if text.count(clause) != 1:
+    raise SystemExit(1)
+target.write_text(text.replace(clause, "", 1), encoding="utf-8")
+PY
+    then
+        provider_notice_mutants_rejected=0
+        break
+    fi
+    if provider_notice_skill_contract "$mutant"; then
+        provider_notice_mutants_rejected=0
+        break
+    fi
+done
+if [[ "$provider_notice_mutants_rejected" == "1" ]]; then
+    ok "installed provider notice contract rejects every independent clause deletion"
+else
+    bad "installed provider notice contract rejects every independent clause deletion"
+fi
+
+provider_notice_weakening_mutants_rejected=1
+provider_notice_weakening_mutant_index=0
+weakening_replacements=(
+    'tell the user in one or two concise user-facing sentences::tell the user if convenient'
+    'caller-selected model information, caller-selected effort::default model information'
+    'state truthfully that the provider default model is used and that model or effort is unresolved::invent a model slug'
+    'without inferring backend reasoning or inventing a thinking level::inferring backend reasoning'
+    'precede every dispatch attempt::follow completion of the job'
+    'explicitly state that the task was not sent to AGY::state that the task was sent to AGY'
+    'state that it is unverified rather than claiming success::claim success'
+    'Direct model and effort selection remain caller-owned::Direct model selection is superseded'
+)
+for pair in "${weakening_replacements[@]}"; do
+    provider_notice_weakening_mutant_index=$((provider_notice_weakening_mutant_index + 1))
+    old_fragment="${pair%%::*}"
+    new_fragment="${pair##*::}"
+    mutant="$TMP/provider-notice-weakened-$provider_notice_weakening_mutant_index.md"
+    if ! python3 -B - "$TMP/installed/agy-worker/SKILL.md" "$mutant" "$old_fragment" "$new_fragment" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+old_frag = sys.argv[3]
+new_frag = sys.argv[4]
+text = source.read_text(encoding="utf-8")
+if text.count(old_frag) != 1:
+    raise SystemExit(1)
+target.write_text(text.replace(old_frag, new_frag, 1), encoding="utf-8")
+PY
+    then
+        provider_notice_weakening_mutants_rejected=0
+        break
+    fi
+    if provider_notice_skill_contract "$mutant"; then
+        provider_notice_weakening_mutants_rejected=0
+        break
+    fi
+done
+if [[ "$provider_notice_weakening_mutants_rejected" == "1" ]]; then
+    ok "installed provider notice contract rejects every clause weakening mutation"
+else
+    bad "installed provider notice contract rejects every clause weakening mutation"
+fi
+
+if grep -Fq 'Before every provider-launch attempt (initial `run`/`start`, `resume`, `continue`, and' \
+        "$ROOT/README.md" \
+        && grep -Fq 'mandatory user-facing provider dispatch notices across initial, resume, continue, and restart launches' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq '## Transparent provider dispatch notice and truthful boundaries' \
+            "$ROOT/docs/lessons_learned.md"; then
+    ok "package documentation describes mandatory user-facing provider dispatch notice contract"
+else
+    bad "package documentation describes mandatory user-facing provider dispatch notice contract"
+fi
+
 mkdir -p "$TMP/reject-relative/agy-worker"
 cp -R "$ROOT/skills/agy-worker/"* "$TMP/reject-relative/agy-worker/"
 printf '../relative\n' > "$TMP/reject-relative/agy-worker/.pipeline-root"
@@ -2796,7 +2910,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (89 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 392 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 396 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \

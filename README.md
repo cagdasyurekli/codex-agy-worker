@@ -447,6 +447,20 @@ content through agy to Google/Gemini, unless the user already approved that exac
 transmission. Read [PRIVACY.md](PRIVACY.md) before use; support and project terms are
 in [SUPPORT.md](SUPPORT.md) and [TERMS.md](TERMS.md).
 
+Before every provider-launch attempt (initial `run`/`start`, `resume`, `continue`, and
+`restart`), the packaged skill requires Codex to tell the user in one or two concise
+user-facing sentences what task is being sent to AGY, the caller-selected model,
+caller-selected effort (when separately selectable), and the exact resolved model slug.
+For default selection where no model is selected or the default tier is used, state
+truthfully that the provider default model is used and that model or effort is unresolved,
+without inventing a resolved slug or thinking level. For fixed, compound, or literal models
+where effort is not separately selectable, that is stated accurately without inferring
+hidden backend reasoning or inventing a thinking level. The notice must precede every dispatch
+attempt and remain accurate afterward. If preflight fails before provider launch, Codex
+explicitly states that the task was not sent to AGY; if provider reach is genuinely uncertain,
+it states that reach is unverified rather than claiming success. Direct model and effort
+selection remain caller-owned, and routing recommendations are advisory.
+
 ## Manual end-to-end example
 
 Keep the pipeline checkout and target repository explicit. The job branch matters:
@@ -1833,7 +1847,7 @@ tests/test-feedback-triage.py 26-case offline metadata-only triage suite
 tests/test-codex-usage-report.py   Codex usage observation and privacy suite
 tests/test-ci-timing.py       offline CI timing telemetry suite
 tests/test-ci-sharding.py     offline CI sharding partition/receipt/aggregate suite
-tests/test-packaging.sh       392-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       396-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
