@@ -35,7 +35,10 @@ requesting review:
 It is fail-fast, requires no network or provider call, does not intentionally inspect
 account-HOME contents, externalizes temporary bytecode, and runs the static checks plus
 all thirty-seven offline suites. Ambient local tools may still consult ordinary user
-configuration. For a quota-unavailable
+configuration. On a clean tracked/untracked worktree, an optional
+`./scripts/ci-offline.sh --timing-report <PATH>` mode captures ordered per-stage
+observational monotonic wall time in an owner-private mode-0600 JSON report without
+recording commands, logs, environment variables, or timestamps. For a quota-unavailable
 private fork this is evidence to attach to review, not a replacement for the protected
 GitHub `test` check; manually dispatch the exact committed range after Actions becomes
 available and before publication. The expanded command inventory is retained below

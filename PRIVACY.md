@@ -112,6 +112,14 @@ its stdout explicitly. It excludes source, diffs, prompts, worker prose, raw
 commands or output, logs, credentials, and absolute repository paths. The report is
 still unsigned and cannot authenticate a rewritten receipt.
 
+When explicitly requested with `--timing-report <PATH>`, `scripts/ci-offline.sh`
+publishes one mode-`0600`, no-overwrite timing report to an owner-private mode-`0700`
+directory. It first requires a clean tracked/untracked worktree, then binds only the
+exact current HEAD commit SHA, deterministic canonical stage inventory digest, gate
+outcome, and observational monotonic wall-clock
+durations per suite. It strictly excludes file paths, commands, environment values,
+logs, credentials, provider/account data, timestamps, host identity, and cost claims.
+
 `job.sh` stores one explicitly named mode-`0600` lifecycle state file in an
 owner-private external directory. It contains canonical absolute repository,
 worktree, Git-common-directory, and receipt paths; filesystem identities; the exact

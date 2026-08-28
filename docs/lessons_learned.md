@@ -875,3 +875,18 @@ rulesets. Exactly one matching category (authentication, provider_permission, qu
 service, timeout, local_environment) is permitted; multiple or zero matches resolve to
 unknown. The output is a mode-0600 record containing only category, origin, hashes, and
 enforced limits, with raw prose and absolute paths excluded and no activation authority granted.
+
+### Privacy-safe per-suite CI timing telemetry and gate boundaries (2026-08-28)
+
+Observation: Optimizing a long-running offline gate across PR iterations requires empirical
+per-stage durations, but collecting telemetry must not leak local environments, commands,
+logs, credentials, or timestamps, nor can wall-clock timing be conflated with reduced compute
+or weakened acceptance.
+Change: `scripts/ci_timing.py` provides an explicit `--timing-report <PATH>` mode for
+`ci-offline.sh`. It records observational monotonic wall time (`time.monotonic()`) per
+canonical stage in a mode-0600 no-overwrite JSON report after requiring a clean
+tracked/untracked worktree and binding the exact Git HEAD SHA and canonical inventory
+digest. Raw commands, file paths, logs, environment variables,
+timestamps, and host identity are strictly excluded. The default fail-fast gate behavior
+and full suite inventory remain unchanged, and timing reports are explicitly distinct
+from CI sharding or acceptance decisions.

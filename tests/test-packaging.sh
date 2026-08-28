@@ -345,6 +345,7 @@ if ci_workflow_contract "$ROOT/.github/workflows/test.yml" \
         && ci_offline_contract "$CI_OFFLINE" \
         && [[ -x "$ROOT/scripts/ci-diff-check.sh" ]] \
         && [[ -x "$ROOT/scripts/ci_diff_check.py" ]] \
+        && [[ -x "$ROOT/scripts/ci_timing.py" ]] \
         && [[ -x "$ROOT/scripts/ci-offline.sh" ]]; then
     ok "PR CI verifies the exact committed range, cancels stale runs, and uses the canonical offline runner"
 else
@@ -355,6 +356,12 @@ if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-diff-check.py"; then
     ok "CI batch reader rejects malformed, unbounded, and interrupted streams"
 else
     bad "CI batch reader rejects malformed, unbounded, and interrupted streams"
+fi
+
+if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-timing.py"; then
+    ok "CI timing telemetry records monotonic wall time, validates schema, and publishes owner-private reports"
+else
+    bad "CI timing telemetry records monotonic wall time, validates schema, and publishes owner-private reports"
 fi
 
 workflow_mutations="$TMP/workflow-mutations"
@@ -2595,7 +2602,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (89 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 390 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 391 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
