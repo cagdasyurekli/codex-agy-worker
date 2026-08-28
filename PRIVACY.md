@@ -120,6 +120,17 @@ outcome, and observational monotonic wall-clock
 durations per suite. It strictly excludes file paths, commands, environment values,
 logs, credentials, provider/account data, timestamps, host identity, and cost claims.
 
+CI shard execution (`scripts/ci_sharding.py` and `scripts/ci-offline.sh --shard`) publishes
+one mode-`0600`, no-overwrite shard receipt to a mode-`0700` local directory. It binds
+only the schema version, kind (`agy-worker-ci-shard-receipt`), exact lowercase Git HEAD commit SHA,
+deterministic canonical stage inventory digest, shard ID, expected stage IDs, observed stage IDs,
+outcome, and fixed unsigned integrity statement. It strictly excludes repository paths, commands,
+environment values, logs, credentials, provider/account data, timestamps, host identity, and cost claims.
+GitHub Actions uploads these deliberately privacy-safe receipts as one-day workflow artifacts;
+uploaded copies inherit repository Actions access rather than local filesystem ownership.
+The aggregate `test` check verifies all four receipts within the same workflow run and fails closed
+on missing, malformed, duplicate, or mismatched evidence.
+
 `job.sh` stores one explicitly named mode-`0600` lifecycle state file in an
 owner-private external directory. It contains canonical absolute repository,
 worktree, Git-common-directory, and receipt paths; filesystem identities; the exact

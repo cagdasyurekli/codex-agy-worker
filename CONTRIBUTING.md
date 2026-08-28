@@ -35,7 +35,10 @@ requesting review:
 It is fail-fast, requires no network or provider call, does not intentionally inspect
 account-HOME contents, externalizes temporary bytecode, and runs the static checks plus
 all thirty-seven offline suites. Ambient local tools may still consult ordinary user
-configuration. On a clean tracked/untracked worktree, an optional
+configuration. In GitHub Actions, the suite is partitioned across four fail-closed shards
+(`dispatcher`, `dispatcher-remediation`, `other-a`, `other-b`) and validated by the required aggregate
+`test` check; lower CI wall time from parallelization does not mean lower total compute, provider usage,
+token usage, cost, or weaker verification. On a clean tracked/untracked worktree, an optional
 `./scripts/ci-offline.sh --timing-report <PATH>` mode captures ordered per-stage
 observational monotonic wall time in an owner-private mode-0600 JSON report without
 recording commands, logs, environment variables, or timestamps. For a quota-unavailable

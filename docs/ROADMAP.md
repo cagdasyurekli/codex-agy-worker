@@ -1223,24 +1223,29 @@ checks remain mandatory; age alone never authorizes deletion.
   leakage, automatic routing changes, and general model/delegation claims. Without
   comparable credit data, label results `directional`.
 
-#### P2-E — Exact-head CI timing telemetry
+#### P2-E — Exact-head CI timing telemetry and fail-closed sharding
 
-**Status:** Implemented in first delivery slice (GitHub issue #73A); CI sharding remains deferred.
+**Status:** Implemented in delivery slices: timing telemetry (GitHub issue #73A) and exact-PR-head fail-closed CI sharding across four frozen shards (GitHub issue #73B); separate token efficiency benchmark follow-up remains deferred.
 
-- **User job:** Observe monotonic per-stage gate timings on the exact current HEAD commit
-  to identify release bottlenecks without publishing telemetry or claiming compute savings.
-- **Intended surface:** `scripts/ci-offline.sh --timing-report <PATH>`.
+- **User job:** Observe monotonic per-stage gate timings and parallelize offline CI across four
+  frozen shards (`dispatcher`, `dispatcher-remediation`, `other-a`, `other-b`) on the exact PR head
+  commit without publishing telemetry, dropping stages, or claiming compute savings.
+- **Intended surface:** `scripts/ci-offline.sh --timing-report <PATH>`, `scripts/ci-offline.sh --shard <SHARD> --receipt <PATH>`,
+  and `scripts/ci_sharding.py verify-aggregate`.
 - **Primary source:** Observational monotonic wall time (`time.monotonic()`) during local
-  or CI gate execution.
+  or CI gate execution; fail-closed receipt aggregation in GitHub Actions.
 - **Report boundary:** Binds exact Git HEAD commit SHA and deterministic canonical
   inventory digest after requiring a clean tracked/untracked worktree; publishes mode
   0600 without overwrite in an owner-private directory.
   Excludes paths, commands, environment values, logs, credentials, provider/account data,
   timestamps, host identity, and cost claims.
 - **Acceptance:** Negative tests verify fail-closed behavior on existing files, non-0700
-  parent directories, dirty worktrees, malformed HEAD/inventory digests,
-  reordered/dropped stages, and
-  unexpected fields. Gate inventory and default fail-fast execution remain unchanged.
+  parent directories, dirty worktrees, malformed HEAD/inventory digests, missing or
+  reordered/dropped stages, duplicate shard/stage evidence, and unexpected fields.
+  Aggregate `test` check with `if: always()` succeeds only when all four unique shard receipts
+  exist, all producers succeeded, all match expected head/inventory, and all 42 canonical stages
+  appear exactly once. Local gate default fail-fast execution remains unchanged, and lower CI wall
+  time does not reduce total compute, provider usage, token usage, cost, or verification rigor.
 
 ### Deferred or rejected
 
