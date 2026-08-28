@@ -399,6 +399,15 @@ capture launched exactly one child and exited `1`; its private streams and sanit
 unclassified failure record were retained. No inventory was interpreted, no retry was
 made, and the 1.1.22 bindings were not activated.
 
+A separate process-inert reprofile adapter
+(`scripts/models_capture_1_1_22_reprofile.py`) accepts an already-validated prior
+1.1.22 capture profile and prepares a new profile reflecting exactly one permitted
+change: `account_home_identity.nlink`. It reuses the fixed 1.1.22 profile module's
+derivation and bounded validation of the explicitly supplied recovery root's fixed
+artifact and scratch allowlists, and follows its publication pattern. It never enumerates
+or reads account HOME contents and has no subprocess, network, capture, inventory
+acceptance, routing, or activation authority.
+
 The historical authorized no-retry `1.1.12` capture established eleven slugs. A later
 separately authorized no-retry capture completed with child exit `0`, one Popen,
 empty post-child scratch, and an exact marker/record digest chain. Strict offline

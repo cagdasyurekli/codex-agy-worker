@@ -117,7 +117,7 @@ not live-provider claims:
 - Fixed 1.1.12 version recovery runner: 75 offline; Explicit-account models capture profile builder: 121 offline.
 - Fixed 1.1.12 models capture profile builder: 30 offline; Fixed 1.1.12 models capture runner: 56 offline.
 - Fixed 1.1.16 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; activation binding: 22 offline.
-- Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline.
+- Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; reprofile: 88 offline.
 - CI sharding and aggregate verifier: 79 offline; CI timing telemetry: 44 offline.
 
 Some conformance cleanup controls trust loaded code, the local owner, same-UID

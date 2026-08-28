@@ -68,3 +68,17 @@ It does not authorize another account or provider call, retry, choose a model, c
 caller selection, forward agy's separate `--effort`, or accept worker output. Reviewed
 direct selection therefore continues to use the accepted 1.1.16 matrix; Codex owns
 diff review and driver-run verification.
+
+## Reprofile adapter
+
+A separate process-inert reprofile adapter (`models_capture_1_1_22_reprofile.py`)
+accepts an already-validated prior 1.1.22 capture profile and prepares a new profile
+reflecting exactly one permitted change: `account_home_identity.nlink`. It reuses the
+fixed 1.1.22 profile module's derivation and bounded validation of the explicitly
+supplied recovery root's fixed artifact and scratch allowlists, and follows its
+publication pattern. It never
+enumerates or reads account HOME contents. It has no subprocess, network, Git, retry,
+capture, inventory acceptance, routing, model selection, metadata update, or activation
+authority. Reprofiling does not authorize a capture, contact a provider, call models,
+or renew any prior one-call authorization. This adapter does not change the
+non-activating status of agy 1.1.22.

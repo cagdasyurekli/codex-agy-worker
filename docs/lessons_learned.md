@@ -902,7 +902,7 @@ Observation: Parallelizing a long-running offline CI gate across shard jobs redu
 but sharded workflows must not silently drop stages, reuse cross-run artifacts, weaken checkout
 immutability, or conflate lower wall time with lower total compute or weaker acceptance.
 Change: Four frozen shard IDs and stage memberships (`dispatcher`, `dispatcher-remediation`, `other-a`,
-`other-b`) partition the canonical 42-stage inventory. In CI, each shard checks out the exact immutable
+`other-b`) partition the canonical 43-stage inventory. In CI, each shard checks out the exact immutable
 head SHA (`github.event.pull_request.head.sha` for pull requests or validated `head_sha` for manual dispatch),
 enforces committed diff hygiene, executes its stage subset, and emits a local mode-0600 shard receipt
 binding the schema, exact head SHA, inventory digest, shard ID, expected and observed stage lists, and outcome.

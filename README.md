@@ -123,7 +123,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The thirty-seven offline suites need no agy provider call, network access, API key, or GitHub login.
+The thirty-eight offline suites need no agy provider call, network access, API key, or GitHub login.
 
 ### GitHub Actions cost and quota fallback
 
@@ -153,7 +153,7 @@ If a private fork's quota is unavailable, run the same fail-fast offline suite l
 ./scripts/ci-offline.sh
 ```
 
-It runs the static checks and all thirty-seven offline suites without requiring a
+It runs the static checks and all thirty-eight offline suites without requiring a
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
@@ -1506,6 +1506,20 @@ self-pins plus fail-closed nonzero-stream preservation. The separately authorize
 no-retry account capture launched one child, exited `1`, and produced no classifiable
 inventory. It was not retried; 1.1.22 therefore did not advance the active baseline.
 
+A separate process-inert `models_capture_1_1_22_reprofile.py` adapter accepts an
+already-validated prior 1.1.22 capture profile and prepares a new profile reflecting
+exactly one permitted change: `account_home_identity.nlink`. It never enumerates or
+reads account HOME contents. It reuses the fixed 1.1.22 profile module's derivation
+and bounded validation of the explicitly supplied recovery root's fixed artifact and
+scratch allowlists. Capture-parent `dev`/`ino`/`uid`/`gid`/`mode` remain exact while
+positive `nlink` drift from an ordinary failed-capture artifact is diagnostic; the
+published profile retains the prior capture-parent identity bytes so the declared
+change remains account-HOME nlink only. The adapter follows the fixed publication
+pattern. It has no subprocess, network, Git, environment
+discovery, account HOME enumeration, retry, capture, inventory acceptance, routing,
+model selection, metadata update, or activation authority. It does not authorize a
+capture or renew any prior one-call authorization.
+
 After process-group closure, every capture-owned TMP/XDG/cwd directory must again be
 the same empty directory or publication fails closed. Successful bounded exit-zero
 execution publishes otherwise uninterpreted private mode-`0600` stdout/stderr, exact
@@ -1748,6 +1762,7 @@ scripts/models_capture_1_1_22_version_evidence.py fixed 1.1.22 source/snapshot v
 scripts/models_capture_1_1_22_profile.py fixed 1.1.22 process-inert capture profile bridge
 scripts/models_capture_1_1_22_runner.py fixed 1.1.22 explicit-account capture-only bridge
 scripts/models_capture_1_1_22_classifier.py fixed 1.1.22 sidecar failure classifier
+scripts/models_capture_1_1_22_reprofile.py fixed 1.1.22 process-inert nlink-only reprofile adapter
 scripts/codex_usage_report.py       Codex 0.150.1 app-server usage observation script
 scripts/ci-diff-check.sh      committed-range and changed-head-blob hygiene gate
 scripts/ci_diff_check.py      bounded attribute-independent committed-blob scanner
@@ -1800,6 +1815,7 @@ tests/test-models-capture-1-1-22-version-evidence.py 45-case offline fixed 1.1.2
 tests/test-models-capture-1-1-22-profile.py 30-case offline fixed 1.1.22 capture-profile suite
 tests/test-models-capture-1-1-22-runner.py 58-case offline fixed 1.1.22 capture-runner suite (88 combined with profile)
 tests/test-models-capture-1-1-22-classifier.py fixed 1.1.22 sidecar failure classifier suite
+tests/test-models-capture-1-1-22-reprofile.py 88-case offline fixed 1.1.22 nlink-only reprofile suite
 tests/test-agy-1-1-16-activation.py 22-case offline active-baseline/inventory-binding suite
 tests/test-adoption-measurement.py 41-case offline privacy-limited 30/60/90 measurement suite
 tests/test-update-notifier.py 89-case offline local notifier lifecycle/signal/maintenance suite
