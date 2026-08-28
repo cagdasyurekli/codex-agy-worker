@@ -214,32 +214,37 @@ check("publication is 0600, no-overwrite, 0700-parent, and no-follow", _publicat
 
 # 4. Clean HEAD Git Binding
 def _clean_head_cases() -> bool:
-    with tempfile.TemporaryDirectory() as temp_dir:
-        repo = Path(temp_dir)
-        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
-        subprocess.run(["git", "config", "user.name", "CI Shard Test"], cwd=repo, check=True)
-        tracked = repo / "tracked.txt"
-        tracked.write_text("clean\n", encoding="utf-8")
-        subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
-        subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
-        sha = MODULE.resolve_clean_head(repo)
-        if not MODULE.COMMIT_RE.fullmatch(sha):
-            return False
-        tracked.write_text("dirty\n", encoding="utf-8")
-        try:
-            MODULE.revalidate_clean_head(repo, sha)
-        except MODULE.ShardingError:
-            pass
-        else:
-            return False
-        tracked.write_text("clean\n", encoding="utf-8")
-        (repo / "untracked.txt").write_text("untracked\n", encoding="utf-8")
-        try:
-            MODULE.resolve_clean_head(repo)
-        except MODULE.ShardingError:
-            return True
-    return False
+    inherited_ci_head = os.environ.pop("AGY_WORKER_CI_HEAD_SHA", None)
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "CI Shard Test"], cwd=repo, check=True)
+            tracked = repo / "tracked.txt"
+            tracked.write_text("clean\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+            sha = MODULE.resolve_clean_head(repo)
+            if not MODULE.COMMIT_RE.fullmatch(sha):
+                return False
+            tracked.write_text("dirty\n", encoding="utf-8")
+            try:
+                MODULE.revalidate_clean_head(repo, sha)
+            except MODULE.ShardingError:
+                pass
+            else:
+                return False
+            tracked.write_text("clean\n", encoding="utf-8")
+            (repo / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+            try:
+                MODULE.resolve_clean_head(repo)
+            except MODULE.ShardingError:
+                return True
+        return False
+    finally:
+        if inherited_ci_head is not None:
+            os.environ["AGY_WORKER_CI_HEAD_SHA"] = inherited_ci_head
 
 
 check("HEAD binding accepts clean Git and rejects dirty tracked/untracked bytes", _clean_head_cases)
