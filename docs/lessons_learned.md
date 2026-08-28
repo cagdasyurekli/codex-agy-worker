@@ -908,3 +908,24 @@ receipt artifacts for one day under repository Actions access. Any failure, canc
 or schema mismatch fails closed. Local `./scripts/ci-offline.sh` retains its default all-stage execution, and
 lower CI wall time is explicitly documented as not reducing total compute, provider usage, tokens, cost, or
 verification rigor.
+
+## Transparent provider dispatch notice and truthful boundaries
+
+When Codex delegates to an external worker CLI backed by provider services, transparency
+and truthful boundary accounting are essential. Before every provider-launch attempt—whether
+initial run/start, same-conversation resume, candidate continuation, or fresh restart—Codex
+must inform the user in one or two concise user-facing sentences what task is being sent,
+the caller-selected model, caller-selected effort (or that effort is not separately selectable
+for fixed/compound/literal models), and the exact resolved model slug.
+
+When no model is selected or the default tier is used, state truthfully that the provider
+default model is used and that model or effort is unresolved, without inventing a resolved
+slug or thinking level.
+
+This notice must precede every dispatch attempt and remain accurate afterward.
+Provider-boundary honesty is paramount:
+- Do not infer hidden backend reasoning or invent thinking levels for fixed or literal models.
+- State provider-default usage truthfully when model resolution is not explicitly selected.
+- If preflight fails before provider launch, explicitly state that the task was not sent to AGY.
+- If provider reach is genuinely uncertain, state that it is unverified rather than claiming success.
+- Direct model and effort selection remain caller-owned; recommendations are advisory.
