@@ -2653,7 +2653,7 @@ with tempfile.TemporaryDirectory() as temporary:
             "resolved_agy_model": "gemini-3.6-flash-high",
             "installed_agy_version": "1.1.17",
             "matrix_sha256": "a" * 64,
-            "matrix_agy_version": "1.1.16",
+            "matrix_agy_version": "1.1.22",
             "matrix_source_revision": "b" * 40,
             "version_relation": "drift",
             "compatibility_status": "critical-interface-compatible-version-drift",

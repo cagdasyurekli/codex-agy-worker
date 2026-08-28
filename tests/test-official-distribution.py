@@ -600,7 +600,7 @@ def _() -> None:
         assert [call[0].full_url for call in opener.calls] == [distribution.MANIFEST_URL]
 
 
-@test("observed 1.1.22 against active 1.1.16 is drift-review")
+@test("observed 1.1.22 against a historical 1.1.16 snapshot is drift-review")
 def _() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)

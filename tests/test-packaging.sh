@@ -1959,8 +1959,8 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.json" \
         && cmp -s "$ROOT/compat/agy-models-inventory-binding.sha256" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.sha256" \
-        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.16" ]] \
-        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-20" ]]; then
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.22" ]] \
+        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-28" ]]; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
@@ -2361,7 +2361,7 @@ fi
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     'case "$*" in' \
-    '  --version) printf "1.1.16\n" ;;' \
+    '  --version) printf "1.1.22\n" ;;' \
     '  --help) printf "%s\n" "Usage of agy:" "  --add-dir  Add a directory" "  --conversation  Resume a conversation" "  --disable-slash-commands  Disable slash commands" "  --json-schema  Schema path" "  --mode  Execution mode (accept-edits, plan)" "  --model  Select a model" "  --output-format  Format (text, json, stream-json)" "  --print  Run a prompt" "  --print-timeout  Print timeout" "  --sandbox  Sandboxed" >&2 ;;' \
     '  *) exit 97 ;;' \
     'esac' > "$TMP/selector-bin/agy"
@@ -2385,7 +2385,7 @@ fi
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "a586927552d90295529f3059989a2a8c36c234d41b8f79d61c1c89edbf829e00"' \
+        && grep -Fq '"matrix_sha256": "5a363dee8acb35e91b60405e705e8afaf155989dd755027cc5fa16741e42436c"' \
             "$TMP/copied-selection.json" \
         && [[ "$copied_selection_v2" == 1 ]] \
         && [[ ! -e "$TMP/network-called" ]]; then
@@ -2587,7 +2587,7 @@ suite_commands += re.findall(
 )
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 38
+    len(suite_commands) == len(set(suite_commands)) == 39
     and all(command in contributing for command in suite_commands)
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
@@ -2607,7 +2607,7 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The thirty-eight offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The thirty-nine offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
@@ -2711,7 +2711,7 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
         && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 56-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (56 offline runner cases' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.16 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; activation binding: 22 offline.' \
+        && grep -Fq 'Fixed 1.1.16 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; historical activation: 8 offline.' \
             "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-capture-1-1-16-version-evidence.py 45-case' \
             "$ROOT/README.md" \
@@ -2739,9 +2739,12 @@ if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md
             "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-22-runner.py` (58 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-agy-1-1-16-activation.py` (22 cases)' \
+        && grep -Fq 'tests/test-agy-1-1-16-activation.py` (8 historical cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-agy-1-1-16-activation.py 22-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-agy-1-1-16-activation.py 8-case' "$ROOT/README.md" \
+        && grep -Fq 'tests/test-agy-1-1-22-activation.py` (24 active cases)' \
+            "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-agy-1-1-22-activation.py 24-case' "$ROOT/README.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \
         && (( bootstrap_preflight_line < bootstrap_suite_line )) \
@@ -2800,6 +2803,11 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         && grep -Fq 'a586927552d90295529f3059989a2a8c36c234d41b8f79d61c1c89edbf829e00' \
             "$ROOT/compat/reviews/agy-1.1.16.md" \
         && grep -Fq 'same fourteen exact slugs' "$ROOT/compat/reviews/agy-1.1.16.md" \
+        && [[ -f "$ROOT/compat/reviews/agy-1.1.22-activation.md" ]] \
+        && grep -Fq '626623c2c7b3b126efc2161c36554ecfa7fad3ce46e9dfcee8419c685ccaf2e3' \
+            "$ROOT/compat/reviews/agy-1.1.22-activation.md" \
+        && grep -Fq 'Active 1.1.22 compatibility binding: 24 offline.' \
+            "$ROOT/AGENTS.md" \
         && [[ -f "$ROOT/compat/reviews/agy-1.1.22.md" ]] \
         && grep -Fq 'cab32a092e67b5199c1777e45f65623f703a94812b75a0732e7b3156302e9f77' \
             "$ROOT/compat/reviews/agy-1.1.22.md" \

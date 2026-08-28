@@ -47,7 +47,7 @@ make_fixture() {
         "$destination/tmp"
     cp -R "$ROOT/skills/agy-worker/runtime" "$destination/runtime"
     rm -rf "$destination/runtime/__pycache__" "$destination/runtime/scripts/__pycache__"
-    printf '1.1.16\n' > "$destination/runtime/compat/agy-verified-version.txt"
+    printf '1.1.22\n' > "$destination/runtime/compat/agy-verified-version.txt"
     "$HOST_PYTHON" -B -c 'from datetime import date; print(date.today().isoformat())' \
         > "$destination/runtime/compat/agy-last-reviewed.txt"
     printf 'CONFIG_SECRET_DO_NOT_READ\n' > "$destination/home/.codex/config.toml"
@@ -61,8 +61,8 @@ make_fixture() {
         '[[ "${FAKE_PYTHON_MODE:-ready}" == "fail" ]] && exit 7' \
         'if [[ "${2:-}" == *doctor-metadata.py && "${3:-}" == "capture-agy-version" ]]; then' \
         '  case "${FAKE_PYTHON_CAPTURE_MODE:-real}" in' \
-        '    no-newline) printf "1.1.16"; exit 0 ;;' \
-        '    multiline) printf "1.1.16\\nextra\\n"; exit 0 ;;' \
+        '    no-newline) printf "1.1.22"; exit 0 ;;' \
+        '    multiline) printf "1.1.22\\nextra\\n"; exit 0 ;;' \
         '    short-write) exec 1>&-; exit 0 ;;' \
         '    disk-full) exit 74 ;;' \
         '  esac' \
@@ -94,14 +94,14 @@ make_fixture() {
         'printf "%s\\n" "$*" >> "$DOCTOR_AGY_CALLS"' \
         '"$DOCTOR_TEST_PYTHON" -B -c '"'"'import os,stat,sys; p=sys.argv[1]; c=os.path.join(p,"agy-version"); open(sys.argv[2],"a").write(f"agy:{p}:{stat.S_IMODE(os.stat(p).st_mode):03o}:{stat.S_IMODE(os.stat(c).st_mode):03o}\\n")'"'"' "$TMPDIR" "${DOCTOR_TMP_OBSERVATIONS:-/dev/null}"' \
         'case "${FAKE_AGY_MODE:-ready}" in' \
-        '  ready) printf "agy 1.1.16\\n" ;;' \
-        '  bare) printf "1.1.16\\n" ;;' \
-        '  no-newline) printf "agy 1.1.16" ;;' \
-        '  two-newlines) printf "agy 1.1.16\\n\\n" ;;' \
-        '  carriage-return) printf "agy 1.1.16\\r\\n" ;;' \
-        '  control) printf "agy 1.1.16\\t" ;;' \
-        '  nul) printf "agy 1.1.16\\0" ;;' \
-        '  prefix-junk) printf "version: agy 1.1.16\\n" ;;' \
+        '  ready) printf "agy 1.1.22\\n" ;;' \
+        '  bare) printf "1.1.22\\n" ;;' \
+        '  no-newline) printf "agy 1.1.22" ;;' \
+        '  two-newlines) printf "agy 1.1.22\\n\\n" ;;' \
+        '  carriage-return) printf "agy 1.1.22\\r\\n" ;;' \
+        '  control) printf "agy 1.1.22\\t" ;;' \
+        '  nul) printf "agy 1.1.22\\0" ;;' \
+        '  prefix-junk) printf "version: agy 1.1.22\\n" ;;' \
         '  oversize) printf "agy "; i=0; while [[ $i -lt 140 ]]; do printf "1"; i=$((i+1)); done ;;' \
         '  huge) printf "agy "; i=0; while [[ $i -lt 4096 ]]; do printf "1"; i=$((i+1)); done ;;' \
         '  signal) kill -TERM "$PPID"; exit 7 ;;' \
@@ -116,7 +116,7 @@ make_fixture() {
         '  drift) printf "agy 1.1.11\\n" ;;' \
         '  empty) : ;;' \
         '  usage) printf "usage: agy [options]\\n" ;;' \
-        '  multiline) printf "agy 1.1.16\\nextra\\n" ;;' \
+        '  multiline) printf "agy 1.1.22\\nextra\\n" ;;' \
         '  fail) exit 7 ;;' \
         'esac' > "$destination/bin/agy"
     printf '%s\n' '#!/usr/bin/env bash' \
