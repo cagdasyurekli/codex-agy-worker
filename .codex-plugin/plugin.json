@@ -18,8 +18,8 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Verified agy Worker",
-    "shortDescription": "Explore, build, and verify with agy.",
+    "displayName": "Codex agy Worker",
+    "shortDescription": "Bounded agy delegation with independent checks.",
     "longDescription": "Use Antigravity CLI for broad exploration, feature work, and project-scale implementation in isolated Git worktrees. Codex reviews the diff, runs driver-owned checks, and records verified or partial delivery without trusting worker claims.",
     "developerName": "cagdasyurekli",
     "category": "Developer Tools",
