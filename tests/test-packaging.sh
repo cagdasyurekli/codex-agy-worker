@@ -1574,7 +1574,7 @@ fi
 if grep -Fq 'is process-owning: it keeps signal rollback authority' \
         "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py" \
         && grep -Fq 'The `--output` CLI path is deliberately process-owning' \
-            "$ROOT/README.md" \
+            "$ROOT/docs/PROJECT_WORKFLOW.md" \
         && grep -Fq 'file-output `main(argv)` is process-owning through `os._exit(0)`' \
             "$ROOT/docs/REPO_MAP.md"; then
     ok "Evidence Report documents its process-owning file-output boundary"
@@ -1592,12 +1592,12 @@ else
 fi
 
 if grep -Fq -- '--format github-step-summary >> "${GITHUB_STEP_SUMMARY:?}"' \
-        "$ROOT/README.md" \
+        "$ROOT/docs/PROJECT_WORKFLOW.md" \
         && grep -Fq 'fork-controlled paths, repository content, tokens, or secrets' \
-            "$ROOT/README.md"; then
-    ok "README keeps GitHub Step Summary redirection explicit and fork-safe"
+            "$ROOT/docs/PROJECT_WORKFLOW.md"; then
+    ok "project workflow guide keeps GitHub Step Summary redirection explicit and fork-safe"
 else
-    bad "README keeps GitHub Step Summary redirection explicit and fork-safe"
+    bad "project workflow guide keeps GitHub Step Summary redirection explicit and fork-safe"
 fi
 
 if grep -Fq 'or implicit environment-file write was added' "$ROOT/docs/ROADMAP.md" \
@@ -1908,7 +1908,7 @@ fi
 
 if grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
         "$CI_OFFLINE" \
-        && grep -Fq '[`benchmark.sh`](docs/BENCHMARKING.md)' "$ROOT/README.md" \
+        && grep -Fq '[Benchmarking](docs/BENCHMARKING.md)' "$ROOT/README.md" \
         && grep -Fq 'Live benchmarking is not implemented' "$ROOT/docs/BENCHMARKING.md" \
         && grep -Fq 'no live provider mode' "$ROOT/docs/index.md"; then
     ok "CI and public docs expose only provider-independent Benchmark v1"
@@ -1917,8 +1917,9 @@ else
 fi
 
 if grep -Fq '/usr/bin/python3 -I -S -B tests/test-swebench-workflow-study.py' "$CI_OFFLINE" \
-        && grep -Fq 'SWE-bench Workflow Study v1' "$ROOT/README.md" \
-        && grep -Fq 'never influences `qa-gate` acceptance' "$ROOT/README.md" ; then
+        && grep -Fq '## SWE-bench Workflow Study v1' "$ROOT/docs/BENCHMARKING.md" \
+        && grep -Fq 'authority false and never' "$ROOT/docs/BENCHMARKING.md" \
+        && grep -Fq 'influences `qa-gate` acceptance.' "$ROOT/docs/BENCHMARKING.md" ; then
     ok "CI and public docs expose SWE-bench Workflow Study v1"
 else
     bad "CI and public docs expose SWE-bench Workflow Study v1"
@@ -1929,7 +1930,7 @@ if grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
         && [[ -x "$ROOT/persona-evidence.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/persona-evidence.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/scripts/persona_registry.py" ]] \
-        && grep -Fq 'Statuses are evidence levels, not trust labels' "$ROOT/README.md" \
+        && grep -Fq 'Statuses are evidence levels, not trust labels' "$ROOT/docs/PERSONAS.md" \
         && grep -Fq 'For the shipped `offline-only` records it is a local,' \
             "$ROOT/docs/PERSONAS.md" \
         && grep -Fq 'fixed sanitized read-only Git object commands' \
@@ -1946,7 +1947,7 @@ if grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
         && [[ -x "$ROOT/profile.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/profile.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/scripts/workload_profiles.py" ]] \
-        && grep -Fq '[`profile.sh`](docs/PROFILES.md)' "$ROOT/README.md" \
+        && grep -Fq '[Profiles](docs/PROFILES.md)' "$ROOT/README.md" \
         && grep -Fq 'Profiles never contain a repository or filesystem path' \
             "$ROOT/docs/PROFILES.md" \
         && grep -Fq 'profile is data, not a driver' "$ROOT/AGENTS.md"; then
@@ -2827,8 +2828,8 @@ else
     bad "installed provider notice contract rejects every clause weakening mutation"
 fi
 
-if grep -Fq 'Before every provider-launch attempt (initial `run`/`start`, `resume`, `continue`, and' \
-        "$ROOT/README.md" \
+if grep -Fq 'Before every provider-launch attempt—initial `run`/`start`, `resume`, `continue`, and' \
+        "$ROOT/docs/USAGE.md" \
         && grep -Fq 'mandatory user-facing provider dispatch notices across initial, resume, continue, and restart launches' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '## Transparent provider dispatch notice and truthful boundaries' \
@@ -2896,12 +2897,12 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The forty offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The forty offline suites' "$ROOT/docs/OPERATIONS.md" \
         && grep -Fq 'all forty offline suites' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
-        && grep -Fq 'tests/test-update-notifier.py 89-case' "$ROOT/README.md" \
+        && grep -Fq '`tests/test-adoption-measurement.py` (41 offline cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq '`tests/test-update-notifier.py` (89 offline fake-control cases)' "$ROOT/docs/REPO_MAP.md" \
         && [[ -f "$ROOT/docs/MEASUREMENT.md" ]] \
         && [[ -x "$ROOT/update-notifier.sh" ]] \
         && grep -Fq 'Google/Gemini' "$ROOT/PRIVACY.md" \
@@ -2914,47 +2915,50 @@ else
 fi
 
 if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
-        "$ROOT/README.md" \
-        && grep -Fq 'An exact matrix-version match proceeds mechanically' \
-            "$ROOT/README.md" \
-        && grep -Fq 'that structural probe. Compatible version drift requires Codex' \
-            "$ROOT/README.md" \
-        && ! grep -Fq 'only when its raw C-locale help SHA-256 is retained' "$ROOT/README.md" \
-        && ! grep -Fq 'An unseen exact-version digest, or compatible version drift' "$ROOT/README.md" \
-        && grep -Fq "\`LC_ALL=C agy --help 2>&1 | /usr/bin/python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'\`" \
-            "$ROOT/README.md" \
-        && ! grep -Fq 'shasum -a 256' "$ROOT/README.md" \
-            "$ROOT/README.md" \
+        "$ROOT/docs/INSTALLATION.md" \
+        && grep -Fq 'matrix-version match proceeds mechanically after that structural probe.' \
+            "$ROOT/docs/INSTALLATION.md" \
+        && grep -Fq "version drift requires Codex's explicit" \
+            "$ROOT/docs/INSTALLATION.md" \
+        && ! grep -Fq 'only when its raw C-locale help SHA-256 is retained' "$ROOT/docs/INSTALLATION.md" \
+        && ! grep -Fq 'An unseen exact-version digest, or compatible version drift' "$ROOT/docs/INSTALLATION.md" \
+        && grep -Fq "LC_ALL=C agy --help 2>&1 | /usr/bin/python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'" \
+            "$ROOT/docs/INSTALLATION.md" \
+        && ! grep -Fq 'shasum -a 256' "$ROOT/docs/INSTALLATION.md" \
         && grep -Fq 'controller help prose is data, never availability inference' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq '`model_availability: not_assessed`' "$ROOT/README.md" \
-        && grep -Fq 'V3/V4 *current* bound result may perform its first lifecycle transition' "$ROOT/README.md" \
-        && grep -Fq 'migration_binding_sha256' "$ROOT/README.md" \
-        && grep -Fq 'V5/V6 transition proves the legacy' "$ROOT/README.md" \
-        && grep -Fq 'caller-resolved symbolic launcher' "$ROOT/README.md" \
+        && grep -Fq 'model availability is' "$ROOT/docs/INSTALLATION.md" \
+        && grep -Fq '`not_assessed`' "$ROOT/docs/INSTALLATION.md" \
+        && grep -Fq 'A V3/V4 current result requires' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'migration_binding_sha256' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'V5/V6 retains its exact legacy digest' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Every emitted action or stale-approval rerun command uses the caller-resolved' \
+            "$ROOT/docs/PROJECT_WORKFLOW.md" \
+        && grep -Fq '| `--allow-slash-commands` |' "$ROOT/docs/USAGE.md" \
+        && grep -Fq 'Leave slash expansion disabled when any prompt content comes from a repository or' \
+            "$ROOT/docs/USAGE.md" \
+        && grep -Fq '| `cheap` | `gemini-3.6-flash-low` |' "$ROOT/docs/USAGE.md" \
+        && grep -Fq '| `hardest` | `claude-opus-4-6-thinking` |' "$ROOT/docs/USAGE.md" \
+        && grep -Fq './model-recommendation.sh --stage pre-dispatch' "$ROOT/docs/USAGE.md" \
+        && grep -Fq './model-recommendation.sh --stage post-gate' "$ROOT/docs/USAGE.md" \
         && grep -Fq 'caller-resolved symbolic launcher `"$PIPELINE/agy-worker.sh"`' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'deterministic external state path under' "$ROOT/README.md" \
         && grep -Fq 'deterministic external state root derivation' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'prospective and post-resolution fail-closed rejection of project roots inside the target worktree' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`status`, `wait`, `result`, `resume`, `restart`,' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/SKILL.md" \
-        && grep -Fq 'tests/test-agy-worker.sh      334-case' "$ROOT/README.md" \
         && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (334 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
-        && grep -Fq 'tests/test-agy-worker-remediation.py 90-case' "$ROOT/README.md" \
         && grep -Fq 'EXPECTED_CHECKS = 90' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (90 focused cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 429 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
-        && ! grep -Fq 'tests/test-agy-worker.sh      300-case' "$ROOT/README.md" \
         && ! grep -Fq '`tests/test-agy-worker.sh` (300 cases)' "$ROOT/docs/REPO_MAP.md" \
         && ! grep -Fq 'resolution remains blocked until installed agy exactly matches' \
-            "$ROOT/README.md"; then
+            "$ROOT/docs/INSTALLATION.md"; then
     ok "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
 else
     bad "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
@@ -2965,79 +2969,55 @@ bootstrap_preflight_line="$(grep -nF "if announce 'repository-only version boots
 bootstrap_suite_line="$(grep -nF "if announce 'repository-only version bootstrap runner'; then" \
     "$CI_OFFLINE" | cut -d: -f1)"
 if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-version-attestation-runner.py  165-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Version-attestation mutation harness: 60 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-version-attestation-harness.py  60-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-attestation-harness.py` (60 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Canonical models-inventory attestation runner: 116 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-attestation-runner.py  116-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-attestation-runner.py` (116 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Explicit-account models capture runner: 84 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-runner.py  84-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-runner.py` (84 fake-account cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Repository-only version bootstrap runner: 139 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-version-bootstrap-runner.py  139-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-bootstrap-runner.py` (139 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Repository-only version initial-bootstrap runner: 43 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-version-initial-bootstrap-runner.py  43-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-initial-bootstrap-runner.py` (43 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Fixed 1.1.12 version recovery runner: 75 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-version-recovery-1-1-12-runner.py  75-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-version-recovery-1-1-12-runner.py` (75 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Explicit-account models capture profile builder: 121 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-profile.py 121-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-profile.py` (121 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Fixed 1.1.12 models capture profile builder: 30 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-profile.py 30-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-12-profile.py` (30 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Fixed 1.1.12 models capture runner: 56 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py 56-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (56 offline runner cases' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Fixed 1.1.16 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; historical activation: 8 offline.' \
             "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-16-version-evidence.py 45-case' \
-            "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-16-version-evidence.py` (45 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-16-profile.py 30-case' \
-            "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-16-profile.py` (30 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-16-runner.py 58-case' \
-            "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-16-runner.py` (58 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; reprofile: 88 offline.' \
             "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-22-version-evidence.py 45-case' \
-            "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-22-version-evidence.py` (45 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-22-profile.py 30-case' \
-            "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-22-profile.py` (30 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-22-runner.py 58-case' \
-            "$ROOT/README.md" \
         && grep -Fq 'tests/test-models-capture-1-1-22-runner.py` (58 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-agy-1-1-16-activation.py` (8 historical cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-agy-1-1-16-activation.py 8-case' "$ROOT/README.md" \
         && grep -Fq 'tests/test-agy-1-1-22-activation.py` (24 active cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-agy-1-1-22-activation.py 24-case' "$ROOT/README.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \
         && (( bootstrap_preflight_line < bootstrap_suite_line )) \
@@ -3133,7 +3113,9 @@ fi
 
 if [[ -x "$ROOT/scripts/version_bootstrap_runner.py" ]] \
         && [[ -x "$ROOT/tests/test-version-bootstrap-runner.py" ]] \
-        && ! grep -Fq 'skills/agy-worker/runtime/version_bootstrap_runner.py' "$ROOT/README.md"; then
+        && ! grep -Fq 'skills/agy-worker/runtime/version_bootstrap_runner.py' \
+            "$ROOT/docs/INSTALLATION.md" "$ROOT/docs/USAGE.md" \
+            "$ROOT/docs/PROJECT_WORKFLOW.md" "$ROOT/docs/OPERATIONS.md"; then
     ok "bootstrap remains an executable repository-only surface"
 else
     bad "bootstrap remains an executable repository-only surface"
@@ -3151,7 +3133,7 @@ fi
 if [[ -x "$ROOT/scripts/version_recovery_1_1_12_runner.py" ]] \
         && [[ -x "$ROOT/tests/test-version-recovery-1-1-12-runner.py" ]] \
         && ! grep -Fq 'version_recovery_1_1_12_runner.py' "$ROOT/skills/agy-worker/runtime" -r \
-        && grep -Fq 'non-authorizing' "$ROOT/README.md"; then
+        && grep -Fq 'grants no account or provider authority itself' "$ROOT/docs/REPO_MAP.md"; then
     ok "fixed recovery remains a separate non-authorizing repository-only surface"
 else
     bad "fixed recovery remains a separate non-authorizing repository-only surface"
@@ -3192,7 +3174,7 @@ else
     bad "capture-profile builder reviewed identity changed"
 fi
 
-if grep -Fq 'same-UID processes' "$ROOT/README.md" \
+if grep -Fq 'same-UID processes' "$ROOT/docs/CONFORMANCE.md" \
         && grep -Fq 'It never scans for or chases a moved directory.' \
             "$ROOT/docs/CONFORMANCE.md" \
         && grep -Fq 'may leave a private residual' "$ROOT/PRIVACY.md" \
@@ -3241,10 +3223,10 @@ else
     bad "approved brand assets and GitHub Pages wiring pass the production contract"
 fi
 
-python3 "$ROOT/scripts/validate-docs.py" "$ROOT" --readme-max-lines 1905 \
+python3 "$ROOT/scripts/validate-docs.py" "$ROOT" --readme-max-lines 450 \
     > "$TMP/docs-valid.out" 2> "$TMP/docs-valid.err"
 docs_valid_rc=$?
-python3 - "$ROOT/scripts/validate-docs.py" "$ROOT/README.md" <<'PY'
+python3 - "$ROOT/scripts/validate-docs.py" "$ROOT/README.md" "$ROOT" <<'PY'
 import importlib.util
 from pathlib import Path
 import sys
@@ -3256,34 +3238,100 @@ assert spec is not None and spec.loader is not None
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
-readme = Path(sys.argv[2]).read_text(encoding="utf-8")
-assert module.validate_onboarding(readme, 1905) == []
-max_lines = 1905
+readme_path = Path(sys.argv[2])
+root_path = Path(sys.argv[3])
+readme = readme_path.read_text(encoding="utf-8")
+assert module.validate_onboarding(readme, 450) == []
+max_lines = 450
 padding = ["<!-- budget mutation -->"] * (max_lines + 1 - len(readme.splitlines()))
-over_budget = readme + "\n" + "\n".join(padding)
-assert any("maximum is 1905" in error for error in module.validate_onboarding(over_budget, max_lines))
+over_budget = "\n".join([*readme.splitlines(), *padding])
+assert len(over_budget.splitlines()) == 451
+assert any("maximum is 450" in error for error in module.validate_onboarding(over_budget, max_lines))
 
 hidden_markers = "\n".join(
     f"<!-- {marker} -->" for _label, marker in module.ONBOARDING_MARKERS
 )
-assert module.validate_onboarding(hidden_markers, 1905)
+assert module.validate_onboarding(hidden_markers, 450)
 unclosed_comment = "<!--\n" + "\n".join(marker for _label, marker in module.ONBOARDING_MARKERS)
-assert module.validate_onboarding(unclosed_comment, 1905)
+assert module.validate_onboarding(unclosed_comment, 450)
 fenced_markers = "```text\n" + "\n".join(
     marker for _label, marker in module.ONBOARDING_MARKERS
 ) + "\n```"
-assert module.validate_onboarding(fenced_markers, 1905)
+assert module.validate_onboarding(fenced_markers, 450)
 full_tutorial = module.ONBOARDING_MARKERS[-1][1]
 broken_tutorial = readme.replace(full_tutorial, full_tutorial.split("](", 1)[0] + "]")
-assert any("verification tutorial" in error for error in module.validate_onboarding(broken_tutorial, 1905))
+assert any("verification tutorial" in error for error in module.validate_onboarding(broken_tutorial, 450))
 inline_code_tutorial = readme.replace(full_tutorial + ".", f"`{full_tutorial}`")
-assert any("verification tutorial" in error for error in module.validate_onboarding(inline_code_tutorial, 1905))
+assert any("verification tutorial" in error for error in module.validate_onboarding(inline_code_tutorial, 450))
 
 lines = readme.splitlines()
 positioning = next(index for index, line in enumerate(lines) if module.ONBOARDING_MARKERS[0][1] in line)
 workflow_badge = next(index for index, line in enumerate(lines) if module.ONBOARDING_MARKERS[1][1] in line)
 lines[positioning], lines[workflow_badge] = lines[workflow_badge], lines[positioning]
-assert any("out of order" in error for error in module.validate_onboarding("\n".join(lines), 1905))
+assert any("out of order" in error for error in module.validate_onboarding("\n".join(lines), 450))
+
+guide_links = {
+    "INSTALLATION.md": "[Installation and compatibility](docs/INSTALLATION.md)",
+    "USAGE.md": "[Usage](docs/USAGE.md)",
+    "PROJECT_WORKFLOW.md": "[Project workflow](docs/PROJECT_WORKFLOW.md)",
+    "OPERATIONS.md": "[Operations](docs/OPERATIONS.md)",
+}
+for filename, link in guide_links.items():
+    guide = root_path / "docs" / filename
+    assert guide.is_file() and not guide.is_symlink(), filename
+    assert link in readme, link
+
+migrated_literal = "The `--output` CLI path is deliberately process-owning"
+assert migrated_literal not in readme
+project_only_markers = (
+    migrated_literal,
+    '--format github-step-summary >> "${GITHUB_STEP_SUMMARY:?}"',
+    "fork-controlled paths, repository content, tokens, or secrets",
+)
+for marker in project_only_markers:
+    owners = [
+        root_path / "docs" / filename
+        for filename in guide_links
+        if marker in (root_path / "docs" / filename).read_text(encoding="utf-8")
+    ]
+    assert owners == [root_path / "docs" / "PROJECT_WORKFLOW.md"], (marker, owners)
+
+with tempfile.TemporaryDirectory() as directory:
+    guide_root = Path(directory) / "repo"
+    guide_docs = guide_root / "docs"
+    guide_docs.mkdir(parents=True)
+    exact_links = []
+    for filename in guide_links:
+        (guide_docs / filename).write_text(f"# {filename}\n", encoding="utf-8")
+        exact_links.append(f"[{filename}](docs/{filename})")
+    guide_readme = guide_root / "README.md"
+    exact_readme = "\n".join(exact_links) + "\n"
+    guide_readme.write_text(exact_readme, encoding="utf-8")
+    assert module.validate_markdown_links(guide_root) == []
+    for filename in guide_links:
+        wrong_case = filename[0].lower() + filename[1:]
+        guide_readme.write_text(
+            exact_readme.replace(f"docs/{filename}", f"docs/{wrong_case}"),
+            encoding="utf-8",
+        )
+        assert any(
+            "non-exact path casing" in error
+            for error in module.validate_markdown_links(guide_root)
+        ), filename
+    guide_readme.write_text(exact_readme, encoding="utf-8")
+    allowlist = guide_docs / "public-files.allowlist"
+    allowlist.write_text(
+        "".join(f"docs/{filename}\n" for filename in sorted(guide_links))
+        + "docs/public-files.allowlist\n",
+        encoding="utf-8",
+    )
+    victim = guide_docs / "OPERATIONS.md"
+    victim.unlink()
+    victim.symlink_to("USAGE.md")
+    assert any(
+        "regular file" in error
+        for error in module.validate_public_docs_inventory(guide_root)
+    )
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory) / "repo"
@@ -3383,9 +3431,9 @@ if [[ "$docs_valid_rc" == "0" ]] \
         && grep -Fq '[documentation policy](docs/DOCUMENTATION_POLICY.md)' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq '`README.md` is the first-visit product page' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
         && grep -Fq 'one authoritative documentation owner' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
-        && grep -Fq 'provisional hard ceiling is **1,905 lines**' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
-        && grep -Fq 'permanent 450-line budget' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
-        && grep -Fq 'Treat those pins as migration debt' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq 'permanent hard ceiling of **450 physical lines**' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq 'Never raise it' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq 'Packaging tests pin operational literals to their authoritative task guide' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
         && grep -Fq '`docs/public-files.allowlist` is the complete set' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
         && grep -Fq 'Installation never authorizes provider dispatch or repository transmission' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
         && grep -Fq '`bash tests/test-packaging.sh`' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
@@ -3597,27 +3645,23 @@ else
 fi
 
 if grep -Fq '24 quota exhausted' "$ROOT/skills/agy-worker/runtime/agy-worker.sh" \
-        && grep -Fq '`24` provider quota exhausted' "$ROOT/README.md" \
-        && grep -Fq 'Wrong-version or altered quota terminals without a report remain `invalid_envelope`' \
-            "$ROOT/README.md" \
-        && grep -Fq '`1.1.13` quota terminal remains `provider_quota_exhausted` with exit `24`' \
-            "$ROOT/README.md" \
         && grep -Fq 'exact agy `1.1.13` terminal quota response' \
             "$ROOT/skills/agy-worker/SKILL.md" \
         && grep -Fq 'terminal phases are `completed` or `blocked`; exact Codex driver decisions/dispositions' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Controller terminal phases are `completed` or' \
             "$ROOT/docs/lessons_learned.md" \
-        && grep -Fq 'bounded non-gating version observation' "$ROOT/README.md" \
         && grep -Fq '1.1.13 shape with no report, it records `provider_quota_exhausted`, exit `24`, and' \
             "$ROOT/compat/reviews/agy-1.1.13-quota-terminal.md" \
         && grep -Fq 'are `invalid_envelope`, exit `4`, and `failure_stage=missing_structured_output`.' \
             "$ROOT/compat/reviews/agy-1.1.13-quota-terminal.md" \
-        && grep -Fq 'Wrong-version or altered quota terminals without a report remain `invalid_envelope`' \
-            "$ROOT/README.md" \
         && grep -Fq 'Wrong-version or altered quota terminals without a' \
             "$ROOT/skills/agy-worker/SKILL.md" \
-        && grep -Fq 'before every reviewed direct dispatch, Codex inspects' "$ROOT/README.md" \
+        && grep -Fq 'Classify authentication, quota, timeout, or provider failures only from reviewed' \
+            "$ROOT/docs/INSTALLATION.md" \
+        && grep -Fq 'Before every reviewed direct' "$ROOT/docs/INSTALLATION.md" \
+        && grep -Fq 'dispatch, including an exact-version match, Codex must inspect current bounded raw' \
+            "$ROOT/docs/INSTALLATION.md" \
         && grep -Fq 'Before every' "$ROOT/skills/agy-worker/SKILL.md" \
         && grep -Fq 'reviewed direct dispatch, including an exact-version match, Codex must inspect' \
             "$ROOT/skills/agy-worker/SKILL.md" \

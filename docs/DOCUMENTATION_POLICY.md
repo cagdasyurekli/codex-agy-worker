@@ -12,11 +12,10 @@ claims elsewhere in the repository.
   or release-history reference.
 - `docs/index.md` is the public Pages landing page. It introduces the product and
   routes readers to the tutorial and repository without copying the full README.
-- Existing task guides under `docs/` own their detailed verification, marketplace,
-  benchmark, measurement, persona, profile, and policy material. Until the planned
-  installation, usage, project-workflow, and operations guides are created, README is
-  the legacy owner of that remaining detail but must not receive new reference depth.
-  The extraction must create each new owner and move its detail in the same change.
+- Task guides under `docs/` own detailed installation, usage, project workflow,
+  operations, verification, marketplace, benchmark, measurement, persona, profile,
+  and policy material. README summarizes those surfaces and routes readers to the
+  one task guide that owns the detail.
 - `docs/REPO_MAP.md` owns maintainer-oriented paths, responsibilities, trust
   boundaries, and verification commands.
 - `docs/lessons_learned.md` owns durable rationale and failure lessons, not current
@@ -42,10 +41,8 @@ Keep the README useful without requiring a visitor to read it end to end:
 4. Prefer a few coherent task guides over one file per small topic. A reader should
    choose a page by intent, not by knowing the source-tree layout.
 
-The compact README budget is at most 450 lines. Until the planned extraction lands, the
-provisional hard ceiling is **1,905 lines**: additions must remove at least as many
-lines elsewhere. When the compact refactor lands, lower the mechanical ceiling to the
-permanent 450-line budget; never raise it merely to avoid moving reference material.
+The README has a permanent hard ceiling of **450 physical lines**. Never raise it
+merely to avoid moving reference material to the task guide that owns it.
 
 ## Keep one authoritative owner
 
@@ -55,6 +52,10 @@ a short context sentence and a link, but must not maintain a second full copy.
 | Topic | Documentation owner |
 |---|---|
 | First task and product overview | `README.md` |
+| Installation, compatibility, doctor, sandbox, and agy troubleshooting | `docs/INSTALLATION.md` |
+| Workflows, examples, options, personas/profiles entry points, and model selection | `docs/USAGE.md` |
+| Project lifecycle, Verification v2, recovery, and Evidence Receipt v1 | `docs/PROJECT_WORKFLOW.md` |
+| CI fallback, updates, notifier maintenance, and sanitized reporting | `docs/OPERATIONS.md` |
 | Marketplace packaging and detailed install contract | `docs/MARKETPLACE.md`; README repeats only the minimal first-task commands and authorization boundary |
 | Verification workflow tutorial | `docs/VERIFYING_AGENT_OUTPUT.md` |
 | Public gate fixture contract | `docs/CONFORMANCE.md` |
@@ -68,12 +69,10 @@ Before adding a new page, identify why an existing owner cannot hold the materia
 a topic moves, move the full detail, update inbound links and the repository map, and
 remove the stale copy in the same change.
 
-The current packaging suite still pins many operational literals and exact test counts
-to README. Treat those pins as migration debt: do not add a new operational literal
-pin below the first 120 lines. The compact extraction must retarget each surviving pin
-to its new authoritative owner in the same change. Longer term, exact suite counts
-should have one generated/inventory owner rather than being copied across README,
-`AGENTS.md`, and `docs/REPO_MAP.md`.
+Packaging tests pin operational literals to their authoritative task guide, not to
+README. Do not add an operational literal pin below README's first 120 lines. Exact
+suite counts belong in the repository map or generated inventory rather than being
+copied across README and task guides.
 
 ## Preserve claims and trust boundaries
 
@@ -151,9 +150,8 @@ For every README or public-doc change:
 6. Confirm every file under `docs/` is intentional and present in
    `docs/public-files.allowlist`; private or campaign artifacts must stay outside
    the checkout.
-7. Run `python3 scripts/validate-docs.py . --readme-max-lines 1905` during the legacy
-   layout, then `bash tests/test-packaging.sh` for README/docs/marketplace/Pages
-   changes. Change the validator limit to 450 in the compact extraction. After
+7. Run `python3 scripts/validate-docs.py . --readme-max-lines 450`, then
+   `bash tests/test-packaging.sh` for README/docs/marketplace/Pages changes. After
    material public claims or stable cross-cutting documentation bytes change, run
    `./scripts/ci-offline.sh` once and apply the repository's review requirements.
 8. Render and inspect live Pages on desktop and mobile only after separately authorized

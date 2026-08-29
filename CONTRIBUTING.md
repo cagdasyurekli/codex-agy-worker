@@ -1,10 +1,11 @@
 # Contributing
 
 Thank you for helping improve `codex-agy-worker`. Human contributors should open
-only the section relevant to the change: [README.md](README.md) for user-facing
-behavior, the matching [repository-map](docs/REPO_MAP.md) row for ownership and tests,
-or the matching [architectural lesson](docs/lessons_learned.md) when prior rationale
-is needed. README and public-documentation changes must also follow the
+only the section relevant to the change: [README.md](README.md) for the first-visit
+journey, the matching task guide for detailed user behavior, the matching
+[repository-map](docs/REPO_MAP.md) row for ownership and tests, or the matching
+[architectural lesson](docs/lessons_learned.md) when prior rationale is needed. README
+and public-documentation changes must also follow the
 [documentation policy](docs/DOCUMENTATION_POLICY.md).
 
 ## Before opening a change
