@@ -152,7 +152,7 @@ stage_in_shard() {
             ;;
         other-b)
             case "$stage" in
-                'qa-gate suite'|'Evidence Receipt v1 suite'|'Evidence Report suite'|'offline benchmark suite'|'persona evidence registry suite'|'data-only workload profiles suite'|'adoption measurement suite'|'local update notifier suite'|'canonical version attestation runner'|'repository-only version bootstrap runtime preflight'|'version attestation mutation harness'|'explicit-account models capture runner'|'fixed 1.1.12 models capture runner'|'fixed 1.1.16 models capture version evidence'|'fixed 1.1.16 models capture runner'|'fixed 1.1.22 models capture reprofile adapter'|'fixed 1.1.22 models capture failure classifier'|'Codex usage observation suite'|'public gate conformance suite'|'repository bytecode hygiene') return 0 ;;
+                'qa-gate suite'|'Evidence Receipt v1 suite'|'Evidence Report suite'|'offline benchmark suite'|'SWE-bench workflow study suite'|'persona evidence registry suite'|'data-only workload profiles suite'|'adoption measurement suite'|'local update notifier suite'|'canonical version attestation runner'|'repository-only version bootstrap runtime preflight'|'version attestation mutation harness'|'explicit-account models capture runner'|'fixed 1.1.12 models capture runner'|'fixed 1.1.16 models capture version evidence'|'fixed 1.1.16 models capture runner'|'fixed 1.1.22 models capture reprofile adapter'|'fixed 1.1.22 models capture failure classifier'|'Codex usage observation suite'|'public gate conformance suite'|'repository bytecode hygiene') return 0 ;;
                 *) return 1 ;;
             esac
             ;;
@@ -210,6 +210,10 @@ fi
 
 if announce 'offline benchmark suite'; then
 /usr/bin/python3 -I -S -B tests/test-benchmark.py
+fi
+
+if announce 'SWE-bench workflow study suite'; then
+/usr/bin/python3 -I -S -B tests/test-swebench-workflow-study.py
 fi
 
 if announce 'persona evidence registry suite'; then

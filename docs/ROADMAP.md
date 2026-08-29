@@ -1294,6 +1294,12 @@ checks remain mandatory; age alone never authorizes deletion.
   untrusted-claim, or human-required outcomes — rejected.** More model spend cannot
   repair those boundaries.
 
+### SWE-bench Workflow Study v1
+
+**Status:** Implemented.
+**Goal:** Add a separate offline suite that lets users import explicit, sanitized, matched experiment results and learn which agy-worker usage method is most token/cost efficient per accepted solution.
+**Deliverable:** `swebench-workflow-study.sh` with exactly `prepare`, `import`, `report`, and `advise` commands. Its hash-linked artifacts use a strict matched all-cell Pareto rule against `codex-only`, closed bounded budgets and failure states, derived acceptance, and separate explicit-availability Codex/agy usage and billed/list-price observations. Advice requires one complete comparable cost basis and complete primary token observations; otherwise it emits a deterministic `no_recommendation`. The lifecycle performs no dispatch, evaluator execution, provider call, retry, routing, or authority change.
+
 ## Approval gates
 
 Roadmap priority is not authorization. Apply these gates independently:

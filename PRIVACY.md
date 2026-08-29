@@ -48,7 +48,15 @@ Receipts, and results: source/tool/fixture/selection hashes, immutable synthetic
 bases and candidate-state hashes, bounded gate facts, and unsigned integrity labels.
 It stores no provider prompt, response, usage, pricing, credential, or raw worker log.
 The report is a pure validated completeness view and uploads nothing. Live
-benchmarking is not implemented.
+benchmark execution remains out of scope for this repository.
+
+The SWE-bench Workflow Study v1 tool is fully offline and uses no network,
+provider, telemetry collection, or analytics service. It only reads explicit, user-supplied
+caller-owned mode-`0600`, one-link regular plan and result files through bounded no-follow
+descriptors and writes deterministic sanitized,
+hash-linked canonical artifacts to a user-selected external owner-0700 result root.
+Every stored string is a bounded privacy-safe identifier. Artifacts omit source code, prompts,
+diffs, logs, task bodies, absolute paths, timestamps, identities, and credentials.
 
 The persona evidence registry is also local and read-only. It validates only
 checked-in public persona, registry, schema, and P1-C contract hashes and renders a
