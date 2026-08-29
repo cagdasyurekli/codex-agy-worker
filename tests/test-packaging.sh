@@ -1178,16 +1178,16 @@ python3 - "$TMP/ci-linear-lines-repo/repeated.txt" <<'PY'
 from pathlib import Path
 import sys
 
-Path(sys.argv[1]).write_bytes(b"same line\n" * 5_000)
+Path(sys.argv[1]).write_bytes(b"same line\n" * 6_000)
 PY
 git -C "$TMP/ci-linear-lines-repo" add repeated.txt
 git -C "$TMP/ci-linear-lines-repo" commit -qm repeated
 ci_linear_lines_head="$(git -C "$TMP/ci-linear-lines-repo" rev-parse HEAD)"
 if run_ci_check "$TMP/ci-linear-lines-repo" pull_request \
         "$ci_linear_lines_base" "$ci_linear_lines_head"; then
-    ok "five thousand repeated lines complete under the linear scanner bound"
+    ok "six thousand repeated lines complete under the linear scanner bound"
 else
-    bad "five thousand repeated lines complete under the linear scanner bound"
+    bad "six thousand repeated lines complete under the linear scanner bound"
 fi
 
 init_ci_repo "$TMP/ci-max-paths-repo"
