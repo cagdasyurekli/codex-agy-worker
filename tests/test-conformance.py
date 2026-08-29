@@ -546,7 +546,12 @@ exec >/dev/null 2>&1
 exec {str(GATE)!r} "$@"
 """,
 )
-close_then_exec_result = run(close_then_exec_gate)
+# Eleven sequential v1 gates at ten seconds, plus wrapper delay and CI headroom.
+CLOSE_THEN_EXEC_OUTER_TIMEOUT_SECONDS = 120.0
+close_then_exec_result = run(
+    close_then_exec_gate,
+    timeout=CLOSE_THEN_EXEC_OUTER_TIMEOUT_SECONDS,
+)
 check(
     "pipe EOF waits for unreaped leader before preserving exact gate exits",
     lambda: close_then_exec_result.returncode == 0 and close_then_exec_result.stdout == EXPECTED,
