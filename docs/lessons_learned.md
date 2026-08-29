@@ -530,10 +530,13 @@ incomplete bundles and invalid markers, and preserve the root CLI's observable
 defaults. Do not duplicate the runtime across packages or introduce a daemon merely
 to make installation look uniform.
 
-Skill installation is not consent to transmit a repository. Before dispatch, name
-the repository and allowed paths and obtain explicit approval for sending the prompt
-and worker-read content through agy to Google/Gemini. Keep local logs private and make
-privacy, support, and usage terms public alongside the GitHub distribution.
+Skill installation is not consent to transmit a repository. Before dispatch, treat
+the entire disposable worktree as worker-readable and potentially transmissible
+through agy to Google/Gemini. Narrow approval is valid only when the worktree contains
+only approved content. Prompt denylist and gate path policies govern task writes and
+candidate acceptance, not read isolation. Keep secrets, denied paths, unrelated
+private files, and local logs out of every provider attempt, and make privacy, support,
+and usage terms public alongside the GitHub distribution.
 
 Catalog metadata is a public product claim. Keep the skill frontmatter explicit about
 the supported host, runtime prerequisites, license, and release version; a provider
@@ -870,7 +873,8 @@ through one relevant `REPO_MAP` row, open only the matching lesson or public-doc
 section, and use a fresh Graphify index only for a narrow relationship or impact gap.
 The map owns human intent and verification routing; Graphify owns machine-derived
 edges. Generated graph data remains ignored local cache, but Git ignore alone does not
-exclude it from provider reads. Use a clean disposable worktree or explicit file scope.
+exclude it from provider reads, and an explicit task path does not isolate it. Keep it
+absent from the disposable worktree or approve the whole worktree before dispatch.
 
 The same single-authority rule applies to verification. During iteration, run the
 owning focused suite. Once bytes are stable, run the canonical `ci-offline.sh` gate

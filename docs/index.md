@@ -31,9 +31,11 @@ then run the offline proof below.
 - Diff reviews used as a second opinion, never as acceptance evidence.
 
 Each edit job runs in one branch-backed Git worktree. The driver captures an immutable
-base commit, declares allowed paths, and supplies the verification commands before
-dispatch. The gate rejects undeclared files, outside-policy changes, malformed worker
-output, missing edits, failed verification, and verifier-created mutations.
+base commit, declares allowed write paths, and supplies the verification commands
+before dispatch. Those paths constrain candidate acceptance, not provider reads: all
+content in the disposable worktree is potentially readable and transmissible. The
+gate rejects undeclared files, outside-policy changes, malformed worker output,
+missing edits, failed verification, and verifier-created mutations.
 
 ## Small runtime, explicit boundaries
 

@@ -1225,7 +1225,7 @@ agents = (root / "AGENTS.md").read_text(encoding="utf-8")
 agents_flat = " ".join(agents.split())
 security_reference = root / "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.11.0"
+assert manifest["version"] == "0.12.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -2918,6 +2918,121 @@ else
     bad "installed provider notice contract rejects every clause weakening mutation"
 fi
 
+provider_read_scope_clauses=(
+    'Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of the requested edit paths.'
+    'A narrower transmission approval is valid only when the disposable worktree contains only approved content; otherwise obtain approval for the entire worktree or do not dispatch.'
+    'Prompt denylist instructions describe requested writes, while `qa-gate --only` constrains candidate changed paths after dispatch. `--allow` merely exempts matching undeclared artifacts from rejection; it narrows neither reads nor writes. None provide read isolation, and `--add-dir` does not narrow the `--workdir` read boundary.'
+    'Before every provider-launch attempt, ensure credentials, secrets, private keys, user-denied paths, and unrelated private files are absent from the entire disposable worktree; telling the worker not to read them is not a control.'
+)
+
+provider_read_scope_skill_contract() {
+    local skill_path="$1" clause
+    for clause in "${provider_read_scope_clauses[@]}"; do
+        [[ "$(grep -Fxc "$clause" "$skill_path")" == "1" ]] || return 1
+    done
+}
+
+if provider_read_scope_skill_contract "$ROOT/skills/agy-worker/SKILL.md" \
+        && provider_read_scope_skill_contract "$TMP/installed/agy-worker/SKILL.md"; then
+    ok "source and installed skills preserve the whole-worktree provider read contract"
+else
+    bad "source and installed skills preserve the whole-worktree provider read contract"
+fi
+
+provider_read_scope_mutants_rejected=1
+provider_read_scope_mutant_index=0
+for clause in "${provider_read_scope_clauses[@]}"; do
+    provider_read_scope_mutant_index=$((provider_read_scope_mutant_index + 1))
+    mutant="$TMP/provider-read-scope-mutant-$provider_read_scope_mutant_index.md"
+    if ! python3 -B - "$TMP/installed/agy-worker/SKILL.md" "$mutant" "$clause" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+clause = sys.argv[3]
+text = source.read_text(encoding="utf-8")
+if text.count(clause) != 1:
+    raise SystemExit(1)
+target.write_text(text.replace(clause, "", 1), encoding="utf-8")
+PY
+    then
+        provider_read_scope_mutants_rejected=0
+        break
+    fi
+    if provider_read_scope_skill_contract "$mutant"; then
+        provider_read_scope_mutants_rejected=0
+        break
+    fi
+done
+if [[ "$provider_read_scope_mutants_rejected" == "1" ]]; then
+    ok "whole-worktree provider read contract rejects every independent clause deletion"
+else
+    bad "whole-worktree provider read contract rejects every independent clause deletion"
+fi
+
+provider_read_scope_weakening_mutants_rejected=1
+provider_read_scope_weakening_mutant_index=0
+provider_read_scope_weakening_replacements=(
+    'regardless of the requested edit paths::except for requested edit paths'
+    'otherwise obtain approval for the entire worktree or do not dispatch::otherwise proceed with a prompt denylist'
+    'None provide read isolation::All provide read isolation'
+    '`--add-dir` does not narrow the `--workdir` read boundary::`--add-dir` narrows the `--workdir` read boundary'
+    '`--allow` merely exempts matching undeclared artifacts from rejection::`--allow` constrains requested writes'
+    'telling the worker not to read them is not a control::telling the worker not to read them is sufficient'
+)
+for pair in "${provider_read_scope_weakening_replacements[@]}"; do
+    provider_read_scope_weakening_mutant_index=$((provider_read_scope_weakening_mutant_index + 1))
+    old_fragment="${pair%%::*}"
+    new_fragment="${pair##*::}"
+    mutant="$TMP/provider-read-scope-weakened-$provider_read_scope_weakening_mutant_index.md"
+    if ! python3 -B - "$TMP/installed/agy-worker/SKILL.md" "$mutant" \
+            "$old_fragment" "$new_fragment" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+old_fragment = sys.argv[3]
+new_fragment = sys.argv[4]
+text = source.read_text(encoding="utf-8")
+if text.count(old_fragment) != 1:
+    raise SystemExit(1)
+target.write_text(text.replace(old_fragment, new_fragment, 1), encoding="utf-8")
+PY
+    then
+        provider_read_scope_weakening_mutants_rejected=0
+        break
+    fi
+    if provider_read_scope_skill_contract "$mutant"; then
+        provider_read_scope_weakening_mutants_rejected=0
+        break
+    fi
+done
+if [[ "$provider_read_scope_weakening_mutants_rejected" == "1" ]]; then
+    ok "whole-worktree provider read contract rejects every weakening mutation"
+else
+    bad "whole-worktree provider read contract rejects every weakening mutation"
+fi
+
+if grep -Fq 'treat every file in the disposable worktree as readable' "$ROOT/README.md" \
+        && grep -Fq 'Treat the entire disposable worktree passed as `--workdir` as' "$ROOT/PRIVACY.md" \
+        && grep -Fq 'worktree through agy to Google/Gemini unless that exact transmission' "$ROOT/docs/USAGE.md" \
+        && grep -Fq 'This is a write-acceptance boundary applied after dispatch.' "$ROOT/docs/VERIFYING_AGENT_OUTPUT.md" \
+        && grep -Fq 'Those paths constrain candidate acceptance, not provider reads' "$ROOT/docs/index.md" \
+        && grep -Fq 'requested paths constrain writes and candidate' "$ROOT/docs/PROJECT_WORKFLOW.md" \
+        && grep -Fq 'approval for the entire disposable worktree sent' "$ROOT/docs/MARKETPLACE.md" \
+        && grep -Fq 'Treat the entire disposable worktree as worker-readable' "$ROOT/AGENTS.md" \
+        && grep -Fq 'The entire disposable `--workdir` is worker-readable' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'Prompt denylist and gate path policies govern task writes' "$ROOT/docs/lessons_learned.md" \
+        && ! grep -Fq 'explicit file scope for dispatch' "$ROOT/docs/REPO_MAP.md" \
+        && ! grep -Fq 'Use a clean disposable worktree or explicit file scope.' "$ROOT/docs/lessons_learned.md" \
+        && ! grep -Fq 'exact repository/path scope sent' "$ROOT/docs/MARKETPLACE.md"; then
+    ok "public and contributor docs distinguish whole-worktree reads from write acceptance"
+else
+    bad "public and contributor docs distinguish whole-worktree reads from write acceptance"
+fi
+
 if grep -Fq 'Before every provider-launch attempt—initial `run`/`start`, `resume`, `continue`, and' \
         "$ROOT/docs/USAGE.md" \
         && grep -Fq 'mandatory user-facing provider dispatch notices across initial, resume, continue, and restart launches' \
@@ -2987,8 +3102,8 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The forty-two offline suites' "$ROOT/docs/OPERATIONS.md" \
-        && grep -Fq 'all forty-two offline suites' "$ROOT/CONTRIBUTING.md" \
+        && grep -Fq 'The forty-seven offline stages' "$ROOT/docs/OPERATIONS.md" \
+        && grep -Fq 'all forty-seven offline stages' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq '`tests/test-adoption-measurement.py` (41 offline cases)' "$ROOT/docs/REPO_MAP.md" \
@@ -3047,7 +3162,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'EXPECTED_CHECKS = 92' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (92 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 482 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 486 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \

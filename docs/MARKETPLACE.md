@@ -29,8 +29,10 @@ codex plugin add codex-agy-worker@codex-agy-worker
 
 Start a new Codex session after installation. This enables the local plugin only; it
 does not authorize a provider call or transmission of repository content. Before
-dispatch, the skill still requires approval for the exact repository/path scope sent
-through `agy` to Google/Gemini unless that transmission was already approved.
+dispatch, the skill still requires approval for the entire disposable worktree sent
+through `agy` to Google/Gemini unless that transmission was already approved. Narrower
+approval is valid only when the worktree contains only approved content; secrets,
+denied paths, and unrelated private files must be absent before every provider attempt.
 
 Validate the package manifest before a release-oriented review with the installed
 plugin-creator skill's `scripts/validate_plugin.py`, passing this repository root as

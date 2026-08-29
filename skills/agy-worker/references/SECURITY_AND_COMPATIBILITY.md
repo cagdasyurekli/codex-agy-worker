@@ -13,9 +13,12 @@ verification before reporting a result. A passing check is evidence for the comm
 that ran, not a general security or correctness guarantee.
 
 `agy` is an external provider-backed CLI. Before dispatch, the operator must approve
-the repository and path scope that may be read and sent to the provider. Do not include
-credentials, private keys, unrelated local files, raw worker logs, or local controller
-state in the task prompt. Installation does not grant this approval.
+the entire disposable worktree as worker-readable and potentially transmissible to the
+provider. A narrower approval is valid only when that worktree contains only approved
+content. Credentials, private keys, user-denied paths, unrelated private files, raw
+worker logs, and local controller state must be absent from the worktree before every
+provider launch. Prompt instructions and candidate-path gates do not provide read
+isolation. Installation does not grant this approval.
 
 Work happens in a disposable Git worktree, but that worktree is not a security sandbox.
 The operator remains responsible for repository access, review, test selection, and
@@ -34,8 +37,9 @@ provider dispatch and are outside this environment-isolation guarantee.
 Driver-owned verification uses the same closed baseline. Use repeated
 `verify-job.sh --verify-env NAME` only when a chosen verifier genuinely needs an
 additional caller variable. The authorized names are bound into the receipt policy
-hash; their values cross a private descriptor directly into the `env -i` verifier
-child and do not enter the outer gate environment or stored receipt. A driver-owned
+hash; their values cross a private descriptor into the trusted gate process, which
+then builds the `env -i` verifier child environment. Values do not
+enter the outer gate environment or stored receipt. A driver-owned
 command can still import and execute unreviewed candidate code, so do not expose
 credentials merely because the command itself is trusted.
 

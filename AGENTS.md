@@ -31,7 +31,12 @@ a new conversation.
 Keep these hard boundaries regardless of workflow:
 
 - Do not let a job write outside its disposable worktree, enter `.git`, or escape via a
-  symlink. Honor user denylist paths and keep local credentials out of worker scope.
+  symlink. User denylist paths constrain requested writes. Gate `--only` constrains
+  candidate changed paths after dispatch; `--allow` only exempts matching undeclared
+  artifacts from rejection. None of these isolate provider reads.
+- Treat the entire disposable worktree as worker-readable and potentially transmissible
+  to Google/Gemini. Before every provider launch, require credentials, secrets,
+  user-denied paths, and unrelated private files to be absent from that worktree.
 - Provider, probe, and verifier children start with an operational allowlist. Do not
   pass `--provider-env` or `--verify-env` without approval for each variable name and
   its resulting provider/verifier exposure; values are not persisted, and filtering
@@ -50,8 +55,8 @@ Keep these hard boundaries regardless of workflow:
   If baseline activation needs new evidence or authority, keep the goal active and
   report that exact blocker instead of silently narrowing the requested outcome.
 
-Before external agy dispatch, confirm repository/path scope and provider transmission
-unless the user already approved that exact transmission.
+Before external agy dispatch, confirm approval for the entire disposable worktree.
+A narrower approval is valid only when that worktree contains only approved content.
 
 For ambiguous architecture or trust decisions, do not lock onto the first plausible
 approach. Preserve the hard boundaries, then compare at least two viable options by
@@ -145,7 +150,7 @@ Each profile is data, not a driver: it cannot name a repository, path, command,
 selection, authorization, dispatch, or Git action. These offline coverage counts are
 not live-provider claims:
 
-- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 482 offline.
+- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 486 offline.
 - Canonical version-attestation runner: 165 offline; Version-attestation mutation harness: 60 offline.
 - Canonical models-inventory attestation runner: 116 offline; Explicit-account models capture runner: 84 offline.
 - Repository-only version bootstrap runner: 139 offline; Repository-only version initial-bootstrap runner: 43 offline.
