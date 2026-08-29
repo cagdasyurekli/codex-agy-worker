@@ -58,9 +58,12 @@ correctness.
 
 ### First real task
 
-Before an agy-backed request, approve the exact repository/path content that may be
-sent through `agy` to Google/Gemini. Keep credentials and denied paths out of scope;
-read [PRIVACY.md](PRIVACY.md) before use.
+Before an agy-backed request, treat every file in the disposable worktree as readable
+and potentially transmissible through `agy` to Google/Gemini. Approve the whole
+worktree; a narrower approval is safe only when it contains only approved content.
+Before every provider attempt, ensure credentials, secrets, denied paths, and unrelated
+private files are absent. Prompt restrictions and later `qa-gate --only` checks do not
+isolate reads; read [PRIVACY.md](PRIVACY.md) before use.
 
 After installation, start a new Codex session and ask:
 
@@ -95,7 +98,8 @@ echo "$TASK" | AGY_WORKER_MODE=accept-edits ./agy-worker.sh \
 The worker envelope is input, not acceptance evidence:
 
 1. Codex freezes an immutable Git base in a disposable worktree.
-2. `agy` explores or edits only within the approved scope.
+2. `agy` may read the whole disposable worktree; requested paths constrain the task,
+   not provider read access.
 3. The gate derives changed paths from Git instead of trusting `files_changed`.
 4. Codex runs driver-owned verification; worker-reported commands are never executed.
 5. Codex reports `verified`, `partially_verified`, or `blocked` for that exact
@@ -281,8 +285,9 @@ and the verification command for each maintained surface.
 - Partial/promisor Git clones are unsupported for disposable worker worktrees.
 - Unresolved merge resolve-undo metadata (REUC) rejects dispatch with resolve_undo_present; the controller never clears index metadata.
 - Each job audits one worktree. Mutation across additional repositories is rejected.
-- Provider transmission requires explicit approval for the exact repository/path
-  scope; installation is never that approval.
+- Provider transmission requires explicit approval for the whole disposable worktree;
+  installation is never that approval. Narrow approval is valid only when the
+  worktree contains only approved content.
 - Direct model/effort selection has strong offline mechanism coverage but does not
   prove backend identity, availability, quality, cost, or quota efficiency.
 - A green gate proves only the exact candidate, immutable base, path policy, and

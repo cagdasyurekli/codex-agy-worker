@@ -12,11 +12,13 @@ verification commands must be discovered during the work.
 ## Before dispatch
 
 `agy` is an external CLI backed by Google/Gemini services. Before the first dispatch
-for a repository, tell the user which repository/path scope may be read and obtain
-explicit approval to send the task and readable repository content to the provider,
-unless the user has already approved that exact transmission. Do not put credentials,
-private keys, unrelated local files, raw worker logs, or local controller state in the
-prompt.
+for a repository, obtain explicit approval to send the task and worker-readable
+repository content to the provider unless that exact transmission was already approved.
+Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of the requested edit paths.
+A narrower transmission approval is valid only when the disposable worktree contains only approved content; otherwise obtain approval for the entire worktree or do not dispatch.
+Prompt denylist instructions describe requested writes, while `qa-gate --only` constrains candidate changed paths after dispatch. `--allow` merely exempts matching undeclared artifacts from rejection; it narrows neither reads nor writes. None provide read isolation, and `--add-dir` does not narrow the `--workdir` read boundary.
+Before every provider-launch attempt, ensure credentials, secrets, private keys, user-denied paths, and unrelated private files are absent from the entire disposable worktree; telling the worker not to read them is not a control.
+Keep raw worker logs and local controller state out of prompts.
 
 Before every provider-launch attempt (initial start/run, resume, continue, and restart), tell the user in one or two concise user-facing sentences what task is being sent to AGY.
 Include a short public-safe task label, caller-selected model information, caller-selected effort when separately selectable, and the exact resolved model slug.
@@ -107,9 +109,11 @@ rmdir "$WT"
 
 The worker may write anywhere in that worktree for a project workflow. Do not allow
 writes into `.git`, outside the worktree, through a symlink escape, into local secret
-files, or into user-denied paths. Never ask the worker to run shell commands: under
-agy sandboxing they run in a scratch directory, not the repository. Use absolute
-paths in the prompt and pass `--workdir "$WT" --add-dir "$WT"`.
+files, or into user-denied paths. This write policy does not narrow the read boundary:
+all content present in `--workdir` remains potentially readable and transmissible.
+Never ask the worker to run shell commands: under agy sandboxing they run in a scratch
+directory, not the repository. Use absolute paths in the prompt and pass
+`--workdir "$WT" --add-dir "$WT"`.
 
 ## Dispatch and measure quality
 
@@ -192,9 +196,12 @@ or claim of general correctness.
 Do not dispatch or continue when the request requires any of these without the
 necessary authorization or safe scope:
 
-- provider transmission approval is absent;
-- the requested path is outside the approved worktree, `.git`, a credential/secret,
-  a symlink escape, or user denylist;
+- provider transmission approval for the entire disposable worktree is absent, or a
+  narrower approval does not match the worktree's complete contents;
+- a credential, secret, private key, user-denied path, or unrelated private file is
+  present anywhere in the disposable worktree before a provider launch;
+- the requested write path is outside the approved worktree, `.git`, a symlink escape,
+  or the task's write policy;
 - the request would use dangerous permission/approval bypass flags;
 - the request would commit, push, open a PR, submit feedback, publish, install tools,
   or apply an update without the separate approval required for that external action.

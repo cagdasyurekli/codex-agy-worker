@@ -9,8 +9,8 @@ this whole file. A fresh local Graphify index complements the map only for cross
 relationships, paths, and impact analysis. Query it narrowly, then verify material
 edges against the mapped source and tests. Generated `graphify-out/` data is ignored
 local cache, not repository authority, and must not be copied into this map. The
-ignore rule removes Git noise only; keep the cache out of provider context by using a
-clean disposable worktree or an explicit file scope for dispatch.
+ignore rule removes Git noise only; it does not exclude the cache from provider reads.
+Keep the cache absent from the disposable worktree used for dispatch.
 
 | Need | Start here | Add Graphify only when |
 |---|---|---|
@@ -333,6 +333,13 @@ does not establish same-user tamper resistance.
 
 ## Trust boundaries
 
+- The entire disposable `--workdir` is worker-readable and potentially transmissible
+  to Google/Gemini. A narrower approval is valid only when the worktree contains only
+  approved content. Prompt denylist instructions describe requested writes, and gate
+  `--only` constrains candidate changed paths after dispatch. `--allow` only exempts
+  matching undeclared artifacts from rejection; it narrows neither reads nor writes.
+  `--add-dir` does not narrow the read boundary. Secrets, denied paths, and unrelated
+  private files must be absent before every provider launch attempt.
 - `agy` and every envelope field are untrusted. The driver's immutable base, path
   policy, and verification commands are trusted inputs and must be authored before
   dispatch.

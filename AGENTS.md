@@ -31,7 +31,12 @@ a new conversation.
 Keep these hard boundaries regardless of workflow:
 
 - Do not let a job write outside its disposable worktree, enter `.git`, or escape via a
-  symlink. Honor user denylist paths and keep local credentials out of worker scope.
+  symlink. User denylist paths constrain requested writes. Gate `--only` constrains
+  candidate changed paths after dispatch; `--allow` only exempts matching undeclared
+  artifacts from rejection. None of these isolate provider reads.
+- Treat the entire disposable worktree as worker-readable and potentially transmissible
+  to Google/Gemini. Before every provider launch, require credentials, secrets,
+  user-denied paths, and unrelated private files to be absent from that worktree.
 - Never add or recommend `--dangerously-skip-permissions` or
   `--dangerously-bypass-approvals-and-sandbox`.
 - Do not modify the user's `~/.gemini/` or `~/.codex/` configuration as a code change.
@@ -46,8 +51,8 @@ Keep these hard boundaries regardless of workflow:
   If baseline activation needs new evidence or authority, keep the goal active and
   report that exact blocker instead of silently narrowing the requested outcome.
 
-Before external agy dispatch, confirm repository/path scope and provider transmission
-unless the user already approved that exact transmission.
+Before external agy dispatch, confirm approval for the entire disposable worktree.
+A narrower approval is valid only when that worktree contains only approved content.
 
 For ambiguous architecture or trust decisions, do not lock onto the first plausible
 approach. Preserve the hard boundaries, then compare at least two viable options by

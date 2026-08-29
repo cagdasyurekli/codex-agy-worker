@@ -30,8 +30,11 @@ changed files cannot replace it.
 
 ## 2. Keep the worker report as untrusted input
 
-Dispatch only after approving the exact repository/path content that may be sent
-through `agy` to Google/Gemini. Exclude credentials and denied paths.
+Dispatch only after approving the entire disposable worktree as content that may be
+read and sent through `agy` to Google/Gemini. A narrower approval is valid only when
+the worktree contains only approved content. Before every provider attempt, ensure
+credentials, secrets, denied paths, and unrelated private files are absent; a prompt
+denylist does not isolate reads.
 
 ```bash
 echo "$TASK" | AGY_WORKER_MODE=accept-edits ./agy-worker.sh \
@@ -60,6 +63,10 @@ The maintained gate rejects undeclared or missing paths, outside-policy edits,
 malformed envelopes, an unexpected no-op, mutable base evidence, and verifier-created
 mutations. It also accounts for nontracked paths, including ignored files, within its
 documented trust boundary.
+
+This is a write-acceptance boundary applied after dispatch. `--only`, `--allow`, and
+prompt denylist instructions do not prevent the worker from reading other files that
+are present in `--workdir`, and `--add-dir` does not narrow that read boundary.
 
 ## 4. Let the driver own verification
 
