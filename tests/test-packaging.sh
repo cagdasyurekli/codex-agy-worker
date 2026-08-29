@@ -316,7 +316,7 @@ import sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 required = (
     "set -eu\n",
-    "git diff --check\n",
+    'bash "$root/scripts/ci-worktree-check.sh"',
     "bash -n \"$file\"\n",
     'PYTHONPYCACHEPREFIX="$pycache"',
     "python3 -m py_compile conformance/v1/*.py scripts/*.py",
@@ -388,6 +388,7 @@ if ci_workflow_contract "$ROOT/.github/workflows/test.yml" \
         && ci_offline_contract "$CI_OFFLINE" \
         && [[ -x "$ROOT/scripts/ci-diff-check.sh" ]] \
         && [[ -x "$ROOT/scripts/ci_diff_check.py" ]] \
+        && [[ -f "$ROOT/scripts/ci-worktree-check.sh" ]] \
         && [[ -x "$ROOT/scripts/ci_timing.py" ]] \
         && [[ -x "$ROOT/scripts/ci_sharding.py" ]] \
         && [[ -x "$ROOT/scripts/ci-offline.sh" ]]; then
@@ -400,6 +401,12 @@ if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-diff-check.py"; then
     ok "CI batch reader rejects malformed, unbounded, and interrupted streams"
 else
     bad "CI batch reader rejects malformed, unbounded, and interrupted streams"
+fi
+
+if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-worktree-check.py"; then
+    ok "local whitespace hygiene covers safe untracked candidates without index mutation"
+else
+    bad "local whitespace hygiene covers safe untracked candidates without index mutation"
 fi
 
 if /usr/bin/python3 -I -S -B "$ROOT/tests/test-ci-timing.py"; then
@@ -3032,7 +3039,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'EXPECTED_CHECKS = 92' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (92 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 481 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 482 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
