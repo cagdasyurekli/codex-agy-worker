@@ -14,7 +14,7 @@
 <!-- Include exact summaries; mark unrun checks and explain why. -->
 
 - [ ] Owning focused checks were used during iteration; commands and summaries are listed below.
-- [ ] Stable candidate: `./scripts/ci-offline.sh` passed, including syntax/compile and `git diff --check`.
+- [ ] Stable candidate: `./scripts/ci-offline.sh` passed, including syntax/compile and tracked plus non-ignored untracked whitespace checks.
 - [ ] Human diff review completed.
 
 Focused checks and exact summaries:
