@@ -36,6 +36,7 @@ STAGES: tuple[tuple[str, str], ...] = (
     ("evidence-receipt", "Evidence Receipt v1 suite"),
     ("evidence-report", "Evidence Report suite"),
     ("offline-benchmark", "offline benchmark suite"),
+    ("swebench-workflow-study", "SWE-bench workflow study suite"),
     ("persona-evidence", "persona evidence registry suite"),
     ("job-lifecycle", "local job lifecycle suite"),
     ("workload-profiles", "data-only workload profiles suite"),

@@ -123,7 +123,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The thirty-nine offline suites need no agy provider call, network access, API key, or GitHub login.
+The forty offline suites need no agy provider call, network access, API key, or GitHub login.
 
 ### GitHub Actions cost and quota fallback
 
@@ -153,7 +153,7 @@ If a private fork's quota is unavailable, run the same fail-fast offline suite l
 ./scripts/ci-offline.sh
 ```
 
-It runs the static checks and all thirty-nine offline suites without requiring a
+It runs the static checks and all forty offline suites without requiring a
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
@@ -1741,6 +1741,12 @@ output, not its own recollection.
 
 ---
 
+## SWE-bench Workflow Study v1
+
+`swebench-workflow-study.sh` imports sanitized matched results and produces offline,
+recommendation-only Pareto evidence; it never influences `qa-gate` acceptance. See
+the [benchmarking guide](docs/BENCHMARKING.md#swe-bench-workflow-study-v1).
+
 ## Layout
 
 ```
@@ -1750,6 +1756,7 @@ qa-gate.sh                    verify an envelope against the repo — the eviden
 verify-job.sh                 run the gate and durably publish Evidence Receipt v1
 evidence-report.sh            render a validated receipt as bounded text or Markdown
 benchmark.sh                  prepare/run/report fixed provider-independent benchmarks
+swebench-workflow-study.sh    prepare/import/report/advise explicit offline matched results
 persona-evidence.sh           validate/report fixed persona evidence records
 profile.sh                    list/show fixed non-executable workload profiles
 proof-demo.sh                 offline starter proof of one gate pass and one rejection
@@ -1770,15 +1777,6 @@ scripts/version_attestation_runner.py fixed-profile snapshot version runner with
 scripts/version_bootstrap_runner.py repository-only retained-recovery bootstrap; never a recovery mode or live-account action
 scripts/version_initial_bootstrap_runner.py repository-only current-source initial bridge; never reads HOME or historical recovery evidence
 scripts/version_recovery_1_1_12_runner.py fixed 1.1.12 recovery from the exact phase-one prior; generated output is non-authorizing
-scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
-scripts/models_attestation_runner.py auth-isolated snapshot models runner; not a live-account capture path
-scripts/models_capture_runner.py explicit-account capture-only models runner; never auto-invoked
-scripts/models_capture_profile.py process-inert canonical profile builder; never reads ambient account state
-scripts/models_capture_1_1_12_profile.py fixed 1.1.12 process-inert capture profile bridge
-scripts/models_capture_1_1_12_runner.py fixed 1.1.12 explicit-account capture-only bridge
-scripts/models_capture_1_1_16_version_evidence.py fixed 1.1.16 source/snapshot version-only evidence bridge
-scripts/models_capture_1_1_16_profile.py fixed 1.1.16 process-inert capture profile bridge
-scripts/models_capture_1_1_16_runner.py fixed 1.1.16 explicit-account capture-only bridge
 scripts/models_capture_1_1_22_version_evidence.py fixed 1.1.22 source/snapshot version-only evidence bridge
 scripts/models_capture_1_1_22_profile.py fixed 1.1.22 process-inert capture profile bridge
 scripts/models_capture_1_1_22_runner.py fixed 1.1.22 explicit-account capture-only bridge
@@ -1810,6 +1808,7 @@ tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/mutation suite
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
+tests/test-swebench-workflow-study.py 58-case offline lifecycle/privacy/Pareto/relocation/schema suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
@@ -1847,7 +1846,7 @@ tests/test-feedback-triage.py 26-case offline metadata-only triage suite
 tests/test-codex-usage-report.py   Codex usage observation and privacy suite
 tests/test-ci-timing.py       offline CI timing telemetry suite
 tests/test-ci-sharding.py     offline CI sharding partition/receipt/aggregate suite
-tests/test-packaging.sh       397-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       429-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
