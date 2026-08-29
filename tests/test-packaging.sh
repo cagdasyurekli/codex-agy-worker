@@ -2899,15 +2899,18 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'caller-resolved symbolic launcher' "$ROOT/README.md" \
         && grep -Fq 'caller-resolved symbolic launcher `"$PIPELINE/agy-worker.sh"`' \
             "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'deterministic external state path under' "$ROOT/README.md" \
+        && grep -Fq 'deterministic external state root derivation' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'prospective and post-resolution fail-closed rejection of project roots inside the target worktree' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`status`, `wait`, `result`, `resume`, `restart`,' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/SKILL.md" \
         && grep -Fq 'tests/test-agy-worker.sh      334-case' "$ROOT/README.md" \
         && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (334 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
-        && grep -Fq 'tests/test-agy-worker-remediation.py 89-case' "$ROOT/README.md" \
-        && grep -Fq 'EXPECTED_CHECKS = 89' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (89 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'tests/test-agy-worker-remediation.py 90-case' "$ROOT/README.md" \
+        && grep -Fq 'EXPECTED_CHECKS = 90' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (90 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 397 offline.' "$ROOT/AGENTS.md" \

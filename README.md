@@ -688,17 +688,17 @@ cancellation. A locally cancelled job therefore reports `remote_cancel_unverifie
 
 The dispatcher creates each job directory and its task, full prompt, stream, stderr,
 staged prompt, and envelope under an owner-only mask, even when the caller's mask is
-permissive. A missing `AGY_WORKER_LOG_DIR` is created owner-only. An existing final
-log root must be a real directory owned by the current user with no group/other write
-bits; a final symlink is rejected, and the accepted root is resolved physically. The
-dispatcher does not rewrite that caller-owned root or change the caller's umask inside
-agy, so this boundary does not silently change candidate-file permissions. A job ID
-is exclusive: an existing directory, file, or symlink at that job path is rejected
-before the prompt is read or agy is invoked. Oversized staged prompts return to
-owner-only modes after the child, on an early exit, and before HUP, INT, or TERM is
-re-raised with its normal status. This bounded final-root check does not validate the
-full ancestor chain or claim to eliminate every filesystem time-of-check/time-of-use
-race.
+permissive. With no `AGY_WORKER_LOG_DIR`, the root wrapper derives a deterministic external state path under `${XDG_STATE_HOME:-$HOME/.local/state}/agy-worker/checkouts/<sha256>/logs`; it preserves
+explicit external overrides and requests one if safe derivation fails. Missing roots are
+created owner-only; existing roots must be real, current-user-owned, non-group/other-writable
+directories. Final symlinks are rejected and accepted roots resolve physically. Project
+workflows reject a resolved root equal to or within the worktree before prompt staging, model
+selection, state mutation, or provider invocation; provider-causing recovery also fails
+closed there. A preserved current V9 candidate permits exact result readback and driver-only
+non-verified final disposition, but not copying, provider continuation, or restart. The
+dispatcher preserves the caller-owned root and agy umask. Existing job paths fail before
+prompt read or agy invocation. Staged prompts return owner-only modes after the child, on
+early exit, and before signals are re-raised. This check covers neither ancestor-chain nor all filesystem time-of-check/time-of-use races.
 
 ### Progress-aware local jobs
 
@@ -1814,7 +1814,7 @@ tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
 tests/test-agy-worker.sh      334-case offline dispatcher/installer/routing/lifecycle suite
-tests/test-agy-worker-remediation.py 89-case offline controller-boundary remediation suite
+tests/test-agy-worker-remediation.py 90-case offline controller-boundary remediation suite
 tests/test-update.sh          325-case offline transport/process/inventory/local-remote/matrix/manifest updater suite
 tests/test-agy-inventory.py   test-only exact-slug/display-alias adversary harness
 tests/test-official-github.py 65-case fixed-endpoint transport adversary harness
