@@ -3197,10 +3197,15 @@ if [[ "$brand_valid_rc" == "0" ]] \
         && grep -Fq 'https://cagdasyurekli.github.io/codex-agy-worker/assets/brand/social-preview-1280x640.png' "$ROOT/docs/_config.yml" \
         && grep -Fq 'canonical' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'property="og:image"' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'name="google-site-verification" content="EwC8gQMZuIrAWw4ZLoyE_FjHZIHZGXNX7IeXOcvZHvs"' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'name="twitter:card" content="summary_large_image"' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'sizes="16x16"' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'sizes="32x32"' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq '<picture aria-hidden="true">' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'code { overflow-wrap: anywhere; }' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'pre code { overflow-wrap: normal; }' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'must not create body-level horizontal overflow at a 390-pixel mobile' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
         && grep -Fq '<loc>https://cagdasyurekli.github.io/codex-agy-worker/</loc>' "$ROOT/docs/sitemap.xml" \
         && grep -Fq '<loc>https://cagdasyurekli.github.io/codex-agy-worker/VERIFYING_AGENT_OUTPUT.html</loc>' "$ROOT/docs/sitemap.xml" \
         && grep -Fq 'GitHub repository as the source of truth' "$ROOT/docs/index.md" \

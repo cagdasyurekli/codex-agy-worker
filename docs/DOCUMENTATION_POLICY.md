@@ -132,6 +132,9 @@ remove it before local validation rather than allowlisting it.
   preflight requires the reader to supply the real value.
 - Pages source links must resolve after Markdown-to-HTML rendering; source `.md` and
   rendered `.html` destinations are different contracts.
+- Public Pages must not create body-level horizontal overflow at a 390-pixel mobile
+  viewport. Wide Markdown tables may scroll within their own container, while long
+  inline-code tokens must wrap; do not hide overflow at the page root.
 
 ## Change checklist
 
@@ -164,6 +167,7 @@ Reject a documentation change when it:
 - makes README longer by adding reference detail that has a clear task-guide owner;
 - duplicates an authoritative explanation instead of summarizing and linking;
 - breaks the first-task path, a retained anchor, or a relative/rendered link;
+- creates body-level horizontal overflow on the supported mobile QA viewport;
 - changes a command or public claim without evidence;
 - weakens a privacy, authorization, verification, or claim boundary;
 - mixes release history, maintainer architecture, and first-visit onboarding on one
