@@ -2339,7 +2339,10 @@ def run(context: dict[str, object]) -> None:
             assert example["candidate_sha256"] == hashlib.sha256(envelope.read_bytes()).hexdigest()
             return example
 
-        for documentation in (ROOT / "README.md", ROOT / "skills/agy-worker/SKILL.md"):
+        for documentation in (
+            ROOT / "docs/PROJECT_WORKFLOW.md",
+            ROOT / "skills/agy-worker/SKILL.md",
+        ):
             text = documentation.read_text(encoding="utf-8")
             assert "CANDIDATE_SHA" in text and "STATE_AND_CANDIDATE" in text
             assert 'candidate = status.get("candidate_sha256")' in text and "--approve-state-sha" in text
@@ -2370,7 +2373,13 @@ def run(context: dict[str, object]) -> None:
         assert null_public["result_available"] is False and null_public["candidate_sha256"] is None
         state_dir = root / "verification-example-null"; state_dir.mkdir()
         null_run = subprocess.run(
-            ["bash", "-euo", "pipefail", "-c", preparation_block(ROOT / "README.md")],
+            [
+                "bash",
+                "-euo",
+                "pipefail",
+                "-c",
+                preparation_block(ROOT / "docs/PROJECT_WORKFLOW.md"),
+            ],
             env={
                 **os.environ, "PIPELINE": str(ROOT / "skills/agy-worker/runtime"),
                 "JOB_ID": null_state["job_id"], "STATE_DIR": str(state_dir),
