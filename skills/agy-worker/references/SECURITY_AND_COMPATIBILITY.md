@@ -21,12 +21,15 @@ Work happens in a disposable Git worktree, but that worktree is not a security s
 The operator remains responsible for repository access, review, test selection, and
 any credentials or network access available to commands they run.
 
-Provider children and local `agy` interface probes receive only `HOME`, `PATH`,
-`TMPDIR`, and locale variables by default. Pass an additional caller variable by
-exact name with repeated `--provider-env NAME`; the value is read only at launch and
-is not written to the dispatch command or public status. Startup and runtime injection
-variables such as `BASH_ENV`, `PYTHON*`, `LD_*`, `DYLD_*`, `GIT_*`, and the gate's
-`AGY_WORKER_SCHEMA` selector cannot be opted in.
+Provider children and the dispatch-time `agy` version, help, and model-selection
+probes receive only `HOME`, `PATH`, `TMPDIR`, and locale variables by default. Pass an
+additional caller variable by exact name with repeated `--provider-env NAME`; the value
+is read only at launch and is not written to the dispatch command or public status.
+Startup and runtime injection variables such as `BASH_ENV`, `PYTHON*`, `LD_*`,
+`DYLD_*`, `GIT_*`, and the gate's `AGY_WORKER_SCHEMA` selector cannot be opted in.
+
+Other local utilities, including diagnostics and feedback-draft generation, are not
+provider dispatch and are outside this environment-isolation guarantee.
 
 Driver-owned verification uses the same closed baseline. Use repeated
 `verify-job.sh --verify-env NAME` only when a chosen verifier genuinely needs an

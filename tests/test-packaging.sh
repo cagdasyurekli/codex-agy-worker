@@ -1239,6 +1239,9 @@ assert security_reference.is_file() and not security_reference.is_symlink()
 reference_text = security_reference.read_text(encoding="utf-8")
 assert 'It is not a Claude or Claude Code skill.' in reference_text
 assert '`verify-job.sh --verify-env NAME`' in reference_text
+assert 'dispatch-time `agy` version, help, and model-selection' in reference_text
+assert 'diagnostics and feedback-draft generation' in reference_text
+assert 'Provider children and local `agy` interface probes' not in reference_text
 PY
 then ok "Codex-only skill metadata matches the plugin version and public legal links"; else bad "Codex-only skill metadata matches the plugin version and public legal links"; fi
 

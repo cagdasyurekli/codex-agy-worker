@@ -37,12 +37,12 @@ Operators remain responsible for credentials, network access, review, testing, a
 access control in each target repository. The skill supports the OpenAI Codex CLI; it
 does not support Claude or Claude Code hosts.
 
-Provider children, local provider-interface probes, and driver verifiers receive a
-closed baseline environment. Additional variables require exact-name opt-in through
-`--provider-env` or `verify-job.sh --verify-env`; verifier-only values reach only the
-verifier child through a private pipe. Unsafe interpreter, loader, schema-selector,
-and Git-control hooks are rejected, and secret values are not written to command or
-receipt artifacts. Driver ownership
+Provider children, dispatch-time provider-interface probes, and driver verifiers
+receive a closed baseline environment. Additional variables require exact-name opt-in
+through `--provider-env` or `verify-job.sh --verify-env`; verifier-only values reach
+only the verifier child through a private pipe. Unsafe interpreter, loader,
+schema-selector, and Git-control hooks are rejected, and secret values are not written
+to command or receipt artifacts. Driver ownership
 of a verification command does not make candidate code imported by that command
 trusted. Environment filtering does not isolate `HOME`, `PATH`, filesystem, network,
 or same-user processes, so human diff review remains required after a green gate.
