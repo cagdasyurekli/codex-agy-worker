@@ -279,6 +279,7 @@ and the verification command for each maintained surface.
   Bash/Python/git environment; WSL may work on a best-effort basis.
 - agy is the only worker backend.
 - Partial/promisor Git clones are unsupported for disposable worker worktrees.
+- Unresolved merge resolve-undo metadata (REUC) rejects dispatch with resolve_undo_present; the controller never clears index metadata.
 - Each job audits one worktree. Mutation across additional repositories is rejected.
 - Provider transmission requires explicit approval for the exact repository/path
   scope; installation is never that approval.
