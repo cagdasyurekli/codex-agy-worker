@@ -99,6 +99,26 @@ this file concise and repository-wide; put detailed lifecycle lessons in
 `docs/lessons_learned.md`, release history in the roadmap/release notes, and mechanical
 checks in tests or CI.
 
+## Documentation governance
+
+Follow `docs/DOCUMENTATION_POLICY.md` for README and public documentation changes.
+Treat `README.md` as the first-visit product page, not the exhaustive reference:
+preserve its first-120-line onboarding contract, summarize deeper material, and link
+to the one authoritative task guide. Do not duplicate commands, lifecycle detail,
+compatibility evidence, inventories, or release narratives across pages.
+
+Only paths listed in `docs/public-files.allowlist` may live under `docs/`.
+Keep owner-private evidence, dated campaign/readout reports, generated audits, and
+temporary drafts outside the repository checkout; update the allowlist and repository
+map deliberately when adding a real public guide.
+
+Until the compact README extraction lands, it may not grow beyond 1,905 lines; lower
+that ceiling to the permanent 450-line budget after extraction rather than raising it
+to avoid moving detail. Verify changed commands and claims against source/tests, preserve
+privacy and evidence boundaries, check affected relative/rendered links, and run
+`python3 scripts/validate-docs.py . --readme-max-lines 1905` followed by
+`bash tests/test-packaging.sh` for README/docs/marketplace/Pages changes.
+
 For material plans involving UX, lifecycle, trust boundaries, security, data semantics,
 or other domain judgment, the coordinator and a suitable domain expert must co-plan
 and freeze user journeys, acceptance tests, and authority/privacy constraints before
@@ -110,7 +130,7 @@ Each profile is data, not a driver: it cannot name a repository, path, command,
 selection, authorization, dispatch, or Git action. These offline coverage counts are
 not live-provider claims:
 
-- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 396 offline.
+- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 397 offline.
 - Canonical version-attestation runner: 165 offline; Version-attestation mutation harness: 60 offline.
 - Canonical models-inventory attestation runner: 116 offline; Explicit-account models capture runner: 84 offline.
 - Repository-only version bootstrap runner: 139 offline; Repository-only version initial-bootstrap runner: 43 offline.
