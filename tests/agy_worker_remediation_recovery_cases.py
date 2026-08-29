@@ -488,7 +488,8 @@ def run(context: dict[str, object]) -> None:
             "case \" $* \" in *\" ls-files --resolve-undo -z \"*)\n"
             "  case \"$mode\" in\n"
             "    malformed) printf 'malformed\\0'; exit 0;;\n"
-            "    duplicate) printf '100644 " + oid + " 1\\ttracked.txt\\0100644 " + oid + " 1\\ttracked.txt\\0'; exit 0;;\n"
+            "    duplicate) printf '100644 " + oid + " 1\\ttracked.txt\\0'; "
+            "printf '100644 " + oid + " 1\\ttracked.txt\\0'; exit 0;;\n"
             "    race) count=0; if [ -r " + shlex.quote(str(count_file)) + " ]; then count=$(cat " + shlex.quote(str(count_file)) + "); fi; "
             "count=$((count + 1)); printf '%s\\n' \"$count\" > " + shlex.quote(str(count_file)) + "; "
             "if [ \"$count\" -gt 1 ]; then printf '100644 " + oid + " 1\\ttracked.txt\\0'; fi; exit 0;;\n"
@@ -511,6 +512,171 @@ def run(context: dict[str, object]) -> None:
             os.environ["PATH"] = previous_path
 
     check("malformed duplicate and racing resolve-undo output fails closed", malformed_duplicate_and_racing_resolve_undo_fail_closed)
+
+    def resolve_undo_observation_fails_closed_before_provider_launch() -> None:
+        """A valid non-empty REUC observation immediately before launch yields resolve_undo_present."""
+        repo = root / "resolve-undo-preflight-repo"; repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email", "fixture@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Fixture"], check=True)
+        tracked = repo / "tracked.txt"; tracked.write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True)
+        primary = subprocess.run(
+            ["git", "-C", str(repo), "branch", "--show-current"], check=True, stdout=subprocess.PIPE,
+        ).stdout.decode("utf-8", "strict").strip()
+        subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "resolve-undo-side"], check=True)
+        tracked.write_text("side\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "commit", "-am", "side", "-q"], check=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", primary], check=True)
+        tracked.write_text("primary\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "commit", "-am", "primary", "-q"], check=True)
+        merged = subprocess.run(
+            ["git", "-C", str(repo), "merge", "resolve-undo-side"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        assert merged.returncode == 1
+        tracked.write_text("resolved\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True)
+        raw_reuc = subprocess.run(
+            ["git", "-C", str(repo), "ls-files", "--resolve-undo", "-z"],
+            check=True, stdout=subprocess.PIPE,
+        ).stdout
+        assert len(raw_reuc.split(b"\0")[:-1]) == 3, raw_reuc
+
+        # Positive case: valid non-empty REUC observation immediately before provider launch
+        job = root / "resolve-undo-preflight-job"; job.mkdir(mode=0o700); job = job.resolve()
+        bin_dir = root / "resolve-undo-preflight-bin"; bin_dir.mkdir()
+        bound_provider = root / "resolve-undo-preflight-provider.json"; provider_schema(bound_provider)
+        calls_log = root / "resolve-undo-calls.log"
+        fake_agy = bin_dir / "agy"
+        fake_agy.write_text(
+            "#!/bin/sh\n"
+            "printf 'provider called\\n' >> " + shlex.quote(str(calls_log)) + "\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        fake_agy.chmod(0o755)
+        command = {
+            "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": "resolve-undo-preflight",
+            "workdir": str(repo), "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
+            "agy_version": "1.1.16", "agy_version_observed": True,
+            "idle_seconds": 2, "hard_seconds": 3, "max_seconds": 20, "notice_seconds": 3,
+            "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+            "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+        }
+        MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+        state_init, _init_sha = MODULE.create_state(job, "initial", resume=False)
+        assert state_init["status"] == "queued"
+        assert state_init["worktree_baseline"] is None
+
+        # Run controller immediately before provider launch
+        exit_code = run_controller(job, bin_dir)
+        assert exit_code == 20
+        assert exit_code == MODULE.EXIT_BY_REASON["resolve_undo_present"]
+
+        # Zero provider calls
+        assert not calls_log.exists()
+
+        # Terminal state validation
+        terminal_state, raw_state, sha = MODULE.load_state(job)
+        assert terminal_state["status"] == "failed"
+        assert terminal_state["reason"] == "resolve_undo_present"
+        assert terminal_state["exit_code"] == 20
+        assert terminal_state["failure_stage"] == "binding_failure"
+        assert terminal_state["agy_returncode"] == 20
+        assert not terminal_state["candidate_recognized"]
+        assert not terminal_state["result_available"]
+        assert terminal_state["driver_disposition"] == "not_applicable"
+
+        # Privacy verification: no task, path, OID, raw Git output, REUC bytes, or count exposed
+        raw_state_text = raw_state.decode("utf-8", "surrogateescape")
+        assert "tracked.txt" not in raw_state_text
+        assert "resolve-undo-side" not in raw_state_text
+        oid = raw_reuc.split(b" ", 2)[1].decode("ascii")
+        assert oid not in raw_state_text
+        public = MODULE.public_status(terminal_state, sha, job=job)
+        assert public["reason"] == "resolve_undo_present"
+        assert public["failure_stage"] == "binding_failure"
+        assert public["exit_code"] == 20
+
+        # Read-only verification: controller never mutates or clears Git resolve-undo metadata
+        raw_after = subprocess.run(
+            ["git", "-C", str(repo), "ls-files", "--resolve-undo", "-z"],
+            check=True, stdout=subprocess.PIPE,
+        ).stdout
+        assert raw_after == raw_reuc
+
+        # Negative cases: malformed, duplicate, and racing REUC fail closed as status_unavailable
+        real_git = shutil.which("git"); assert real_git is not None
+        neg_bin_dir = root / "resolve-undo-neg-bin"; neg_bin_dir.mkdir()
+        neg_mode_file = root / "resolve-undo-neg-mode"
+        neg_count_file = root / "resolve-undo-neg-count"
+        fake_git = neg_bin_dir / "git"
+        fake_git.write_text(
+            "#!/bin/sh\n"
+            "mode=$(cat " + shlex.quote(str(neg_mode_file)) + ")\n"
+            "case \" $* \" in *\" ls-files --resolve-undo -z \"*)\n"
+            "  case \"$mode\" in\n"
+            "    malformed) printf 'malformed\\0'; exit 0;;\n"
+            "    duplicate) printf '100644 " + oid + " 1\\ttracked.txt\\0'; "
+            "printf '100644 " + oid + " 1\\ttracked.txt\\0'; exit 0;;\n"
+            "    unavailable) exit 1;;\n"
+            "    race) count=0; if [ -r " + shlex.quote(str(neg_count_file)) + " ]; then count=$(cat " + shlex.quote(str(neg_count_file)) + "); fi; "
+            "count=$((count + 1)); printf '%s\\n' \"$count\" > " + shlex.quote(str(neg_count_file)) + "; "
+            "if [ $((count % 2)) -eq 1 ]; then "
+            "printf '100644 " + oid + " 1\\ttracked.txt\\0'; fi; exit 0;;\n"
+            "  esac;;\n"
+            "esac\n"
+            "exec " + shlex.quote(real_git) + " \"$@\"\n",
+            encoding="utf-8",
+        )
+        fake_git.chmod(0o755)
+        previous_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{neg_bin_dir}{os.pathsep}{previous_path}"
+        try:
+            for mode in ("malformed", "duplicate", "unavailable", "race"):
+                neg_mode_file.write_text(mode, encoding="ascii")
+                if neg_count_file.exists(): neg_count_file.unlink()
+                neg_job = root / f"resolve-undo-neg-{mode}-job"; neg_job.mkdir(mode=0o700); neg_job = neg_job.resolve()
+                neg_command = dict(command); neg_command["job_id"] = f"resolve-undo-neg-{mode}"
+                MODULE.write_atomic(neg_job, MODULE.COMMAND_NAME, neg_command)
+                MODULE.create_state(neg_job, "initial", resume=False)
+                neg_exit = run_controller(neg_job, bin_dir)
+                assert neg_exit == MODULE.EXIT_BY_REASON["status_unavailable"]
+                neg_state, _raw, _sha = MODULE.load_state(neg_job)
+                assert neg_state["status"] == "failed" and neg_state["reason"] == "status_unavailable"
+                assert neg_state["failure_stage"] == "binding_failure"
+        finally:
+            os.environ["PATH"] = previous_path
+
+        # Explicit owner recovery on disposable fixture
+        subprocess.run(["git", "-C", str(repo), "update-index", "--clear-resolve-undo"], check=True)
+        assert subprocess.run(
+            ["git", "-C", str(repo), "ls-files", "--resolve-undo", "-z"],
+            check=True, stdout=subprocess.PIPE,
+        ).stdout == b""
+        recovery_job = root / "resolve-undo-recovery-job"; recovery_job.mkdir(mode=0o700); recovery_job = recovery_job.resolve()
+        recovery_command = dict(command); recovery_command["job_id"] = "resolve-undo-recovery"
+        MODULE.write_atomic(recovery_job, MODULE.COMMAND_NAME, recovery_command)
+        rec_state, _ = MODULE.create_state(recovery_job, "initial", resume=False)
+        assert rec_state["worktree_baseline"] is not None
+        rec_events = [
+            {"event": "init", "init": {}, "conversation_id": "conv-recovery"},
+            {"event": "result", "result": {
+                "conversation_id": "conv-recovery", "status": "SUCCESS",
+                "structured_output": report(summary="recovery success"),
+            }},
+        ]
+        fake_agy.write_text(
+            "#!/bin/sh\nprintf '%s\\n' " + " ".join(shlex.quote(json.dumps(item)) for item in rec_events) + "\n",
+            encoding="utf-8",
+        )
+        assert run_controller(recovery_job, bin_dir) == 0
+        final_rec, _, _ = MODULE.load_state(recovery_job)
+        assert final_rec["status"] == "succeeded" and final_rec["reason"] is None
+
+    check("resolve-undo observation immediately before launch fails closed with bounded reason and zero provider calls", resolve_undo_observation_fails_closed_before_provider_launch)
 
     def malformed_debug_stat_cache_fails_closed_and_blocks_candidate_actions() -> None:
         """Only documented numeric ls-files --debug cache fields are eligible."""
