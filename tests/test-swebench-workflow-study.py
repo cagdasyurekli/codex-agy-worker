@@ -564,6 +564,46 @@ class TestSWEBenchWorkflowStudy(unittest.TestCase):
         for k in ["dataset_revision", "evaluator_revision", "repository_base", "repository_image", "frozen_prompt_digest", "permissions_policy", "network_policy", "budgets", "ordering", "codex_model", "codex_effort", "agy_model", "agy_effort", "arms", "aggregation", "telemetry_bindings"]:
             self.assertEqual(rep["plan"][k], plan[k])
 
+    def test_public_report_schema_closes_nested_privacy_surface(self):
+        plan_path = self.write_plan(make_valid_plan())
+        self.run_tool("prepare", "--root", str(self.root), "--plan", str(plan_path))
+        self.run_tool("import", "--root", str(self.root), "--records", str(self.write_records(make_valid_records())))
+        result = self.run_tool("report", "--root", str(self.root))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        spec = importlib.util.spec_from_file_location("swebench_workflow_study_schema_test", self.script)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        schema = json.loads(module.REPORT_SCHEMA.read_text(encoding="utf-8"))
+        report = json.loads((self.root / "report.json").read_text(encoding="utf-8"))
+        module.validate_schema(report, schema)
+
+        mutants = []
+        extra_cell = copy.deepcopy(report)
+        extra_cell["records"][0]["cells"][0]["raw_log"] = "Bearer abc"
+        mutants.append(extra_cell)
+        unsafe_task = copy.deepcopy(report)
+        unsafe_task["records"][0]["task_commitment"] = "/secret/path"
+        mutants.append(unsafe_task)
+        secret_task = copy.deepcopy(report)
+        secret_task["records"][0]["task_commitment"] = "secret_value"
+        mutants.append(secret_task)
+        extra_usage = copy.deepcopy(report)
+        extra_usage["records"][0]["cells"][0]["codex_usage"]["bearer_log"] = "Bearer abc"
+        mutants.append(extra_usage)
+        unsafe_binding = copy.deepcopy(report)
+        unsafe_binding["plan"]["telemetry_bindings"]["agy"]["accounting"] = "Bearer abc"
+        mutants.append(unsafe_binding)
+        extra_plan = copy.deepcopy(report)
+        extra_plan["plan"]["raw_prompt"] = "/private/secret"
+        mutants.append(extra_plan)
+        for index, mutant in enumerate(mutants):
+            with self.subTest(mutant=index):
+                with self.assertRaises(module.ValidationFailure):
+                    module.validate_schema(mutant, schema)
+
     def test_advise_calibration_policy_2_tasks(self):
         # 2-task x 5-arm calibration can never recommend
         plan = make_valid_plan(["task_1", "task_2"])

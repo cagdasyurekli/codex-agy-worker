@@ -2897,6 +2897,7 @@ PY
 
 if governance_docs_contract \
         && grep -Fq 'The forty offline suites' "$ROOT/README.md" \
+        && grep -Fq 'all forty offline suites' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \

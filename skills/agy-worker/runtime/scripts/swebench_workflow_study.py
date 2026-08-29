@@ -92,11 +92,27 @@ def schema_type_matches(value: Any, expected: str) -> bool:
         "null":value is None,
     }.get(expected,False)
 
-def validate_schema(value: Any, schema: dict[str,Any], location: str = "$") -> None:
+def validate_schema(value: Any, schema: dict[str,Any], location: str = "$", root_schema: dict[str,Any] | None = None) -> None:
+    if root_schema is None:
+        root_schema=schema
+    reference=schema.get("$ref")
+    if reference is not None:
+        if not isinstance(reference,str) or not reference.startswith("#/"):
+            raise ValidationFailure(f"{location} uses an unsupported schema reference")
+        target:Any=root_schema
+        for component in reference[2:].split("/"):
+            component=component.replace("~1","/").replace("~0","~")
+            if not isinstance(target,dict) or component not in target:
+                raise ValidationFailure(f"{location} uses an unresolved schema reference")
+            target=target[component]
+        if not isinstance(target,dict):
+            raise ValidationFailure(f"{location} uses an invalid schema reference")
+        validate_schema(value,target,location,root_schema)
+        return
     if "oneOf" in schema:
         accepted=0
         for alternative in schema["oneOf"]:
-            try: validate_schema(value,alternative,location)
+            try: validate_schema(value,alternative,location,root_schema)
             except ValidationFailure: continue
             accepted+=1
         if accepted!=1: raise ValidationFailure(f"{location} does not match exactly one schema alternative")
@@ -116,13 +132,13 @@ def validate_schema(value: Any, schema: dict[str,Any], location: str = "$") -> N
     if isinstance(value,list):
         if len(value)<schema.get("minItems",0) or len(value)>schema.get("maxItems",len(value)): raise ValidationFailure(f"{location} has invalid item count")
         if "items" in schema:
-            for index,item in enumerate(value): validate_schema(item,schema["items"],f"{location}[{index}]")
+            for index,item in enumerate(value): validate_schema(item,schema["items"],f"{location}[{index}]",root_schema)
     if isinstance(value,dict):
         required=set(schema.get("required",[])); properties=schema.get("properties",{})
         if required-set(value): raise ValidationFailure(f"{location} is missing required fields")
         if schema.get("additionalProperties") is False and set(value)-set(properties): raise ValidationFailure(f"{location} has unexpected fields")
         for key,child in properties.items():
-            if key in value: validate_schema(value[key],child,f"{location}.{key}")
+            if key in value: validate_schema(value[key],child,f"{location}.{key}",root_schema)
 
 def fail(message: str, code: str = "invalid_input") -> None:
     """Stop with a bounded, stable semantic category and sanitized detail."""

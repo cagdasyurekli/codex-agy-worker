@@ -1808,7 +1808,7 @@ tests/test-qa-gate.sh         offline adversarial suite
 tests/test-evidence-receipt.sh  88-case offline receipt/publication/protocol suite
 tests/test-evidence-report.sh  80-case offline pure renderer/privacy/CI-format/mutation suite
 tests/test-benchmark.py       104-case offline plan/receipt/result/report suite
-tests/test-swebench-workflow-study.py 57-case offline lifecycle/privacy/Pareto/relocation suite
+tests/test-swebench-workflow-study.py 58-case offline lifecycle/privacy/Pareto/relocation/schema suite
 tests/test-persona-evidence.py 124-case offline semantic-chain/ancestry/portable/mutation suite
 tests/test-workload-profiles.py 89-case offline data-only profile authority suite
 tests/test-job-lifecycle.py   116-case offline state/receipt/Git-policy/cleanup/abort/signal suite
