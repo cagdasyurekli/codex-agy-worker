@@ -850,9 +850,11 @@ def run(context: dict[str, object]) -> None:
 
         def downgrade(
             label: str, version: int, *, patch: dict | None = None, linked: bool = False,
+            inside_worktree: bool = False,
         ) -> tuple[Path, dict, bytes, str]:
             job, state, _sha, _envelope = current_candidate_fixture(
                 f"v{version}-{label}", workflow="task", linked=linked,
+                inside_worktree=inside_worktree,
             )
             command = json.loads((job / MODULE.COMMAND_NAME).read_text(encoding="utf-8"))
             state["schema_version"] = version
@@ -973,6 +975,35 @@ def run(context: dict[str, object]) -> None:
                     assert not list(job.glob("attempt-*.stream.ndjson"))
                 assert not provider_marker.exists()
 
+        for version in (3, 4):
+            unsafe_job, loaded, raw, sha = downgrade("unsafe-worktree", version, inside_worktree=True)
+            public = MODULE.public_status(loaded, sha, job=unsafe_job)
+            assert public["migration_binding_sha256"] is None
+            actions = {item["action"] for item in public["available_actions"]}
+            assert "result" in actions
+            assert not ({"restart", "continue", "resume", "finalize"} & actions)
+
+            status_res = subprocess.run(
+                [sys.executable, str(SOURCE), "status", "--job-dir", str(unsafe_job)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            assert status_res.returncode == 0
+            assert json.loads(status_res.stdout)["migration_binding_sha256"] is None
+
+            result_res = subprocess.run(
+                [sys.executable, str(SOURCE), "result", "--job-dir", str(unsafe_job)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            assert result_res.returncode == 0 and json.loads(result_res.stdout)["status"] == "completed"
+
+            restart_res = subprocess.run(
+                [sys.executable, str(SOURCE), "restart", "--job-dir", str(unsafe_job),
+                 "--approve-state-sha", sha, "--approve-migration-sha", "0" * 64],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            assert restart_res.returncode != 0
+            assert (unsafe_job / MODULE.STATE_NAME).read_bytes() == raw
+
     def v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v9() -> None:
         """Every migratable legacy generation can prove and use its actions."""
         for version in (5, 6, 7, 8):
@@ -1047,6 +1078,121 @@ def run(context: dict[str, object]) -> None:
         check(FOCUSED_CHECK, v1_candidate_status_is_read_only_and_all_mutations_fail_without_writes)
     else:
         check("legacy status separates readback from proved v5-v8 mutation authority", legacy_read_and_mutation_authority_contracts)
+
+    def current_v9_candidate_inside_worktree_is_driver_only() -> None:
+        """Preserve current evidence without reviving provider authority.
+
+        This is intentionally distinct from the V3/V4 migration fixture above
+        and the no-candidate recovery fixture below: it is one current V9 bound
+        candidate whose controller directory already exists inside its worktree.
+        """
+        job, state, _sha, _envelope = current_candidate_fixture(
+            "v9-inside-worktree", inside_worktree=True,
+        )
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 9
+        state["continue_available"] = True
+        before, sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
+        state, loaded_raw, loaded_sha = MODULE.load_state(job)
+        assert loaded_raw == before and loaded_sha == sha
+
+        status = subprocess.run(
+            [sys.executable, str(SOURCE), "status", "--job-dir", str(job)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        assert status.returncode == 0 and not status.stderr, status.stderr
+        public = json.loads(status.stdout)
+        assert public["result_available"] is True
+        assert public["candidate_sha256"] == state["result_sha256"]
+        assert public["continue_available"] is False
+        assert {item["action"] for item in public["available_actions"]} == {
+            "result", "finalize",
+        }
+
+        delivered = subprocess.run(
+            [sys.executable, str(SOURCE), "result", "--job-dir", str(job)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        assert delivered.returncode == 0 and not delivered.stderr
+        assert json.loads(delivered.stdout)["summary"] == "candidate-v9-inside-worktree"
+        assert (job / MODULE.STATE_NAME).read_bytes() == before
+
+        verification = {
+            "schema_version": 2, "summary": "driver reviewed preserved current candidate",
+            "passed_checks": [], "failed_checks": ["inside-worktree-controller-state"],
+            "advisory_checks": 0, "missing_checks": 0,
+            "candidate_sha256": state["result_sha256"], "coverage": "partial",
+            "verified_findings": 1, "unresolved_gaps": 1,
+            "diff_review_complete": True,
+        }
+        provider_marker = root / "v9-inside-worktree-provider-called"
+        fake_bin = root / "v9-inside-worktree-bin"; fake_bin.mkdir(mode=0o700)
+        fake_agy = fake_bin / "agy"
+        fake_agy.write_text(
+            "#!/bin/sh\nprintf called > " + shlex.quote(str(provider_marker)) + "\nexit 99\n",
+            encoding="utf-8",
+        )
+        fake_agy.chmod(0o700)
+        environment = {**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"}
+        for action, payload in (("continue", verification), ("restart", None)):
+            rejected = subprocess.run(
+                [sys.executable, str(SOURCE), action, "--job-dir", str(job),
+                 "--approve-state-sha", sha],
+                env=environment,
+                input=None if payload is None else json.dumps(payload).encode("utf-8"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            assert rejected.returncode == 64 and not rejected.stdout, (
+                action, rejected.returncode, rejected.stderr,
+            )
+            assert b"dispatch job directory cannot be inside the target workdir" in rejected.stderr
+            assert (job / MODULE.STATE_NAME).read_bytes() == before
+            assert not list(job.glob("verification-*.json"))
+            assert not list(job.glob("attempt-*.stream.ndjson"))
+            assert not provider_marker.exists()
+
+        complete_verification = {
+            **verification,
+            "summary": "complete evidence cannot verify an unbound worktree",
+            "passed_checks": ["driver-full-gate"],
+            "failed_checks": [],
+            "unresolved_gaps": 0,
+            "coverage": "complete",
+        }
+        rejected_verified = subprocess.run(
+            [sys.executable, str(SOURCE), "finalize", "--job-dir", str(job),
+             "--approve-state-sha", sha, "--assurance", "verified"],
+            env=environment, input=json.dumps(complete_verification).encode("utf-8"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        assert rejected_verified.returncode == 64 and not rejected_verified.stdout
+        assert b"verified finalization is unavailable for jobs inside the worktree" in rejected_verified.stderr
+        assert (job / MODULE.STATE_NAME).read_bytes() == before
+        assert not list(job.glob("verification-*.json"))
+        assert not provider_marker.exists()
+
+        finalized = subprocess.run(
+            [sys.executable, str(SOURCE), "finalize", "--job-dir", str(job),
+             "--approve-state-sha", sha, "--assurance", "partially_verified"],
+            env=environment, input=json.dumps(verification).encode("utf-8"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        assert finalized.returncode == 0 and not finalized.stderr, finalized.stderr
+        final_public = json.loads(finalized.stdout)
+        assert final_public["driver_disposition"] == "partially_verified"
+        assert {item["action"] for item in final_public["available_actions"]} == {"result"}
+        assert not provider_marker.exists()
+
+        final_result = subprocess.run(
+            [sys.executable, str(SOURCE), "result", "--job-dir", str(job)],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        assert final_result.returncode == 0 and not final_result.stderr
+        assert json.loads(final_result.stdout)["summary"] == "candidate-v9-inside-worktree"
+
+    check(
+        "current V9 inside-worktree candidate remains result-finalize only without provider mutation",
+        current_v9_candidate_inside_worktree_is_driver_only,
+    )
 
     def independent_nonempty_snapshot_reference_preserves_v6_v7_and_v8() -> None:
         """Freeze full per-path v6/v7 bytes without dispatcher's serializers."""
@@ -1774,9 +1920,10 @@ def run(context: dict[str, object]) -> None:
     check("available recovery actions use the same bound command/schema/root/selection guard as mutation", recovery_actions_share_their_strict_mutation_guard)
 
     def recovery_guard_rejects_stage_schema_and_root_drift_before_state_writes() -> None:
-        for kind in ("stage", "provider-schema", "root"):
+        for kind in ("stage", "provider-schema", "root", "job-inside-worktree"):
             job, state, _sha, _envelope = current_candidate_fixture(
                 f"recovery-{kind}", staged=kind == "stage",
+                inside_worktree=kind == "job-inside-worktree",
             )
             state.update({
                 "status": "failed", "reason": "agy_failed_unclassified", "exit_code": 5,
@@ -1794,7 +1941,7 @@ def run(context: dict[str, object]) -> None:
             elif kind == "provider-schema":
                 provider_path = Path(command["argv"][command["argv"].index("--json-schema") + 1])
                 provider_path.write_bytes(provider_path.read_bytes() + b"\n")
-            else:
+            elif kind == "root":
                 original = Path(command["workdir"])
                 moved = original.with_name(original.name + "-moved")
                 original.rename(moved)
@@ -1811,6 +1958,7 @@ def run(context: dict[str, object]) -> None:
                 else:
                     raise AssertionError(f"{kind} drift accepted {origin}")
                 assert (job / MODULE.STATE_NAME).read_bytes() == before
+        assert MODULE._job_is_inside_worktree(Path("\0invalid"), "/some/workdir") is True
 
     check("stage provider-schema and root drift have status-command recovery parity", recovery_guard_rejects_stage_schema_and_root_drift_before_state_writes)
 

@@ -544,6 +544,14 @@ case "${FAKE_DISPATCH_MODE:-result}" in
         heartbeat_index=0
         while [[ "$heartbeat_index" -lt "$heartbeat_count" ]]; do
             printf '{"event":"step_update","step_update":{}}\n'
+            if [[ "$heartbeat_index" == 0 \
+                    && -n "${FAKE_HEARTBEAT_AFTER_FIRST_READY:-}" \
+                    && -n "${FAKE_HEARTBEAT_AFTER_FIRST_RELEASE:-}" ]]; then
+                : > "$FAKE_HEARTBEAT_AFTER_FIRST_READY"
+                while [[ ! -e "$FAKE_HEARTBEAT_AFTER_FIRST_RELEASE" ]]; do
+                    sleep 0.01
+                done
+            fi
             sleep "$heartbeat_delay"
             heartbeat_index=$((heartbeat_index+1))
         done
@@ -2075,22 +2083,169 @@ mkdir -p "$WRAPPER_FIXTURE/skills"
 cp "$ROOT/agy-worker.sh" "$WRAPPER_FIXTURE/agy-worker.sh"
 cp -R "$ROOT/skills/agy-worker" "$WRAPPER_FIXTURE/skills/agy-worker"
 chmod +x "$WRAPPER_FIXTURE/agy-worker.sh"
-printf 'empty log override\n' | PATH="$TMP/bin:$PATH" \
-    AGY_WORKER_LOG_DIR= AGY_WORKER_JOB_ID=empty-log-override AGY_WORKER_MODE=accept-edits \
-    FAKE_MODEL_FILE="$TMP/empty-log.model" \
-    FAKE_PROMPT_FILE="$TMP/empty-log.prompt" \
-    FAKE_DIRS_FILE="$TMP/empty-log.dirs" \
-    FAKE_ARGV_FILE="$TMP/empty-log.argv" \
-    FAKE_STAGE_RESULT_FILE="$TMP/empty-log.stage-result" \
-    "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
-    > "$TMP/empty-log.out" 2> "$TMP/empty-log.err"
+WRAPPER_REAL="$(cd "$WRAPPER_FIXTURE" && pwd -P)"
+EXPECTED_CHECKOUT_SHA="$(python3 -I -S -B -c 'import hashlib, sys; print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest())' "$WRAPPER_REAL")"
+
+TEST_XDG="$TMP/isolated-xdg-state"
+TEST_HOME="$TMP/isolated-home"
+mkdir -p "$TEST_XDG" "$TEST_HOME"
+
+wrapper_pass=1
+
+# 1. Unset AGY_WORKER_LOG_DIR uses XDG_STATE_HOME
+(
+    unset AGY_WORKER_LOG_DIR
+    printf 'unset log dir\n' | PATH="$TMP/bin:$PATH" \
+        XDG_STATE_HOME="$TEST_XDG" HOME="$TEST_HOME" \
+        AGY_WORKER_JOB_ID=unset-log AGY_WORKER_MODE=accept-edits \
+        FAKE_MODEL_FILE="$TMP/unset-log.model" \
+        FAKE_PROMPT_FILE="$TMP/unset-log.prompt" \
+        FAKE_DIRS_FILE="$TMP/unset-log.dirs" \
+        FAKE_ARGV_FILE="$TMP/unset-log.argv" \
+        FAKE_STAGE_RESULT_FILE="$TMP/unset-log.stage-result" \
+        "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        > "$TMP/unset-log.out" 2> "$TMP/unset-log.err"
+)
 rc=$?
-if [[ "$rc" == "0" ]] \
-        && [[ -f "$WRAPPER_FIXTURE/logs/empty-log-override/task.txt" ]] \
-        && [[ ! -e "$WRAPPER_FIXTURE/skills/agy-worker/runtime/logs/empty-log-override" ]]; then
-    ok "root wrapper treats an empty log override as the historical root logs default"
+if [[ "$rc" != "0" ]] \
+        || [[ ! -f "$TEST_XDG/agy-worker/checkouts/$EXPECTED_CHECKOUT_SHA/logs/unset-log/task.txt" ]] \
+        || [[ -e "$WRAPPER_FIXTURE/logs" ]] \
+        || [[ -e "$WRAPPER_FIXTURE/skills/agy-worker/runtime/logs/unset-log" ]]; then
+    wrapper_pass=0
+fi
+
+# 2. Empty AGY_WORKER_LOG_DIR with unset XDG_STATE_HOME falls back to HOME/.local/state
+(
+    unset XDG_STATE_HOME
+    printf 'empty log override\n' | PATH="$TMP/bin:$PATH" \
+        HOME="$TEST_HOME" AGY_WORKER_LOG_DIR= \
+        AGY_WORKER_JOB_ID=empty-log-override AGY_WORKER_MODE=accept-edits \
+        FAKE_MODEL_FILE="$TMP/empty-log.model" \
+        FAKE_PROMPT_FILE="$TMP/empty-log.prompt" \
+        FAKE_DIRS_FILE="$TMP/empty-log.dirs" \
+        FAKE_ARGV_FILE="$TMP/empty-log.argv" \
+        FAKE_STAGE_RESULT_FILE="$TMP/empty-log.stage-result" \
+        "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        > "$TMP/empty-log.out" 2> "$TMP/empty-log.err"
+)
+rc=$?
+if [[ "$rc" != "0" ]] \
+        || [[ ! -f "$TEST_HOME/.local/state/agy-worker/checkouts/$EXPECTED_CHECKOUT_SHA/logs/empty-log-override/task.txt" ]]; then
+    wrapper_pass=0
+fi
+
+# 3. Deterministic lifecycle reuse across commands (status uses same derived log root)
+(
+    unset XDG_STATE_HOME
+    PATH="$TMP/bin:$PATH" HOME="$TEST_HOME" AGY_WORKER_LOG_DIR= \
+        "$WRAPPER_FIXTURE/agy-worker.sh" status --job-id empty-log-override --format json \
+        > "$TMP/empty-log-status.out" 2> "$TMP/empty-log-status.err"
+)
+rc=$?
+if [[ "$rc" != "0" ]] || ! grep -Fq '"job_id":"empty-log-override"' "$TMP/empty-log-status.out"; then
+    wrapper_pass=0
+fi
+
+# 4. Actionable error when neither XDG_STATE_HOME nor HOME is safe
+(
+    unset AGY_WORKER_LOG_DIR
+    printf 'unsafe root\n' | PATH="$TMP/bin:$PATH" \
+        XDG_STATE_HOME="relative/path" HOME="" \
+        AGY_WORKER_JOB_ID=unsafe-root AGY_WORKER_MODE=accept-edits \
+        "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        > "$TMP/unsafe-root.out" 2> "$TMP/unsafe-root.err"
+)
+rc=$?
+if [[ "$rc" != "64" ]] \
+        || ! grep -Fq 'unable to derive a safe state root; set an explicit external AGY_WORKER_LOG_DIR' "$TMP/unsafe-root.err" \
+        || [[ -e "$WRAPPER_FIXTURE/logs/unsafe-root" ]]; then
+    wrapper_pass=0
+fi
+
+# 5. Explicit external AGY_WORKER_LOG_DIR remains unchanged
+EXPLICIT_EXTERNAL="$TMP/explicit-external-logs"
+mkdir -p "$EXPLICIT_EXTERNAL"
+(
+    printf 'explicit log override\n' | PATH="$TMP/bin:$PATH" \
+        AGY_WORKER_LOG_DIR="$EXPLICIT_EXTERNAL" AGY_WORKER_JOB_ID=explicit-log AGY_WORKER_MODE=accept-edits \
+        FAKE_MODEL_FILE="$TMP/explicit-log.model" \
+        FAKE_PROMPT_FILE="$TMP/explicit-log.prompt" \
+        FAKE_DIRS_FILE="$TMP/explicit-log.dirs" \
+        FAKE_ARGV_FILE="$TMP/explicit-log.argv" \
+        FAKE_STAGE_RESULT_FILE="$TMP/explicit-log.stage-result" \
+        "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        > "$TMP/explicit-log.out" 2> "$TMP/explicit-log.err"
+)
+rc=$?
+if [[ "$rc" != "0" ]] || [[ ! -f "$EXPLICIT_EXTERNAL/explicit-log/task.txt" ]]; then
+    wrapper_pass=0
+fi
+
+# 6. Project workflow rejects existing and prospective log roots equal to or inside workdir.
+PROJECT_DIR="$TMP/project-test-worktree"
+mkdir -p "$PROJECT_DIR/.git" "$PROJECT_DIR/logs"
+touch "$PROJECT_DIR/.git/HEAD"
+
+for test_case in equal child relative missing-child symlink-log symlink-worktree; do
+    missing_root=""
+    case "$test_case" in
+        equal)
+            test_log="$PROJECT_DIR"; test_work="$PROJECT_DIR"
+            expected_job="$PROJECT_DIR/proj-equal" ;;
+        child)
+            test_log="$PROJECT_DIR/logs"; test_work="$PROJECT_DIR"
+            expected_job="$PROJECT_DIR/logs/proj-child" ;;
+        relative)
+            test_log="./logs"; test_work="$PROJECT_DIR"
+            expected_job="$PROJECT_DIR/logs/proj-relative" ;;
+        missing-child)
+            test_log="$PROJECT_DIR/new/logs"; test_work="$PROJECT_DIR"
+            expected_job="$PROJECT_DIR/new/logs/proj-missing-child"
+            missing_root="$PROJECT_DIR/new" ;;
+        symlink-log)
+            ln -s "$PROJECT_DIR/logs" "$TMP/symlink-proj-log"
+            test_log="$TMP/symlink-proj-log"; test_work="$PROJECT_DIR"
+            expected_job="$PROJECT_DIR/logs/proj-symlink-log" ;;
+        symlink-worktree)
+            ln -s "$PROJECT_DIR" "$TMP/symlink-proj-work"
+            test_log="$PROJECT_DIR/logs"; test_work="$TMP/symlink-proj-work"
+            expected_job="$PROJECT_DIR/logs/proj-symlink-worktree" ;;
+    esac
+    (
+        cd "$PROJECT_DIR"
+        printf 'project reject\n' | PATH="$TMP/bin:$PATH" \
+            AGY_WORKER_LOG_DIR="$test_log" AGY_WORKER_JOB_ID="proj-$test_case" \
+            FAKE_MODEL_FILE="$TMP/proj-$test_case.model" \
+            FAKE_PROMPT_FILE="$TMP/proj-$test_case.prompt" \
+            FAKE_DIRS_FILE="$TMP/proj-$test_case.dirs" \
+            FAKE_ARGV_FILE="$TMP/proj-$test_case.argv" \
+            FAKE_STAGE_RESULT_FILE="$TMP/proj-$test_case.stage-result" \
+            FAKE_CALLED_FILE="$TMP/proj-$test_case.called" \
+            "$WRAPPER_FIXTURE/agy-worker.sh" --workflow project --workdir "$test_work" \
+            > "$TMP/proj-$test_case.out" 2> "$TMP/proj-$test_case.err"
+    )
+    rc=$?
+    expected_msg="project log root cannot be inside the target workdir"
+    if [[ "$rc" != "64" ]] \
+            || ! grep -Fq "$expected_msg" "$TMP/proj-$test_case.err" \
+            || [[ -e "$TMP/proj-$test_case.model" ]] \
+            || [[ -e "$TMP/proj-$test_case.prompt" ]] \
+            || [[ -e "$TMP/proj-$test_case.dirs" ]] \
+            || [[ -e "$TMP/proj-$test_case.argv" ]] \
+            || [[ -e "$TMP/proj-$test_case.stage-result" ]] \
+            || [[ -e "$expected_job" ]] \
+            || [[ -e "$expected_job/task.txt" ]] \
+            || [[ -e "$expected_job/dispatch-state.json" ]] \
+            || [[ -n "$missing_root" && -e "$missing_root" ]] \
+            || [[ -e "$TMP/proj-$test_case.called" ]]; then
+        wrapper_pass=0
+    fi
+done
+
+if (( wrapper_pass )); then
+    ok "root wrapper derives deterministic external state root and rejects project log root in worktree"
 else
-    bad "root wrapper treats an empty log override as the historical root logs default"
+    bad "root wrapper derives deterministic external state root and rejects project log root in worktree"
 fi
 
 PRIVATE_LOG_022="$TMP/existing-log-022"
@@ -2514,6 +2669,8 @@ control_worker() {
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
         FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
+        FAKE_HEARTBEAT_AFTER_FIRST_READY="${FAKE_HEARTBEAT_AFTER_FIRST_READY:-}" \
+        FAKE_HEARTBEAT_AFTER_FIRST_RELEASE="${FAKE_HEARTBEAT_AFTER_FIRST_RELEASE:-}" \
         FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
         "$WORKER" "$action" --job-id "$job" "$@"
 }
@@ -2531,6 +2688,8 @@ start_worker() {
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
         FAKE_HEARTBEAT_BARRIER_READY="${FAKE_HEARTBEAT_BARRIER_READY:-}" \
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
+        FAKE_HEARTBEAT_AFTER_FIRST_READY="${FAKE_HEARTBEAT_AFTER_FIRST_READY:-}" \
+        FAKE_HEARTBEAT_AFTER_FIRST_RELEASE="${FAKE_HEARTBEAT_AFTER_FIRST_RELEASE:-}" \
         FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
         "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$workdir" "$@"
 }
@@ -3068,14 +3227,19 @@ else
     bad "fast controller ownership handoff race"
 fi
 
+extend_after_first_ready="$TMP/extend-active.after-first-ready"
+extend_after_first_release="$TMP/extend-active.after-first-release"
 printf 'extend active deadline\n' | FAKE_DISPATCH_MODE=heartbeat-success \
     FAKE_HEARTBEAT_COUNT=2 FAKE_HEARTBEAT_DELAY=1.00 \
+    FAKE_HEARTBEAT_AFTER_FIRST_READY="$extend_after_first_ready" \
+    FAKE_HEARTBEAT_AFTER_FIRST_RELEASE="$extend_after_first_release" \
     start_worker extend-active --idle-timeout 2s --hard-timeout 3s --max-runtime 5s \
     > "$TMP/extend-active.start" 2> "$TMP/extend-active.start.err"
 extend_ready=0
 for (( extend_index=0; extend_index<200; extend_index++ )); do
     control_worker status extend-active > "$TMP/extend-active.status"
-    if [[ "$(status_field "$TMP/extend-active.status" status)" == "running" \
+    if [[ -e "$extend_after_first_ready" \
+            && "$(status_field "$TMP/extend-active.status" status)" == "running" \
             && "$(status_field "$TMP/extend-active.status" progress_count)" -ge 1 ]]; then
         extend_ready=1
         break
@@ -3092,6 +3256,7 @@ over_max_rc=$?
 control_worker extend extend-active --approve-state-sha "$extend_sha" --by 1s \
     > "$TMP/extend-active.extend"
 extend_rc=$?
+: > "$extend_after_first_release"
 wait_terminal extend-active "$TMP/extend-active.extend"
 extend_terminal_rc=$?
 control_worker result extend-active > "$TMP/extend-active.result"

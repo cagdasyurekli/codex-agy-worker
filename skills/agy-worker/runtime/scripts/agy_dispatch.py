@@ -286,6 +286,21 @@ def canonical_job(path: Path) -> Path:
     return path
 
 
+def _job_is_inside_worktree(job: Path, workdir: str | Path) -> bool:
+    try:
+        job_text = os.fsdecode(job)
+        workdir_text = os.fsdecode(workdir)
+        if "\0" in job_text or "\0" in workdir_text:
+            return True
+        resolved_job = Path(os.path.realpath(job_text))
+        resolved_workdir = Path(os.path.realpath(workdir_text))
+        if resolved_job == resolved_workdir:
+            return True
+        return os.path.commonpath([resolved_workdir, resolved_job]) == str(resolved_workdir)
+    except (TypeError, UnicodeError, ValueError, OSError):
+        return True
+
+
 def read_regular(
     path: Path, maximum: int, label: str, *, allowed_modes: tuple[int, ...] = (0o600,),
 ) -> tuple[bytes, os.stat_result]:
@@ -1179,6 +1194,8 @@ def _legacy_migration_facts(
     if _legacy_prior_result_is_unknown(state):
         raise DispatchError("unknown legacy result has no migration authority")
     command = _load_bound_command(job, state, stage_readonly=False)
+    if _job_is_inside_worktree(job, command["workdir"]):
+        raise DispatchError("legacy migration is unavailable for jobs inside the worktree")
     command, checked = _bound_lifecycle_inputs(job, state, command, read_legacy=True)
     selection = _load_bound_selection(command, checked, legacy_command_binding=True)
     schema_bindings = _schema_bindings(command)
@@ -1508,8 +1525,11 @@ def _lifecycle_mutation_bindings(
         bound_job = canonical_job(Path(job).resolve(strict=True))
         command = _load_bound_command(bound_job, value, stage_readonly=False)
         _bound_lifecycle_inputs(bound_job, value, command)
-        provider_launch_bound = _selection_launch_is_authorized(
-            _load_bound_selection(command, value)
+        provider_launch_bound = (
+            not _job_is_inside_worktree(bound_job, command["workdir"])
+            and _selection_launch_is_authorized(
+                _load_bound_selection(command, value)
+            )
         )
     except (OSError, DispatchError):
         return False, False
@@ -1599,7 +1619,11 @@ def _available_actions(
             "action": "result",
             "command": f"{PUBLIC_LAUNCHER} result --job-id {job_id} --format json",
         })
-        if _verification_copy_is_eligible(value):
+        if (
+            _verification_copy_is_eligible(value)
+            and job is not None
+            and not _job_is_inside_worktree(job, value["workdir"])
+        ):
             actions.append({
                 "action": "verification-copy",
                 "command": (
@@ -2563,7 +2587,12 @@ def _bound_current_candidate(job: Path, state: dict[str, Any]) -> tuple[dict[str
     # The validator opened both schema pathnames; bind them and the project
     # marker again before accepting its answer.
     _bound_lifecycle_inputs(bound_job, state, command, read_legacy=legacy_read)
-    if not legacy_read:
+    # Project jobs created before the external-log-root boundary can place their
+    # own controller state inside the candidate worktree. Every state write then
+    # changes the semantic snapshot, so that stored snapshot is self-invalidating.
+    # Keep exact command/schema/root/result bindings for readback and a driver-only
+    # final disposition; provider recovery is denied by the inside-worktree guard.
+    if not legacy_read and not _job_is_inside_worktree(bound_job, command["workdir"]):
         _bound_candidate_worktree(state, command)
     return command, raw
 
@@ -2758,6 +2787,8 @@ def command_verification_copy(job: Path, destination: Path, output_format: str) 
             raise DispatchError("verification copy is unavailable")
         command = _load_bound_command(job, state, stage_readonly=False)
         command, state = _bound_lifecycle_inputs(job, state, command)
+        if _job_is_inside_worktree(job, command["workdir"]):
+            raise DispatchError("verification copy is unavailable for jobs inside the worktree")
         command, _candidate_raw = _bound_current_candidate(job, state)
         worktree = Path(command["workdir"])
         destination, parent_identity = _verification_copy_destination(destination, worktree)
@@ -4188,6 +4219,8 @@ def create_state(
                 )
             else:
                 command = _load_bound_command(job, state, stage_readonly=False)
+            if _job_is_inside_worktree(job, command["workdir"]):
+                raise DispatchError("dispatch job directory cannot be inside the target workdir")
             command, state = _bound_lifecycle_inputs(job, state, command)
             if not _selection_launch_is_authorized(_load_bound_selection(command, state)):
                 raise DispatchError("dispatch direct selection lacks approved compatibility disposition")
@@ -4272,6 +4305,8 @@ def create_state(
                 raise
         if path.exists() or path.is_symlink():
             raise DispatchError("dispatch state already exists")
+        if command.get("workflow") == "project" and _job_is_inside_worktree(job, command["workdir"]):
+            raise DispatchError("dispatch job directory cannot be inside the target workdir")
         state = initial_state(
             command, origin, 1, command_sha=digest(command_raw),
             command_identity=command_info, stage_sha=stage_sha, stage_identity=stage_info,
@@ -4716,6 +4751,8 @@ def command_finalize(
         command, state = _bound_lifecycle_inputs(job, state, command)
         if not _finalize_is_eligible(state):
             raise DispatchError("dispatch finalization is stale or unavailable")
+        if assurance == "verified" and _job_is_inside_worktree(job, command["workdir"]):
+            raise DispatchError("verified finalization is unavailable for jobs inside the worktree")
         _require_current_candidate_verification(verification, state)
         if assurance == "verified" and not _verification_is_verified(verification, state["workflow"]):
             raise DispatchError("verified finalization requires complete driver evidence")
