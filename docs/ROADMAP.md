@@ -137,13 +137,36 @@ behavior into broader agy `1.1.22` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
+### v0.12.0 verified delegation and agy 1.1.22 compatibility
+
+**Status:** Release candidate. The source changes are merged and protected-CI
+verified; publication still requires an exact release-preparation head, protected
+`test`, squash merge, annotated tag, and GitHub Release readback.
+
+This release collects the completed post-v0.11.0 goal without adding a new product
+slice. It activates the human-reconciled agy 1.1.22 baseline and unchanged 14-slug
+inventory; adds privacy-safe Codex usage observation, account-capture classification,
+exact-head CI timing and four-way sharding; discloses every AGY dispatch model and
+effort; adds advisory SWE-bench workflow studies and evidence-bound model/delegation
+guidance plus the V10 sanitized outer-terminal diagnostic/state migration; and adds
+repository-scoped marketplace metadata/tutorial, progressive documentation, Pages
+source, and verification assets.
+
+The release also includes the bounded follow-up fixes for capture reprofile identity,
+controller log-root isolation, resolve-undo diagnostics, close-then-exec conformance
+timing, and tracked/untracked whitespace hygiene. These mechanisms improve observable
+failure handling and verification; they do not establish a general model winner,
+guaranteed token savings, provider quality, or exhaustive correctness. Issue #105 is a
+known test-harness isolation limitation and remains outside this release candidate.
+
 ### v0.11.0 observation-only release scope and dogfood record
 
-**Status:** Reduced observation-only scope explicitly approved for publication. The
-required single no-retry 1.1.22 account observation failed without inventory evidence;
-the approval does not activate it, so the active baseline remains 1.1.16. A source
-checkout alone is not publication evidence: exact merged `main`, protected CI,
-annotated tag, and GitHub Release readback remain required gates.
+**Status:** Published. The reduced observation-only scope was explicitly approved.
+The required single no-retry 1.1.22 account observation failed without inventory
+evidence; the approval did not activate it, so the active baseline for this immutable
+release remained 1.1.16. Publication was later established by protected CI, exact
+merged `main` commit `7fe59599ef26773f9ab6537e1ecf31ec8ddc00b9`, the annotated
+`v0.11.0` tag, and GitHub Release readback; a source checkout alone was not evidence.
 
 This candidate records agy `1.1.22` as a non-activating compatibility observation,
 Codex `0.150.1` as observation-only, pins `actions/checkout` v6.0.2 by immutable
