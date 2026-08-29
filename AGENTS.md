@@ -112,11 +112,10 @@ Keep owner-private evidence, dated campaign/readout reports, generated audits, a
 temporary drafts outside the repository checkout; update the allowlist and repository
 map deliberately when adding a real public guide.
 
-Until the compact README extraction lands, it may not grow beyond 1,905 lines; lower
-that ceiling to the permanent 450-line budget after extraction rather than raising it
-to avoid moving detail. Verify changed commands and claims against source/tests, preserve
-privacy and evidence boundaries, check affected relative/rendered links, and run
-`python3 scripts/validate-docs.py . --readme-max-lines 1905` followed by
+README has a permanent 450-line ceiling; do not raise it to avoid moving detail to
+the owning task guide. Verify changed commands and claims against source/tests,
+preserve privacy and evidence boundaries, check affected relative/rendered links, and run
+`python3 scripts/validate-docs.py . --readme-max-lines 450` followed by
 `bash tests/test-packaging.sh` for README/docs/marketplace/Pages changes.
 
 For material plans involving UX, lifecycle, trust boundaries, security, data semantics,
