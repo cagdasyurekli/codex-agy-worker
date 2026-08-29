@@ -259,6 +259,13 @@ set -u
 FAKE_EXECUTABLE_CONTENT_SENTINEL=round-two-binding-original
 FAKE_CALLS_FILE="${FAKE_CALLS_FILE:-/dev/null}"
 FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-/dev/null}"
+if [[ -n "${FAKE_ENV_OBSERVED_FILE:-}" ]]; then
+    if [[ -n "${AGY_WORKER_UNRELATED_SECRET+x}" ]]; then
+        printf '%s:present\n' "${1:-worker}" >> "$FAKE_ENV_OBSERVED_FILE"
+    else
+        printf '%s:absent\n' "${1:-worker}" >> "$FAKE_ENV_OBSERVED_FILE"
+    fi
+fi
 if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
     printf 'version\n' >> "$FAKE_CALLS_FILE"
     case "${FAKE_VERSION_MODE:-ready}" in
@@ -607,6 +614,28 @@ FAKE
 chmod +x "$TMP/bin/agy"
 
 run_worker() {
+    local fake_provider_env_args=()
+    local fake_provider_env_name
+    for fake_provider_env_name in \
+        FAKE_AGY_STATUS FAKE_ARGV_FILE FAKE_BAD_ENVELOPE FAKE_CALLED_FILE \
+        FAKE_CALLS_FILE FAKE_CHILD_PID_FILE FAKE_DIRS_FILE FAKE_DISPATCH_COUNT_FILE \
+        FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_ERROR_LINE \
+        FAKE_EXECUTABLE_SYMLINK_TARGET \
+        FAKE_EXIT_CODE FAKE_FAIL_FIRST FAKE_HEARTBEAT_AFTER_FIRST_READY \
+        FAKE_HEARTBEAT_AFTER_FIRST_RELEASE FAKE_HEARTBEAT_BARRIER_READY \
+        FAKE_HEARTBEAT_BARRIER_RELEASE FAKE_HEARTBEAT_COUNT FAKE_HEARTBEAT_DELAY \
+        FAKE_HELP_MODE FAKE_MODEL_FILE FAKE_MUTATE_EXECUTABLE \
+        FAKE_MUTATE_EXECUTABLE_MODE FAKE_MUTATE_EXECUTABLE_PARENT \
+        FAKE_MUTATE_EXECUTABLE_SAME_LENGTH FAKE_MUTATE_MATRIX \
+        FAKE_MUTATE_PROJECT_MARKER FAKE_MUTATION_MARKER FAKE_PROBE_PARENT_PID_FILE \
+        FAKE_PROBE_PGID_FILE FAKE_PROBE_READY_FILE FAKE_PROBE_RELEASE_FILE \
+        FAKE_PROMPT_FILE FAKE_QUOTA_ERROR FAKE_REPLACE_EXECUTABLE_SYMLINK \
+        FAKE_SIDE_EFFECT_FILE FAKE_SIGNAL_PARENT FAKE_SPARSE_PROJECT_MARKER \
+        FAKE_STAGE_RESULT_FILE FAKE_TRY_STAGE_WRITE FAKE_UTF8_SUMMARY \
+        FAKE_VERSION_MODE FAKE_WARNING_LINE FAKE_WORKER_CALLS_FILE \
+        FAKE_WORKER_VERIFIED; do
+        fake_provider_env_args+=(--provider-env "$fake_provider_env_name")
+    done
     local job="$1" workdir; shift
     workdir="${AGY_TEST_WORKDIR:-$TMP/repo}"
     PATH="$TMP/bin:$PATH" \
@@ -644,6 +673,7 @@ run_worker() {
     FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
     FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
     FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
+    FAKE_ENV_OBSERVED_FILE="${FAKE_ENV_OBSERVED_FILE:-}" \
     FAKE_ERROR_LINE="${FAKE_ERROR_LINE:-}" \
     FAKE_WARNING_LINE="${FAKE_WARNING_LINE:-}" \
     FAKE_QUOTA_ERROR="${FAKE_QUOTA_ERROR:-}" \
@@ -652,7 +682,8 @@ run_worker() {
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
-    "${AGY_TEST_WORKER:-$WORKER}" --workdir "$workdir" "$@"
+    "${AGY_TEST_WORKER:-$WORKER}" --workdir "$workdir" \
+        "${fake_provider_env_args[@]}" "$@"
 }
 
 echo "agy-worker.sh offline test suite"
@@ -685,6 +716,40 @@ else
     bad "--tier is resolved after CLI parsing"
 fi
 expect_print_last "small prompt keeps --print and its value last" "$TMP/tier.argv"
+
+ambient_env_observed="$TMP/ambient-env-observed.txt"
+printf 'ambient environment filter\n' | \
+    AGY_WORKER_UNRELATED_SECRET=do-not-forward \
+    FAKE_ENV_OBSERVED_FILE="$ambient_env_observed" \
+    run_worker ambient-env-filter --tier cheap \
+    > "$TMP/ambient-env-filter.out" 2> "$TMP/ambient-env-filter.err"
+ambient_env_rc=$?
+if [[ "$ambient_env_rc" == 0 && -s "$ambient_env_observed" ]] \
+        && ! grep -Fq ':present' "$ambient_env_observed"; then
+    ok "ambient secret is absent from agy probes and provider launch"
+else
+    bad "ambient secret is absent from agy probes and provider launch"
+fi
+
+explicit_env_observed="$TMP/explicit-env-observed.txt"
+printf 'explicit environment opt-in\n' | \
+    AGY_WORKER_UNRELATED_SECRET=approved-value \
+    FAKE_ENV_OBSERVED_FILE="$explicit_env_observed" \
+    run_worker explicit-env-opt-in --tier cheap \
+        --provider-env AGY_WORKER_UNRELATED_SECRET \
+    > "$TMP/explicit-env-opt-in.out" 2> "$TMP/explicit-env-opt-in.err"
+explicit_env_rc=$?
+if [[ "$explicit_env_rc" == 0 && -s "$explicit_env_observed" ]] \
+        && ! grep -Fq ':absent' "$explicit_env_observed"; then
+    ok "explicit provider environment name reaches agy children"
+else
+    bad "explicit provider environment name reaches agy children"
+fi
+
+printf 'unsafe provider environment\n' | run_worker unsafe-provider-env \
+    --tier cheap --provider-env PYTHONPATH \
+    > "$TMP/unsafe-provider-env.out" 2> "$TMP/unsafe-provider-env.err"
+expect_exit "runtime-injection provider environment name is rejected" 64 "$?"
 
 printf 'raw custom model\n' | run_worker raw-flash-high \
     --tier gemini-3.6-flash-high > "$TMP/raw-flash-high.out" 2>/dev/null
@@ -896,6 +961,7 @@ LOCALE_HELP_SHA="$(LC_ALL=C FAKE_HELP_MODE=locale-sensitive PATH="$TMP/bin:$PATH
     "$TMP/bin/agy" --help 2>&1 | /usr/bin/python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
 LC_ALL=POSIX FAKE_VERSION_MODE=drift117 FAKE_HELP_MODE=locale-sensitive PATH="$TMP/bin:$PATH" \
     "$SELECTOR" --model gemini-3.6-flash --effort high \
+    --child-env FAKE_VERSION_MODE --child-env FAKE_HELP_MODE \
     --compatibility-disposition proceed --approve-help-sha "$LOCALE_HELP_SHA" \
     > "$TMP/direct-selector-public.json" 2> "$TMP/direct-selector-public.err"
 rc=$?
@@ -2104,6 +2170,7 @@ wrapper_pass=1
         FAKE_ARGV_FILE="$TMP/unset-log.argv" \
         FAKE_STAGE_RESULT_FILE="$TMP/unset-log.stage-result" \
         "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         > "$TMP/unset-log.out" 2> "$TMP/unset-log.err"
 )
 rc=$?
@@ -2126,6 +2193,7 @@ fi
         FAKE_ARGV_FILE="$TMP/empty-log.argv" \
         FAKE_STAGE_RESULT_FILE="$TMP/empty-log.stage-result" \
         "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         > "$TMP/empty-log.out" 2> "$TMP/empty-log.err"
 )
 rc=$?
@@ -2153,6 +2221,7 @@ fi
         XDG_STATE_HOME="relative/path" HOME="" \
         AGY_WORKER_JOB_ID=unsafe-root AGY_WORKER_MODE=accept-edits \
         "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         > "$TMP/unsafe-root.out" 2> "$TMP/unsafe-root.err"
 )
 rc=$?
@@ -2174,6 +2243,7 @@ mkdir -p "$EXPLICIT_EXTERNAL"
         FAKE_ARGV_FILE="$TMP/explicit-log.argv" \
         FAKE_STAGE_RESULT_FILE="$TMP/explicit-log.stage-result" \
         "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         > "$TMP/explicit-log.out" 2> "$TMP/explicit-log.err"
 )
 rc=$?
@@ -2477,7 +2547,8 @@ printf 'broad audit is a usable default plan\n' | (
         FAKE_ARGV_FILE="$TMP/plan-without-persona.argv" \
         FAKE_STAGE_RESULT_FILE="$TMP/plan-without-persona.stage-result" \
         FAKE_CALLED_FILE="$TMP/plan-without-persona.called" \
-        "$WORKER" --workdir "$TMP/repo"
+        "$WORKER" --workdir "$TMP/repo" \
+            --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE --provider-env FAKE_CALLED_FILE
 ) > "$TMP/plan-without-persona.out" 2> "$TMP/plan-without-persona.err"
 rc=$?
 if [[ "$rc" == "0" ]] \
@@ -2614,7 +2685,8 @@ printf 'terminal failure\n' | PATH="$TMP/bin:$PATH" \
     FAKE_MODEL_FILE="$TMP/terminal.model" FAKE_PROMPT_FILE="$TMP/terminal.prompt" \
     FAKE_DIRS_FILE="$TMP/terminal.dirs" \
     FAKE_ARGV_FILE="$TMP/terminal.argv" FAKE_STAGE_RESULT_FILE="$TMP/terminal.stage-result" \
-    "$WORKER" --workdir "$TMP/repo" > "$TMP/terminal.out" 2>/dev/null
+    "$WORKER" --workdir "$TMP/repo" --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
+        --provider-env FAKE_AGY_STATUS > "$TMP/terminal.out" 2>/dev/null
 rc=$?
 expect_exit "non-success terminal status fails closed" 4 "$rc"
 
@@ -2624,7 +2696,8 @@ printf 'bad envelope\n' | PATH="$TMP/bin:$PATH" \
     FAKE_MODEL_FILE="$TMP/bad.model" FAKE_PROMPT_FILE="$TMP/bad.prompt" \
     FAKE_DIRS_FILE="$TMP/bad.dirs" \
     FAKE_ARGV_FILE="$TMP/bad.argv" FAKE_STAGE_RESULT_FILE="$TMP/bad.stage-result" \
-    "$WORKER" --workdir "$TMP/repo" > "$TMP/bad.out" 2>/dev/null
+    "$WORKER" --workdir "$TMP/repo" --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
+        --provider-env FAKE_BAD_ENVELOPE > "$TMP/bad.out" 2>/dev/null
 rc=$?
 expect_exit "dispatcher independently rejects schema-invalid output" 4 "$rc"
 
@@ -2675,6 +2748,27 @@ control_worker() {
         "$WORKER" "$action" --job-id "$job" "$@"
 }
 start_worker() {
+    local fake_provider_env_args=()
+    local fake_provider_env_name
+    for fake_provider_env_name in \
+        FAKE_AGY_STATUS FAKE_ARGV_FILE FAKE_BAD_ENVELOPE FAKE_CALLED_FILE \
+        FAKE_CALLS_FILE FAKE_CHILD_PID_FILE FAKE_DIRS_FILE FAKE_DISPATCH_COUNT_FILE \
+        FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_ERROR_LINE \
+        FAKE_EXECUTABLE_SYMLINK_TARGET FAKE_EXIT_CODE FAKE_FAIL_FIRST \
+        FAKE_HEARTBEAT_AFTER_FIRST_READY FAKE_HEARTBEAT_AFTER_FIRST_RELEASE \
+        FAKE_HEARTBEAT_BARRIER_READY FAKE_HEARTBEAT_BARRIER_RELEASE \
+        FAKE_HEARTBEAT_COUNT FAKE_HEARTBEAT_DELAY FAKE_HELP_MODE FAKE_MODEL_FILE \
+        FAKE_MUTATE_EXECUTABLE FAKE_MUTATE_EXECUTABLE_MODE \
+        FAKE_MUTATE_EXECUTABLE_PARENT FAKE_MUTATE_EXECUTABLE_SAME_LENGTH \
+        FAKE_MUTATE_MATRIX FAKE_MUTATE_PROJECT_MARKER FAKE_MUTATION_MARKER \
+        FAKE_PROBE_PARENT_PID_FILE FAKE_PROBE_PGID_FILE FAKE_PROBE_READY_FILE \
+        FAKE_PROBE_RELEASE_FILE FAKE_PROMPT_FILE FAKE_QUOTA_ERROR \
+        FAKE_REPLACE_EXECUTABLE_SYMLINK FAKE_SIDE_EFFECT_FILE FAKE_SIGNAL_PARENT \
+        FAKE_SPARSE_PROJECT_MARKER FAKE_STAGE_RESULT_FILE FAKE_TRY_STAGE_WRITE \
+        FAKE_UTF8_SUMMARY FAKE_VERSION_MODE FAKE_WARNING_LINE \
+        FAKE_WORKER_CALLS_FILE FAKE_WORKER_VERIFIED; do
+        fake_provider_env_args+=(--provider-env "$fake_provider_env_name")
+    done
     local job="$1" workdir; shift
     workdir="${AGY_TEST_WORKDIR:-$TMP/repo}"
     PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID="$job" \
@@ -2691,7 +2785,8 @@ start_worker() {
         FAKE_HEARTBEAT_AFTER_FIRST_READY="${FAKE_HEARTBEAT_AFTER_FIRST_READY:-}" \
         FAKE_HEARTBEAT_AFTER_FIRST_RELEASE="${FAKE_HEARTBEAT_AFTER_FIRST_RELEASE:-}" \
         FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
-        "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$workdir" "$@"
+        "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$workdir" \
+        "${fake_provider_env_args[@]}" "$@"
 }
 
 partial_clone_repo="$TMP/partial-clone-repo"
@@ -3103,6 +3198,11 @@ PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID=foregroun
     FAKE_VERSION_MODE=ready FAKE_DISPATCH_MODE=heartbeat-forever \
     FAKE_SIDE_EFFECT_FILE="$FOREGROUND_SIGNAL_SIDE_EFFECT" \
     "$WORKER" --workdir "$TMP/repo" --idle-timeout 2s --hard-timeout 4s --max-runtime 4s \
+    --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE \
+    --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE \
+    --provider-env FAKE_STAGE_RESULT_FILE --provider-env FAKE_CALLS_FILE \
+    --provider-env FAKE_WORKER_CALLS_FILE --provider-env FAKE_VERSION_MODE \
+    --provider-env FAKE_DISPATCH_MODE --provider-env FAKE_SIDE_EFFECT_FILE \
     < "$TMP/foreground-signal.task" > "$TMP/foreground-signal.out" \
     2> "$TMP/foreground-signal.err" &
 foreground_wrapper=$!

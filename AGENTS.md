@@ -32,6 +32,10 @@ Keep these hard boundaries regardless of workflow:
 
 - Do not let a job write outside its disposable worktree, enter `.git`, or escape via a
   symlink. Honor user denylist paths and keep local credentials out of worker scope.
+- Provider, probe, and verifier children start with an operational allowlist. Do not
+  pass `--provider-env` or `--verify-env` without approval for each variable name and
+  its resulting provider/verifier exposure; values are not persisted, and filtering
+  is not `HOME`, `PATH`, filesystem, network, or same-user isolation.
 - Never add or recommend `--dangerously-skip-permissions` or
   `--dangerously-bypass-approvals-and-sandbox`.
 - Do not modify the user's `~/.gemini/` or `~/.codex/` configuration as a code change.
@@ -92,6 +96,18 @@ it already includes every offline suite, syntax/compile checks, and `git diff --
 Reuse that exact-candidate result instead of repeating an unchanged full run. Run
 `./ground-truth.sh` when agy behavior or claims are in scope. Keep suites offline and
 add positive and negative coverage for every new hard boundary.
+
+After a green full run, classify later changes before rerunning it. Executable or
+runtime bytes, trust boundaries, test runners or inventories, and upstream merges that
+touch those surfaces require affected focused checks plus a new full run. A
+documentation, public-claim, metadata, or existing-test-assertion correction that does
+not change executable behavior or the canonical suite inventory requires its owning
+focused check, diff hygiene, and incremental independent review; do not repeat the full
+local suite solely to attach it to a new commit SHA. Any focused failure or uncertainty
+about impact upgrades the change to a full run. Treat the required GitHub check as the
+exact PR-head full gate. After integrating a pinned upstream base, do not chase later
+remote drift unless it creates a conflict, fails a required check, or overlaps an
+affected surface.
 
 After material changes to commands, workflow behavior, trust boundaries, tests, or
 product claims, run the `agents-md-auditor` skill before declaring completion. Keep

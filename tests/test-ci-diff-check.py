@@ -132,6 +132,19 @@ with tempfile.TemporaryDirectory(prefix="agy-ci-batch-test.") as directory:
     check("oversized declaration", rejected([oid("7")]))
     check("bounded nonempty stderr", rejected([oid("8")]))
 
+    at_line_bound = True
+    try:
+        module._check_head_blob(b"clean\n" * module.MAX_LINES)
+    except module.CheckRejected:
+        at_line_bound = False
+    check("exact line bound is accepted", at_line_bound)
+    over_line_bound = False
+    try:
+        module._check_head_blob(b"clean\n" * (module.MAX_LINES + 1))
+    except module.CheckRejected:
+        over_line_bound = True
+    check("one line over bound is rejected", over_line_bound)
+
     count_path = Path(str(fake) + ".count")
     count_path.unlink(missing_ok=True)
     maximum = [oid("a", index) for index in range(module.MAX_PATHS)]

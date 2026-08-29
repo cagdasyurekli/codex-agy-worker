@@ -87,13 +87,17 @@ def run(context: dict[str, object]) -> None:
             MODULE.MODEL_SELECTION.publish_record(selection_path, selection)
             raw, info = MODULE.read_regular(selection_path, MODULE.MAX_COMMAND_BYTES, "fixture selection")
             command = {
-                "schema_version": 4, "kind": "agy-worker-dispatch-command", "job_id": f"direct-{label}",
+                "schema_version": 5, "kind": "agy-worker-dispatch-command", "job_id": f"direct-{label}",
                 "workdir": str(repo), "argv": ["agy", "--sandbox", "--mode", "accept-edits", "--add-dir", str(repo), "--json-schema", str(schema), "--model", "gemini-3.6-flash-high", "--print", "task"],
                 "agy_version": "1.1.22", "agy_version_observed": True,
                 "selection_path": str(selection_path), "selection_sha256": MODULE.digest(raw), "selection_identity": list(MODULE._identity(info)),
                 "idle_seconds": idle_seconds, "hard_seconds": hard_seconds, "max_seconds": max_seconds, "notice_seconds": 3,
                 "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": workflow,
                 "max_cycles": max_cycles, "resume_prompt": "resume", "continue_prompt": "continue",
+                "provider_env": [
+                    "FAKE_DIRECT_HEARTBEAT_COUNT", "FAKE_DIRECT_HEARTBEAT_DELAY",
+                    "FAKE_DIRECT_HELP_DELAY",
+                ],
             }
             MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
             MODULE.create_state(job, "initial", resume=False)
