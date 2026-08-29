@@ -1418,6 +1418,26 @@ else
     bad "root and portable packages include the safe local job lifecycle"
 fi
 
+if [[ -x "$ROOT/model-intelligence.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/model-intelligence.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/model_intelligence.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-intelligence-evidence.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-intelligence-advisory.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/compat/model-intelligence/dataset.v1.json" ]]; then
+    ok "root and portable packages include Model Intelligence v1"
+else
+    bad "root and portable packages include Model Intelligence v1"
+fi
+
+if [[ -x "$ROOT/delegation-policy.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/delegation-policy.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/delegation_policy.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/delegation-policy.schema.json" ]]; then
+    ok "root and portable packages include the Delegation Policy evaluator"
+else
+    bad "root and portable packages include the Delegation Policy evaluator"
+fi
+
 if [[ -x "$ROOT/agy-worker.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/agy-worker.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" ]] \
@@ -1456,6 +1476,30 @@ if [[ -x "$ROOT/swebench-workflow-study.sh" ]] \
     ok "root and portable packages include SWE-bench Workflow Study v1"
 else
     bad "root and portable packages include SWE-bench Workflow Study v1"
+fi
+
+if [[ -x "$ROOT/model-intelligence.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/model-intelligence.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/model_intelligence.py" ]] \
+        && grep -Fq 'model-intelligence.sh' "$ROOT/skills/agy-worker/scripts/resolve-pipeline.sh" \
+        && grep -Fq 'scripts/model_intelligence.py' "$ROOT/skills/agy-worker/runtime/doctor.sh" \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-intelligence-evidence.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-intelligence-advisory.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/compat/model-intelligence/dataset.v1.json" ]]; then
+    ok "root and portable packages include Model Intelligence v1"
+else
+    bad "root and portable packages include Model Intelligence v1"
+fi
+
+if [[ -x "$ROOT/delegation-policy.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/delegation-policy.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/delegation_policy.py" ]] \
+        && grep -Fq 'delegation-policy.sh' "$ROOT/skills/agy-worker/scripts/resolve-pipeline.sh" \
+        && grep -Fq 'scripts/delegation_policy.py' "$ROOT/skills/agy-worker/runtime/doctor.sh" \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/delegation-policy.schema.json" ]]; then
+    ok "root and portable packages include Delegation-First Coordinator Policy"
+else
+    bad "root and portable packages include Delegation-First Coordinator Policy"
 fi
 
 if python3 - "$ROOT" "$TMP" <<'PY'
@@ -1622,6 +1666,8 @@ required_runtime_dependencies=(
     model-selection.sh
     doctor.sh
     feedback-triage.sh
+    model-intelligence.sh
+    delegation-policy.sh
     scripts/validate-envelope.py
     scripts/evidence_receipt.py
     scripts/evidence_report.py
@@ -1639,6 +1685,8 @@ required_runtime_dependencies=(
     scripts/job_lifecycle.py
     scripts/doctor-metadata.py
     scripts/feedback-triage.py
+    scripts/model_intelligence.py
+    scripts/delegation_policy.py
     schemas/worker-result.schema.json
     schemas/worker-result.provider.schema.json
     schemas/evidence-receipt.schema.json
@@ -1650,6 +1698,9 @@ required_runtime_dependencies=(
     schemas/swebench-workflow-study-plan.schema.json
     schemas/swebench-workflow-study-report.schema.json
     schemas/swebench-workflow-study-advisory.schema.json
+    schemas/model-intelligence-evidence.schema.json
+    schemas/model-intelligence-advisory.schema.json
+    schemas/delegation-policy.schema.json
     schemas/persona-dispatch.schema.json
     schemas/persona-human-review.schema.json
     schemas/persona-run-evidence.schema.json
@@ -1665,6 +1716,7 @@ required_runtime_dependencies=(
     compat/personas/bulk-test-writer.json
     compat/personas/diff-reviewer.json
     compat/personas/repo-inventory.json
+    compat/model-intelligence/dataset.v1.json
     benchmarks/v1/manifest.json
     benchmarks/v1/portable-source.json
     benchmarks/v1/tasks/exact-edit/initial.txt
@@ -1778,6 +1830,8 @@ for specification in \
     'swebench-workflow-study.sh:executable' \
     'persona-evidence.sh:executable' \
     'profile.sh:executable' \
+    'model-intelligence.sh:executable' \
+    'delegation-policy.sh:executable' \
     'scripts/validate-envelope.py:executable' \
     'scripts/evidence_receipt.py:executable' \
     'scripts/evidence_report.py:executable' \
@@ -1791,6 +1845,8 @@ for specification in \
     'scripts/agy_dispatch_worktree.py:data' \
     'scripts/job_lifecycle.py:executable' \
     'scripts/model_selection.py:executable' \
+    'scripts/model_intelligence.py:executable' \
+    'scripts/delegation_policy.py:executable' \
     'schemas/worker-result.schema.json:data' \
     'schemas/evidence-receipt.schema.json:data' \
     'schemas/job-state.schema.json:data' \
@@ -1799,12 +1855,16 @@ for specification in \
     'schemas/swebench-workflow-study-plan.schema.json:data' \
     'schemas/swebench-workflow-study-report.schema.json:data' \
     'schemas/swebench-workflow-study-advisory.schema.json:data' \
+    'schemas/model-intelligence-evidence.schema.json:data' \
+    'schemas/model-intelligence-advisory.schema.json:data' \
+    'schemas/delegation-policy.schema.json:data' \
     'schemas/persona-run-manifest.schema.json:data' \
     'schemas/persona-transition-approval.schema.json:data' \
     'schemas/workload-profile.schema.json:data' \
     'compat/persona-evidence.schema.json:data' \
     'compat/persona-registry.schema.json:data' \
     'compat/personas/manifest.json:data' \
+    'compat/model-intelligence/dataset.v1.json:data' \
     'benchmarks/v1/manifest.json:data' \
     'benchmarks/v1/portable-source.json:data' \
     'profiles/v1/manifest.json:data' \
@@ -2877,7 +2937,7 @@ suite_commands += re.findall(
 )
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 40
+    len(suite_commands) == len(set(suite_commands)) == 42
     and all(command in contributing for command in suite_commands)
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
@@ -2897,8 +2957,8 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The forty offline suites' "$ROOT/docs/OPERATIONS.md" \
-        && grep -Fq 'all forty offline suites' "$ROOT/CONTRIBUTING.md" \
+        && grep -Fq 'The forty-two offline suites' "$ROOT/docs/OPERATIONS.md" \
+        && grep -Fq 'all forty-two offline suites' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq '`tests/test-adoption-measurement.py` (41 offline cases)' "$ROOT/docs/REPO_MAP.md" \
@@ -2933,6 +2993,11 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'V5/V6 retains its exact legacy digest' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses the caller-resolved' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
+        && grep -Fq 'Controller-private V10 state also persists a sanitized' \
+            "$ROOT/docs/PROJECT_WORKFLOW.md" \
+        && grep -Fq '`status`, `wait`, and `result` JSON intentionally omit it' \
+            "$ROOT/docs/PROJECT_WORKFLOW.md" \
+        && grep -Fq 'Current V10 uses `dispatching`' "$ROOT/skills/agy-worker/SKILL.md" \
         && grep -Fq '| `--allow-slash-commands` |' "$ROOT/docs/USAGE.md" \
         && grep -Fq 'Leave slash expansion disabled when any prompt content comes from a repository or' \
             "$ROOT/docs/USAGE.md" \
@@ -2949,10 +3014,10 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/SKILL.md" \
         && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (334 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
-        && grep -Fq 'EXPECTED_CHECKS = 90' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (90 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'EXPECTED_CHECKS = 91' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (91 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 429 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 481 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \

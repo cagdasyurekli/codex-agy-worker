@@ -6,7 +6,7 @@ from __future__ import annotations
 def run(context: dict[str, object]) -> None:
     """Run the retained tail with the canonical suite's exact context."""
     globals().update(context)
-    def normal_standard_and_linked_worktrees_create_bound_v9_state() -> None:
+    def normal_standard_and_linked_worktrees_create_bound_v10_state() -> None:
         fixture = root / "bound-positive-controls"; fixture.mkdir()
         source_repo = fixture / "source"; source_repo.mkdir()
         linked = fixture / "linked-worktree"
@@ -37,7 +37,7 @@ def run(context: dict[str, object]) -> None:
                 MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
                 state, _state_sha = MODULE.create_state(job, "initial", resume=False)
                 persisted = json.loads((job / MODULE.STATE_NAME).read_text(encoding="utf-8"))
-                assert state["schema_version"] == persisted["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 9, label
+                assert state["schema_version"] == persisted["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 10, label
                 assert state["worktree_snapshot_algorithm"] == MODULE.CURRENT_WORKTREE_SNAPSHOT_ALGORITHM, label
                 assert state["worktree_baseline"] is not None, label
                 assert state["worktree_root_identity"] is not None, label
@@ -111,9 +111,9 @@ def run(context: dict[str, object]) -> None:
                 subprocess.run(["git", "-C", str(source_repo), "worktree", "remove", "--force", str(linked)], check=True)
             shutil.rmtree(fixture)
 
-    # Keep the established V9 dispatch-state case as the inventory owner: this
+    # Keep the established current dispatch-state case as the inventory owner: this
     # is its plumbing-alias integration branch, not a new suite count.
-    check("normal standard and linked worktrees persist a bound V9 dispatch state", normal_standard_and_linked_worktrees_create_bound_v9_state)
+    check("normal standard and linked worktrees persist a bound V10 dispatch state", normal_standard_and_linked_worktrees_create_bound_v10_state)
 
     def extracted_worktree_facade_preserves_all_signatures_and_patch_seams() -> None:
         """The split keeps the old module surface and its intentional test seams."""
@@ -606,6 +606,7 @@ def run(context: dict[str, object]) -> None:
             "continue_available": True,
         })
         state.pop("worktree_snapshot_algorithm")
+        state.pop("provider_terminal_status")
         root_identity = state.pop("worktree_root_identity")
         legacy_raw, legacy_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         loaded, _raw, loaded_sha = MODULE.load_state(job)
@@ -691,10 +692,12 @@ def run(context: dict[str, object]) -> None:
 
     check("v6 candidate readback retains its legacy digest then atomically migrates to a fresh v9 semantic binding", v6_snapshot_readback_uses_legacy_digest_and_rejects_semantic_substitution)
 
-    def v5_through_v8_status_parity_and_migration_are_exact() -> None:
-        """Legacy status is read-only; eligible writes acquire one V9 binding."""
-        for version in (5, 6, 7, 8):
-            job, state, _sha, _envelope = current_candidate_fixture(f"v{version}-migration")
+    def v5_through_v9_status_parity_and_migration_are_exact() -> None:
+        """Legacy status is read-only; eligible writes acquire one V10 binding."""
+        for version in (5, 6, 7, 8, 9):
+            job, state, _sha, _envelope = current_candidate_fixture(
+                f"v{version}-migration", selection=version == 9,
+            )
             command = json.loads((job / MODULE.COMMAND_NAME).read_text(encoding="utf-8"))
             legacy = MODULE._worktree_snapshot(command["workdir"], legacy=True)
             semantic = MODULE._worktree_snapshot(command["workdir"])
@@ -714,8 +717,10 @@ def run(context: dict[str, object]) -> None:
                 state.pop("selection_sha256"); state.pop("selection_identity")
             if version < 8:
                 state.pop("worktree_snapshot_algorithm")
-            if version < MODULE.CURRENT_STATE_SCHEMA:
+            if version < 9:
                 state.pop("worktree_root_identity")
+            if version < MODULE.CURRENT_STATE_SCHEMA:
+                state.pop("provider_terminal_status")
             _raw, legacy_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             loaded, _raw, loaded_sha = MODULE.load_state(job)
             assert loaded_sha == legacy_sha and loaded["schema_version"] == version
@@ -739,6 +744,24 @@ def run(context: dict[str, object]) -> None:
             assert queued["candidate_worktree_sha256"] == semantic["sha256"]
             assert queued["candidate_worktree_entries"] == semantic["entries"]
             assert queued["worktree_root_identity"] == MODULE._dispatch_root_identity(command["workdir"])
+            assert queued["provider_terminal_status"] == "unknown"
+
+        # A V9 state cannot acquire V10 authority from a different selection
+        # binding, even when the command, root, schemas, and worktree remain valid.
+        _job, v9_state, _sha, _envelope = current_candidate_fixture(
+            "v9-selection-drift", selection=True,
+        )
+        v9_command = json.loads((_job / MODULE.COMMAND_NAME).read_text(encoding="utf-8"))
+        v9_state["schema_version"] = 9
+        v9_state.pop("provider_terminal_status")
+        v9_state["selection_sha256"] = "0" * 64
+        MODULE.validate_state(v9_state)
+        try:
+            MODULE._upgrade_legacy_state(v9_state, v9_command)
+        except MODULE.DispatchError as exc:
+            assert str(exc) == "dispatch selection binding changed"
+        else:
+            raise AssertionError("V9 selection drift acquired V10 authority")
 
     def v1_candidate_status_is_read_only_and_all_mutations_fail_without_writes() -> None:
         """V1 result evidence remains readable but has no lifecycle authority."""
@@ -759,7 +782,7 @@ def run(context: dict[str, object]) -> None:
                     workflow=workflow, linked=workflow == "project",
                 )
                 state["schema_version"] = version
-                removed = {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS}
+                removed = {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}
                 if version == 1:
                     removed.update(MODULE.STATE_PROJECT_FIELDS)
                     removed.update({"provider_retry_after_seconds", "provider_retry_observed_epoch"})
@@ -861,6 +884,7 @@ def run(context: dict[str, object]) -> None:
             for key in {
                 *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS,
                 *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS,
+                *MODULE.STATE_V10_FIELDS,
             }:
                 state.pop(key, None)
             if version == 3:
@@ -1004,7 +1028,7 @@ def run(context: dict[str, object]) -> None:
             assert restart_res.returncode != 0
             assert (unsafe_job / MODULE.STATE_NAME).read_bytes() == raw
 
-    def v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v9() -> None:
+    def v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v10() -> None:
         """Every migratable legacy generation can prove and use its actions."""
         for version in (5, 6, 7, 8):
             job, state, _sha, _envelope = current_candidate_fixture(f"v{version}-status-positive")
@@ -1025,6 +1049,7 @@ def run(context: dict[str, object]) -> None:
             if version < 8:
                 state.pop("worktree_snapshot_algorithm")
             state.pop("worktree_root_identity")
+            state.pop("provider_terminal_status")
             old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             loaded, _raw, loaded_sha = MODULE.load_state(job)
             assert loaded_sha == old_sha
@@ -1067,29 +1092,29 @@ def run(context: dict[str, object]) -> None:
             assert current["worktree_root_identity"] == MODULE._dispatch_root_identity(command["workdir"])
 
     def legacy_read_and_mutation_authority_contracts() -> None:
-        v5_through_v8_status_parity_and_migration_are_exact()
+        v5_through_v9_status_parity_and_migration_are_exact()
         v1_candidate_status_is_read_only_and_all_mutations_fail_without_writes()
         v3_v4_migration_requires_state_command_agreement_before_any_write()
-        v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v9()
+        v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v10()
 
     if FOCUSED_CHECK == "V3/V4 migration state-command binding rejects before any write":
         check(FOCUSED_CHECK, v3_v4_migration_requires_state_command_agreement_before_any_write)
     elif FOCUSED_CHECK == "V1 legacy evidence remains result-only":
         check(FOCUSED_CHECK, v1_candidate_status_is_read_only_and_all_mutations_fail_without_writes)
     else:
-        check("legacy status separates readback from proved v5-v8 mutation authority", legacy_read_and_mutation_authority_contracts)
+        check("legacy status separates readback from proved v5-v9 mutation authority", legacy_read_and_mutation_authority_contracts)
 
-    def current_v9_candidate_inside_worktree_is_driver_only() -> None:
+    def current_v10_candidate_inside_worktree_is_driver_only() -> None:
         """Preserve current evidence without reviving provider authority.
 
         This is intentionally distinct from the V3/V4 migration fixture above
-        and the no-candidate recovery fixture below: it is one current V9 bound
+        and the no-candidate recovery fixture below: it is one current V10 bound
         candidate whose controller directory already exists inside its worktree.
         """
         job, state, _sha, _envelope = current_candidate_fixture(
-            "v9-inside-worktree", inside_worktree=True,
+            "v10-inside-worktree", inside_worktree=True,
         )
-        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 9
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 10
         state["continue_available"] = True
         before, sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         state, loaded_raw, loaded_sha = MODULE.load_state(job)
@@ -1113,7 +1138,7 @@ def run(context: dict[str, object]) -> None:
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         assert delivered.returncode == 0 and not delivered.stderr
-        assert json.loads(delivered.stdout)["summary"] == "candidate-v9-inside-worktree"
+        assert json.loads(delivered.stdout)["summary"] == "candidate-v10-inside-worktree"
         assert (job / MODULE.STATE_NAME).read_bytes() == before
 
         verification = {
@@ -1124,8 +1149,8 @@ def run(context: dict[str, object]) -> None:
             "verified_findings": 1, "unresolved_gaps": 1,
             "diff_review_complete": True,
         }
-        provider_marker = root / "v9-inside-worktree-provider-called"
-        fake_bin = root / "v9-inside-worktree-bin"; fake_bin.mkdir(mode=0o700)
+        provider_marker = root / "v10-inside-worktree-provider-called"
+        fake_bin = root / "v10-inside-worktree-bin"; fake_bin.mkdir(mode=0o700)
         fake_agy = fake_bin / "agy"
         fake_agy.write_text(
             "#!/bin/sh\nprintf called > " + shlex.quote(str(provider_marker)) + "\nexit 99\n",
@@ -1187,11 +1212,11 @@ def run(context: dict[str, object]) -> None:
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         assert final_result.returncode == 0 and not final_result.stderr
-        assert json.loads(final_result.stdout)["summary"] == "candidate-v9-inside-worktree"
+        assert json.loads(final_result.stdout)["summary"] == "candidate-v10-inside-worktree"
 
     check(
-        "current V9 inside-worktree candidate remains result-finalize only without provider mutation",
-        current_v9_candidate_inside_worktree_is_driver_only,
+        "current V10 inside-worktree candidate remains result-finalize only without provider mutation",
+        current_v10_candidate_inside_worktree_is_driver_only,
     )
 
     def independent_nonempty_snapshot_reference_preserves_v6_v7_and_v8() -> None:
@@ -1447,6 +1472,7 @@ def run(context: dict[str, object]) -> None:
         v7["schema_version"] = 7
         v7.pop("worktree_snapshot_algorithm")
         v7.pop("worktree_root_identity")
+        v7.pop("provider_terminal_status")
         assert MODULE.validate_state(v7)["schema_version"] == 7
         assert MODULE._state_worktree_snapshot(v7, command["workdir"]) == MODULE._worktree_snapshot(command["workdir"])
 
@@ -2392,3 +2418,101 @@ def run(context: dict[str, object]) -> None:
         assert not (state_dir / "verification-v2.json").exists()
 
     check("published Verification v2 examples execute from one public snapshot and bind the current candidate", verification_v2_example_and_lifecycle_help_are_copyable)
+
+    def v10_sanitized_outer_terminal_disposition_contracts() -> None:
+        """Issue #82: Sanitized outer terminal disposition and V10 migration."""
+        job, state, state_sha, _envelope = current_candidate_fixture("v10-terminal-disposition")
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 10
+        assert state["provider_terminal_status"] == "unknown"
+
+        # 1. State validation bounds on provider_terminal_status enum
+        for valid_status in ("unknown", "success", "error", "cancelled"):
+            candidate_state = dict(state)
+            candidate_state["provider_terminal_status"] = valid_status
+            MODULE.validate_state(candidate_state)
+
+        for invalid_status in ("canceled", "SUCCESS", "ERROR", "CANCELLED", None, 123, "", "other"):
+            candidate_state = dict(state)
+            candidate_state["provider_terminal_status"] = invalid_status
+            try:
+                MODULE.validate_state(candidate_state)
+            except MODULE.DispatchError:
+                pass
+            else:
+                raise AssertionError(f"validate_state accepted invalid provider_terminal_status {invalid_status!r}")
+
+        # 2. Public status does not leak provider_terminal_status
+        public = MODULE.public_status(state, state_sha, job=job)
+        assert "provider_terminal_status" not in public
+
+        # 3. Reportless terminal framing sets provider_terminal_status but never recognizes a candidate
+        schema_paths = MODULE._bound_schemas(
+            json.loads((job / MODULE.COMMAND_NAME).read_text(encoding="utf-8")), state,
+        )
+        assert schema_paths is not None
+
+        for outer_raw in ("SUCCESS", "ERROR", "CANCELLED", "CANCELED"):
+            stream_file = job / f"stream-reportless-{outer_raw.lower()}.jsonl"
+            stream_file.write_text(
+                json.dumps({"event": "init", "init": {"session_id": "s1"}}) + "\n" +
+                json.dumps({"event": "result", "result": {"status": outer_raw}}) + "\n",
+                encoding="utf-8",
+            )
+            binding, outer_status, failure_stage = MODULE._validate_terminal_envelope(
+                stream_file, job / f"envelope-reportless-{outer_raw.lower()}.json",
+                schema_paths[0], schema_paths[1],
+            )
+            assert binding is None
+            assert outer_status == ("CANCELLED" if outer_raw in {"CANCELLED", "CANCELED"} else outer_raw)
+            assert failure_stage == "missing_structured_output"
+
+        # 4. Malformed/duplicate/unparsed framing leaves outer_status None (maps to unknown)
+        malformed_stream = job / "stream-malformed.jsonl"
+        malformed_stream.write_text(
+            json.dumps({"event": "result", "result": {"status": "SUCCESS"}}) + "\n",
+            encoding="utf-8",
+        )
+        binding, outer_status, failure_stage = MODULE._validate_terminal_envelope(
+            malformed_stream, job / "envelope-malformed.json",
+            schema_paths[0], schema_paths[1],
+        )
+        assert binding is None
+        assert outer_status is None
+        assert failure_stage == "framing"
+
+        # 5. Invalid structured result leaves provider_terminal_status unknown
+        invalid_result_stream = job / "stream-invalid-result.jsonl"
+        invalid_result_stream.write_text(
+            json.dumps({"event": "init", "init": {"session_id": "s1"}}) + "\n" +
+            json.dumps({"event": "result", "result": {"status": "SUCCESS", "structured_output": {"invalid_key": 123}}}) + "\n",
+            encoding="utf-8",
+        )
+        binding, outer_status, failure_stage = MODULE._validate_terminal_envelope(
+            invalid_result_stream, job / "envelope-invalid-result.json",
+            schema_paths[0], schema_paths[1],
+        )
+        assert binding is None
+        assert failure_stage == "schema_rejection"
+
+        # 6. Action parity between V9 and V10 states, including verification-copy.
+        # Actual controller persistence is covered by the SUCCESS/ERROR/CANCELED
+        # fake-provider integration cases in the owning remediation suite.
+        candidate_state_v9 = dict(state)
+        candidate_state_v9["schema_version"] = 9
+        candidate_state_v9["candidate_recognized"] = True
+        candidate_state_v9["result_available"] = True
+        candidate_state_v9["status"] = "succeeded"
+        candidate_state_v9["driver_disposition"] = "unreviewed"
+        candidate_state_v9.pop("provider_terminal_status", None)
+        v9_actions = [item["action"] for item in MODULE.public_status(candidate_state_v9, "0" * 64, job=job)["available_actions"]]
+        assert "verification-copy" in v9_actions, f"verification-copy missing in v9 actions: {v9_actions}"
+
+        for st in ("unknown", "success", "error", "cancelled"):
+            candidate_state_v10 = dict(candidate_state_v9)
+            candidate_state_v10["schema_version"] = 10
+            candidate_state_v10["provider_terminal_status"] = st
+            v10_actions = [item["action"] for item in MODULE.public_status(candidate_state_v10, "0" * 64, job=job)["available_actions"]]
+            assert "verification-copy" in v10_actions, f"verification-copy missing in v10 actions: {v10_actions}"
+            assert v10_actions == v9_actions, f"Action mismatch for status {st}: {v10_actions} vs {v9_actions}"
+
+    check("v10 state validates terminal-status schema, framing privacy, invalid unknown, and V9 action parity", v10_sanitized_outer_terminal_disposition_contracts)

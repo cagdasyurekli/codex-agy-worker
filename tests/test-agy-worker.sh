@@ -3053,7 +3053,7 @@ state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
 for field in module.STATE_V5_FIELDS:
     state.pop(field)
-for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS}:
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS}:
     state.pop(field)
 state["schema_version"] = 3
 state["phase"] = None
@@ -3500,7 +3500,7 @@ state = module.initial_state(
     command_identity=(1, 1, os.getuid(), os.getgid(), 0o600),
     stage_sha=None, stage_identity=None,
 )
-assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 9
+assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 10
 assert state["worktree_root_identity"] is not None
 assert state["worktree_baseline"] is not None
 assert state["worktree_snapshot_algorithm"] == module.WORKTREE_SNAPSHOT_SEMANTIC_V1
@@ -4362,7 +4362,7 @@ for field in module.STATE_PROJECT_FIELDS:
     state.pop(field)
 for field in module.STATE_V5_FIELDS:
     state.pop(field)
-for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS}:
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS}:
     state.pop(field)
 state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")

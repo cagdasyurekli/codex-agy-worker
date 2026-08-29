@@ -44,6 +44,23 @@ sent. If provider reach is uncertain, state that it is unverified.
 Unknown files, architecture, or initial test commands are ordinary discovery work;
 they are not reasons to reject a useful task.
 
+### Explicit delegation-first policy
+
+Delegation-first is an opt-in coordinator policy, enabled only with literal
+`user_opt_in: true`. After instruction discovery, scope/privacy confirmation,
+disposable-worktree setup, and driver verification planning, the first substantive
+repository action goes to agy: use `explore` for investigation and `task` or
+`project` for implementation. Run `delegation-policy.sh` to evaluate that offline
+policy decision before dispatch.
+
+The evaluator cannot infer earlier work, launch agy, select or change a model or
+effort, authorize Git operations, or accept a candidate. A missing transmission
+approval, provider/preflight failure, hard stop, or exhausted cycle budget fails
+closed without silently moving the substantive task to Codex. Direct-Codex work or
+second-eye-only use must be an explicit override. Fixed agy overhead can make small
+tasks inefficient, and token observations do not by themselves prove billing,
+quota, cost, or savings.
+
 After installation, start a new Codex session and ask in natural language:
 
 > Use the agy-worker skill to add error-path tests for the parser modules under
