@@ -1300,6 +1300,24 @@ checks remain mandatory; age alone never authorizes deletion.
 **Goal:** Add a separate offline suite that lets users import explicit, sanitized, matched experiment results and learn which agy-worker usage method is most token/cost efficient per accepted solution.
 **Deliverable:** `swebench-workflow-study.sh` with exactly `prepare`, `import`, `report`, and `advise` commands. Its hash-linked artifacts use a strict matched all-cell Pareto rule against `codex-only`, closed bounded budgets and failure states, derived acceptance, and separate explicit-availability Codex/agy usage and billed/list-price observations. Advice requires one complete comparable cost basis and complete primary token observations; otherwise it emits a deterministic `no_recommendation`. The lifecycle performs no dispatch, evaluator execution, provider call, retry, routing, or authority change.
 
+### Model Intelligence v1
+
+**Status:** Implemented (GitHub issue #80).
+**Goal:** Provide offline evidence validation and deterministic Pareto frontier analysis across model/effort candidates for bounded task taxonomies.
+**Deliverable:** `model-intelligence.sh` with `validate` and `advise` subcommands, strict evidence schemas, dataset `dataset.v1.json`, distinct provenance types (`vendor`, `independent`, `local`), non-expired observations, and strict telemetry comparability (accounting, tokenizer, cost basis, currency). Expired, calibration-only, substituted, or incomparable telemetry fails closed to `no_recommendation`. Comparable candidates yield Pareto trade-off options with zero execution, dispatch, model-change, or git authority.
+
+### Delegation-First Coordinator Policy
+
+**Status:** Implemented (GitHub issue #81).
+**Goal:** Provide a deterministic, side-effect-free evaluator for explicit opt-in delegation-first coordinator policy.
+**Deliverable:** `delegation-policy.sh` with `eval` subcommand, schema `delegation-policy.schema.json`, and SKILL.md coordinator guidance. Assigns AGY as first substantive repository actor after discovery/worktree/verification setup. Missing transmission/scope approvals, hard stops, preflight failures, or budget exhaustion fail closed without silent fallback to direct Codex execution. Fixed overhead notices and token observation disclaimers are strictly enforced.
+
+### Sanitized Outer Terminal Disposition (State Schema V10 Migration)
+
+**Status:** Implemented (GitHub issue #82).
+**Goal:** State schema migration to V10 with sanitized outer terminal disposition tracking.
+**Deliverable:** `CURRENT_STATE_SCHEMA = 10` with enum `provider_terminal_status: "unknown" | "success" | "error" | "cancelled"`. Reportless terminal framing sets the sanitized enum without recognizing phantom candidate files or corrupting candidate state. V3..V9 eligible lifecycle transitions initialize `provider_terminal_status: "unknown"`; V1 remains read-only evidence.
+
 ## Approval gates
 
 Roadmap priority is not authorization. Apply these gates independently:

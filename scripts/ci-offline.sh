@@ -146,13 +146,13 @@ stage_in_shard() {
             ;;
         other-a)
             case "$stage" in
-                'working-tree diff hygiene'|'shell syntax'|'Python syntax'|'local job lifecycle suite'|'updater suite'|'repository-only version bootstrap runner'|'repository-only version initial bootstrap runner'|'fixed 1.1.12 version recovery runner'|'canonical models inventory attestation runner'|'explicit-account models capture profile builder'|'fixed 1.1.12 models capture profile builder'|'fixed 1.1.16 models capture profile builder'|'fixed 1.1.22 models capture version evidence'|'fixed 1.1.22 models capture profile builder'|'fixed 1.1.22 models capture runner'|'1.1.16 activation binding'|'1.1.22 activation binding'|'reporting suite'|'feedback triage suite'|'Codex distribution suite'|'read-only doctor suite'|'starter proof suite') return 0 ;;
+                'working-tree diff hygiene'|'shell syntax'|'Python syntax'|'local job lifecycle suite'|'updater suite'|'repository-only version bootstrap runner'|'repository-only version initial bootstrap runner'|'fixed 1.1.12 version recovery runner'|'canonical models inventory attestation runner'|'explicit-account models capture profile builder'|'fixed 1.1.12 models capture profile builder'|'fixed 1.1.16 models capture profile builder'|'fixed 1.1.22 models capture version evidence'|'fixed 1.1.22 models capture profile builder'|'fixed 1.1.22 models capture runner'|'1.1.16 activation binding'|'1.1.22 activation binding'|'reporting suite'|'feedback triage suite'|'Model Intelligence v1 suite'|'Codex distribution suite'|'read-only doctor suite'|'starter proof suite') return 0 ;;
                 *) return 1 ;;
             esac
             ;;
         other-b)
             case "$stage" in
-                'qa-gate suite'|'Evidence Receipt v1 suite'|'Evidence Report suite'|'offline benchmark suite'|'SWE-bench workflow study suite'|'persona evidence registry suite'|'data-only workload profiles suite'|'adoption measurement suite'|'local update notifier suite'|'canonical version attestation runner'|'repository-only version bootstrap runtime preflight'|'version attestation mutation harness'|'explicit-account models capture runner'|'fixed 1.1.12 models capture runner'|'fixed 1.1.16 models capture version evidence'|'fixed 1.1.16 models capture runner'|'fixed 1.1.22 models capture reprofile adapter'|'fixed 1.1.22 models capture failure classifier'|'Codex usage observation suite'|'public gate conformance suite'|'repository bytecode hygiene') return 0 ;;
+                'qa-gate suite'|'Evidence Receipt v1 suite'|'Evidence Report suite'|'offline benchmark suite'|'SWE-bench workflow study suite'|'persona evidence registry suite'|'data-only workload profiles suite'|'adoption measurement suite'|'local update notifier suite'|'canonical version attestation runner'|'repository-only version bootstrap runtime preflight'|'version attestation mutation harness'|'explicit-account models capture runner'|'fixed 1.1.12 models capture runner'|'fixed 1.1.16 models capture version evidence'|'fixed 1.1.16 models capture runner'|'fixed 1.1.22 models capture reprofile adapter'|'fixed 1.1.22 models capture failure classifier'|'Codex usage observation suite'|'delegation policy suite'|'public gate conformance suite'|'repository bytecode hygiene') return 0 ;;
                 *) return 1 ;;
             esac
             ;;
@@ -352,8 +352,16 @@ if announce 'feedback triage suite'; then
 /usr/bin/python3 -I -S -B tests/test-feedback-triage.py
 fi
 
+if announce 'Model Intelligence v1 suite'; then
+/usr/bin/python3 -I -S -B tests/test-model-intelligence.py
+fi
+
 if announce 'Codex usage observation suite'; then
 /usr/bin/python3 -I -S -B tests/test-codex-usage-report.py
+fi
+
+if announce 'delegation policy suite'; then
+/usr/bin/python3 -I -S -B tests/test-delegation-policy.py
 fi
 
 if announce 'Codex distribution suite'; then

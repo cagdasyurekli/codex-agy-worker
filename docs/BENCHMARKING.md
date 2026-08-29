@@ -105,3 +105,25 @@ for combined token metrics, and matching currency/cost-basis bindings for combin
 cost metrics. Incompatible or incomplete telemetry fails closed. The advisory keeps
 `applied`, dispatch, model-change, and effort-change authority false and never
 influences `qa-gate` acceptance.
+
+## Model Intelligence v1
+
+`model-intelligence.sh` provides offline evidence validation, Issue #78 SWE-bench study import, and deterministic Pareto
+frontier analysis across model candidates for bounded task taxonomies:
+
+```bash
+./model-intelligence.sh validate --dataset path/to/dataset.json
+./model-intelligence.sh advise --dataset path/to/dataset.json --taxonomy swe-bench-lite --reference-date 2026-08-25
+./model-intelligence.sh import-study --report path/to/report.json --plan path/to/plan.json --results path/to/imported_results.json --out path/to/dataset.json
+```
+
+Evidence records require valid HTTPS or local provenances, distinct provenance types (`vendor`,
+`independent`, `local`), non-expired observations relative to caller-provided `--reference-date`, and strict telemetry comparability
+(harness, harness version, agy version, task taxonomy, provenance, confidence, accounting, tokenizer, cost basis, currency). Expired, calibration-only, substituted,
+incomplete, or incomparable telemetry fails closed to `no_recommendation`. Comparable candidates
+yield Pareto trade-off options with zero execution, dispatch, model-change, or git authority.
+The Issue #78 importer validates the canonical plan/import/report hash chain and emits
+only a calibration provenance record. Because that chain does not attest an observed
+model, agy version, substitution result, model-level quality, latency percentiles,
+token means, cost, or confidence, those fields remain `null` and cannot participate
+in ranking.

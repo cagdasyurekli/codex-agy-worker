@@ -129,7 +129,7 @@ Each profile is data, not a driver: it cannot name a repository, path, command,
 selection, authorization, dispatch, or Git action. These offline coverage counts are
 not live-provider claims:
 
-- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 429 offline.
+- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 481 offline.
 - Canonical version-attestation runner: 165 offline; Version-attestation mutation harness: 60 offline.
 - Canonical models-inventory attestation runner: 116 offline; Explicit-account models capture runner: 84 offline.
 - Repository-only version bootstrap runner: 139 offline; Repository-only version initial-bootstrap runner: 43 offline.
@@ -139,6 +139,7 @@ not live-provider claims:
 - Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; reprofile: 88 offline.
 - Active 1.1.22 compatibility binding: 24 offline.
 - CI sharding and aggregate verifier: 79 offline; CI timing telemetry: 44 offline.
+- Model Intelligence v1: 6 offline; Delegation-first coordinator policy: 8 offline.
 
 Some conformance cleanup controls trust loaded code, the local owner, same-UID
 processes, and OS administrators. They do not establish same-user tamper-resistance or guaranteed hostile-gate cleanup; preserve a residual on identity drift instead of chasing it.

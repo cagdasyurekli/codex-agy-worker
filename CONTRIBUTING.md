@@ -36,7 +36,7 @@ requesting review:
 
 It is fail-fast, requires no network or provider call, does not intentionally inspect
 account-HOME contents, externalizes temporary bytecode, and runs the static checks plus
-all forty offline suites. Ambient local tools may still consult ordinary user
+all forty-two offline suites. Ambient local tools may still consult ordinary user
 configuration. In GitHub Actions, the suite is partitioned across four fail-closed shards
 (`dispatcher`, `dispatcher-remediation`, `other-a`, `other-b`) and validated by the required aggregate
 `test` check; lower CI wall time from parallelization does not mean lower total compute, provider usage,
@@ -86,7 +86,9 @@ stable-candidate full gate:
 /usr/bin/python3 -I -S -B tests/test-agy-1-1-22-activation.py
 ./tests/test-reporting.sh
 /usr/bin/python3 -I -S -B tests/test-feedback-triage.py
+/usr/bin/python3 -I -S -B tests/test-model-intelligence.py
 /usr/bin/python3 -I -S -B tests/test-codex-usage-report.py
+/usr/bin/python3 -I -S -B tests/test-delegation-policy.py
 ./tests/test-packaging.sh
 ./tests/test-doctor.sh
 /usr/bin/python3 -I -S -B tests/test-conformance.py
