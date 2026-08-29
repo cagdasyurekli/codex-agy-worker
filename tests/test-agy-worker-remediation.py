@@ -32,7 +32,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 90
+EXPECTED_CHECKS = 91
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 
@@ -439,7 +439,7 @@ with tempfile.TemporaryDirectory() as temporary:
         state = MODULE.initial_state(command, "initial", 1, command_sha="0" * 64, command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None, state_schema=8)
         state.update({"phase": None, "assurance": None})
         state["schema_version"] = 4
-        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS}:
+        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}:
             state.pop(key, None)
         migrated = MODULE.validate_state(state)
         assert migrated["candidate_source"] == "none"
@@ -460,7 +460,7 @@ with tempfile.TemporaryDirectory() as temporary:
         )
         original.update({"phase": None, "assurance": None})
         v3 = copy.deepcopy(original); v3["schema_version"] = 3
-        for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS}:
+        for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}:
             v3.pop(key, None)
         validated_v3 = MODULE.validate_state(v3)
         assert validated_v3["schema_version"] == 3
@@ -510,7 +510,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 "last_success_identity": list(MODULE._identity(info)),
                 "phase": "awaiting-verification", "assurance": "pending", "resume_available": False,
             })
-            for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS}:
+            for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}:
                 state.pop(key)
             MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             return job, worktree, artifact
@@ -1874,16 +1874,18 @@ with tempfile.TemporaryDirectory() as temporary:
         assert state["exit_code"] == 25 and state["candidate_source"] == "provider_error"
         assert state["result_available"] and state["driver_disposition"] == "unreviewed"
         assert state["failure_stage"] is None and state["phase"] == "awaiting-verification"
+        assert state["provider_terminal_status"] == "error"
 
     check("controller maps ERROR plus valid report to failed unreviewed exit 25", controller_preserves_outer_error_candidate)
 
     def invalid_error_and_cancelled_candidate_are_separate() -> None:
         cases = [
-            ("error-missing", "ERROR", None, 4, "failed", "invalid_envelope", "none", "missing_structured_output"),
-            ("lowercase-success", "success", report(), 4, "failed", "invalid_envelope", "none", "outer_status"),
-            ("cancelled", "CANCELED", report(), 22, "cancelled", "provider_terminal_cancelled", "provider_cancelled", None),
+            ("success-missing", "SUCCESS", None, 4, "failed", "invalid_envelope", "none", "missing_structured_output", "success"),
+            ("error-missing", "ERROR", None, 4, "failed", "invalid_envelope", "none", "missing_structured_output", "error"),
+            ("lowercase-success", "success", report(), 4, "failed", "invalid_envelope", "none", "outer_status", "unknown"),
+            ("cancelled", "CANCELED", report(), 22, "cancelled", "provider_terminal_cancelled", "provider_cancelled", None, "cancelled"),
         ]
-        for label, outer_status, candidate, expected_exit, status, reason, source_name, stage_name in cases:
+        for label, outer_status, candidate, expected_exit, status, reason, source_name, stage_name, terminal_status in cases:
             repo = root / f"{label}-repo"; repo.mkdir()
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
             job = root / f"{label}-job"; job.mkdir(mode=0o700)
@@ -1918,6 +1920,7 @@ with tempfile.TemporaryDirectory() as temporary:
             assert (state["status"], state["reason"], state["candidate_source"], state["failure_stage"]) == (
                 status, reason, source_name, stage_name,
             )
+            assert state["provider_terminal_status"] == terminal_status
             if source_name == "provider_cancelled":
                 assert state["result_available"] and not state["resume_available"] and not state["continue_available"]
             else:
@@ -2293,7 +2296,7 @@ with tempfile.TemporaryDirectory() as temporary:
             "phase": None, "assurance": None,
         })
         state["schema_version"] = 4
-        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS}:
+        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}:
             state.pop(key)
         old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         loaded, _raw, read_sha = MODULE.read_state_snapshot(job)

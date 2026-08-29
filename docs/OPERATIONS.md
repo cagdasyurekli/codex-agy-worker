@@ -32,7 +32,7 @@ same canonical fail-fast suite locally from the repository root:
 ./scripts/ci-offline.sh
 ```
 
-The forty offline suites need no agy provider call, network access, API key, or
+The forty-two offline suites need no agy provider call, network access, API key, or
 GitHub login. Ambient local tools may still consult their ordinary user
 configuration. Keep the exact summary with the commit, tree, and `git diff --check`
 evidence. On a clean tracked and untracked worktree, an optional timing report records

@@ -83,7 +83,7 @@ It is not a provider-success or acceptance claim. `extend` and `cancel` require 
 current state SHA. Eligible `resume` preserves the exact stored conversation;
 `restart` starts a fresh attempt. Neither happens automatically.
 
-Lifecycle state v9 uses these controller phases:
+Lifecycle state v10 uses these controller phases:
 
 | Phase | Meaning |
 |---|---|
@@ -126,7 +126,22 @@ compatibility fields `phase`, `next_action`, `next_action_command`, and
 
 Read public lifecycle JSON in this order: first `status` for `state_sha256`,
 `controller_phase`, `cycle`/`max_cycles`, `failure_stage`, and
-`available_actions`; then use `candidate_sha256` only when `result_available` is
+`available_actions`. `worktree_changes_present` describes current ambient dirtiness;
+`worktree_changed_since_dispatch` is the attribution-relevant signal.
+
+Controller-private V10 state also persists a sanitized
+`provider_terminal_status`: `unknown`, `success`, `error`, or `cancelled`, derived
+only from the exact attempt's structurally valid outer terminal event. The public
+`status`, `wait`, and `result` JSON intentionally omit it. It is not candidate
+acceptance, ambient provider/account health, quota, routing, model or task
+acceptance, or billing evidence. A terminal without a recognized structured report
+can retain that private enum while public `candidate_recognized` is false and
+`failure_stage` is `missing_structured_output`.
+
+Current V10 preserves every externally bound V9 transition and action decision
+atomically while adding this private diagnostic field; migration does not create new
+continuation, restart, or acceptance authority. Then use `candidate_sha256` only
+when `result_available` is
 `true`; then retrieve `result` only when its mechanically derived action is present.
 Review that bound result and build driver evidence before choosing an eligible
 `continue` or `finalize`; the controller does not choose either. If the candidate hash
