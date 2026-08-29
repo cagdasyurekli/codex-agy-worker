@@ -43,15 +43,15 @@ def check(label: str, test: Callable[[], bool] | bool) -> None:
 
 
 # 1. Shard Partition Invariants
-check("inventory has 44 ordered unique stage IDs", len(MODULE.STAGES) == 44 and len({x[0] for x in MODULE.STAGES}) == 44)
+check("inventory has 45 ordered unique stage IDs", len(MODULE.STAGES) == 45 and len({x[0] for x in MODULE.STAGES}) == 45)
 check("exactly four frozen shard IDs exist", set(MODULE.SHARDS) == {"dispatcher", "dispatcher-remediation", "other-a", "other-b"})
 
 all_shard_stages: list[str] = []
 for shard_id, stages in MODULE.SHARDS.items():
     all_shard_stages.extend(stages)
 
-check("total stage count across four shards is 44", len(all_shard_stages) == 44)
-check("all stages across shards are disjoint and unique", len(set(all_shard_stages)) == 44)
+check("total stage count across four shards is 45", len(all_shard_stages) == 45)
+check("all stages across shards are disjoint and unique", len(set(all_shard_stages)) == 45)
 check("union of shard stages equals canonical inventory stages", set(all_shard_stages) == {x[0] for x in MODULE.STAGES})
 
 canonical_order_index = {stage_id: idx for idx, (stage_id, _) in enumerate(MODULE.STAGES)}
@@ -90,7 +90,7 @@ def _shell_gate_announcements() -> list[str]:
 
 
 check(
-    "shell script announcements match canonical 44 stages exactly",
+    "shell script announcements match canonical 45 stages exactly",
     _shell_gate_announcements() == [ann for _, ann in MODULE.STAGES],
 )
 

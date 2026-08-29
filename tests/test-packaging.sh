@@ -2876,7 +2876,7 @@ suite_commands += re.findall(
 )
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 39
+    len(suite_commands) == len(set(suite_commands)) == 40
     and all(command in contributing for command in suite_commands)
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
@@ -2896,7 +2896,7 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The thirty-nine offline suites' "$ROOT/README.md" \
+        && grep -Fq 'The forty offline suites' "$ROOT/README.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-adoption-measurement.py 41-case' "$ROOT/README.md" \
@@ -2946,7 +2946,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (90 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 397 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 429 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \

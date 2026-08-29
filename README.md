@@ -123,7 +123,7 @@ text, and it hashes the Git diff plus every nontracked path—including ignored 
 before and after verification so a passing verifier cannot silently rewrite the
 candidate.
 
-The thirty-nine offline suites need no agy provider call, network access, API key, or GitHub login.
+The forty offline suites need no agy provider call, network access, API key, or GitHub login.
 
 ### GitHub Actions cost and quota fallback
 
@@ -153,7 +153,7 @@ If a private fork's quota is unavailable, run the same fail-fast offline suite l
 ./scripts/ci-offline.sh
 ```
 
-It runs the static checks and all thirty-nine offline suites without requiring a
+It runs the static checks and all forty offline suites without requiring a
 network or provider call and without intentionally inspecting account-HOME contents.
 Ambient local tools may still consult their ordinary user configuration. Keep the
 command's exact summaries together with the commit,
@@ -1743,23 +1743,9 @@ output, not its own recollection.
 
 ## SWE-bench Workflow Study v1
 
-The `swebench-workflow-study.sh` tool lets users import explicit, sanitized, matched experiment results and learn which agy-worker usage method is most token/cost efficient per accepted solution. It operates entirely offline without live provider usage.
-
-```bash
-# Prepare from an explicit sanitized plan
-./swebench-workflow-study.sh prepare --root /path/to/results --plan /path/to/plan.json
-
-# Import pre-gathered result records
-./swebench-workflow-study.sh import --root /path/to/results --records /path/to/results.jsonl
-
-# Generate the completeness report
-./swebench-workflow-study.sh report --root /path/to/results
-
-# Advise on a strict matched Pareto rule against codex-only
-./swebench-workflow-study.sh advise --root /path/to/results
-```
-
-The result root must be outside the checkout or relocated skill bundle, owned by the caller, mode `0700`, and empty at prepare time. Plan and records inputs must each be caller-owned, mode `0600`, one-link regular files; the tool opens them without following symlinks. Each command accepts only the exact prior stage and publishes one flat canonical mode-`0600` no-overwrite artifact. Plans contain closed nonempty budgets, sorted opaque task commitments, and separate Codex/agy telemetry bindings. Imports require exact bindings, a closed pre-subject failure classification, complete driver/reviewer acceptance gates, and separate token/cost observations with explicit unavailable states. `accepted_solution` is checked as a derivation, not trusted as an independent claim. Report and advice revalidate the complete hash-linked chain; the report derives all planned-task, planned-cell, and accepted-solution denominators. Advice is deterministic and recommendation-only; it evaluates strict task-paired Pareto non-regression over every planned cell and fails closed unless provider token accounting/tokenizers and cost currencies/bases are structurally comparable and complete. It publishes `applied`, dispatch, model-change, and effort-change authority as `false`; it never dispatches, evaluates, retries, routes, changes authority, runs provider code, or influences `qa-gate` acceptance.
+`swebench-workflow-study.sh` imports sanitized matched results and produces offline,
+recommendation-only Pareto evidence; it never influences `qa-gate` acceptance. See
+the [benchmarking guide](docs/BENCHMARKING.md#swe-bench-workflow-study-v1).
 
 ## Layout
 
@@ -1791,15 +1777,6 @@ scripts/version_attestation_runner.py fixed-profile snapshot version runner with
 scripts/version_bootstrap_runner.py repository-only retained-recovery bootstrap; never a recovery mode or live-account action
 scripts/version_initial_bootstrap_runner.py repository-only current-source initial bridge; never reads HOME or historical recovery evidence
 scripts/version_recovery_1_1_12_runner.py fixed 1.1.12 recovery from the exact phase-one prior; generated output is non-authorizing
-scripts/version_attestation_harness.py persistent fake-child publication/process/signal mutation harness
-scripts/models_attestation_runner.py auth-isolated snapshot models runner; not a live-account capture path
-scripts/models_capture_runner.py explicit-account capture-only models runner; never auto-invoked
-scripts/models_capture_profile.py process-inert canonical profile builder; never reads ambient account state
-scripts/models_capture_1_1_12_profile.py fixed 1.1.12 process-inert capture profile bridge
-scripts/models_capture_1_1_12_runner.py fixed 1.1.12 explicit-account capture-only bridge
-scripts/models_capture_1_1_16_version_evidence.py fixed 1.1.16 source/snapshot version-only evidence bridge
-scripts/models_capture_1_1_16_profile.py fixed 1.1.16 process-inert capture profile bridge
-scripts/models_capture_1_1_16_runner.py fixed 1.1.16 explicit-account capture-only bridge
 scripts/models_capture_1_1_22_version_evidence.py fixed 1.1.22 source/snapshot version-only evidence bridge
 scripts/models_capture_1_1_22_profile.py fixed 1.1.22 process-inert capture profile bridge
 scripts/models_capture_1_1_22_runner.py fixed 1.1.22 explicit-account capture-only bridge
@@ -1869,7 +1846,7 @@ tests/test-feedback-triage.py 26-case offline metadata-only triage suite
 tests/test-codex-usage-report.py   Codex usage observation and privacy suite
 tests/test-ci-timing.py       offline CI timing telemetry suite
 tests/test-ci-sharding.py     offline CI sharding partition/receipt/aggregate suite
-tests/test-packaging.sh       397-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       429-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite
