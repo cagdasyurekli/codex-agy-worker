@@ -134,6 +134,13 @@ else
 fi
 ```
 
+Provider children/probes and gate verifiers receive only the documented baseline
+environment. If a selected tool genuinely needs another caller variable, opt in its
+exact name with repeated `--provider-env NAME`, or use `verify-job.sh --verify-env
+NAME` for a verifier child. Verifier-only values cross the gate through a private
+pipe, not its ambient environment. Values are not stored in dispatch or receipt
+artifacts; unsafe startup, loader, schema-selector, and Git-control hooks are rejected.
+
 Exit 0 means the evidence gate accepted this exact candidate under the exercised
 scope and verifier commands. It does not merge, publish, or establish general
 correctness. Review and preserve the work before removing the worktree:
@@ -197,6 +204,7 @@ prove the worker's architecture prose or completeness.
 | `--literal-model EXACT_SLUG` | — | CLI-only unreconciled caller-owned pass-through. |
 | `--workdir DIR` | — | agy's workspace; treat all content as worker-readable and potentially transmissible. |
 | `--add-dir DIR` | — | Repeatable file-tool root inside `--workdir`; it does not narrow the worktree read boundary. |
+| `--provider-env NAME` | — | Repeatable exact-name opt-in for an additional caller variable passed to local `agy` probes and provider launches. |
 | `--persona NAME` | — | Optional bounded prompt specialization; never authorization or quality evidence. |
 | `--allow-slash-commands` | — | Expert-only opt-in for a fully caller-controlled prompt; disables the normal embedded slash-command protection. |
 | `--idle-timeout DURATION` | `AGY_WORKER_IDLE_TIMEOUT` | No valid progress deadline; default `10m`. |

@@ -1178,16 +1178,16 @@ python3 - "$TMP/ci-linear-lines-repo/repeated.txt" <<'PY'
 from pathlib import Path
 import sys
 
-Path(sys.argv[1]).write_bytes(b"same line\n" * 5_000)
+Path(sys.argv[1]).write_bytes(b"same line\n" * 6_000)
 PY
 git -C "$TMP/ci-linear-lines-repo" add repeated.txt
 git -C "$TMP/ci-linear-lines-repo" commit -qm repeated
 ci_linear_lines_head="$(git -C "$TMP/ci-linear-lines-repo" rev-parse HEAD)"
 if run_ci_check "$TMP/ci-linear-lines-repo" pull_request \
         "$ci_linear_lines_base" "$ci_linear_lines_head"; then
-    ok "five thousand repeated lines complete under the linear scanner bound"
+    ok "six thousand repeated lines complete under the linear scanner bound"
 else
-    bad "five thousand repeated lines complete under the linear scanner bound"
+    bad "six thousand repeated lines complete under the linear scanner bound"
 fi
 
 init_ci_repo "$TMP/ci-max-paths-repo"
@@ -1215,10 +1215,15 @@ fi
 if python3 - "$ROOT" <<'PY'
 import json
 from pathlib import Path
+import re
 import sys
 
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
+skill = (root / "skills/agy-worker/SKILL.md").read_text(encoding="utf-8")
+agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+agents_flat = " ".join(agents.split())
+security_reference = root / "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md"
 assert manifest["name"] == "codex-agy-worker"
 assert manifest["version"] == "0.12.0"
 assert manifest["skills"] == "./skills/"
@@ -1226,8 +1231,24 @@ assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
 assert manifest["interface"]["termsOfServiceURL"].startswith("https://")
 assert not ({"apps", "mcpServers", "hooks"} & manifest.keys())
+assert 'license: MIT' in skill
+assert f'  version: "{manifest["version"]}"' in skill
+assert 'compatibility: Requires OpenAI Codex CLI' in skill
+assert 'Claude and Claude Code hosts are not supported.' in skill
+assert 'Use when ' in re.search(r"^description: (.+)$", skill, re.M).group(1)
+assert '[Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md)' in skill
+assert security_reference.is_file() and not security_reference.is_symlink()
+reference_text = security_reference.read_text(encoding="utf-8")
+assert 'It is not a Claude or Claude Code skill.' in reference_text
+assert '`verify-job.sh --verify-env NAME`' in reference_text
+assert 'dispatch-time `agy` version, help, and model-selection' in reference_text
+assert 'diagnostics and feedback-draft generation' in reference_text
+assert 'Provider children and local `agy` interface probes' not in reference_text
+assert 'After a green full run, classify later changes before rerunning it.' in agents_flat
+assert 'do not repeat the full local suite solely to attach it to a new commit SHA' in agents_flat
+assert 'Treat the required GitHub check as the exact PR-head full gate.' in agents_flat
 PY
-then ok "Codex plugin is a skills-only package with public legal links"; else bad "Codex plugin is a skills-only package with public legal links"; fi
+then ok "Codex-only skill metadata matches the plugin version and public legal links"; else bad "Codex-only skill metadata matches the plugin version and public legal links"; fi
 
 if python3 - "$ROOT" "$TMP/marketplace-contract" <<'PY'
 import json
@@ -1282,6 +1303,8 @@ def validate(root: Path) -> None:
     require_directory(skill_root)
     require_directory(runtime_root)
     require_regular(skill_root / "SKILL.md")
+    require_directory(skill_root / "references")
+    require_regular(skill_root / "references/SECURITY_AND_COMPATIBILITY.md")
     assert [path.relative_to(root).as_posix() for path in root.rglob("SKILL.md")] == [
         "skills/agy-worker/SKILL.md"
     ]
@@ -3079,8 +3102,8 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The forty-two offline suites' "$ROOT/docs/OPERATIONS.md" \
-        && grep -Fq 'all forty-two offline suites' "$ROOT/CONTRIBUTING.md" \
+        && grep -Fq 'The forty-seven offline stages' "$ROOT/docs/OPERATIONS.md" \
+        && grep -Fq 'all forty-seven offline stages' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
         && grep -Fq '`tests/test-adoption-measurement.py` (41 offline cases)' "$ROOT/docs/REPO_MAP.md" \
@@ -3135,11 +3158,11 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/SKILL.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (334 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (337 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
         && grep -Fq 'EXPECTED_CHECKS = 92' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (92 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 482 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 486 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \

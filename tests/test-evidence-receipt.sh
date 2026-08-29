@@ -161,6 +161,20 @@ else
     bad "direct gate without evidence FD retains exact output and exit"
 fi
 
+for blocked_verify_env in AGY_WORKER_SCHEMA GIT_DIR GIT_WORK_TREE GIT_CONFIG_COUNT; do
+    blocked_target="$RECEIPTS/blocked-$blocked_verify_env.json"
+    /usr/bin/env "$blocked_verify_env=blocked" \
+        "$VERIFY" --receipt "$blocked_target" --envelope "$TMP/honest.json" \
+            --repo "$REPO" --base "$BASE" --only a.txt \
+            --verify-env "$blocked_verify_env" --verify true \
+            >/dev/null 2>&1
+    if [[ $? == 64 && ! -e "$blocked_target" ]]; then
+        ok "wrapper rejects $blocked_verify_env as verifier environment control"
+    else
+        bad "wrapper rejects $blocked_verify_env as verifier environment control"
+    fi
+done
+
 cat > "$TMP/unsupported-worker-schema.json" <<'EOF'
 {"type":"object","pattern":"worker-controlled schema must not govern receipts"}
 EOF
@@ -303,7 +317,7 @@ done
 SH
 hostile_sentinel="$TMP/hostile-startup-sentinel.txt"
 hostile_target="$RECEIPTS/hostile-startup.json"
-startup_verifier='test "$SAFE_VERIFIER_ENV" = keep; test -z "${BASH_ENV+x}"; test -z "${PYTHONPATH+x}"; test -z "${AGY_WORKER_INTERNAL_EVIDENCE_TOKEN+x}"; test -z "${AGY_WORKER_INTERNAL_PYTHON+x}"; python3 -c '\''print(1)'\'' >/dev/null; /bin/bash -c true'
+startup_verifier='test "$SAFE_VERIFIER_ENV" = keep && test -z "${BASH_ENV+x}" && test -z "${PYTHONPATH+x}" && test -z "${AGY_WORKER_INTERNAL_EVIDENCE_TOKEN+x}" && test -z "${AGY_WORKER_INTERNAL_PYTHON+x}" && python3 -c '\''print(1)'\'' >/dev/null && /bin/bash -c true'
 BASH_ENV="$TMP/hostile-bash-env.sh" \
 ENV="$TMP/hostile-bash-env.sh" \
 PYTHONPATH="$HOSTILE_PYTHON" \
@@ -315,6 +329,7 @@ HOSTILE_STARTUP_SENTINEL="$hostile_sentinel" \
 SAFE_VERIFIER_ENV=keep \
     "$VERIFY" --receipt "$hostile_target" --envelope "$TMP/honest.json" \
         --repo "$REPO" --base "$BASE" --only a.txt \
+        --verify-env SAFE_VERIFIER_ENV \
         --verify "$startup_verifier" \
         >"$TMP/hostile-startup.out" 2>"$TMP/hostile-startup.err"
 hostile_startup_rc=$?
@@ -326,6 +341,25 @@ if [[ "$hostile_startup_rc" == 0 && -f "$hostile_target" ]] \
     ok "wrapper isolates evidence from hostile Python and Bash startup controls"
 else
     bad "wrapper isolates evidence from hostile Python and Bash startup controls"
+fi
+
+complex_target="$RECEIPTS/complex-verifier-env.json"
+complex_value=$'space = value\nnext'
+complex_sha="$(printf '%s' "$complex_value" | shasum -a 256 | cut -d ' ' -f 1)"
+complex_verifier="python3 -c 'import hashlib,os,sys; assert hashlib.sha256(os.environ[\"COMPLEX_VERIFIER_ENV\"].encode()).hexdigest() == sys.argv[1]; assert \"EMPTY_VERIFIER_ENV\" in os.environ and not os.environ[\"EMPTY_VERIFIER_ENV\"]' '$complex_sha'"
+COMPLEX_VERIFIER_ENV="$complex_value" EMPTY_VERIFIER_ENV= \
+    "$VERIFY" --receipt "$complex_target" --envelope "$TMP/honest.json" \
+        --repo "$REPO" --base "$BASE" --only a.txt \
+        --verify-env COMPLEX_VERIFIER_ENV --verify-env EMPTY_VERIFIER_ENV \
+        --verify "$complex_verifier" \
+        >"$TMP/complex-verifier-env.out" 2>"$TMP/complex-verifier-env.err"
+if [[ $? == 0 && -f "$complex_target" ]] \
+        && ! grep -Fq 'space = value' "$complex_target" \
+        && ! grep -Fq 'space = value' "$TMP/complex-verifier-env.out" \
+        && ! grep -Fq 'space = value' "$TMP/complex-verifier-env.err"; then
+    ok "private verifier environment preserves complex and empty values without persistence"
+else
+    bad "private verifier environment preserves complex and empty values without persistence"
 fi
 
 UNSANITIZED_RUNTIME="$TMP/unsanitized-runtime"
@@ -698,11 +732,18 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --evidence-fd) fd="$2"; shift 2 ;;
         --evidence-token) token="$2"; shift 2 ;;
+        --verify-env-fd) verify_env_fd="$2"; shift 2 ;;
         --base) base="$2"; shift 2 ;;
         --envelope) envelope="$2"; shift 2 ;;
         *) if [[ $# -ge 2 && "$1" != --expect-edits ]]; then shift 2; else shift; fi ;;
     esac
 done
+if [[ -n "${verify_env_fd:-}" ]]; then
+    while IFS= read -r -d '' verify_env_name <&"$verify_env_fd"; do
+        IFS= read -r -d '' verify_env_value <&"$verify_env_fd" || exit 64
+        [[ "$verify_env_name" != FAKE_GATE_MODE ]] || FAKE_GATE_MODE="$verify_env_value"
+    done
+fi
 case "${FAKE_GATE_MODE:-missing}" in
     exit64) exit 64 ;;
     unknown) exit 99 ;;
@@ -731,13 +772,15 @@ for protocol_mode in missing malformed duplicate mismatch wrong-exit unknown sig
     protocol_target="$RECEIPTS/protocol-$protocol_mode.json"
     FAKE_GATE_MODE="$protocol_mode" \
         "$FAKE_RUNTIME/verify-job.sh" --receipt "$protocol_target" \
-        --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" --verify true \
+        --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
+        --verify-env FAKE_GATE_MODE --verify true \
         >/dev/null 2>&1
     if [[ $? == 70 && ! -e "$protocol_target" ]]; then ok "$protocol_mode gate protocol failure exits 70 with no receipt"; else bad "$protocol_mode gate protocol failure exits 70 with no receipt"; fi
 done
 protocol64_target="$RECEIPTS/protocol-64.json"
 FAKE_GATE_MODE=exit64 "$FAKE_RUNTIME/verify-job.sh" --receipt "$protocol64_target" \
-    --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" --verify true \
+    --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
+    --verify-env FAKE_GATE_MODE --verify true \
     >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$protocol64_target" ]]; then ok "gate preflight 64 passes through with no receipt"; else bad "gate preflight 64 passes through with no receipt"; fi
 

@@ -37,6 +37,10 @@ Keep these hard boundaries regardless of workflow:
 - Treat the entire disposable worktree as worker-readable and potentially transmissible
   to Google/Gemini. Before every provider launch, require credentials, secrets,
   user-denied paths, and unrelated private files to be absent from that worktree.
+- Provider, probe, and verifier children start with an operational allowlist. Do not
+  pass `--provider-env` or `--verify-env` without approval for each variable name and
+  its resulting provider/verifier exposure; values are not persisted, and filtering
+  is not `HOME`, `PATH`, filesystem, network, or same-user isolation.
 - Never add or recommend `--dangerously-skip-permissions` or
   `--dangerously-bypass-approvals-and-sandbox`.
 - Do not modify the user's `~/.gemini/` or `~/.codex/` configuration as a code change.
@@ -98,6 +102,18 @@ Reuse that exact-candidate result instead of repeating an unchanged full run. Ru
 `./ground-truth.sh` when agy behavior or claims are in scope. Keep suites offline and
 add positive and negative coverage for every new hard boundary.
 
+After a green full run, classify later changes before rerunning it. Executable or
+runtime bytes, trust boundaries, test runners or inventories, and upstream merges that
+touch those surfaces require affected focused checks plus a new full run. A
+documentation, public-claim, metadata, or existing-test-assertion correction that does
+not change executable behavior or the canonical suite inventory requires its owning
+focused check, diff hygiene, and incremental independent review; do not repeat the full
+local suite solely to attach it to a new commit SHA. Any focused failure or uncertainty
+about impact upgrades the change to a full run. Treat the required GitHub check as the
+exact PR-head full gate. After integrating a pinned upstream base, do not chase later
+remote drift unless it creates a conflict, fails a required check, or overlaps an
+affected surface.
+
 After material changes to commands, workflow behavior, trust boundaries, tests, or
 product claims, run the `agents-md-auditor` skill before declaring completion. Keep
 this file concise and repository-wide; put detailed lifecycle lessons in
@@ -134,7 +150,7 @@ Each profile is data, not a driver: it cannot name a repository, path, command,
 selection, authorization, dispatch, or Git action. These offline coverage counts are
 not live-provider claims:
 
-- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 482 offline.
+- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 486 offline.
 - Canonical version-attestation runner: 165 offline; Version-attestation mutation harness: 60 offline.
 - Canonical models-inventory attestation runner: 116 offline; Explicit-account models capture runner: 84 offline.
 - Repository-only version bootstrap runner: 139 offline; Repository-only version initial-bootstrap runner: 43 offline.
