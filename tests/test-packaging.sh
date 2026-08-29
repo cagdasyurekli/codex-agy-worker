@@ -1221,6 +1221,8 @@ import sys
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
 skill = (root / "skills/agy-worker/SKILL.md").read_text(encoding="utf-8")
+agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+agents_flat = " ".join(agents.split())
 security_reference = root / "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md"
 assert manifest["name"] == "codex-agy-worker"
 assert manifest["version"] == "0.11.0"
@@ -1242,6 +1244,9 @@ assert '`verify-job.sh --verify-env NAME`' in reference_text
 assert 'dispatch-time `agy` version, help, and model-selection' in reference_text
 assert 'diagnostics and feedback-draft generation' in reference_text
 assert 'Provider children and local `agy` interface probes' not in reference_text
+assert 'After a green full run, classify later changes before rerunning it.' in agents_flat
+assert 'do not repeat the full local suite solely to attach it to a new commit SHA' in agents_flat
+assert 'Treat the required GitHub check as the exact PR-head full gate.' in agents_flat
 PY
 then ok "Codex-only skill metadata matches the plugin version and public legal links"; else bad "Codex-only skill metadata matches the plugin version and public legal links"; fi
 
