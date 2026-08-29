@@ -17,14 +17,20 @@ configuration.
 
 When a user explicitly dispatches a job, `agy-worker.sh` passes the task prompt to the
 locally installed Antigravity CLI (`agy`). `agy` is an external tool backed by
-Google/Gemini services. The task text and repository content that the worker reads
-from driver-approved roots can therefore be transmitted to and processed by that
-external service under its own terms and privacy policy.
+Google/Gemini services. Treat the entire disposable worktree passed as `--workdir` as
+worker-readable and potentially transmissible to that external service under its own
+terms and privacy policy, even when the task requests edits to only a few paths.
 
-The skill requires the driver to identify the repository and allowed paths and obtain
-explicit approval for that transmission before the first dispatch unless the user
-already approved that exact scope. Do not put credentials, private keys, regulated
-data, or unrelated files in a prompt or an allowed root.
+The skill requires explicit approval for that whole-worktree transmission before the
+first dispatch unless it was already approved. A narrower approval is valid only when
+the worktree contains only approved content. Prompt denylist instructions describe
+requested writes, while `qa-gate --only` constrains candidate changed paths after
+dispatch. `--allow` merely exempts matching undeclared artifacts from rejection; it
+does not narrow reads or writes. None prevent reads or transmission, and `--add-dir`
+does not narrow the `--workdir` read boundary. Before every initial, resumed, continued, or restarted
+provider attempt, credentials, secrets, private keys, regulated or user-denied data,
+and unrelated private files must be absent from the entire worktree. Telling the
+worker not to read a present file is not a privacy control.
 
 The project does not automatically submit GitHub issues, push code, merge branches,
 or publish releases. Those are separate actions with separate approval boundaries.

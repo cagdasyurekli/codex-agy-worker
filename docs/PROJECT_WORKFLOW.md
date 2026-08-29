@@ -11,8 +11,10 @@ For the public synthetic gate contract, read [QA gate conformance v1](CONFORMANC
 
 ## Lifecycle at a glance
 
-1. Capture an immutable base commit and create an isolated worktree.
-2. Dispatch only the approved task and repository/path scope.
+1. Capture an immutable base commit and create an isolated worktree whose entire
+   content is approved as potentially provider-readable and transmissible.
+2. Dispatch only the approved task; requested paths constrain writes and candidate
+   acceptance, not provider reads.
 3. Retrieve the bound candidate and inspect its Git diff without trusting the worker
    report or executing any worker-reported command.
 4. Run writable build and test commands in a separate verification copy.

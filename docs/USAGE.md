@@ -11,11 +11,14 @@ does not authorize provider dispatch or repository transmission.
 ## Before the first provider dispatch
 
 agy is backed by Google/Gemini services. Before the first dispatch for a repository,
-Codex must identify the repository/path scope and obtain explicit approval to send
-the task and worker-readable repository content through agy to Google/Gemini, unless
-that exact transmission was already approved. Keep credentials, private keys,
-unrelated files, raw worker logs, controller state, and user-denied paths out of
-scope. Read [PRIVACY.md](../PRIVACY.md) before use.
+Codex must obtain explicit approval to send the task and the entire disposable
+worktree through agy to Google/Gemini unless that exact transmission was already
+approved. A narrower approval is valid only when the worktree contains only approved
+content. Before every initial `run`/`start`, `resume`, `continue`, or `restart`, ensure
+credentials, secrets, private keys, unrelated private files, raw worker logs,
+controller state, and user-denied paths are absent from the entire worktree. Prompt
+instructions not to read a present file are not a privacy control. Read
+[PRIVACY.md](../PRIVACY.md) before use.
 
 Before every provider-launch attempt—initial `run`/`start`, `resume`, `continue`, and
 `restart`—Codex must tell the user in one or two concise sentences:
@@ -84,14 +87,16 @@ persona, or every verification command before starting.
    can reach the approved target. Let the worker edit with file tools; Codex owns
    every repository command.
 2. **Use absolute paths and `--add-dir`.** Name the absolute target in the task and
-   pass the same bounded root with `--workdir` and `--add-dir`. Using only one can
-   send the worker to the wrong place.
+   pass the same root with `--workdir` and `--add-dir`. Using only one can send the
+   worker to the wrong place. `--add-dir` does not narrow the `--workdir` read
+   boundary: all worktree content remains potentially readable and transmissible.
 
 ## Manual bounded task example
 
 This lower-level example preserves accepted work on a branch. Before running it,
-emit the mandatory provider notice and obtain exact transmission approval. Keep the
-pipeline checkout and target explicit. The selected `bulk-test-writer` persona is
+emit the mandatory provider notice and obtain whole-worktree transmission approval.
+Confirm that the worktree contains no secrets, user-denied paths, or unrelated private
+files. Keep the pipeline checkout and target explicit. The selected `bulk-test-writer` persona is
 experimental: it has been exercised on a real task but has not produced an accepted
 real delivery. Its inclusion here is not a quality claim.
 
@@ -197,8 +202,8 @@ prove the worker's architecture prose or completeness.
 | `--model EXACT_MODEL` | `AGY_WORKER_MODEL` | Reviewed exact slug or adjustable base used with effort. |
 | `--effort low|medium|high` | `AGY_WORKER_EFFORT` | Requires an adjustable base and resolves to one exact slug. |
 | `--literal-model EXACT_SLUG` | — | CLI-only unreconciled caller-owned pass-through. |
-| `--workdir DIR` | — | agy's workspace. |
-| `--add-dir DIR` | — | Repeatable file-tool root; must resolve inside `--workdir`. |
+| `--workdir DIR` | — | agy's workspace; treat all content as worker-readable and potentially transmissible. |
+| `--add-dir DIR` | — | Repeatable file-tool root inside `--workdir`; it does not narrow the worktree read boundary. |
 | `--provider-env NAME` | — | Repeatable exact-name opt-in for an additional caller variable passed to local `agy` probes and provider launches. |
 | `--persona NAME` | — | Optional bounded prompt specialization; never authorization or quality evidence. |
 | `--allow-slash-commands` | — | Expert-only opt-in for a fully caller-controlled prompt; disables the normal embedded slash-command protection. |
@@ -304,9 +309,12 @@ For the underlying acceptance model, read
 
 Stop before dispatch, continuation, or external action when:
 
-- exact provider-transmission approval is absent;
-- a path leaves the approved worktree, enters `.git`, exposes a credential, follows a
-  symlink escape, or enters a user-denied scope;
+- whole-worktree provider-transmission approval is absent, or a narrower approval does
+  not match the worktree's complete contents;
+- a credential, secret, private key, unrelated private file, or user-denied path is
+  present anywhere in the worktree before a provider launch;
+- a requested write path leaves the approved worktree, enters `.git`, follows a
+  symlink escape, or violates the task's write policy;
 - a dangerous permission/approval bypass would be required; or
 - commit, push, PR, publication, issue submission, installation, or an update lacks
   its separately required approval.
