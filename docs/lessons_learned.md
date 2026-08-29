@@ -34,6 +34,14 @@ verification so a passing verifier cannot rewrite it. Use a branch-backed dispos
 worktree so rejected changes are isolated and accepted changes are not destroyed by
 cleanup.
 
+Resolve-undo metadata in the Git index (`REUC`) leaves the worktree state outside
+semantic snapshot guarantees. When observed immediately before provider launch, the
+controller fails closed with the bounded reason `resolve_undo_present`, exit code 20,
+and `failure_stage=binding_failure` without launching a provider process, exposing
+paths/OIDs/counts, or mutating the index. The controller never clears index metadata;
+explicit recovery via `git update-index --clear-resolve-undo` is owner-managed for
+a disposable worktree.
+
 ## Progress renews only an idle lease
 
 Progress is evidence that a locally supervised stream is still moving, not evidence

@@ -99,7 +99,7 @@ REASONS = {
     "permission_required", "empty_output", "invalid_envelope",
     "output_oversized", "interrupted", "provider_quota_exhausted",
     "provider_terminal_error", "provider_terminal_cancelled",
-    "selection_preflight_failed",
+    "selection_preflight_failed", "resolve_undo_present",
 }
 EXIT_BY_REASON = {
     "empty_output": 3,
@@ -111,7 +111,7 @@ EXIT_BY_REASON = {
     "provider_timeout": 17,
     "authentication_failed": 18,
     "provider_unavailable": 19,
-    "status_unavailable": 20,
+    "status_unavailable": 20, "resolve_undo_present": 20,
     "resume_failed": 21,
     "cancelled": 22,
     "output_oversized": 23,
@@ -156,6 +156,8 @@ class SelectionPreflightError(DispatchError):
 class WorktreeBaselineError(DispatchError):
     """The queued worktree baseline is unavailable or no longer exact."""
 
+class ResolveUndoPresentError(WorktreeBaselineError):
+    """A valid, non-empty REUC observation is present in the worktree index."""
 
 _selection_spec = importlib.util.spec_from_file_location(
     "agy_dispatch_model_selection", Path(__file__).with_name("model_selection.py"),
@@ -1009,6 +1011,11 @@ def initial_state(
     now = time.time()
     workflow = command.get("workflow", "legacy")
     max_cycles = command.get("max_cycles", 1)
+    try:
+        worktree_baseline = _worktree_snapshot(
+            command["workdir"], legacy=state_schema == 6, explain_unsupported=explain_worktree_rejection)
+    except ResolveUndoPresentError:
+        worktree_baseline = None
     state = {
         "schema_version": state_schema,
         "kind": "agy-worker-dispatch-state",
@@ -1083,10 +1090,7 @@ def initial_state(
         # recommendation; public aliases are derived at read time.
         "next_action": "none",
         "next_action_command": None,
-        "worktree_baseline": _worktree_snapshot(
-            command["workdir"], legacy=state_schema == 6,
-            explain_unsupported=explain_worktree_rejection,
-        ),
+        "worktree_baseline": worktree_baseline,
         "provider_schema_sha256": None if schema_bindings is None else schema_bindings["provider_schema_sha256"],
         "provider_schema_identity": None if schema_bindings is None else schema_bindings["provider_schema_identity"],
         "canonical_schema_sha256": None if schema_bindings is None else schema_bindings["canonical_schema_sha256"],
@@ -2443,9 +2447,10 @@ def _worktree_snapshot(
             "_worktree_snapshot", workdir, legacy=legacy,
             explain_unsupported=explain_unsupported,
         )
+    except _WORKTREE_HELPER._ResolveUndoPresentError as exc:
+        raise ResolveUndoPresentError(str(exc)) from None
     except _WORKTREE_HELPER._UnsupportedWorktreeError as exc:
         raise WorktreeBaselineError(str(exc)) from None
-
 
 _WORKTREE_FACADE_DEFAULTS = {
     name: globals()[name] for name in _WORKTREE_HELPER._IMPLEMENTATION_FUNCTIONS
@@ -2936,12 +2941,13 @@ def _bound_legacy_unknown_result(job: Path, state: dict[str, Any]) -> bytes:
     _bound_lifecycle_inputs(bound_job, state, command, read_legacy=True)
     return raw
 
-
 def _bound_worktree_baseline(state: dict[str, Any], command: dict[str, Any]) -> None:
     """Require the queued worktree fact set immediately before provider launch."""
     expected = state["worktree_baseline"]
     current = _state_worktree_snapshot(state, command["workdir"])
     if expected is None or current is None:
+        if state.get("schema_version", CURRENT_STATE_SCHEMA) >= 7:
+            _worktree_snapshot(command["workdir"], explain_unsupported=True)
         raise WorktreeBaselineError("queued worktree baseline is unavailable")
     if (
         current["sha256"] != expected["sha256"]
@@ -3637,8 +3643,8 @@ def controller(job: Path, ownership_fd: int) -> int:
                 reason = "selection_preflight_failed"
                 failure_stage = "selection_preflight"
                 returncode = EXIT_BY_REASON[reason]
-            except WorktreeBaselineError:
-                reason = "status_unavailable"
+            except WorktreeBaselineError as exc:
+                reason = "resolve_undo_present" if isinstance(exc, ResolveUndoPresentError) else "status_unavailable"
                 failure_stage = "binding_failure"
                 returncode = EXIT_BY_REASON[reason]
             except DispatchError:
