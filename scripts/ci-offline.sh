@@ -180,7 +180,7 @@ announce() {
 }
 
 if announce 'working-tree diff hygiene'; then
-git diff --check
+bash "$root/scripts/ci-worktree-check.sh"
 fi
 
 if announce 'shell syntax'; then
