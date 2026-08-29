@@ -39,6 +39,18 @@ TOKEN_FIELDS = ("input", "cached_input", "fresh_input", "cache_write", "output",
 TOKEN_CORE_FIELDS = ("input", "cached_input", "fresh_input", "output", "reasoning_output")
 MANDATORY_ACCEPTANCE_FIELDS = ("evaluator_resolved", "clean_driver_gate", "independent_diff_acceptance", "exact_bindings_verified", "accepted_solution")
 BUDGET_FIELDS = ("max_tasks", "max_repairs_per_cell", "max_wall_time_seconds_per_cell", "max_codex_tokens_per_cell", "max_agy_tokens_per_cell", "max_observed_billed_cost_per_cell", "max_version_bound_list_price_cost_per_cell")
+TELEMETRY_PARTIES = ("codex", "agy")
+TELEMETRY_BINDING_FIELDS = ("accounting", "tokenizer", "currency", "price_source")
+PLAN_STRING_FIELDS = ("dataset_revision", "evaluator_revision", "permissions_policy", "network_policy", "codex_model", "codex_effort", "agy_model", "agy_effort")
+MAX_TASKS = 10_000
+MAX_CELLS = 50_000
+MAX_REPAIRS = 1_000_000
+MAX_WALL_TIME = 1_000_000_000.0
+MAX_TOKENS = 1_000_000_000_000
+MAX_COST = 1_000_000_000.0
+MAX_INTEGER = 1_000_000_000_000_000
+MAX_FLOAT = 1e15
+
 SAFE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:+-]{0,99}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 FORBIDDEN = re.compile(
@@ -66,7 +78,7 @@ def parse_json_bytes(payload: bytes, label: str) -> Any:
         raise ValidationFailure(f"{label} is empty or oversized")
     try:
         return json.loads(payload.decode("utf-8"),object_pairs_hook=reject_duplicates)
-    except (UnicodeDecodeError,json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError,ValueError,ValidationFailure) as exc:
         raise ValidationFailure(f"{label} is not valid unique-key UTF-8 JSON") from exc
 
 def schema_type_matches(value: Any, expected: str) -> bool:
@@ -95,7 +107,11 @@ def validate_schema(value: Any, schema: dict[str,Any], location: str = "$") -> N
         if len(value)<schema.get("minLength",0) or len(value)>schema.get("maxLength",len(value)): raise ValidationFailure(f"{location} has invalid length")
         pattern=schema.get("pattern")
         if pattern is not None and re.search(pattern,value) is None: raise ValidationFailure(f"{location} does not match its pattern")
-    if type(value) in (int,float):
+    if type(value) in (int,float) and not isinstance(value,bool):
+        try:
+            f=float(value)
+            if not math.isfinite(f): raise ValidationFailure(f"{location} must be finite")
+        except OverflowError: raise ValidationFailure(f"{location} is oversized")
         if value<schema.get("minimum",value) or value>schema.get("maximum",value): raise ValidationFailure(f"{location} is outside its range")
     if isinstance(value,list):
         if len(value)<schema.get("minItems",0) or len(value)>schema.get("maxItems",len(value)): raise ValidationFailure(f"{location} has invalid item count")
@@ -116,10 +132,25 @@ def fail(message: str, code: str = "invalid_input") -> None:
 def sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
-def number(value: Any, label: str, integer: bool = False) -> float | int:
-    good = isinstance(value, int) if integer else isinstance(value, (int, float))
-    if not good or isinstance(value, bool) or not math.isfinite(float(value)) or value < 0:
-        fail(f"{label} must be finite and non-negative")
+def number(value: Any, label: str, integer: bool = False, maximum: float | int | None = None) -> float | int:
+    if isinstance(value, bool):
+        fail(f"{label} must be a number, not boolean", "numeric_validation")
+    if integer:
+        if not isinstance(value, int) or isinstance(value, bool):
+            fail(f"{label} must be an integer", "numeric_validation")
+    else:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            fail(f"{label} must be finite and non-negative", "numeric_validation")
+    try:
+        f = float(value)
+    except (OverflowError, ValueError):
+        fail(f"{label} is oversized or non-convertible", "numeric_validation")
+    if not math.isfinite(f) or f < 0:
+        fail(f"{label} must be finite and non-negative", "finite_value")
+    if integer and value > (maximum if maximum is not None else MAX_INTEGER):
+        fail(f"{label} exceeds maximum integer bound", "numeric_validation")
+    if not integer and f > (maximum if maximum is not None else MAX_FLOAT):
+        fail(f"{label} exceeds maximum float bound", "numeric_validation")
     return value
 
 def safe(value: Any, label: str, is_digest: bool = False, code: str = "privacy") -> None:
@@ -273,6 +304,14 @@ def validate_plan(plan: Any, require_binding: bool = True) -> dict[str,Any]:
         fail("plan tasks must be unique", "plan_tasks")
     if tasks!=sorted(tasks):
         fail("plan tasks must use deterministic order", "plan_ordering")
+    budgets=plan.get("budgets")
+    if not isinstance(budgets,dict) or set(budgets)!=set(BUDGET_FIELDS):
+        fail("plan budgets must contain the exact closed fields", "plan_schema")
+    for field in BUDGET_FIELDS:
+        is_int = field in {"max_tasks","max_repairs_per_cell","max_codex_tokens_per_cell","max_agy_tokens_per_cell"}
+        max_bound = MAX_TASKS if field=="max_tasks" else (MAX_REPAIRS if field=="max_repairs_per_cell" else (MAX_TOKENS if "tokens" in field else MAX_COST))
+        number(budgets[field],f"plan budget {field}",integer=is_int,maximum=max_bound)
+    if budgets["max_tasks"]==0 or len(tasks)>budgets["max_tasks"]: fail("plan task budget is empty or exceeded")
     schema_value=dict(plan); schema_value.pop("plan_content_sha256",None)
     try: validate_schema(schema_value,load_schema(PLAN_SCHEMA))
     except ValidationFailure: fail("plan does not match the closed schema", "plan_schema")
@@ -283,17 +322,22 @@ def validate_plan(plan: Any, require_binding: bool = True) -> dict[str,Any]:
         if binding!=sha(canonical_bytes(content)): fail("plan content binding drifted", "plan_binding")
     elif binding is not None:
         fail("input plan must not seed a derived content binding", "plan_binding")
-    for field in ("dataset_revision","evaluator_revision","permissions_policy","network_policy","codex_model","codex_effort","agy_model","agy_effort"):
+    for field in PLAN_STRING_FIELDS:
         safe(plan[field],f"plan.{field}",code="plan_privacy")
+    bindings=plan.get("telemetry_bindings")
+    if not isinstance(bindings,dict) or set(bindings)!=set(TELEMETRY_PARTIES):
+        fail("plan telemetry bindings must contain exact Codex and agy records", "plan_schema")
+    for party in TELEMETRY_PARTIES:
+        binding=bindings[party]
+        if not isinstance(binding,dict) or set(binding)!=set(TELEMETRY_BINDING_FIELDS):
+            fail(f"plan {party} telemetry binding has an invalid shape", "plan_schema")
+        for field in TELEMETRY_BINDING_FIELDS:
+            safe(binding[field],f"plan.telemetry_bindings.{party}.{field}",code="plan_privacy")
     for field in ("repository_base","repository_image"):
         safe(plan[field],f"plan.{field}",True,"plan_binding")
     safe(plan["frozen_prompt_digest"],"plan.frozen_prompt_digest",True,"plan_binding")
     if tuple(plan["arms"])!=ARMS or plan["ordering"]!="task_then_arm":
         fail("plan ordering or arms changed", "plan_arms")
-    budgets=plan["budgets"]
-    if set(budgets)!=set(BUDGET_FIELDS): fail("plan budgets must contain the exact closed fields")
-    for field in BUDGET_FIELDS: number(budgets[field],f"plan budget {field}",field in {"max_tasks","max_repairs_per_cell"})
-    if budgets["max_tasks"]==0 or len(tasks)>budgets["max_tasks"]: fail("plan task budget is empty or exceeded")
     return plan
 
 def usage(value: Any,label: str)->tuple[int|None,bool]:
@@ -307,9 +351,9 @@ def usage(value: Any,label: str)->tuple[int|None,bool]:
             fail(f"{label}.cache_write cannot exist without core counters", "telemetry_availability")
         return None,False
     for k in TOKEN_CORE_FIELDS:
-        number(value[k],f"{label}.{k}",True)
+        number(value[k],f"{label}.{k}",integer=True,maximum=MAX_TOKENS)
     if value["cache_write"] is not None:
-        number(value["cache_write"],f"{label}.cache_write",True)
+        number(value["cache_write"],f"{label}.cache_write",integer=True,maximum=MAX_TOKENS)
     if value["input"]!=value["cached_input"]+value["fresh_input"]:
         fail(f"{label}.input must equal cached_input plus fresh_input", "telemetry_arithmetic")
     if value["reasoning_output"]>value["output"]:
@@ -321,9 +365,23 @@ def usage(value: Any,label: str)->tuple[int|None,bool]:
 def cost(value: Any,label: str)->None:
     if not isinstance(value,dict) or set(value)!={"observed_billed","version_bound_list_price"}: fail(f"{label} has invalid fields")
     for k in value:
-        if value[k] is not None: number(value[k],f"{label}.{k}")
+        if value[k] is not None: number(value[k],f"{label}.{k}",integer=False,maximum=MAX_COST)
 
-def validate_cell(cell: Any,budgets: dict[str,Any])->dict[str,Any]:
+def token_bindings_comparable(plan:dict[str,Any])->bool:
+    bindings=plan["telemetry_bindings"]
+    return all(
+        bindings["codex"][field]==bindings["agy"][field]
+        for field in ("accounting","tokenizer")
+    )
+
+def cost_bindings_comparable(plan:dict[str,Any],basis:str)->bool:
+    bindings=plan["telemetry_bindings"]
+    if bindings["codex"]["currency"]!=bindings["agy"]["currency"]:
+        return False
+    return basis=="observed_billed" or bindings["codex"]["price_source"]==bindings["agy"]["price_source"]
+
+def validate_cell(cell: Any,plan:dict[str,Any])->dict[str,Any]:
+    budgets=plan["budgets"]
     required={"arm","failure_class","evaluator_resolved","clean_driver_gate","independent_diff_acceptance","exact_bindings_verified","accepted_solution","repair_count","wall_time_seconds","codex_usage","codex_cost","agy_usage","agy_cost"}
     if not isinstance(cell,dict) or set(cell)!=required: fail("study cell does not match the closed shape", "cell_schema")
     if cell["arm"] not in ARMS or cell["failure_class"] not in FAILURES: fail("unknown arm or failure classification", "cell_classification")
@@ -332,12 +390,12 @@ def validate_cell(cell: Any,budgets: dict[str,Any])->dict[str,Any]:
     accepted=cell["failure_class"]=="none" and all(cell[k] for k in gates)
     if cell["accepted_solution"] is not accepted:
         fail("accepted_solution is not derived from every mandatory gate", "acceptance_derivation")
-    number(cell["repair_count"],"repair_count",True); number(cell["wall_time_seconds"],"wall_time_seconds")
-    if cell["repair_count"]>budgets["max_repairs_per_cell"] or cell["wall_time_seconds"]>budgets["max_wall_time_seconds_per_cell"]: fail("cell exceeds repair or time budget")
+    number(cell["repair_count"],"repair_count",integer=True,maximum=budgets["max_repairs_per_cell"])
+    number(cell["wall_time_seconds"],"wall_time_seconds",integer=False,maximum=budgets["max_wall_time_seconds_per_cell"])
     ctotal,cok=usage(cell["codex_usage"],"Codex usage"); atotal,aok=usage(cell["agy_usage"],"agy usage")
     cost(cell["codex_cost"],"Codex cost"); cost(cell["agy_cost"],"agy cost")
-    if ctotal is not None and ctotal>budgets["max_codex_tokens_per_cell"]: fail("Codex token budget exceeded")
-    if atotal is not None and atotal>budgets["max_agy_tokens_per_cell"]: fail("agy token budget exceeded")
+    if ctotal is not None and ctotal>budgets["max_codex_tokens_per_cell"]: fail("Codex token budget exceeded", "token_budget")
+    if atotal is not None and atotal>budgets["max_agy_tokens_per_cell"]: fail("agy token budget exceeded", "token_budget")
     for party in ("codex","agy"):
         for field,budget in (("observed_billed","max_observed_billed_cost_per_cell"),("version_bound_list_price","max_version_bound_list_price_cost_per_cell")):
             value=cell[f"{party}_cost"][field]
@@ -345,7 +403,7 @@ def validate_cell(cell: Any,budgets: dict[str,Any])->dict[str,Any]:
     if cell["arm"]!="codex-only":
         for field,budget in (("observed_billed","max_observed_billed_cost_per_cell"),("version_bound_list_price","max_version_bound_list_price_cost_per_cell")):
             codex_value=cell["codex_cost"][field]; agy_value=cell["agy_cost"][field]
-            if codex_value is not None and agy_value is not None and codex_value+agy_value>budgets[budget]:
+            if cost_bindings_comparable(plan,field) and codex_value is not None and agy_value is not None and codex_value+agy_value>budgets[budget]:
                 fail("combined per-cell cost budget exceeded", "cost_budget")
     if cell["arm"]=="codex-only":
         if not aok or any(cell["agy_usage"][k] not in (0,None) for k in TOKEN_FIELDS) or any(v not in (0,None) for v in cell["agy_cost"].values()):
@@ -365,7 +423,7 @@ def validate_records(records: Any,plan: dict[str,Any])->list[dict[str,Any]]:
         if not isinstance(record["cells"],list) or len(record["cells"])!=len(ARMS): fail("task record must cover every arm", "arm_coverage")
         by_arm={}
         for item in record["cells"]:
-            cell=validate_cell(item,plan["budgets"])
+            cell=validate_cell(item,plan)
             if cell["arm"] in by_arm: fail("duplicate arm", "arm_coverage")
             by_arm[cell["arm"]]=cell
         if set(by_arm)!=set(ARMS): fail("task record must cover every arm", "arm_coverage")
@@ -441,13 +499,17 @@ def do_report(args: argparse.Namespace)->None:
         validate_report(report,plan,plan_raw,imported,imported_raw); publish(fd,"report.json",report); print("Generated study report")
     finally: os.close(fd)
 
-def total_usage(cell:dict[str,Any])->int|None:
+def total_usage(plan:dict[str,Any],cell:dict[str,Any])->int|None:
+    if not token_bindings_comparable(plan):
+        return None
     codex,cok=usage(cell["codex_usage"],"Codex usage"); agy,aok=usage(cell["agy_usage"],"agy usage")
     return int(codex or 0)+int(agy or 0) if cok and aok else None
 
-def selected_cost_basis(records:list[dict[str,Any]])->str|None:
+def selected_cost_basis(plan:dict[str,Any],records:list[dict[str,Any]])->str|None:
     """Choose one like-for-like basis for every planned cell, or none."""
     for basis in ("observed_billed","version_bound_list_price"):
+        if not cost_bindings_comparable(plan,basis):
+            continue
         complete=True
         for record in records:
             for cell in record["cells"]:
@@ -459,9 +521,11 @@ def selected_cost_basis(records:list[dict[str,Any]])->str|None:
             return basis
     return None
 
-def comparable_cost(base:dict[str,Any],candidate:dict[str,Any],basis:str)->tuple[float,float]:
+def comparable_cost(plan:dict[str,Any],base:dict[str,Any],candidate:dict[str,Any],basis:str)->tuple[float,float]|None:
     # The basis is selected once across every cell; billed and modeled values
     # can therefore never be mixed within an advisory.
+    if not cost_bindings_comparable(plan,basis):
+        return None
     return float(base["codex_cost"][basis]),float(candidate["codex_cost"][basis]+candidate["agy_cost"][basis])
 
 def complete_primary_telemetry(records:list[dict[str,Any]])->bool:
@@ -484,31 +548,70 @@ def do_advise(args: argparse.Namespace)->None:
             or any(cell[field] is not True for field in MANDATORY_ACCEPTANCE_FIELDS)
             for cell in every_cell
         )
+        bindings_token_comparable=token_bindings_comparable(plan)
+        bindings_cost_comparable=cost_bindings_comparable(plan,"observed_billed") or cost_bindings_comparable(plan,"version_bound_list_price")
         telemetry_complete=complete_primary_telemetry(records)
-        cost_basis=selected_cost_basis(records)
+        cost_basis=selected_cost_basis(plan,records)
         dominant=[]
-        if len(records)>=3 and accepted and not hard_stop and telemetry_complete and cost_basis is not None:
+        if len(records)>=3 and accepted and not hard_stop and bindings_token_comparable and bindings_cost_comparable and telemetry_complete and cost_basis is not None:
             for arm in ARMS[1:]:
-                valid=True; improvement=False; base_tokens=0; savings=0
+                valid=True; token_improved=False; cost_improved=False
+                base_tokens=0; candidate_tokens=0
+                base_cost=0.0; candidate_cost=0.0
                 for record in records:
                     cells={cell["arm"]:cell for cell in record["cells"]}; base= cells[ARMS[0]]; candidate=cells[arm]
                     if not base["accepted_solution"] or not candidate["accepted_solution"]: valid=False; break
-                    bt=total_usage(base); ct=total_usage(candidate); costs=comparable_cost(base,candidate,cost_basis)
-                    if bt is None or ct is None: valid=False; break
-                    metrics=((ct,bt),(candidate["repair_count"],base["repair_count"]),(candidate["wall_time_seconds"],base["wall_time_seconds"]),(costs[1],costs[0]))
-                    if any(c>b for c,b in metrics): valid=False; break
-                    improvement=improvement or any(c<b for c,b in metrics); base_tokens+=bt; savings+=bt-ct
-                if valid and improvement and base_tokens>0: dominant.append((arm,savings/base_tokens))
-        recommendation="no_recommendation"; efficiency=None
+                    bt=total_usage(plan,base); ct=total_usage(plan,candidate); costs=comparable_cost(plan,base,candidate,cost_basis)
+                    if bt is None or ct is None or costs is None: valid=False; break
+                    # Guardrails: non-regression across all four dimensions
+                    if ct>bt: valid=False; break
+                    if candidate["repair_count"]>base["repair_count"]: valid=False; break
+                    if candidate["wall_time_seconds"]>base["wall_time_seconds"]: valid=False; break
+                    if costs[1]>costs[0]: valid=False; break
+                    if ct<bt: token_improved=True
+                    if costs[1]<costs[0]: cost_improved=True
+                    base_tokens+=bt; candidate_tokens+=ct
+                    base_cost+=costs[0]; candidate_cost+=costs[1]
+                # Qualification: candidate must strictly improve on comparable tokens or cost.
+                # Repair count and wall time are guardrails only.
+                if valid and (token_improved or cost_improved):
+                    token_eff=(base_tokens-candidate_tokens)/base_tokens if base_tokens>0 else 0.0
+                    cost_eff=(base_cost-candidate_cost)/base_cost if base_cost>0 else 0.0
+                    dominant.append((arm,token_eff,cost_eff))
+        recommendation="no_recommendation"; token_efficiency=None; cost_efficiency=None; advisory_cost_basis=cost_basis
         if len(records)<3: reason="calibration-only"
         elif accepted==0: reason="zero-accepted-solutions"
         elif hard_stop: reason="hard-stop"
+        elif not bindings_token_comparable: reason="incomparable-token"
+        elif not bindings_cost_comparable: reason="incomparable-cost"
         elif not telemetry_complete: reason="incomplete-telemetry"
         elif cost_basis is None: reason="incomparable-cost"
-        elif len(dominant)==1: recommendation,efficiency=dominant[0]; reason="pareto-dominant"
+        elif len(dominant)==1:
+            recommendation,token_efficiency,cost_efficiency=dominant[0]
+            reason="pareto-dominant"
         elif len(dominant)>1: reason="multiple-dominant"
         else: reason="no-dominant-arm"
-        advisory={"schema_version":1,"kind":"agy-swebench-workflow-study-advisory","plan_sha256":sha(plan_raw),"imported_results_sha256":sha(imported_raw),"report_sha256":sha(report_raw),"exact_bindings_verified":True,"recommendation_only":True,"applied":False,"dispatch_authorized":False,"model_change_authorized":False,"effort_change_authorized":False,"recommendation":recommendation,"reason_code":reason,"directional_total_reported_token_efficiency":efficiency,"denominators":{"planned_tasks":len(records),"planned_cells":len(records)*len(ARMS),"accepted_solutions":accepted}}
+        advisory={
+            "schema_version":1,
+            "kind":"agy-swebench-workflow-study-advisory",
+            "plan_sha256":sha(plan_raw),
+            "imported_results_sha256":sha(imported_raw),
+            "report_sha256":sha(report_raw),
+            "exact_bindings_verified":True,
+            "recommendation_only":True,
+            "applied":False,
+            "dispatch_authorized":False,
+            "model_change_authorized":False,
+            "effort_change_authorized":False,
+            "recommendation":recommendation,
+            "reason_code":reason,
+            "directional_total_reported_token_efficiency":token_efficiency,
+            "directional_total_reported_cost_efficiency":cost_efficiency,
+            "selected_cost_basis":advisory_cost_basis,
+            "token_bindings_comparable":bindings_token_comparable,
+            "cost_bindings_comparable":bindings_cost_comparable,
+            "denominators":{"planned_tasks":len(records),"planned_cells":len(records)*len(ARMS),"accepted_solutions":accepted}
+        }
         try: validate_schema(advisory,load_schema(ADVISORY_SCHEMA))
         except ValidationFailure: fail("advisory does not match the closed schema")
         publish(fd,"advisory.json",advisory); print("Generated study advisory")

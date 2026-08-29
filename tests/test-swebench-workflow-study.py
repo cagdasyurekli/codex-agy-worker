@@ -61,6 +61,21 @@ def make_valid_plan(tasks: list[str] | None = None) -> dict:
             "second-eye",
         ],
         "tasks": tasks,
+        "aggregation": "input-plus-output-no-overlap-v1",
+        "telemetry_bindings": {
+            "codex": {
+                "accounting": "provider-native-v1",
+                "tokenizer": "cl100k-base-v1",
+                "currency": "USD",
+                "price_source": "static-rates-v1",
+            },
+            "agy": {
+                "accounting": "provider-native-v1",
+                "tokenizer": "cl100k-base-v1",
+                "currency": "USD",
+                "price_source": "static-rates-v1",
+            },
+        },
     }
 
 
@@ -290,7 +305,11 @@ class TestSWEBenchWorkflowStudy(unittest.TestCase):
                 self.assertEqual(stopped["reason_code"], "hard-stop")
         self.assertEqual(adv["recommendation"], "agy-explore-first")
         self.assertEqual(adv["reason_code"], "pareto-dominant")
+        self.assertEqual(adv["selected_cost_basis"], "observed_billed")
+        self.assertTrue(adv["token_bindings_comparable"])
+        self.assertTrue(adv["cost_bindings_comparable"])
         self.assertAlmostEqual(adv["directional_total_reported_token_efficiency"], 0.3333333333333333, places=4)
+        self.assertAlmostEqual(adv["directional_total_reported_cost_efficiency"], 0.0, places=4)
         self.assertEqual(adv["denominators"]["planned_tasks"], 3)
         self.assertEqual(adv["denominators"]["planned_cells"], 15)
         self.assertEqual(adv["denominators"]["accepted_solutions"], 15)
@@ -542,7 +561,7 @@ class TestSWEBenchWorkflowStudy(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
 
         rep = json.loads((self.root / "report.json").read_text(encoding="utf-8"))
-        for k in ["dataset_revision", "evaluator_revision", "repository_base", "repository_image", "frozen_prompt_digest", "permissions_policy", "network_policy", "budgets", "ordering", "codex_model", "codex_effort", "agy_model", "agy_effort", "arms"]:
+        for k in ["dataset_revision", "evaluator_revision", "repository_base", "repository_image", "frozen_prompt_digest", "permissions_policy", "network_policy", "budgets", "ordering", "codex_model", "codex_effort", "agy_model", "agy_effort", "arms", "aggregation", "telemetry_bindings"]:
             self.assertEqual(rep["plan"][k], plan[k])
 
     def test_advise_calibration_policy_2_tasks(self):
@@ -741,6 +760,45 @@ class TestSWEBenchWorkflowStudy(unittest.TestCase):
         self.assertEqual(advisory["recommendation"], "no_recommendation")
         self.assertEqual(advisory["reason_code"], "incomparable-cost")
 
+    def test_advise_incompatible_provider_native_bindings_fail_closed(self):
+        plan = make_valid_plan()
+        plan["telemetry_bindings"]["codex"]["accounting"] = "codex-provider-native-v1"
+        plan["telemetry_bindings"]["codex"]["tokenizer"] = "cl100k-base-v1"
+        plan["telemetry_bindings"]["agy"]["accounting"] = "agy-provider-native-v1"
+        plan["telemetry_bindings"]["agy"]["tokenizer"] = "sentencepiece-v2"
+        plan["telemetry_bindings"]["agy"]["currency"] = "EUR"
+        plan_path = self.write_plan(plan)
+        self.run_tool("prepare", "--root", str(self.root), "--plan", str(plan_path))
+        self.run_tool("import", "--root", str(self.root), "--records", str(self.write_records(make_valid_records())))
+        self.run_tool("report", "--root", str(self.root))
+
+        result = self.run_tool("advise", "--root", str(self.root))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        advisory = json.loads((self.root / "advisory.json").read_text(encoding="utf-8"))
+        self.assertEqual(advisory["recommendation"], "no_recommendation")
+        self.assertEqual(advisory["reason_code"], "incomparable-token")
+        self.assertFalse(advisory["token_bindings_comparable"])
+        self.assertFalse(advisory["cost_bindings_comparable"])
+        self.assertIsNone(advisory["selected_cost_basis"])
+        self.assertIsNone(advisory["directional_total_reported_token_efficiency"])
+        self.assertIsNone(advisory["directional_total_reported_cost_efficiency"])
+
+    def test_advise_mixed_currency_fails_closed_with_comparable_tokens(self):
+        plan = make_valid_plan()
+        plan["telemetry_bindings"]["agy"]["currency"] = "EUR"
+        plan_path = self.write_plan(plan)
+        self.run_tool("prepare", "--root", str(self.root), "--plan", str(plan_path))
+        self.run_tool("import", "--root", str(self.root), "--records", str(self.write_records(make_valid_records())))
+        self.run_tool("report", "--root", str(self.root))
+
+        result = self.run_tool("advise", "--root", str(self.root))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        advisory = json.loads((self.root / "advisory.json").read_text(encoding="utf-8"))
+        self.assertEqual(advisory["recommendation"], "no_recommendation")
+        self.assertEqual(advisory["reason_code"], "incomparable-cost")
+        self.assertTrue(advisory["token_bindings_comparable"])
+        self.assertFalse(advisory["cost_bindings_comparable"])
+
     def test_advise_counts_agy_side_usage_in_pareto(self):
         plan_path = self.write_plan(make_valid_plan())
         self.run_tool("prepare", "--root", str(self.root), "--plan", str(plan_path))
@@ -883,7 +941,7 @@ class TestSWEBenchWorkflowStudy(unittest.TestCase):
         plan = make_valid_plan()
         plan["budgets"]["max_wall_time_seconds_per_cell"] = float("inf")
         res = self.run_tool("prepare", "--root", str(self.root), "--plan", str(self.write_plan(plan)))
-        self.assertNotEqual(res.returncode, 0)
+        self.assert_rejected(res, "finite_value")
         self.assertIn("finite", res.stderr + res.stdout)
 
     def test_prepare_rejects_unsorted_tasks_and_non_digest(self):
@@ -937,6 +995,7 @@ class TestSWEBenchWorkflowStudy(unittest.TestCase):
             os.chmod(records_path, 0o600)
             res = self.run_tool("import", "--root", str(root), "--records", str(records_path))
             self.assertNotEqual(res.returncode, 0)
+            if field in ("wall", "cost"): self.assert_rejected(res, "finite_value")
             if field == "combined-cost": self.assert_rejected(res, "cost_budget")
 
     def test_report_rejects_plan_drift_even_when_canonical(self):
@@ -958,6 +1017,118 @@ class TestSWEBenchWorkflowStudy(unittest.TestCase):
         os.chmod(path, 0o600)
         res = self.run_tool("advise", "--root", str(self.root))
         self.assertNotEqual(res.returncode, 0)
+
+    def test_advise_cost_only_improvement(self):
+        plan_path = self.write_plan(make_valid_plan())
+        self.run_tool("prepare", "--root", str(self.root), "--plan", str(plan_path))
+        # agy-explore-first has identical tokens, repairs, and wall time, but 50% lower cost
+        records = make_valid_records(dominant_arm="none")
+        for r in records:
+            r["cells"][1]["codex_cost"]["observed_billed"] = 0.005
+            r["cells"][1]["codex_cost"]["version_bound_list_price"] = 0.005
+        records_path = self.write_records(records)
+        self.run_tool("import", "--root", str(self.root), "--records", str(records_path))
+        self.run_tool("report", "--root", str(self.root))
+
+        res = self.run_tool("advise", "--root", str(self.root))
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+        adv = json.loads((self.root / "advisory.json").read_text(encoding="utf-8"))
+        self.assertEqual(adv["recommendation"], "agy-explore-first")
+        self.assertEqual(adv["reason_code"], "pareto-dominant")
+        self.assertEqual(adv["selected_cost_basis"], "observed_billed")
+        self.assertAlmostEqual(adv["directional_total_reported_token_efficiency"], 0.0, places=4)
+        self.assertAlmostEqual(adv["directional_total_reported_cost_efficiency"], 0.5, places=4)
+
+    def test_advise_repair_or_wall_time_alone_not_qualified(self):
+        plan_path = self.write_plan(make_valid_plan())
+        self.run_tool("prepare", "--root", str(self.root), "--plan", str(plan_path))
+        # Candidate arm has lower repair count and lower wall time, but identical tokens and cost.
+        # Since repair and time are guardrails only, this must NOT recommend.
+        records = make_valid_records(dominant_arm="none")
+        for r in records:
+            r["cells"][0]["repair_count"] = 2
+            r["cells"][0]["wall_time_seconds"] = 20.0
+            r["cells"][1]["repair_count"] = 0
+            r["cells"][1]["wall_time_seconds"] = 5.0
+        records_path = self.write_records(records)
+        self.run_tool("import", "--root", str(self.root), "--records", str(records_path))
+        self.run_tool("report", "--root", str(self.root))
+
+        res = self.run_tool("advise", "--root", str(self.root))
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+        adv = json.loads((self.root / "advisory.json").read_text(encoding="utf-8"))
+        self.assertEqual(adv["recommendation"], "no_recommendation")
+        self.assertEqual(adv["reason_code"], "no-dominant-arm")
+
+    def test_prepare_rejects_missing_and_unsafe_comparability_bindings(self):
+        for field in ("accounting", "tokenizer", "currency", "price_source"):
+            plan = make_valid_plan()
+            del plan["telemetry_bindings"]["agy"][field]
+            res = self.run_tool("prepare", "--root", str(self.root), "--plan", str(self.write_plan(plan)))
+            self.assertNotEqual(res.returncode, 0)
+
+            plan = make_valid_plan()
+            plan["telemetry_bindings"]["agy"][field] = "placeholder"
+            res = self.run_tool("prepare", "--root", str(self.root), "--plan", str(self.write_plan(plan)))
+            self.assert_rejected(res, "plan_privacy")
+
+        plan = make_valid_plan()
+        plan["aggregation"] = "provider-native"
+        res = self.run_tool("prepare", "--root", str(self.root), "--plan", str(self.write_plan(plan)))
+        self.assert_rejected(res, "plan_schema")
+
+    def test_numeric_validation_bounds_and_booleans(self):
+        for field in ("max_tasks", "max_repairs_per_cell", "max_codex_tokens_per_cell"):
+            plan = make_valid_plan()
+            plan["budgets"][field] = True
+            res = self.run_tool("prepare", "--root", str(self.root), "--plan", str(self.write_plan(plan)))
+            self.assertNotEqual(res.returncode, 0)
+
+        plan = make_valid_plan()
+        plan["budgets"]["max_tasks"] = 20000  # Exceeds MAX_TASKS (10000)
+        res = self.run_tool("prepare", "--root", str(self.root), "--plan", str(self.write_plan(plan)))
+        self.assertNotEqual(res.returncode, 0)
+
+    def test_oversized_json_integer_normalization(self):
+        # 1. CLI test with 5000-digit integer payload
+        huge_int_str = "1" + "0" * 5000
+        plan = make_valid_plan()
+        plan_raw = json.dumps(plan).replace('"max_tasks":100', f'"max_tasks":{huge_int_str}').replace('"max_tasks": 100', f'"max_tasks": {huge_int_str}')
+        plan_path = self.inputs / "huge_int_plan.json"
+        plan_path.write_text(plan_raw, encoding="utf-8")
+        os.chmod(plan_path, 0o600)
+        res = self.run_tool("prepare", "--root", str(self.root), "--plan", str(plan_path))
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("Traceback", res.stderr + res.stdout)
+        self.assertNotIn(str(self.inputs), res.stderr + res.stdout)
+        self.assertIn("error:", res.stderr + res.stdout)
+
+        # 2. Portable module test that verifies ValueError from json.loads (e.g. on Python 3.11+)
+        # is caught and converted to ValidationFailure without leaking traceback even on Python 3.9
+        spec = importlib.util.spec_from_file_location("swebench_workflow_study_int_test", self.script)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with mock.patch.object(
+            module.json,
+            "loads",
+            side_effect=ValueError("Exceeds the limit (4300 digits) for integer string conversion"),
+        ):
+            with self.assertRaises(module.ValidationFailure):
+                module.parse_json_bytes(b'{"tasks": 1}', "test input")
+
+            diagnostic = io.StringIO()
+            with contextlib.redirect_stderr(diagnostic):
+                with self.assertRaises(SystemExit) as exc:
+                    module.do_prepare(SimpleNamespace(root=self.root, plan=plan_path))
+            self.assertEqual(exc.exception.code, 1)
+            self.assertIn("error: invalid_input:", diagnostic.getvalue())
+            self.assertNotIn("Traceback", diagnostic.getvalue())
+            self.assertNotIn(str(self.inputs), diagnostic.getvalue())
 
     def test_publication_is_bounded_flat_owner_0600_and_relocatable(self):
         self.run_tool("prepare", "--root", str(self.root), "--plan", str(self.write_plan(make_valid_plan())))
