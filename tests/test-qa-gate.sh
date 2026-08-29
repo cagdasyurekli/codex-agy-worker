@@ -111,6 +111,16 @@ fi
 echo
 echo "driver verification is bounded and read-only:"
 check "driver verification failure" 14 honest.json --verify false
+SAFE_VERIFIER_ENV=keep check "ambient verifier variable is absent by default" 0 honest.json \
+    --verify 'test -z "${SAFE_VERIFIER_ENV+x}"'
+SAFE_VERIFIER_ENV=keep check "direct explicit verifier variable requires receipt wrapper" 64 honest.json \
+    --verify-env SAFE_VERIFIER_ENV --verify true
+SAFE_VERIFIER_ENV=keep check "unsafe verifier variable name is rejected" 64 honest.json \
+    --verify-env PYTHONPATH --verify true
+AGY_WORKER_SCHEMA="$SCHEMA" check "schema selector cannot be a verifier opt-in" 64 honest.json \
+    --verify-env AGY_WORKER_SCHEMA --verify true
+GIT_DIR=.git check "Git control cannot be a verifier opt-in" 64 honest.json \
+    --verify-env GIT_DIR --verify true
 check "driver verification cannot rewrite declared file" 14 honest.json --verify "printf 'verify mutation\\n' >> '$TMP/repo/a.txt'"
 printf 'modified by worker\n' > "$TMP/repo/a.txt"
 check "driver verification cannot create undeclared file" 14 honest.json --verify "printf artifact > '$TMP/repo/verify.out'"

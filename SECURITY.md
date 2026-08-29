@@ -22,3 +22,27 @@ resolution deadline is guaranteed.
 The evidence gate reduces specific acceptance risks but does not prove that generated
 or accepted code is secure. Operators remain responsible for review, testing, access
 control, and incident response in each target repository.
+
+## Execution boundaries
+
+`agy-worker` is a Codex Agent Skill, not a sandbox or an autonomous acceptance
+service. It delegates approved repository work to the external `agy` provider while
+Codex retains diff review and driver-owned verification. Before dispatch, the operator
+must approve the repository and path scope that may be sent to the provider; do not
+include credentials, private keys, unrelated local files, raw worker logs, or local
+controller state in a prompt. Installation alone is not provider-transmission consent.
+
+The disposable worktree limits ordinary workflow scope but is not a security sandbox.
+Operators remain responsible for credentials, network access, review, testing, and
+access control in each target repository. The skill supports the OpenAI Codex CLI; it
+does not support Claude or Claude Code hosts.
+
+Provider children, dispatch-time provider-interface probes, and driver verifiers
+receive a closed baseline environment. Additional variables require exact-name opt-in
+through `--provider-env` or `verify-job.sh --verify-env`; verifier-only values reach
+only the verifier child through a private pipe. Unsafe interpreter, loader,
+schema-selector, and Git-control hooks are rejected, and secret values are not written
+to command or receipt artifacts. Driver ownership
+of a verification command does not make candidate code imported by that command
+trusted. Environment filtering does not isolate `HOME`, `PATH`, filesystem, network,
+or same-user processes, so human diff review remains required after a green gate.

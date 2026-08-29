@@ -498,8 +498,9 @@ Python `sitecustomize` or a shell `BASH_ENV` hook can execute before that helper
 first statement. Bind evidence mode to the receipt wrapper, sanitize executable
 startup controls before launching the gate, run gate-owned Python with isolated/no-site
 startup, and close the numeric validated FD with a Bash builtin in the already-running
-gate process before starting the verifier shell. Preserve ordinary verifier environment
-values, but do not forward the stripped startup controls or internal capability.
+gate process before starting the verifier shell. Do not preserve the ambient verifier
+environment: start from the closed baseline and forward only explicitly approved names
+to the verifier child, never stripped startup controls or the internal capability.
 
 Schema validation detects malformed and internally inconsistent content, not an
 authorized rewrite. An unsigned JSON document can be changed and rehashed by anyone
@@ -533,6 +534,22 @@ Skill installation is not consent to transmit a repository. Before dispatch, nam
 the repository and allowed paths and obtain explicit approval for sending the prompt
 and worker-read content through agy to Google/Gemini. Keep local logs private and make
 privacy, support, and usage terms public alongside the GitHub distribution.
+
+Catalog metadata is a public product claim. Keep the skill frontmatter explicit about
+the supported host, runtime prerequisites, license, and release version; a provider
+model slug is not host compatibility. Put the fuller execution-boundary explanation in
+a focused skill reference, and do not add empty assets or unsupported integrations to
+raise a directory score.
+
+An inherited shell environment is also a trust boundary. Provider processes, local
+interface probes, and driver-owned verification commands should start from a small
+operational baseline; additional variables require exact-name opt-in, and only their
+names—not values—belong in frozen command or receipt policy. Verifier-only values must
+cross the outer gate through a private descriptor and enter only the `env -i` verifier
+child; ambient preservation would let schema or Git controls influence gate work.
+This reduces accidental
+secret exposure but does not isolate `HOME`, `PATH`, filesystem, network, or same-user
+processes. A trusted test command can still import unreviewed candidate code.
 
 Keep distribution surfaces no broader than the maintained product. A Codex package
 manifest and an explicitly approved repo marketplace descriptor can validate one local
