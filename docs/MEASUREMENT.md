@@ -31,11 +31,13 @@ Actions run URL. This convenience command stores one 30-day watcher outcome coun
 it does not read the workflow, action output, or any GitHub service.
 
 ```bash
+: "${REPO_SHA:?set REPO_SHA to the measured 40-character repository commit}"
+: "${WATCHER_EVIDENCE_URL:?set WATCHER_EVIDENCE_URL to the public Actions run URL}"
 /usr/bin/python3 -I -S -B scripts/adoption_measurement.py append-watcher \
   --ledger /private/tmp/codex-agy-worker-measurement.jsonl \
   --result unchanged \
-  --repo-sha 0123456789abcdef0123456789abcdef01234567 \
-  --evidence-url https://github.com/cagdasyurekli/codex-agy-worker/actions/runs/123456789
+  --repo-sha "$REPO_SHA" \
+  --evidence-url "$WATCHER_EVIDENCE_URL"
 ```
 
 `unchanged`, `drift-review`, and `evidence-unavailable` map to the watcher’s `0`, `3`,
@@ -49,12 +51,14 @@ partial when its sample size is smaller than its denominator. Sum, median, and l
 metrics require the denominator and sample size to be exactly `1`.
 
 ```bash
+: "${REPO_SHA:?set REPO_SHA to the measured 40-character repository commit}"
+: "${METRIC_EVIDENCE_URL:?set METRIC_EVIDENCE_URL to its public GitHub evidence URL}"
 /usr/bin/python3 -I -S -B scripts/adoption_measurement.py append \
   --ledger /private/tmp/codex-agy-worker-measurement.jsonl \
   --window 30 --metric doctor_pre_dispatch_blocker_ratio \
   --value 2 --denominator 10 --sample-size 8 \
-  --repo-sha 0123456789abcdef0123456789abcdef01234567 \
-  --evidence-url https://github.com/cagdasyurekli/codex-agy-worker/issues/42
+  --repo-sha "$REPO_SHA" \
+  --evidence-url "$METRIC_EVIDENCE_URL"
 ```
 
 ## Closed report families
