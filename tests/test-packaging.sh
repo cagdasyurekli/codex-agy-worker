@@ -2910,7 +2910,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (89 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-doctor.sh          257-case' "$ROOT/README.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 396 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 397 offline.' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
@@ -3202,6 +3202,170 @@ if [[ "$brand_valid_rc" == "0" ]] \
     ok "approved brand assets and GitHub Pages wiring pass the production contract"
 else
     bad "approved brand assets and GitHub Pages wiring pass the production contract"
+fi
+
+python3 "$ROOT/scripts/validate-docs.py" "$ROOT" --readme-max-lines 1905 \
+    > "$TMP/docs-valid.out" 2> "$TMP/docs-valid.err"
+docs_valid_rc=$?
+python3 - "$ROOT/scripts/validate-docs.py" "$ROOT/README.md" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+import tempfile
+
+script = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("validate_docs", script)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+readme = Path(sys.argv[2]).read_text(encoding="utf-8")
+assert module.validate_onboarding(readme, 1905) == []
+max_lines = 1905
+padding = ["<!-- budget mutation -->"] * (max_lines + 1 - len(readme.splitlines()))
+over_budget = readme + "\n" + "\n".join(padding)
+assert any("maximum is 1905" in error for error in module.validate_onboarding(over_budget, max_lines))
+
+hidden_markers = "\n".join(
+    f"<!-- {marker} -->" for _label, marker in module.ONBOARDING_MARKERS
+)
+assert module.validate_onboarding(hidden_markers, 1905)
+unclosed_comment = "<!--\n" + "\n".join(marker for _label, marker in module.ONBOARDING_MARKERS)
+assert module.validate_onboarding(unclosed_comment, 1905)
+fenced_markers = "```text\n" + "\n".join(
+    marker for _label, marker in module.ONBOARDING_MARKERS
+) + "\n```"
+assert module.validate_onboarding(fenced_markers, 1905)
+full_tutorial = module.ONBOARDING_MARKERS[-1][1]
+broken_tutorial = readme.replace(full_tutorial, full_tutorial.split("](", 1)[0] + "]")
+assert any("verification tutorial" in error for error in module.validate_onboarding(broken_tutorial, 1905))
+inline_code_tutorial = readme.replace(full_tutorial + ".", f"`{full_tutorial}`")
+assert any("verification tutorial" in error for error in module.validate_onboarding(inline_code_tutorial, 1905))
+
+lines = readme.splitlines()
+positioning = next(index for index, line in enumerate(lines) if module.ONBOARDING_MARKERS[0][1] in line)
+workflow_badge = next(index for index, line in enumerate(lines) if module.ONBOARDING_MARKERS[1][1] in line)
+lines[positioning], lines[workflow_badge] = lines[workflow_badge], lines[positioning]
+assert any("out of order" in error for error in module.validate_onboarding("\n".join(lines), 1905))
+
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory) / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "README.md").write_text("[missing](docs/no.md)\n", encoding="utf-8")
+    assert any("missing local link target" in error for error in module.validate_markdown_links(root))
+    (root / "docs" / "guide.md").write_text("# Present\n", encoding="utf-8")
+    (root / "README.md").write_text("[bad anchor](docs/guide.md#missing)\n", encoding="utf-8")
+    assert any("missing Markdown anchor" in error for error in module.validate_markdown_links(root))
+    (root / "README.md").write_text("[case](docs/GUIDE.md#present)\n", encoding="utf-8")
+    assert any("non-exact path casing" in error for error in module.validate_markdown_links(root))
+    (root.parent / "outside.md").write_text("# Outside\n", encoding="utf-8")
+    (root / "README.md").write_text("[escape](../outside.md#outside)\n", encoding="utf-8")
+    assert any("escapes the repository" in error for error in module.validate_markdown_links(root))
+    (root / "README.md").write_text("[root](/../outside.md#outside)\n", encoding="utf-8")
+    assert any("root-relative" in error for error in module.validate_markdown_links(root))
+    (root / "README.md").write_text("[encoded](/%2e%2e/outside.md#outside)\n", encoding="utf-8")
+    assert any("root-relative" in error for error in module.validate_markdown_links(root))
+    (root / "docs" / "name_(guide).md").write_text("# Parentheses\n", encoding="utf-8")
+    (root / "README.md").write_text("[balanced](docs/name_(guide).md#parentheses)\n", encoding="utf-8")
+    assert module.validate_markdown_links(root) == []
+    allowlist = root / "docs" / "public-files.allowlist"
+    allowlist.write_text(
+        "docs/guide.md\ndocs/name_(guide).md\ndocs/public-files.allowlist\n",
+        encoding="utf-8",
+    )
+    assert module.validate_public_docs_inventory(root) == []
+    (root / "docs" / ".DS_Store").write_bytes(b"ignored OS noise")
+    assert any("not public-allowlisted" in error for error in module.validate_public_docs_inventory(root))
+    (root / "docs" / ".DS_Store").unlink()
+    (root / "docs" / ".DS_Store").mkdir()
+    (root / "docs" / ".DS_Store" / "private.md").write_text("# Hidden\n", encoding="utf-8")
+    assert any("not public-allowlisted" in error for error in module.validate_public_docs_inventory(root))
+    (root / "docs" / ".DS_Store" / "private.md").unlink()
+    (root / "docs" / ".DS_Store").rmdir()
+    (root / "README.md").write_text("[escaped](docs/name_\\(guide\\).md#parentheses)\n", encoding="utf-8")
+    assert module.validate_markdown_links(root) == []
+    (root / "docs" / "private-report.MD").write_text("# Private readout\n", encoding="utf-8")
+    assert any("not public-allowlisted" in error for error in module.validate_public_docs_inventory(root))
+    (root / "docs" / "private-report.markdown").write_text("# Private readout\n", encoding="utf-8")
+    assert any("not public-allowlisted" in error for error in module.validate_public_docs_inventory(root))
+    (root / "docs" / "guide.markdown").write_text("[missing](nope.md)\n", encoding="utf-8")
+    assert any("missing local link target" in error for error in module.validate_markdown_links(root))
+    campaign = root / "docs" / "campaign-report-2026-08-29.md"
+    campaign.write_text("# Private readout\n", encoding="utf-8")
+    allowlist.write_text(
+        "docs/campaign-report-2026-08-29.md\ndocs/guide.md\ndocs/name_(guide).md\n"
+        "docs/private-report.MD\ndocs/private-report.markdown\ndocs/public-files.allowlist\n",
+        encoding="utf-8",
+    )
+    assert any("forbidden private/report/draft/dated" in error for error in module.validate_public_docs_inventory(root))
+
+    sitemap = root / "docs" / "sitemap.xml"
+    sitemap.write_text(
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>\n',
+        encoding="utf-8",
+    )
+    assert any("at least one owned URL" in error for error in module.validate_pages_sitemap(root))
+    sitemap.write_text("<urlset></urlset>\n", encoding="utf-8")
+    assert any("sitemap urlset namespace" in error for error in module.validate_pages_sitemap(root))
+    sitemap.write_text(
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>'
+        + module.PAGES_BASE
+        + "GUIDE.html</loc></url></urlset>\n",
+        encoding="utf-8",
+    )
+    assert any("non-exact path casing" in error for error in module.validate_pages_sitemap(root))
+PY
+docs_mutation_rc=$?
+if tracked_evidence="$(git -C "$ROOT" ls-files -- 'evidence' 'evidence/**')"; then
+    tracked_evidence_rc=0
+else
+    tracked_evidence_rc=$?
+fi
+mkdir "$TMP/evidence-pathspec-repo"
+git -C "$TMP/evidence-pathspec-repo" init -q
+ln -s private-target "$TMP/evidence-pathspec-repo/evidence"
+git -C "$TMP/evidence-pathspec-repo" add -f evidence
+if [[ "$(git -C "$TMP/evidence-pathspec-repo" ls-files -- 'evidence' 'evidence/**')" == "evidence" ]]; then
+    evidence_pathspec_rc=0
+else
+    evidence_pathspec_rc=1
+fi
+if git -C "$ROOT" check-ignore -q --no-index \
+        docs/agy-worker-campaign-quality-report-2026-08-27.md; then
+    removed_report_ignore_rc=0
+else
+    removed_report_ignore_rc=$?
+fi
+if [[ "$docs_valid_rc" == "0" ]] \
+        && [[ "$docs_mutation_rc" == "0" ]] \
+        && [[ "$tracked_evidence_rc" == "0" ]] \
+        && [[ "$evidence_pathspec_rc" == "0" ]] \
+        && [[ "$removed_report_ignore_rc" == "0" ]] \
+        && grep -Fq 'complete public docs inventory, README onboarding order and line budget' "$TMP/docs-valid.out" \
+        && grep -Fq 'Follow `docs/DOCUMENTATION_POLICY.md`' "$ROOT/AGENTS.md" \
+        && grep -Fq '[documentation policy](docs/DOCUMENTATION_POLICY.md)' "$ROOT/CONTRIBUTING.md" \
+        && grep -Fq '`README.md` is the first-visit product page' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq 'one authoritative documentation owner' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq 'provisional hard ceiling is **1,905 lines**' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq 'permanent 450-line budget' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq 'Treat those pins as migration debt' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq '`docs/public-files.allowlist` is the complete set' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq 'Installation never authorizes provider dispatch or repository transmission' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fq '`bash tests/test-packaging.sh`' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
+        && grep -Fxq '/evidence' "$ROOT/.gitignore" \
+        && grep -Fxq '/docs/private/' "$ROOT/.gitignore" \
+        && grep -Fxq '/docs/reports/' "$ROOT/.gitignore" \
+        && grep -Fxq '/docs/agy-worker-campaign-quality-report-*.md' "$ROOT/.gitignore" \
+        && grep -Fxq '/docs/*campaign-report-20??-??-??*.md' "$ROOT/.gitignore" \
+        && [[ -z "$tracked_evidence" ]] \
+        && ! grep -Fq '0123456789abcdef0123456789abcdef01234567' "$ROOT/docs/MEASUREMENT.md" \
+        && ! grep -Fq 'actions/runs/123456789' "$ROOT/docs/MEASUREMENT.md" \
+        && grep -Fq ': "${REPO_SHA:?set REPO_SHA' "$ROOT/docs/MEASUREMENT.md" \
+        && grep -Fq -- '--evidence-url "$WATCHER_EVIDENCE_URL"' "$ROOT/docs/MEASUREMENT.md" \
+        && [[ ! -e "$ROOT/docs/agy-worker-campaign-quality-report-2026-08-27.md" ]]; then
+    ok "documentation policy, public inventory, ordered onboarding, budget, links, anchors, and Pages mapping stay valid"
+else
+    bad "documentation policy, public inventory, ordered onboarding, budget, links, anchors, and Pages mapping stay valid"
 fi
 
 cp -R "$ROOT/docs/assets/brand" "$TMP/reject-brand-image"

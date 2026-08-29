@@ -1847,7 +1847,7 @@ tests/test-feedback-triage.py 26-case offline metadata-only triage suite
 tests/test-codex-usage-report.py   Codex usage observation and privacy suite
 tests/test-ci-timing.py       offline CI timing telemetry suite
 tests/test-ci-sharding.py     offline CI sharding partition/receipt/aggregate suite
-tests/test-packaging.sh       396-case offline Codex package/CI-policy/relocation/landing suite
+tests/test-packaging.sh       397-case offline Codex package/CI-policy/relocation/landing suite
 tests/test-doctor.sh          257-case offline fake-tool/read-only doctor suite
 tests/test-proof-demo.sh      21-case offline starter-proof adversarial suite
 tests/test-conformance.py     81-case offline public gate-contract/adversary suite

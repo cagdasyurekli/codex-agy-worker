@@ -5,3 +5,12 @@ logs/
 *.prompt.txt
 .DS_Store
 __pycache__/
+
+# Owner-private, dated, and campaign artifacts do not belong in public docs.
+/evidence
+/docs/private/
+/docs/reports/
+/docs/drafts/
+/docs/agy-worker-campaign-quality-report-*.md
+/docs/*campaign-report-20??-??-??*.md
+/docs/**/*campaign-report-20??-??-??*.md
