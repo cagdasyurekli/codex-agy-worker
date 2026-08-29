@@ -1208,10 +1208,13 @@ fi
 if python3 - "$ROOT" <<'PY'
 import json
 from pathlib import Path
+import re
 import sys
 
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
+skill = (root / "skills/agy-worker/SKILL.md").read_text(encoding="utf-8")
+security_reference = root / "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md"
 assert manifest["name"] == "codex-agy-worker"
 assert manifest["version"] == "0.11.0"
 assert manifest["skills"] == "./skills/"
@@ -1219,8 +1222,18 @@ assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
 assert manifest["interface"]["termsOfServiceURL"].startswith("https://")
 assert not ({"apps", "mcpServers", "hooks"} & manifest.keys())
+assert 'license: MIT' in skill
+assert f'  version: "{manifest["version"]}"' in skill
+assert 'compatibility: Requires OpenAI Codex CLI' in skill
+assert 'Claude and Claude Code hosts are not supported.' in skill
+assert 'Use when ' in re.search(r"^description: (.+)$", skill, re.M).group(1)
+assert '[Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md)' in skill
+assert security_reference.is_file() and not security_reference.is_symlink()
+reference_text = security_reference.read_text(encoding="utf-8")
+assert 'It is not a Claude or Claude Code skill.' in reference_text
+assert '`verify-job.sh --verify-env NAME`' in reference_text
 PY
-then ok "Codex plugin is a skills-only package with public legal links"; else bad "Codex plugin is a skills-only package with public legal links"; fi
+then ok "Codex-only skill metadata matches the plugin version and public legal links"; else bad "Codex-only skill metadata matches the plugin version and public legal links"; fi
 
 if python3 - "$ROOT" "$TMP/marketplace-contract" <<'PY'
 import json
@@ -1275,6 +1288,8 @@ def validate(root: Path) -> None:
     require_directory(skill_root)
     require_directory(runtime_root)
     require_regular(skill_root / "SKILL.md")
+    require_directory(skill_root / "references")
+    require_regular(skill_root / "references/SECURITY_AND_COMPATIBILITY.md")
     assert [path.relative_to(root).as_posix() for path in root.rglob("SKILL.md")] == [
         "skills/agy-worker/SKILL.md"
     ]
@@ -3013,7 +3028,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/SKILL.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (334 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (337 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
         && grep -Fq 'EXPECTED_CHECKS = 91' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (91 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \

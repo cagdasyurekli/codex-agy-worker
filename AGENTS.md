@@ -32,6 +32,10 @@ Keep these hard boundaries regardless of workflow:
 
 - Do not let a job write outside its disposable worktree, enter `.git`, or escape via a
   symlink. Honor user denylist paths and keep local credentials out of worker scope.
+- Provider, probe, and verifier children start with an operational allowlist. Do not
+  pass `--provider-env` or `--verify-env` without approval for each variable name and
+  its resulting provider/verifier exposure; values are not persisted, and filtering
+  is not `HOME`, `PATH`, filesystem, network, or same-user isolation.
 - Never add or recommend `--dangerously-skip-permissions` or
   `--dangerously-bypass-approvals-and-sandbox`.
 - Do not modify the user's `~/.gemini/` or `~/.codex/` configuration as a code change.

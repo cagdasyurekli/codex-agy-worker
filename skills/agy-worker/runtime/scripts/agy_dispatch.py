@@ -57,6 +57,7 @@ COMMAND_V1_FIELDS = {
 COMMAND_V2_FIELDS = COMMAND_V1_FIELDS | {"workflow", "max_cycles", "continue_prompt"}
 COMMAND_V3_FIELDS = COMMAND_V2_FIELDS | {"agy_version_observed"}
 COMMAND_V4_FIELDS = COMMAND_V3_FIELDS | {"selection_path", "selection_sha256", "selection_identity"}
+COMMAND_V5_FIELDS = COMMAND_V4_FIELDS | {"provider_env"}
 STATE_PROJECT_FIELDS = {
     "workflow", "max_cycles", "cycle", "phase", "assurance",
     "check_summary", "check_counts", "verification_path", "verification_sha256",
@@ -455,19 +456,31 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             "continue_prompt": "legacy commands cannot continue projects",
             "agy_version_observed": False,
             "selection_path": None, "selection_sha256": None, "selection_identity": None,
+            "provider_env": [],
         })
     elif set(value) == COMMAND_V2_FIELDS and value.get("schema_version") == 2:
         if raw != canonical(value):
             raise DispatchError("dispatch command is not canonical")
         value = dict(value)
         value["agy_version_observed"] = False
-        value.update({"selection_path": None, "selection_sha256": None, "selection_identity": None})
+        value.update({
+            "selection_path": None, "selection_sha256": None, "selection_identity": None,
+            "provider_env": [],
+        })
     elif set(value) == COMMAND_V3_FIELDS and value.get("schema_version") == 3:
         if raw != canonical(value):
             raise DispatchError("dispatch command is not canonical")
         value = dict(value)
-        value.update({"selection_path": None, "selection_sha256": None, "selection_identity": None})
-    elif set(value) != COMMAND_V4_FIELDS or value.get("schema_version") != 4:
+        value.update({
+            "selection_path": None, "selection_sha256": None, "selection_identity": None,
+            "provider_env": [],
+        })
+    elif set(value) == COMMAND_V4_FIELDS and value.get("schema_version") == 4:
+        if raw != canonical(value):
+            raise DispatchError("dispatch command is not canonical")
+        value = dict(value)
+        value["provider_env"] = []
+    elif set(value) != COMMAND_V5_FIELDS or value.get("schema_version") != 5:
         raise DispatchError("dispatch command fields are invalid")
     elif raw != canonical(value):
         raise DispatchError("dispatch command is not canonical")
@@ -508,6 +521,15 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         raise DispatchError("dispatch resume prompt is invalid")
     if not isinstance(value["continue_prompt"], str) or not value["continue_prompt"]:
         raise DispatchError("dispatch continue prompt is invalid")
+    if not isinstance(value["provider_env"], list) or any(
+        not isinstance(item, str) for item in value["provider_env"]
+    ):
+        raise DispatchError("dispatch provider environment is invalid")
+    try:
+        if MODEL_SELECTION.validate_child_environment_names(value["provider_env"]) != value["provider_env"]:
+            raise DispatchError("dispatch provider environment is not canonical")
+    except MODEL_SELECTION.EvidenceUnavailable as exc:
+        raise DispatchError("dispatch provider environment is invalid") from exc
     if value["workflow"] not in {"legacy", "explore", "task", "project"}:
         raise DispatchError("dispatch workflow is invalid")
     if not _valid_max_cycles(value["workflow"], value["max_cycles"]):
@@ -3391,6 +3413,7 @@ def controller(job: Path, ownership_fd: int) -> int:
         schema_paths: tuple[Path, Path] | None = None
         try:
             command = _load_bound_command(job, state, stage_readonly=False)
+            MODEL_SELECTION.ACTIVE_CHILD_ENV = list(command["provider_env"])
             _load_bound_selection(command, state)
             schema_paths = _bound_schemas(command, state)
             if not _worktree_symlink_boundary(command["workdir"]):
@@ -3594,6 +3617,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                                 stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
+                                env=MODEL_SELECTION.child_environment(command["provider_env"]),
                                 start_new_session=True,
                                 preexec_fn=lambda: os.umask(int(command["child_umask"], 8)),
                             )
@@ -4411,14 +4435,17 @@ def spawn(
         if parent_signal is not None:
             _terminalize_queued_signal(job, parent_signal)
             return 128 + parent_signal
-        command = [
+        bound_command = _load_bound_command(job, state, stage_readonly=False)
+        controller_environment = MODEL_SELECTION.child_environment(bound_command["provider_env"])
+        controller_argv = [
             sys.executable, "-I", "-S", "-B", str(Path(__file__).resolve()),
             "controller", "--job-dir", str(job), "--ownership-fd", str(ownership_fd),
         ]
         controller_process = subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            controller_argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True,
             pass_fds=(ownership_fd,),
+            env=controller_environment,
         )
       deadline = time.monotonic() + 5.0
       forwarded = False

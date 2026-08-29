@@ -1,6 +1,11 @@
 ---
 name: agy-worker
-description: Let Codex use Google Antigravity CLI (agy) for repository exploration, feature work, and project-scale implementation. Codex owns the diff review, verification, repair loop, and transparent delivery assurance; agy is not limited to mechanical edits or predeclared files.
+description: Let Codex use Google Antigravity CLI (agy) for repository exploration, bounded feature work, and project-scale implementation. Use when a Codex task benefits from delegated repository work while Codex retains diff review, verification, repair, and delivery assurance.
+license: MIT
+compatibility: Requires OpenAI Codex CLI, Bash, Python 3, git, and agy with provider network access. Claude and Claude Code hosts are not supported.
+metadata:
+  author: cagdasyurekli
+  version: "0.11.0"
 ---
 
 # Use agy to explore, build, and repair
@@ -8,6 +13,9 @@ description: Let Codex use Google Antigravity CLI (agy) for repository explorati
 `agy-worker` is for making progress on real repository work. Default to the workflow
 that matches the user's request; do not decline merely because files, architecture, or
 verification commands must be discovered during the work.
+
+For host compatibility, provider transmission, environment, and verification
+boundaries, see [Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md).
 
 ## Before dispatch
 
@@ -185,7 +193,11 @@ evidence.
 For a bounded candidate that needs gate/receipt evidence, run `verify-job.sh` with the
 immutable base, a suitable `--only` policy when one exists, and driver-authored
 `--verify` commands. A passed gate is strong candidate evidence, not a merge, release,
-or claim of general correctness.
+or claim of general correctness. Provider and verifier children inherit only the
+documented baseline environment. Add a caller variable by exact name only when needed:
+`--provider-env NAME` for `agy` children or `verify-job.sh --verify-env NAME` for its
+verifier child. Verifier-only values do not enter the outer gate environment.
+Never opt in credentials merely to preserve an ambient shell setup.
 
 ## Hard stops
 
