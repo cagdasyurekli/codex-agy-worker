@@ -255,26 +255,26 @@ def test_run_preview_and_approval_enforcement() -> bool:
         manifest_sha = preview["manifest_sha256"]
         assert len(manifest_sha) == 64
 
-        # 2. Invoking run without --approve-preview-sha exits 20 with preview info
+        # 2. Invoking run without an explicit transmission mode exits 20 with preview info
         res = run_workflow(
             "run", "--state", str(f.state_file), "--repo", str(f.repo),
             "--worktree", str(f.worktree), "--branch", f.branch,
             "--base", f.base, "--job-id", f.job_id
         )
         assert res.returncode == 20
-        assert b"approval required" in res.stderr
+        assert b"explicit provider-transmission mode required" in res.stderr
 
-        # 3. Invoking run with mismatched --approve-preview-sha fails closed
+        # 3. Invoking run with mismatched whole-worktree approval fails closed
         res = run_workflow(
             "run", "--state", str(f.state_file), "--repo", str(f.repo),
             "--worktree", str(f.worktree), "--branch", f.branch,
             "--base", f.base, "--job-id", f.job_id,
-            "--approve-preview-sha", "a" * 64
+            "--approve-whole-worktree", "a" * 64
         )
         assert res.returncode != 0
         assert b"stale or mismatched" in res.stderr
 
-        # 4. Invoking run with exact --approve-preview-sha creates valid Workflow State v1
+        # 4. Exact whole-worktree approval creates valid Workflow State v1
         # Use fake mock for agy to avoid real provider dispatch
         fake_bin = f.tmp / "bin"
         fake_bin.mkdir(mode=0o700)
@@ -286,7 +286,7 @@ def test_run_preview_and_approval_enforcement() -> bool:
             "run", "--state", str(f.state_file), "--repo", str(f.repo),
             "--worktree", str(f.worktree), "--branch", f.branch,
             "--base", f.base, "--job-id", f.job_id,
-            "--approve-preview-sha", manifest_sha,
+            "--approve-whole-worktree", manifest_sha,
             "--task", "Test prompt",
             env={"PATH": f"{fake_bin}:{os.environ.get('PATH', '')}"}
         )
@@ -335,7 +335,7 @@ def test_run_drift_rejection() -> bool:
             "run", "--state", str(f.state_file), "--repo", str(f.repo),
             "--worktree", str(f.worktree), "--branch", f.branch,
             "--base", f.base, "--job-id", f.job_id,
-            "--approve-preview-sha", manifest_sha
+            "--approve-whole-worktree", manifest_sha
         )
         assert res.returncode != 0
         assert b"stale or mismatched" in res.stderr
@@ -363,7 +363,7 @@ def test_run_pre_dispatch_failure_rolls_back_exact_state() -> bool:
                 "run", "--state", str(f.state_file), "--repo", str(f.repo),
                 "--worktree", str(f.worktree), "--branch", f.branch,
                 "--base", f.base, "--job-id", f.job_id,
-                "--approve-preview-sha", manifest_sha,
+                "--approve-whole-worktree", manifest_sha,
                 "--provider-env", "BASH_ENV", "--task", "bounded task",
             )
 
@@ -486,7 +486,7 @@ def test_ordinary_run_owns_private_initialization_and_reuses_preview() -> bool:
         assert git(f.repo, "rev-parse", "HEAD") != f.base
         approved = run_workflow(
             "run", "--repo", str(f.repo), "--job-id", job_id,
-            "--approve-preview-sha", manifest_sha,
+            "--approve-whole-worktree", manifest_sha,
             "--provider-env", "BASH_ENV", "--task", "bounded task", env=env,
         )
         assert approved.returncode == 64
@@ -499,7 +499,7 @@ def test_ordinary_run_owns_private_initialization_and_reuses_preview() -> bool:
 
         stale = run_workflow(
             "run", "--repo", str(f.repo), "--job-id", job_id,
-            "--approve-preview-sha", "0" * 64, "--task", "bounded task", env=env,
+            "--approve-whole-worktree", "0" * 64, "--task", "bounded task", env=env,
         )
         assert stale.returncode == 20
         assert workflow_state.exists() and job_state.exists() and worktree.exists()
@@ -511,6 +511,123 @@ def test_ordinary_run_owns_private_initialization_and_reuses_preview() -> bool:
 check(
     "ordinary run derives private lifecycle resources, isolates dirty checkout, and reuses preview bindings",
     test_ordinary_run_owns_private_initialization_and_reuses_preview,
+)
+
+
+def test_ordinary_run_requires_one_explicit_transmission_mode() -> bool:
+    f = RepoFixture("ordinary-scope")
+    try:
+        state_home = f.tmp / "xdg-state"
+        state_home.mkdir(mode=0o700)
+        scope_path = f.tmp / "provider-scope.json"
+        scope_path.write_bytes(json.dumps({
+            "schema_version": 1,
+            "kind": "agy-worker-provider-scope",
+            "read": [{"path": "README.md", "kind": "file"}],
+            "write": [{"path": "README.md", "kind": "file"}],
+        }, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n")
+        scope_path.chmod(0o600)
+        job_id = "ordinary-scope-job"
+        env = {"XDG_STATE_HOME": str(state_home)}
+
+        preview = run_workflow(
+            "run", "--repo", str(f.repo), "--job-id", job_id,
+            "--provider-scope", str(scope_path), "--preview", env=env,
+        )
+        assert preview.returncode == 0, preview.stderr
+        preview_value = json.loads(preview.stdout)
+        transmission_sha = preview_value["transmission_sha256"]
+        assert preview_value["contents_read"] is True
+
+        missing = run_workflow(
+            "run", "--repo", str(f.repo), "--job-id", job_id,
+            "--provider-scope", str(scope_path), "--task", "bounded task", env=env,
+        )
+        assert missing.returncode == 20
+        assert b"explicit provider-transmission mode required" in missing.stderr
+        assert transmission_sha.encode("ascii") in missing.stderr
+
+        conflicting = run_workflow(
+            "run", "--repo", str(f.repo), "--job-id", job_id,
+            "--provider-scope", str(scope_path),
+            "--approve-whole-worktree", preview_value["manifest_sha256"],
+            "--task", "bounded task", env=env,
+        )
+        assert conflicting.returncode == 20
+        assert b"conflicts with whole-worktree approval options" in conflicting.stderr
+
+        passed_to_raw_boundary = run_workflow(
+            "run", "--repo", str(f.repo), "--job-id", job_id,
+            "--provider-scope", str(scope_path),
+            "--approve-transmission-sha", transmission_sha,
+            "--provider-env", "BASH_ENV", "--task", "bounded task", env=env,
+        )
+        assert passed_to_raw_boundary.returncode == 64
+        assert b"unsafe --provider-env name" in passed_to_raw_boundary.stderr
+        assert b"conflicts with --add-dir" not in passed_to_raw_boundary.stderr
+
+        workflow_state, job_state, worktree = _derived_files(state_home, job_id)
+        assert workflow_state.exists() and job_state.exists() and worktree.exists()
+        (worktree / "README.md").write_text("scoped content drift\n", encoding="utf-8")
+        stale = run_workflow(
+            "run", "--repo", str(f.repo), "--job-id", job_id,
+            "--provider-scope", str(scope_path),
+            "--approve-transmission-sha", transmission_sha,
+            "--task", "bounded task", env=env,
+        )
+        assert stale.returncode == 20
+        assert b"stale or mismatched" in stale.stderr
+        return True
+    finally:
+        f.clean()
+
+
+check(
+    "ordinary run requires explicit whole-worktree or scoped transmission evidence",
+    test_ordinary_run_requires_one_explicit_transmission_mode,
+)
+
+
+def test_legacy_preview_approval_requires_explicit_migration_opt_in() -> bool:
+    f = RepoFixture("legacy-preview")
+    try:
+        preview = run_workflow(
+            "run", "--state", str(f.state_file), "--repo", str(f.repo),
+            "--worktree", str(f.worktree), "--branch", f.branch,
+            "--base", f.base, "--job-id", f.job_id, "--preview",
+        )
+        assert preview.returncode == 0
+        manifest_sha = json.loads(preview.stdout)["manifest_sha256"]
+
+        implicit_legacy = run_workflow(
+            "run", "--state", str(f.state_file), "--repo", str(f.repo),
+            "--worktree", str(f.worktree), "--branch", f.branch,
+            "--base", f.base, "--job-id", f.job_id,
+            "--approve-preview-sha", manifest_sha, "--task", "bounded task",
+        )
+        assert implicit_legacy.returncode == 20
+        assert b"--approve-preview-sha is deprecated" in implicit_legacy.stderr
+        assert not f.state_file.exists()
+
+        explicit_legacy = run_workflow(
+            "run", "--state", str(f.state_file), "--repo", str(f.repo),
+            "--worktree", str(f.worktree), "--branch", f.branch,
+            "--base", f.base, "--job-id", f.job_id,
+            "--approve-preview-sha", manifest_sha,
+            "--legacy-preview-approval", "--provider-env", "BASH_ENV",
+            "--task", "bounded task",
+        )
+        assert explicit_legacy.returncode == 64
+        assert b"warning: --approve-preview-sha is deprecated" in explicit_legacy.stderr
+        assert b"unsafe --provider-env name" in explicit_legacy.stderr
+        return True
+    finally:
+        f.clean()
+
+
+check(
+    "deprecated preview approval cannot preserve an implicit broad default",
+    test_legacy_preview_approval_requires_explicit_migration_opt_in,
 )
 
 
@@ -577,7 +694,7 @@ def test_ordinary_same_invocation_predispatch_failure_rolls_back_lifecycle() -> 
 
         failed = run_workflow(
             "run", "--repo", str(f.repo), "--job-id", job_id,
-            "--approve-preview-sha", manifest_sha,
+            "--approve-whole-worktree", manifest_sha,
             "--provider-env", "BASH_ENV", "--task", "bounded task", env=env,
         )
         assert failed.returncode == 64, (failed.returncode, failed.stdout, failed.stderr)

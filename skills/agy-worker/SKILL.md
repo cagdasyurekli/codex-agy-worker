@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires OpenAI Codex CLI, Bash, Python 3, git, and agy with provider network access. Claude and Claude Code hosts are not supported.
 metadata:
   author: cagdasyurekli
-  version: "0.13.0"
+  version: "0.14.0"
 ---
 
 # Delegate repository work and verify the result
@@ -38,6 +38,7 @@ being sent unless that exact provider transmission was already approved.
 
 Without `--provider-scope`, treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that default read boundary.
 Optional `--provider-scope FILE --approve-transmission-sha SHA256` instead binds exact reviewed read entries, their selected-content digest, and a write subset, then stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.
+The primary `workflow.sh run` facade has no implicit transmission mode: launch requires either `--approve-whole-worktree MANIFEST_SHA256` or the scoped pair above. The deprecated `--approve-preview-sha` spelling cannot launch by itself and remains temporarily available only with `--legacy-preview-approval`.
 The controller still locally enumerates and validates worktree paths and the scope policy before staging; scoped mode is not a filesystem, network, `PATH`, `HOME`, or same-UID sandbox and retains the documented local-owner and mutation-race residuals.
 Provider-scope approval grants neither provider execution, Git action, driver acceptance, nor publication.
 Before each launch, ensure secrets, credentials, private keys, user-denied paths, and unrelated private files are absent from every entry approved for provider transmission; telling the worker not to read an approved entry is not a control.
@@ -91,7 +92,9 @@ read-only `status`, and `verify-finalize`. For ordinary use, supply only an abso
 repository and job ID; optional `--base` overrides the first-call `HEAD` binding. The
 facade derives owner-private state and delegates branch-backed disposable-worktree
 creation to the job lifecycle. Review the content-free preview, then repeat the same
-repository/job ID with its exact digest. Preview and stale approval retain those
+repository/job ID with `--approve-whole-worktree` and its exact manifest digest, or
+preview with `--provider-scope` and repeat it with the exact
+`--approve-transmission-sha`. Preview and stale approval retain those
 bindings. Explicit state/worktree/branch/base inputs remain an all-or-nothing advanced
 compatibility surface. The lifecycle may roll back only clean façade-created resources
 from the same failing pre-dispatch invocation and refuses any drift or dispatch evidence.

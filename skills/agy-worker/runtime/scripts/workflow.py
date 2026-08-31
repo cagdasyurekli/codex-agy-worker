@@ -498,18 +498,23 @@ def validate_base_commit(repo: Path, base: str) -> None:
         raise WorkflowError("base commit does not exist in repository")
 
 
-def canonical_transmission_preview(worktree: Path) -> tuple[bytes, dict[str, Any]]:
+def canonical_transmission_preview(
+    worktree: Path, *, provider_scope: str | None = None,
+) -> tuple[bytes, dict[str, Any]]:
     """Delegate preview generation to the canonical public runtime command."""
 
     preview_command = SCRIPTS.parent / "agy-worker.sh"
+    command = [
+        str(preview_command),
+        "transmission-preview",
+        "--workdir",
+        str(worktree),
+    ]
+    if provider_scope is not None:
+        command += ["--provider-scope", provider_scope, "--format", "json"]
     try:
         proc = subprocess.run(
-            [
-                str(preview_command),
-                "transmission-preview",
-                "--workdir",
-                str(worktree),
-            ],
+            command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -532,7 +537,71 @@ def canonical_transmission_preview(worktree: Path) -> tuple[bytes, dict[str, Any
         or canonical_json(value) + b"\n" != proc.stdout
     ):
         raise WorkflowError("transmission preview contract is invalid")
+    if provider_scope is not None:
+        transmission_sha = value.get("transmission_sha256")
+        if (
+            not isinstance(transmission_sha, str)
+            or SHA_RE.fullmatch(transmission_sha) is None
+            or value.get("provider_scope") is None
+            or value.get("selected_content_manifest") is None
+        ):
+            raise WorkflowError("scoped transmission preview contract is invalid")
     return proc.stdout, value
+
+
+def transmission_choice(
+    args: argparse.Namespace, preview_data: dict[str, Any],
+) -> tuple[str, str | None, str, str, bool]:
+    """Resolve one explicit launch mode without widening provider readability."""
+
+    if args.provider_scope:
+        if (
+            args.approve_whole_worktree
+            or args.approve_preview_sha
+            or args.legacy_preview_approval
+        ):
+            raise WorkflowError(
+                "--provider-scope conflicts with whole-worktree approval options"
+            )
+        expected = preview_data["transmission_sha256"]
+        approved = args.approve_transmission_sha
+        hint = (
+            f"--provider-scope {args.provider_scope} "
+            f"--approve-transmission-sha {expected}"
+        )
+        mode = "provider-scope"
+        legacy = False
+    else:
+        if args.approve_transmission_sha:
+            raise WorkflowError(
+                "--approve-transmission-sha requires --provider-scope"
+            )
+        if args.approve_whole_worktree and args.approve_preview_sha:
+            raise WorkflowError(
+                "--approve-whole-worktree conflicts with --approve-preview-sha"
+            )
+        if args.approve_preview_sha:
+            if not args.legacy_preview_approval:
+                raise WorkflowError(
+                    "--approve-preview-sha is deprecated; use "
+                    "--approve-whole-worktree or add "
+                    "--legacy-preview-approval during the migration window"
+                )
+            approved = args.approve_preview_sha
+            legacy = True
+        else:
+            if args.legacy_preview_approval:
+                raise WorkflowError(
+                    "--legacy-preview-approval requires --approve-preview-sha"
+                )
+            approved = args.approve_whole_worktree
+            legacy = False
+        expected = preview_data["manifest_sha256"]
+        hint = f"--approve-whole-worktree {expected}"
+        mode = "whole-worktree"
+    if approved is not None and SHA_RE.fullmatch(approved) is None:
+        raise WorkflowError(f"{mode} approval must be one lowercase SHA-256")
+    return mode, approved, expected, hint, legacy
 
 
 def _owner_directory(path: Path, label: str, *, private: bool) -> Path:
@@ -763,7 +832,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--branch", help="Advanced: explicit branch name.")
     run_parser.add_argument("--base", help="Immutable base commit SHA; defaults to current HEAD in ordinary mode.")
     run_parser.add_argument("--job-id", "--workflow-id", dest="job_id", required=True, help="Workflow job ID.")
-    run_parser.add_argument("--approve-preview-sha", help="Approved transmission-preview manifest SHA-256.")
+    run_parser.add_argument(
+        "--approve-whole-worktree",
+        help="Explicitly approve whole-worktree transmission bound to this preview SHA-256.",
+    )
+    run_parser.add_argument(
+        "--provider-scope",
+        help="Canonical provider-scope policy file for selected-content staging.",
+    )
+    run_parser.add_argument(
+        "--approve-transmission-sha",
+        help="Approved scoped transmission SHA-256 from the exact preview.",
+    )
+    run_parser.add_argument(
+        "--approve-preview-sha",
+        help="Deprecated whole-worktree approval spelling; requires --legacy-preview-approval.",
+    )
+    run_parser.add_argument(
+        "--legacy-preview-approval",
+        action="store_true",
+        help="Temporarily acknowledge the deprecated --approve-preview-sha spelling.",
+    )
     run_parser.add_argument("--preview", action="store_true", help="Run transmission preview only.")
     run_parser.add_argument("--job-dir", help="Explicit dispatch job directory.")
     run_parser.add_argument("--job-state", help="Optional path to job.sh state file.")
@@ -834,10 +923,16 @@ def _dispatch_run(
     cmd = [
         str(runtime / "agy-worker.sh"),
         "--workdir", str(worktree),
-        "--add-dir", str(worktree),
         "--workflow", args.workflow,
         "--mode", args.mode,
     ]
+    if args.provider_scope:
+        cmd += [
+            "--provider-scope", args.provider_scope,
+            "--approve-transmission-sha", args.approve_transmission_sha,
+        ]
+    else:
+        cmd += ["--add-dir", str(worktree)]
     if args.tier:
         cmd += ["--tier", args.tier]
     if args.model:
@@ -892,19 +987,30 @@ def _explicit_run(args: argparse.Namespace, repo: Path) -> int:
     created_state_sha: str | None = None
     created_state_identity: dict[str, int] | None = None
     try:
-        preview_raw, preview_data = canonical_transmission_preview(worktree)
+        preview_raw, preview_data = canonical_transmission_preview(
+            worktree, provider_scope=args.provider_scope,
+        )
         manifest_sha = preview_data["manifest_sha256"]
+        _mode, approved_sha, expected_sha, approval_hint, legacy = (
+            transmission_choice(args, preview_data)
+        )
         if args.preview:
             sys.stdout.buffer.write(preview_raw)
             return 0
-        if not args.approve_preview_sha:
+        if approved_sha is None:
             sys.stdout.buffer.write(preview_raw)
             sys.stderr.write(
-                f"workflow: provider-transmission approval required. Re-run with --approve-preview-sha {manifest_sha}\n"
+                "workflow: explicit provider-transmission mode required. "
+                f"Re-run with {approval_hint}\n"
             )
             return 20
-        if args.approve_preview_sha != manifest_sha:
+        if approved_sha != expected_sha:
             raise WorkflowError("transmission preview approval is stale or mismatched")
+        if legacy:
+            sys.stderr.write(
+                "workflow: warning: --approve-preview-sha is deprecated; "
+                "use --approve-whole-worktree\n"
+            )
         if store.value is not None:
             raise WorkflowError(
                 "workflow state already exists; use status or the advanced recovery commands"
@@ -1020,7 +1126,9 @@ def _ordinary_run(args: argparse.Namespace, repo: Path) -> int:
     state_identity: dict[str, int] | None = None
     try:
         try:
-            preview_raw, preview_data = canonical_transmission_preview(worktree)
+            preview_raw, preview_data = canonical_transmission_preview(
+                worktree, provider_scope=args.provider_scope,
+            )
         except BaseException:
             if initialized_here:
                 _rollback_facade_ready(
@@ -1031,6 +1139,9 @@ def _ordinary_run(args: argparse.Namespace, repo: Path) -> int:
                 )
             raise
         manifest_sha = preview_data["manifest_sha256"]
+        _mode, approved_sha, expected_sha, approval_hint, legacy = (
+            transmission_choice(args, preview_data)
+        )
         if store.value is None:
             state_sha = store.create(
                 {
@@ -1078,14 +1189,20 @@ def _ordinary_run(args: argparse.Namespace, repo: Path) -> int:
         if args.preview:
             sys.stdout.buffer.write(preview_raw)
             return 0
-        if not args.approve_preview_sha:
+        if approved_sha is None:
             sys.stdout.buffer.write(preview_raw)
             sys.stderr.write(
-                f"workflow: provider-transmission approval required. Re-run with --approve-preview-sha {manifest_sha}\n"
+                "workflow: explicit provider-transmission mode required. "
+                f"Re-run with {approval_hint}\n"
             )
             return 20
-        if args.approve_preview_sha != manifest_sha:
+        if approved_sha != expected_sha:
             raise WorkflowError("transmission preview approval is stale or mismatched")
+        if legacy:
+            sys.stderr.write(
+                "workflow: warning: --approve-preview-sha is deprecated; "
+                "use --approve-whole-worktree\n"
+            )
     finally:
         store.close()
 
@@ -1105,6 +1222,10 @@ def _ordinary_run(args: argparse.Namespace, repo: Path) -> int:
 
 def command_run(args: argparse.Namespace) -> int:
     repo = real_absolute(Path(args.repo), "repository")
+    if args.provider_scope:
+        args.provider_scope = str(
+            real_absolute(Path(args.provider_scope), "provider scope")
+        )
     explicit = any((args.state, args.worktree, args.branch))
     if explicit:
         return _explicit_run(args, repo)

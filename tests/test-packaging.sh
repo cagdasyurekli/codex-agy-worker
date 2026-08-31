@@ -1373,7 +1373,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.13.0"
+assert manifest["version"] == "0.14.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -1403,7 +1403,7 @@ assert '## State approval is stale' in troubleshooting_reference.read_text(encod
 
 def lifecycle_invocation_contract(text: str) -> bool:
     approved_start = text.find('ENVELOPE="$STATE_DIR/envelope.json"')
-    approved_end = text.find('This facade invocation uses default whole-worktree dispatch;', approved_start)
+    approved_end = text.find('This facade invocation explicitly approves whole-worktree dispatch;', approved_start)
     verify_start = text.find('RECEIPT="$STATE_DIR/evidence-receipt.json"')
     verify_end = text.find('Choose commands from the candidate repository', verify_start)
     if min(approved_start, approved_end, verify_start, verify_end) < 0:
@@ -1412,7 +1412,7 @@ def lifecycle_invocation_contract(text: str) -> bool:
     verify = text[verify_start:verify_end]
     return all((
         'test ! -e "$ENVELOPE"' in approved,
-        '--approve-preview-sha "$PREVIEW_SHA"' in approved,
+        '--approve-whole-worktree "$PREVIEW_SHA"' in approved,
         '> "$ENVELOPE"' in approved,
         'test -s "$ENVELOPE"' in approved,
         'test ! -e "$RECEIPT"' in verify,
@@ -1436,6 +1436,10 @@ workflow_source = (
 ).read_text(encoding="utf-8")
 assert 'vf_parser.add_argument("--receipt", required=True' in workflow_source
 assert 'vf_parser.add_argument("--envelope", required=True' in workflow_source
+assert '"--approve-whole-worktree"' in workflow_source
+assert '"--provider-scope"' in workflow_source
+assert '"--approve-transmission-sha"' in workflow_source
+assert '"--legacy-preview-approval"' in workflow_source
 runtime_wrapper = (
     root / "skills/agy-worker/runtime/agy-worker.sh"
 ).read_text(encoding="utf-8")
@@ -3358,8 +3362,8 @@ required = {
     "README.md": (
         "Default dispatch may expose every file in the disposable worktree",
         "Optional `--provider-scope` instead binds exact reviewed read entries",
-        "In default facade mode, `agy` may read the whole disposable worktree",
-        "Optional direct `--provider-scope` dispatch instead binds exact reviewed read/write entries",
+        "The facade requires an explicit choice",
+        "Facade `--provider-scope` dispatch instead binds exact reviewed read/write entries",
         "the stage is not a sandbox, and scope approval grants no provider execution, Git, acceptance, or publication authority",
     ),
     "PRIVACY.md": (
@@ -3387,17 +3391,19 @@ required = {
         "Optional `--provider-scope` binds exact reviewed read/write entries",
     ),
     "docs/REPO_MAP.md": (
-        "Default dispatch exposes the entire disposable `--workdir`",
+        "Primary facade dispatch has no implicit provider-read mode",
+        "Whole-worktree mode exposes the entire disposable `--workdir`",
         "Optional provider-scope mode binds exact reviewed read entries",
     ),
     "docs/index.md": (
-        "With default facade dispatch, those paths constrain candidate acceptance, not provider reads",
-        "Optional direct `--provider-scope` dispatch instead binds exact reviewed read/write entries",
+        "The facade has no implicit provider-read mode.",
+        "<code>--approve-whole-worktree</code> binds the current path/kind manifest",
+        "<code>--provider-scope</code> plus the exact transmission digest binds reviewed read/write entries",
         "scoped staging is not a sandbox, and its approval grants no provider execution, Git, acceptance, or publication authority",
     ),
     "docs/PROJECT_WORKFLOW.md": (
-        "The primary facade uses default whole-worktree visibility",
-        "`agy-worker.sh --provider-scope FILE --approve-transmission-sha SHA256` binds exact reviewed read/write entries",
+        "Choose the transmission mode explicitly",
+        "`--provider-scope FILE --approve-transmission-sha SHA256`, which binds exact reviewed read/write entries",
         "it is not a sandbox, and scope approval grants no provider execution, Git, acceptance, or publication authority",
     ),
     "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md": (

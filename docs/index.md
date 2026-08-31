@@ -120,12 +120,12 @@ runs no provider</code></pre>
   </div>
   <div class="evidence-grid">
     <article class="evidence-item">
-      <h3>Default facade dispatch</h3>
-      <p>With default facade dispatch, those paths constrain candidate acceptance, not provider reads: content in the disposable worktree is potentially readable and transmissible.</p>
+      <h3>Whole-worktree approval</h3>
+      <p>The facade has no implicit provider-read mode. <code>--approve-whole-worktree</code> binds the current path/kind manifest and acknowledges that the disposable worktree is potentially readable and transmissible.</p>
     </article>
     <article class="evidence-item">
-      <h3>Selected-content dispatch</h3>
-      <p>Optional direct `--provider-scope` dispatch instead binds exact reviewed read/write entries. It stages only the selected content in a private, Gitless provider directory.</p>
+      <h3>Selected-content approval</h3>
+      <p><code>--provider-scope</code> plus the exact transmission digest binds reviewed read/write entries. It stages only the selected content in a private, Gitless provider directory.</p>
     </article>
     <article class="evidence-item">
       <h3>Authority remains separate</h3>
@@ -151,7 +151,6 @@ runs no provider</code></pre>
   <pre class="install-command"><code>git clone https://github.com/cagdasyurekli/codex-agy-worker.git
 cd codex-agy-worker</code></pre>
 </section>
-
 <aside class="callout" aria-labelledby="privacy-title">
   <div>
     <p class="eyebrow">Provider boundary</p>
