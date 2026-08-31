@@ -27,6 +27,29 @@ SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9._:+-]{1,100}\Z")
 BINDING_KEY_RE = re.compile(r"^[a-z_]{1,50}\Z")
 SOURCE_URI_RE = re.compile(r"^(?:https://[a-zA-Z0-9_./-]{1,2000}|local://[a-zA-Z0-9_./-]{1,2000})\Z")
 VALID_LANES = {"vendor_declared", "measured", "observational"}
+WORKFLOW_CATEGORIES = ("explore", "task", "project", "benchmark", "other")
+IDENTITY_STATUSES = ("match", "mismatch", "missing", "substituted")
+SUBJECT_RATIONALE_CODES = {
+    "within-bounds",
+    "lane-limitation",
+    "identity-mismatch",
+    "model-substituted",
+    "observed-model-missing",
+    "scenario-drift",
+    "harness-drift",
+    "evaluator-drift",
+    "config-drift",
+    "policy-drift",
+    "window-drift",
+    "telemetry-incompatible",
+    "insufficient-coverage",
+    "budget-exhausted",
+    "insufficient-samples",
+    "drift-exceeded",
+    "error-rate-exceeded",
+    "verification-failed",
+    "uncertainty-exceeded",
+}
 RECORD_LIMITATION_CODES = {
     "identity-observation-caller-supplied",
     "observational-evidence-not-measured",
@@ -116,6 +139,37 @@ def _bounded_number(value: Any, label: str, minimum: float, maximum: float) -> f
             f"{label} must be a finite number between {minimum} and {maximum}"
         )
     return float(value)
+
+
+def _workflow_category(scenario_id: str) -> str:
+    """Reduce a private scenario identifier to one closed, non-identifying category."""
+    tokens = {token for token in re.split(r"[._:+-]+", scenario_id.lower()) if token}
+    if "benchmark" in tokens or "swebench" in tokens or {"swe", "bench"}.issubset(tokens):
+        return "benchmark"
+    if tokens.intersection({"explore", "exploration"}):
+        return "explore"
+    if "task" in tokens:
+        return "task"
+    if "project" in tokens:
+        return "project"
+    return "other"
+
+
+def _scenario_version(scenario_id: str) -> str | None:
+    """Expose only a terminal version token, never the scenario identifier itself."""
+    match = re.search(r"(?:^|[._:+-])(v[0-9]+(?:[._-][0-9]+)*)\Z", scenario_id.lower())
+    return match.group(1) if match else None
+
+
+def _identity_status(record: dict[str, Any]) -> str:
+    identity = record["model_identity"]
+    if identity["observed_model"] is None:
+        return "missing"
+    if identity["substituted"] is True:
+        return "substituted"
+    if identity["requested_model"] != identity["observed_model"]:
+        return "mismatch"
+    return "match"
 
 
 def _model_intelligence_module() -> Any:
@@ -855,7 +909,7 @@ def validate_evaluation(eval_dict: Any) -> dict[str, Any]:
 def validate_aggregate(agg: Any) -> dict[str, Any]:
     if not isinstance(agg, dict):
         raise ModelEvidenceCampaignError("aggregate must be an object")
-    allowed_keys = {
+    v1_keys = {
         "schema_version",
         "kind",
         "total_records",
@@ -865,11 +919,16 @@ def validate_aggregate(agg: Any) -> dict[str, Any]:
         "total_samples",
         "total_invocations",
     }
-    if set(agg.keys()) != allowed_keys:
+    version = agg.get("schema_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version not in {1, 2}:
+        raise ModelEvidenceCampaignError("aggregate schema_version must be integer 1 or 2")
+    expected_keys = v1_keys if version == 1 else v1_keys | {
+        "by_workflow_category",
+        "by_requested_observed_model",
+        "identity_mismatch_counts",
+    }
+    if set(agg.keys()) != expected_keys:
         raise ModelEvidenceCampaignError("aggregate keys do not match strict schema")
-
-    if agg["schema_version"] != 1 or isinstance(agg["schema_version"], bool):
-        raise ModelEvidenceCampaignError("aggregate schema_version must be integer 1")
     if agg["kind"] != "agy-model-evidence-campaign-aggregate":
         raise ModelEvidenceCampaignError("aggregate kind must be agy-model-evidence-campaign-aggregate")
 
@@ -902,6 +961,52 @@ def validate_aggregate(agg: Any) -> dict[str, Any]:
         if not isinstance(by_verif[k], int) or isinstance(by_verif[k], bool) or by_verif[k] < 0:
             raise ModelEvidenceCampaignError(f"by_verification {k} must be non-negative integer")
 
+    if version == 2:
+        by_workflow = agg["by_workflow_category"]
+        if not isinstance(by_workflow, dict) or set(by_workflow.keys()) != set(WORKFLOW_CATEGORIES):
+            raise ModelEvidenceCampaignError(
+                "by_workflow_category must contain explore, task, project, benchmark, other"
+            )
+        for key, value in by_workflow.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ModelEvidenceCampaignError(
+                    f"by_workflow_category {key} must be non-negative integer"
+                )
+
+        by_identity = agg["by_requested_observed_model"]
+        if not isinstance(by_identity, dict) or set(by_identity.keys()) != set(IDENTITY_STATUSES):
+            raise ModelEvidenceCampaignError(
+                "by_requested_observed_model must contain match, mismatch, missing, substituted"
+            )
+        for key, value in by_identity.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ModelEvidenceCampaignError(
+                    f"by_requested_observed_model {key} must be non-negative integer"
+                )
+
+        mismatch_counts = agg["identity_mismatch_counts"]
+        if not isinstance(mismatch_counts, dict) or set(mismatch_counts.keys()) != {
+            "candidate", "anchor", "total"
+        }:
+            raise ModelEvidenceCampaignError(
+                "identity_mismatch_counts must contain candidate, anchor, total"
+            )
+        for key, value in mismatch_counts.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ModelEvidenceCampaignError(
+                    f"identity_mismatch_counts {key} must be non-negative integer"
+                )
+        if mismatch_counts["candidate"] + mismatch_counts["anchor"] != mismatch_counts["total"]:
+            raise ModelEvidenceCampaignError("identity_mismatch_counts total is inconsistent")
+        if mismatch_counts["total"] != by_identity["mismatch"]:
+            raise ModelEvidenceCampaignError(
+                "identity_mismatch_counts must equal requested-observed mismatch count"
+            )
+        if sum(by_workflow.values()) != agg["total_records"]:
+            raise ModelEvidenceCampaignError("workflow-category counts must equal total_records")
+        if sum(by_identity.values()) != agg["total_records"]:
+            raise ModelEvidenceCampaignError("requested-observed counts must equal total_records")
+
     if not isinstance(agg["total_samples"], int) or isinstance(agg["total_samples"], bool) or agg["total_samples"] < 0:
         raise ModelEvidenceCampaignError("total_samples must be non-negative integer")
     if not isinstance(agg["total_invocations"], int) or isinstance(agg["total_invocations"], bool) or agg["total_invocations"] < 0:
@@ -915,13 +1020,172 @@ def validate_aggregate_preview(preview: Any) -> dict[str, Any]:
         raise ModelEvidenceCampaignError("preview must be an object")
     if set(preview.keys()) != {"schema_version", "kind", "preview_sha256", "payload"}:
         raise ModelEvidenceCampaignError("preview keys do not match strict schema")
-    if preview["schema_version"] != 1 or isinstance(preview["schema_version"], bool):
-        raise ModelEvidenceCampaignError("preview schema_version must be integer 1")
+    if preview["schema_version"] not in {1, 2} or isinstance(preview["schema_version"], bool):
+        raise ModelEvidenceCampaignError("preview schema_version must be integer 1 or 2")
     if preview["kind"] != "agy-model-evidence-campaign-aggregate-preview":
         raise ModelEvidenceCampaignError("preview kind must be agy-model-evidence-campaign-aggregate-preview")
     if not isinstance(preview["preview_sha256"], str) or not SHA256_RE.fullmatch(preview["preview_sha256"]):
         raise ModelEvidenceCampaignError("invalid preview_sha256")
     validate_aggregate(preview["payload"])
+    if preview["schema_version"] != preview["payload"]["schema_version"]:
+        raise ModelEvidenceCampaignError("preview schema_version must match aggregate payload")
+    return preview
+
+
+def _validate_subject_summary(subject: Any, expected_role: str) -> dict[str, Any]:
+    if not isinstance(subject, dict) or set(subject.keys()) != {
+        "role",
+        "ordinal",
+        "coverage",
+        "identity",
+        "provenance",
+        "runtime_version",
+        "uncertainty",
+        "drift_fraction",
+        "rationale_codes",
+    }:
+        raise ModelEvidenceCampaignError("advisory subject keys do not match strict schema")
+    if subject["role"] != expected_role:
+        raise ModelEvidenceCampaignError("advisory subject role is inconsistent")
+    if (
+        not isinstance(subject["ordinal"], int)
+        or isinstance(subject["ordinal"], bool)
+        or not 0 <= subject["ordinal"] <= 20
+    ):
+        raise ModelEvidenceCampaignError("advisory subject ordinal is invalid")
+    _bounded_number(subject["coverage"], "advisory subject coverage", 0.0, 1.0)
+    _bounded_number(subject["uncertainty"], "advisory subject uncertainty", 0.0, 100.0)
+    _bounded_number(subject["drift_fraction"], "advisory subject drift_fraction", 0.0, 1.0)
+    if subject["identity"] not in IDENTITY_STATUSES:
+        raise ModelEvidenceCampaignError("advisory subject identity is invalid")
+    if subject["provenance"] not in {
+        "vendor_declared", "observational", "independent", "local"
+    }:
+        raise ModelEvidenceCampaignError("advisory subject provenance is invalid")
+    if subject["runtime_version"] is not None and (
+        not isinstance(subject["runtime_version"], str)
+        or not SAFE_ID_RE.fullmatch(subject["runtime_version"])
+    ):
+        raise ModelEvidenceCampaignError("advisory subject runtime_version is invalid")
+    rationale_codes = subject["rationale_codes"]
+    if (
+        not isinstance(rationale_codes, list)
+        or not 1 <= len(rationale_codes) <= len(SUBJECT_RATIONALE_CODES)
+        or len(set(rationale_codes)) != len(rationale_codes)
+        or any(code not in SUBJECT_RATIONALE_CODES for code in rationale_codes)
+    ):
+        raise ModelEvidenceCampaignError("advisory subject rationale_codes are invalid")
+    return subject
+
+
+def validate_advisory_summary(summary: Any) -> dict[str, Any]:
+    if not isinstance(summary, dict) or set(summary.keys()) != {
+        "schema_version",
+        "kind",
+        "lane",
+        "scenario",
+        "recommendation",
+        "rationale_code",
+        "candidate",
+        "anchors",
+        "recommendation_only",
+        "applied",
+        "dispatch_authorized",
+        "model_change_authorized",
+        "effort_change_authorized",
+        "acceptance_authorized",
+        "git_authorized",
+        "limitations",
+        "token_inference_disclaimer",
+    }:
+        raise ModelEvidenceCampaignError("advisory summary keys do not match strict schema")
+    if summary["schema_version"] != 1 or isinstance(summary["schema_version"], bool):
+        raise ModelEvidenceCampaignError("advisory summary schema_version must be integer 1")
+    if summary["kind"] != "agy-model-evidence-campaign-advisory-summary":
+        raise ModelEvidenceCampaignError("advisory summary kind is invalid")
+    if summary["lane"] not in VALID_LANES:
+        raise ModelEvidenceCampaignError("advisory summary lane is invalid")
+
+    scenario = summary["scenario"]
+    if not isinstance(scenario, dict) or set(scenario.keys()) != {
+        "workflow_category",
+        "scenario_version",
+        "harness_version",
+        "evaluator_version",
+        "policy_version",
+    }:
+        raise ModelEvidenceCampaignError("advisory scenario keys do not match strict schema")
+    if scenario["workflow_category"] not in WORKFLOW_CATEGORIES:
+        raise ModelEvidenceCampaignError("advisory workflow_category is invalid")
+    if scenario["scenario_version"] is not None and (
+        not isinstance(scenario["scenario_version"], str)
+        or not SAFE_ID_RE.fullmatch(scenario["scenario_version"])
+    ):
+        raise ModelEvidenceCampaignError("advisory scenario_version is invalid")
+    for key in ("harness_version", "evaluator_version", "policy_version"):
+        if not isinstance(scenario[key], str) or not SAFE_ID_RE.fullmatch(scenario[key]):
+            raise ModelEvidenceCampaignError(f"advisory {key} is invalid")
+
+    if summary["recommendation"] not in {"candidate_evidence_only", "no_recommendation"}:
+        raise ModelEvidenceCampaignError("advisory recommendation is invalid")
+    if summary["rationale_code"] not in EVALUATION_REASON_CODES:
+        raise ModelEvidenceCampaignError("advisory rationale_code is invalid")
+    if summary["lane"] != "measured" and summary["recommendation"] != "no_recommendation":
+        raise ModelEvidenceCampaignError("non-measured advisory must fail closed")
+    if summary["recommendation"] == "candidate_evidence_only" and (
+        summary["lane"] != "measured"
+        or summary["rationale_code"] != "verified-measured-evidence"
+    ):
+        raise ModelEvidenceCampaignError("candidate advisory is not verified measured evidence")
+
+    _validate_subject_summary(summary["candidate"], "candidate")
+    anchors = summary["anchors"]
+    if not isinstance(anchors, list) or not 1 <= len(anchors) <= 20:
+        raise ModelEvidenceCampaignError("advisory anchors must contain 1 to 20 subjects")
+    for index, subject in enumerate(anchors, start=1):
+        _validate_subject_summary(subject, "anchor")
+        if subject["ordinal"] != index:
+            raise ModelEvidenceCampaignError("advisory anchor ordinals are not contiguous")
+    if summary["candidate"]["ordinal"] != 0:
+        raise ModelEvidenceCampaignError("advisory candidate ordinal must be zero")
+
+    for flag in (
+        "applied",
+        "dispatch_authorized",
+        "model_change_authorized",
+        "effort_change_authorized",
+        "acceptance_authorized",
+        "git_authorized",
+    ):
+        if summary[flag] is not False:
+            raise ModelEvidenceCampaignError(f"advisory {flag} must be false")
+    if summary["recommendation_only"] is not True:
+        raise ModelEvidenceCampaignError("advisory recommendation_only must be true")
+    if (
+        not isinstance(summary["limitations"], list)
+        or not 1 <= len(summary["limitations"]) <= 20
+        or any(not isinstance(item, str) or not 1 <= len(item) <= 1000 for item in summary["limitations"])
+    ):
+        raise ModelEvidenceCampaignError("advisory limitations are invalid")
+    if summary["token_inference_disclaimer"] != TOKEN_DISCLAIMER:
+        raise ModelEvidenceCampaignError("invalid advisory token_inference_disclaimer")
+    return summary
+
+
+def validate_advisory_preview(preview: Any) -> dict[str, Any]:
+    if not isinstance(preview, dict) or set(preview.keys()) != {
+        "schema_version", "kind", "preview_sha256", "payload"
+    }:
+        raise ModelEvidenceCampaignError("advisory preview keys do not match strict schema")
+    if preview["schema_version"] != 1 or isinstance(preview["schema_version"], bool):
+        raise ModelEvidenceCampaignError("advisory preview schema_version must be integer 1")
+    if preview["kind"] != "agy-model-evidence-campaign-advisory-preview":
+        raise ModelEvidenceCampaignError("advisory preview kind is invalid")
+    if not isinstance(preview["preview_sha256"], str) or not SHA256_RE.fullmatch(
+        preview["preview_sha256"]
+    ):
+        raise ModelEvidenceCampaignError("invalid advisory preview_sha256")
+    validate_advisory_summary(preview["payload"])
     return preview
 
 
@@ -1807,6 +2071,208 @@ def _make_evaluation_result(
     return validate_evaluation(eval_dict)
 
 
+def _subject_rationale_codes(
+    plan: dict[str, Any], record: dict[str, Any]
+) -> list[str]:
+    codes: list[str] = []
+    identity_status = _identity_status(record)
+    if identity_status == "missing":
+        codes.append("observed-model-missing")
+    elif identity_status == "substituted":
+        codes.append("model-substituted")
+    elif identity_status == "mismatch":
+        codes.append("identity-mismatch")
+
+    if record["scenario_id"] != plan["scenario_id"]:
+        codes.append("scenario-drift")
+    if record["harness"] != plan["harness"]:
+        codes.append("harness-drift")
+    if record["evaluator"] != plan["evaluator"]:
+        codes.append("evaluator-drift")
+    if record["config_sha256"] != plan["config_sha256"]:
+        codes.append("config-drift")
+    if record["policy"] != plan["policy"]:
+        codes.append("policy-drift")
+    if record["measurement_window"] != plan["measurement_window"]:
+        codes.append("window-drift")
+
+    telemetry = record["telemetry"]
+    required_bindings = set(plan["required_telemetry"]["bindings"])
+    if not required_bindings.issubset(set(telemetry["telemetry_bindings"])):
+        codes.append("telemetry-incompatible")
+    required_coverage = max(
+        float(plan["acceptance_rules"]["min_coverage"]),
+        float(plan["required_telemetry"]["min_coverage"]),
+    )
+    if float(telemetry["coverage"]) < required_coverage:
+        codes.append("insufficient-coverage")
+    if telemetry["sample_count"] < plan["acceptance_rules"]["min_sample_size"]:
+        codes.append("insufficient-samples")
+    if (
+        telemetry["sample_count"] > plan["budget"]["sample_budget"]
+        or telemetry["invocation_count"] > plan["budget"]["invocation_budget"]
+    ):
+        codes.append("budget-exhausted")
+    if float(telemetry["drift_fraction"]) > float(plan["drift_tolerance"]["max_drift_fraction"]):
+        codes.append("drift-exceeded")
+    if float(telemetry["error_rate"]) > float(plan["acceptance_rules"]["max_error_rate"]):
+        codes.append("error-rate-exceeded")
+    if telemetry["verification_passed"] is not True:
+        codes.append("verification-failed")
+    if float(telemetry["uncertainty"]) > float(
+        plan["acceptance_rules"]["uncertainty_rule"]["max_uncertainty"]
+    ):
+        codes.append("uncertainty-exceeded")
+    if plan["lane"] != "measured":
+        codes.append("lane-limitation")
+    return codes or ["within-bounds"]
+
+
+def _subject_summary(
+    plan: dict[str, Any], record: dict[str, Any], role: str, ordinal: int
+) -> dict[str, Any]:
+    measured = record["measured_metadata"]
+    if plan["lane"] == "vendor_declared":
+        provenance = "vendor_declared"
+    elif plan["lane"] == "observational":
+        provenance = "observational"
+    else:
+        assert isinstance(measured, dict)
+        provenance = measured["provenance_type"]
+    summary = {
+        "role": role,
+        "ordinal": ordinal,
+        "coverage": record["telemetry"]["coverage"],
+        "identity": _identity_status(record),
+        "provenance": provenance,
+        "runtime_version": measured["agy_version"] if isinstance(measured, dict) else None,
+        "uncertainty": record["telemetry"]["uncertainty"],
+        "drift_fraction": record["telemetry"]["drift_fraction"],
+        "rationale_codes": _subject_rationale_codes(plan, record),
+    }
+    return _validate_subject_summary(summary, role)
+
+
+def compute_advisory_summary(
+    plan: dict[str, Any],
+    plan_sha: str,
+    records: Sequence[tuple[dict[str, Any], str]],
+    evaluation: dict[str, Any],
+    review: dict[str, Any],
+    review_sha: str,
+    dataset: dict[str, Any],
+    dataset_sha: str,
+    inventory: dict[str, Any],
+    inventory_sha: str,
+    matrix: dict[str, Any],
+    matrix_sha: str,
+) -> dict[str, Any]:
+    """Render a privacy-bounded advisory from one exact plan/cohort/evaluation chain."""
+    validate_plan(plan)
+    validate_evaluation(evaluation)
+    if not isinstance(plan_sha, str) or not SHA256_RE.fullmatch(plan_sha):
+        raise ModelEvidenceCampaignError("advisory plan digest is invalid")
+    if evaluation["plan_sha256"] != plan_sha or evaluation["lane"] != plan["lane"]:
+        raise ModelEvidenceCampaignError("advisory evaluation does not bind the plan")
+    if evaluation["candidate_model_id"] != plan["candidate_model_id"]:
+        raise ModelEvidenceCampaignError("advisory evaluation candidate does not bind the plan")
+    validate_campaign_artifacts(
+        plan, review, review_sha, inventory, inventory_sha, matrix, matrix_sha,
+        dataset, dataset_sha,
+    )
+
+    candidate_entries: list[tuple[dict[str, Any], str]] = []
+    anchor_by_sha: dict[str, dict[str, Any]] = {}
+    seen_record_shas: set[str] = set()
+    for record, record_sha in records:
+        validate_record(record)
+        if not isinstance(record_sha, str) or not SHA256_RE.fullmatch(record_sha):
+            raise ModelEvidenceCampaignError("advisory record digest is invalid")
+        if record_sha in seen_record_shas:
+            raise ModelEvidenceCampaignError("advisory record digest is duplicated")
+        seen_record_shas.add(record_sha)
+        if record["plan_sha256"] != plan_sha or record["lane"] != plan["lane"]:
+            raise ModelEvidenceCampaignError("advisory record does not bind the plan and lane")
+        if record["subject_role"] == "candidate":
+            candidate_entries.append((record, record_sha))
+        else:
+            anchor_by_sha[record_sha] = record
+
+    if len(candidate_entries) != 1:
+        raise ModelEvidenceCampaignError("advisory requires exactly one candidate record")
+    candidate_record, candidate_sha = candidate_entries[0]
+    if candidate_sha != evaluation["candidate_record_sha256"]:
+        raise ModelEvidenceCampaignError("advisory candidate record does not bind the evaluation")
+    if candidate_record["model_identity"]["requested_model"] != plan["candidate_model_id"]:
+        raise ModelEvidenceCampaignError("advisory candidate record is unexpected")
+
+    evaluation_anchor_shas = evaluation["anchor_record_sha256s"]
+    if set(anchor_by_sha) != set(evaluation_anchor_shas):
+        raise ModelEvidenceCampaignError("advisory anchor records do not bind the evaluation")
+    if len(evaluation_anchor_shas) != len(plan["anchor_model_ids"]):
+        raise ModelEvidenceCampaignError("advisory requires the complete anchor cohort")
+    ordered_anchors: list[dict[str, Any]] = []
+    ordered_anchor_records: list[tuple[dict[str, Any], str]] = []
+    for ordinal, (expected_model, anchor_sha) in enumerate(
+        zip(plan["anchor_model_ids"], evaluation_anchor_shas), start=1
+    ):
+        anchor_record = anchor_by_sha[anchor_sha]
+        if anchor_record["model_identity"]["requested_model"] != expected_model:
+            raise ModelEvidenceCampaignError("advisory anchor order does not bind the plan")
+        ordered_anchor_records.append((anchor_record, anchor_sha))
+        ordered_anchors.append(_subject_summary(plan, anchor_record, "anchor", ordinal))
+
+    recomputed_evaluation = evaluate_campaign(
+        plan,
+        plan_sha,
+        candidate_record=candidate_record,
+        candidate_record_sha=candidate_sha,
+        anchor_records=ordered_anchor_records,
+        review=review,
+        review_sha=review_sha,
+        dataset_sha=dataset_sha,
+        inventory_sha=inventory_sha,
+        matrix_sha=matrix_sha,
+    )
+    if canonical_bytes(recomputed_evaluation) != canonical_bytes(evaluation):
+        raise ModelEvidenceCampaignError(
+            "advisory evaluation differs from deterministic cohort recomputation"
+        )
+
+    candidate_summary = _subject_summary(plan, candidate_record, "candidate", 0)
+
+    summary = {
+        "schema_version": 1,
+        "kind": "agy-model-evidence-campaign-advisory-summary",
+        "lane": plan["lane"],
+        "scenario": {
+            "workflow_category": _workflow_category(plan["scenario_id"]),
+            "scenario_version": _scenario_version(plan["scenario_id"]),
+            "harness_version": plan["harness"]["version"],
+            "evaluator_version": plan["evaluator"]["version"],
+            "policy_version": plan["policy"]["version"],
+        },
+        "recommendation": evaluation["recommendation"],
+        "rationale_code": evaluation["reason_code"],
+        "candidate": candidate_summary,
+        "anchors": ordered_anchors,
+        "recommendation_only": True,
+        "applied": False,
+        "dispatch_authorized": False,
+        "model_change_authorized": False,
+        "effort_change_authorized": False,
+        "acceptance_authorized": False,
+        "git_authorized": False,
+        "limitations": [
+            "Privacy-bounded local advisory; excludes prompts, paths, identifiers, and raw evidence.",
+            "Scenario identifiers are reduced to a closed workflow category and terminal version token.",
+            TOKEN_DISCLAIMER,
+        ],
+        "token_inference_disclaimer": TOKEN_DISCLAIMER,
+    }
+    return validate_advisory_summary(summary)
+
+
 def compute_aggregate(
     records: Sequence[tuple[dict[str, Any], str]],
     evaluations: Sequence[dict[str, Any]],
@@ -1816,6 +2282,9 @@ def compute_aggregate(
     by_lane = {"vendor_declared": 0, "measured": 0, "observational": 0}
     by_status = {"evaluated": 0, "verified_measured": 0, "no_recommendation": 0, "unreviewed": 0}
     by_verification = {"passed": 0, "failed": 0}
+    by_workflow_category = {category: 0 for category in WORKFLOW_CATEGORIES}
+    by_requested_observed_model = {status: 0 for status in IDENTITY_STATUSES}
+    identity_mismatch_counts = {"candidate": 0, "anchor": 0, "total": 0}
     total_samples = 0
     total_invocations = 0
 
@@ -1840,6 +2309,12 @@ def compute_aggregate(
         lane = rec["lane"]
         if lane in by_lane:
             by_lane[lane] += 1
+        by_workflow_category[_workflow_category(rec["scenario_id"])] += 1
+        identity_status = _identity_status(rec)
+        by_requested_observed_model[identity_status] += 1
+        if identity_status == "mismatch":
+            identity_mismatch_counts[rec["subject_role"]] += 1
+            identity_mismatch_counts["total"] += 1
 
         telem = rec["telemetry"]
         total_samples += telem["sample_count"]
@@ -1876,12 +2351,15 @@ def compute_aggregate(
             by_status["no_recommendation"] += 1
 
     agg = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "agy-model-evidence-campaign-aggregate",
         "total_records": total_records,
         "by_lane": by_lane,
         "by_status": by_status,
         "by_verification": by_verification,
+        "by_workflow_category": by_workflow_category,
+        "by_requested_observed_model": by_requested_observed_model,
+        "identity_mismatch_counts": identity_mismatch_counts,
         "total_samples": total_samples,
         "total_invocations": total_invocations,
     }
@@ -2148,10 +2626,86 @@ def collect_aggregate_inputs(
     return collect_record_files(record_args), evaluations
 
 
+def collect_advisory_inputs(
+    args: Sequence[str],
+) -> tuple[
+    dict[str, Any], str, list[tuple[dict[str, Any], str]], dict[str, Any], dict[str, Any]
+]:
+    if args.count("--local-opt-in") != 1:
+        raise ModelEvidenceCampaignError("advisory commands require one explicit --local-opt-in")
+    required_paths: dict[str, Path | None] = {
+        "plan": None,
+        "evaluation": None,
+        "review": None,
+        "dataset": None,
+        "inventory": None,
+        "matrix": None,
+    }
+    record_args: list[str] = []
+    idx = 0
+    while idx < len(args):
+        arg = args[idx]
+        if arg == "--local-opt-in":
+            idx += 1
+        elif arg.lstrip("-") in required_paths and idx + 1 < len(args):
+            key = arg.lstrip("-")
+            if required_paths[key] is not None:
+                raise ModelEvidenceCampaignError(f"advisory {key} path is duplicated")
+            required_paths[key] = Path(args[idx + 1]); idx += 2
+        elif arg.startswith("--") and arg.partition("=")[0].lstrip("-") in required_paths and "=" in arg:
+            key = arg.partition("=")[0].lstrip("-")
+            if required_paths[key] is not None:
+                raise ModelEvidenceCampaignError(f"advisory {key} path is duplicated")
+            required_paths[key] = Path(arg.partition("=")[2]); idx += 1
+        elif arg in {"--record", "--candidate-record", "--anchor-record", "--records-dir"}:
+            if idx + 1 >= len(args):
+                raise ModelEvidenceCampaignError(f"missing value for {arg}")
+            record_args.extend((arg, args[idx + 1])); idx += 2
+        elif arg.startswith(("--record=", "--candidate-record=", "--anchor-record=", "--records-dir=")):
+            record_args.append(arg); idx += 1
+        elif not arg.startswith("--"):
+            record_args.append(arg); idx += 1
+        else:
+            raise ModelEvidenceCampaignError(f"rejected advisory argument: {arg}")
+    if any(path is None for path in required_paths.values()) or not record_args:
+        raise ModelEvidenceCampaignError(
+            "advisory commands require --plan, records, --evaluation, --review, "
+            "--dataset, --inventory, and --matrix"
+        )
+    plan_path = required_paths["plan"]
+    evaluation_path = required_paths["evaluation"]
+    assert plan_path is not None and evaluation_path is not None
+    plan, plan_sha, _ = read_json_file(plan_path)
+    validate_plan(plan)
+    evaluation, _, _ = read_json_file(evaluation_path)
+    validate_evaluation(evaluation)
+    review_path = required_paths["review"]
+    dataset_path = required_paths["dataset"]
+    inventory_path = required_paths["inventory"]
+    matrix_path = required_paths["matrix"]
+    assert review_path is not None and dataset_path is not None
+    assert inventory_path is not None and matrix_path is not None
+    review, review_sha, _ = read_json_file(review_path)
+    dataset, dataset_sha, _ = read_json_file(dataset_path, max_bytes=MAX_DATASET_BYTES)
+    inventory, inventory_sha, _ = read_json_file(inventory_path)
+    matrix, matrix_sha, _ = read_json_file(matrix_path)
+    artifacts = {
+        "review": review,
+        "review_sha": review_sha,
+        "dataset": dataset,
+        "dataset_sha": dataset_sha,
+        "inventory": inventory,
+        "inventory_sha": inventory_sha,
+        "matrix": matrix,
+        "matrix_sha": matrix_sha,
+    }
+    return plan, plan_sha, collect_record_files(record_args), evaluation, artifacts
+
+
 def main(argv: Sequence[str]) -> int:
     if len(argv) < 2:
         sys.stderr.write(
-            "usage: model-evidence-campaign <validate-plan|evaluate|materialize-measured|aggregate-status|aggregate-preview|aggregate-export> [options]\n"
+            "usage: model-evidence-campaign <validate-plan|evaluate|materialize-measured|advisory-preview|advisory-export|aggregate-status|aggregate-preview|aggregate-export> [options]\n"
         )
         return 2
 
@@ -2409,6 +2963,75 @@ def main(argv: Sequence[str]) -> int:
             sys.stderr.write(f"model-evidence-campaign materialize-measured error: {exc}\n")
             return 2
 
+    elif subcmd == "advisory-preview":
+        try:
+            plan, plan_sha, records, evaluation, artifacts = collect_advisory_inputs(subcmd_args)
+            summary = compute_advisory_summary(
+                plan, plan_sha, records, evaluation, **artifacts
+            )
+            preview_sha = hashlib.sha256(canonical_bytes(summary)).hexdigest()
+            preview = {
+                "schema_version": 1,
+                "kind": "agy-model-evidence-campaign-advisory-preview",
+                "preview_sha256": preview_sha,
+                "payload": summary,
+            }
+            validate_advisory_preview(preview)
+            sys.stdout.write(json.dumps(preview, indent=2) + "\n")
+            return 0
+        except Exception as exc:
+            sys.stderr.write(f"model-evidence-campaign {subcmd} error: {exc}\n")
+            return 2
+
+    elif subcmd == "advisory-export":
+        approve_sha: str | None = None
+        out_path: Path | None = None
+        advisory_args: list[str] = []
+        idx = 0
+        while idx < len(subcmd_args):
+            arg = subcmd_args[idx]
+            if arg == "--approve-preview-sha" and idx + 1 < len(subcmd_args):
+                approve_sha = subcmd_args[idx + 1]; idx += 2
+            elif arg.startswith("--approve-preview-sha="):
+                approve_sha = arg.partition("=")[2]; idx += 1
+            elif arg == "--out" and idx + 1 < len(subcmd_args):
+                out_path = Path(subcmd_args[idx + 1]); idx += 2
+            elif arg.startswith("--out="):
+                out_path = Path(arg.partition("=")[2]); idx += 1
+            else:
+                advisory_args.append(arg)
+                if arg in {
+                    "--plan", "--evaluation", "--record", "--candidate-record",
+                    "--anchor-record", "--records-dir", "--review", "--dataset",
+                    "--inventory", "--matrix",
+                } and idx + 1 < len(subcmd_args):
+                    advisory_args.append(subcmd_args[idx + 1]); idx += 1
+                idx += 1
+        if approve_sha is None or out_path is None:
+            sys.stderr.write(
+                "model-evidence-campaign advisory-export: missing required --approve-preview-sha or --out\n"
+            )
+            return 2
+        try:
+            plan, plan_sha, records, evaluation, artifacts = collect_advisory_inputs(advisory_args)
+            summary = compute_advisory_summary(
+                plan, plan_sha, records, evaluation, **artifacts
+            )
+            computed_sha = hashlib.sha256(canonical_bytes(summary)).hexdigest()
+            if computed_sha != approve_sha:
+                sys.stderr.write(
+                    "model-evidence-campaign advisory-export error: preview SHA mismatch "
+                    f"(approved {approve_sha}, computed {computed_sha})\n"
+                )
+                return 2
+            formatted = json.dumps(summary, indent=2) + "\n"
+            publish_file_atomically(out_path, formatted.encode("utf-8"))
+            sys.stdout.write(formatted)
+            return 0
+        except Exception as exc:
+            sys.stderr.write(f"model-evidence-campaign advisory-export error: {exc}\n")
+            return 2
+
     elif subcmd == "aggregate-status":
         try:
             records, evaluations = collect_aggregate_inputs(subcmd_args)
@@ -2426,7 +3049,7 @@ def main(argv: Sequence[str]) -> int:
             preview_bytes = canonical_bytes(agg)
             preview_sha = hashlib.sha256(preview_bytes).hexdigest()
             preview = {
-                "schema_version": 1,
+                "schema_version": agg["schema_version"],
                 "kind": "agy-model-evidence-campaign-aggregate-preview",
                 "preview_sha256": preview_sha,
                 "payload": agg,

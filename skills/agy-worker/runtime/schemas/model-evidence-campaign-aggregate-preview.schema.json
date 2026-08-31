@@ -6,7 +6,7 @@
   "properties": {
     "schema_version": {
       "type": "integer",
-      "enum": [1]
+      "enum": [1, 2]
     },
     "kind": {
       "type": "string",
@@ -19,5 +19,19 @@
     "payload": {
       "$ref": "model-evidence-campaign-aggregate.schema.json"
     }
-  }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "schema_version": {"const": 1},
+        "payload": {"$ref": "model-evidence-campaign-aggregate.schema.json#/definitions/v1"}
+      }
+    },
+    {
+      "properties": {
+        "schema_version": {"const": 2},
+        "payload": {"$ref": "model-evidence-campaign-aggregate.schema.json#/definitions/v2"}
+      }
+    }
+  ]
 }

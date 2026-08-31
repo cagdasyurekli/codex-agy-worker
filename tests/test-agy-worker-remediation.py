@@ -32,7 +32,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 100
+EXPECTED_CHECKS = 103
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 

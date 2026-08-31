@@ -137,11 +137,32 @@ behavior into broader agy `1.1.22` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
+### v0.13.0 safer verification and lower-friction lifecycle
+
+**Status:** Release candidate. Publication requires the exact candidate to pass the
+canonical offline suite, protected `test`, squash merge, annotated tag, GitHub Release
+readback, and the separately governed SkillStore reassessment.
+
+This release adds the ordinary `run`, `status`, and structured-argv
+`verify-finalize` lifecycle facade while retaining low-level recovery commands. It
+also adds provider-free transmission preview, Gitless allowlisted provider staging,
+manifest-derived CI stages and timing receipts, manifest-driven version compatibility,
+and privacy-bounded model-evidence campaign advisory/aggregate surfaces. Conformance
+cleanup is restricted to work-owned temporary roots, and the scoped-staging acceptance
+matrix directly covers denied or omitted paths, symlinks, special files, races, drift,
+unauthorized writes, exact binary bytes, and executable modes.
+
+The release preserves caller-owned provider/model selection, Codex-owned final
+acceptance, explicit local opt-in for aggregates, and fail-closed handling of stale or
+incompatible evidence. It does not establish provider isolation, general model
+superiority, guaranteed time or token savings, exhaustive correctness, or completion
+of the two-minor-release persona/profile retirement window.
+
 ### v0.12.0 verified delegation and agy 1.1.22 compatibility
 
-**Status:** Release candidate. The source changes are merged and protected-CI
-verified; publication still requires an exact release-preparation head, protected
-`test`, squash merge, annotated tag, and GitHub Release readback.
+**Status:** Published. Publication is established by the rewritten annotated
+`v0.12.0` tag and GitHub Release readback; the exact history rewrite changed commit
+identities while preserving the release tree.
 
 This release collects the completed post-v0.11.0 goal without adding a new product
 slice. It activates the human-reconciled agy 1.1.22 baseline and unchanged 14-slug
@@ -156,8 +177,8 @@ The release also includes the bounded follow-up fixes for capture reprofile iden
 controller log-root isolation, resolve-undo diagnostics, close-then-exec conformance
 timing, and tracked/untracked whitespace hygiene. These mechanisms improve observable
 failure handling and verification; they do not establish a general model winner,
-guaranteed token savings, provider quality, or exhaustive correctness. Issue #105 is a
-known test-harness isolation limitation and remains outside this release candidate.
+guaranteed token savings, provider quality, or exhaustive correctness. Issue #105 was
+outside this immutable release and was resolved later on `main` for v0.13.0.
 
 ### v0.11.0 observation-only release scope and dogfood record
 

@@ -118,6 +118,8 @@ doctor_runtime_complete() {
         schemas/model-evidence-campaign-evaluation.schema.json \
         schemas/model-evidence-campaign-aggregate.schema.json \
         schemas/model-evidence-campaign-aggregate-preview.schema.json \
+        schemas/model-evidence-campaign-advisory-summary.schema.json \
+        schemas/model-evidence-campaign-advisory-preview.schema.json \
         schemas/delegation-policy.schema.json \
         schemas/persona-dispatch.schema.json \
         schemas/persona-human-review.schema.json \

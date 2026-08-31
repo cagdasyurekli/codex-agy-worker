@@ -2,6 +2,8 @@
 """Recovery-focused cases loaded by the canonical remediation suite."""
 from __future__ import annotations
 
+import base64
+
 
 def run(context: dict[str, object]) -> None:
     """Run the retained tail with the canonical suite's exact context."""
@@ -291,6 +293,234 @@ def run(context: dict[str, object]) -> None:
         shutil.rmtree(fixture)
 
     check("narrow stage rejects unselected writes and reconciles an authorized replacement", narrow_stage_authorization_and_reconciliation_are_end_to_end)
+
+    def scoped_controller_fixture(label: str, behavior: str):
+        """Create one exact V11 narrow-scope controller fixture with a fake provider."""
+        source_repo = (root / f"scope-acceptance-source-{label}").resolve(); source_repo.mkdir()
+        repo = (root / f"scope-acceptance-repo-{label}").resolve()
+        subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+        subprocess.run(["git", "-C", str(source_repo), "config", "user.email", "fixture@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(source_repo), "config", "user.name", "Fixture"], check=True)
+        initial_payload = b"\x00initial-binary\xff\n"
+        initial_tool = b"#!/bin/sh\nprintf 'initial\\n'\n"
+        (source_repo / "payload.bin").write_bytes(initial_payload); (source_repo / "payload.bin").chmod(0o644)
+        (source_repo / "tool.sh").write_bytes(initial_tool); (source_repo / "tool.sh").chmod(0o755)
+        (source_repo / "denied-secret.txt").write_text("denied-private\n", encoding="utf-8")
+        (source_repo / "omitted-private.txt").write_text("omitted-private\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(source_repo), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(source_repo), "commit", "-qm", "base"], check=True)
+        subprocess.run([
+            "git", "-C", str(source_repo), "worktree", "add", "-q", "-b",
+            f"scope-acceptance-{label}", str(repo),
+        ], check=True)
+
+        scope = {
+            "schema_version": 1, "kind": "agy-worker-provider-scope",
+            "read": [
+                {"path": "payload.bin", "kind": "file"},
+                {"path": "tool.sh", "kind": "file"},
+            ],
+            "write": [
+                {"path": "payload.bin", "kind": "file"},
+                {"path": "tool.sh", "kind": "file"},
+            ],
+        }
+        scope_raw = json.dumps(
+            scope, ensure_ascii=True, sort_keys=True, separators=(",", ":"),
+        ).encode("ascii") + b"\n"
+        scope_path = root / f"scope-acceptance-{label}.json"
+        scope_path.write_bytes(scope_raw); scope_path.chmod(0o600)
+        parsed_scope = MODULE._parse_provider_scope(scope_raw)
+        readable_manifest = MODULE._scan_readable_worktree(str(repo))
+        MODULE._validate_scope_against_worktree(parsed_scope, str(repo), readable_manifest)
+        selected_manifest = MODULE._build_selected_content_manifest(repo, parsed_scope)
+        approved = MODULE._compute_transmission_sha256(
+            MODULE._canonical_digest(parsed_scope),
+            MODULE._manifest_digest(readable_manifest),
+            MODULE._selected_content_digest(selected_manifest),
+        )
+
+        job = (root / f"scope-acceptance-job-{label}").resolve(); job.mkdir(mode=0o700)
+        bin_dir = root / f"scope-acceptance-bin-{label}"; bin_dir.mkdir()
+        sentinel = root / f"scope-acceptance-provider-{label}.json"
+        schema = root / f"scope-acceptance-provider-schema-{label}.json"; provider_schema(schema)
+        events = [
+            {"event": "init", "init": {}, "conversation_id": "scope-acceptance"},
+            {
+                "event": "result",
+                "result": {
+                    "conversation_id": "scope-acceptance", "status": "SUCCESS",
+                    "structured_output": report(summary=f"scope-{behavior}"),
+                },
+            },
+        ]
+        fake = bin_dir / "agy"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import base64, json, os, stat\n"
+            "from pathlib import Path\n"
+            f"sentinel = Path({str(sentinel)!r})\n"
+            "cwd = Path.cwd()\n"
+            "observation = {\n"
+            "    'cwd': str(cwd),\n"
+            "    'cwd_mode': stat.S_IMODE(cwd.stat().st_mode),\n"
+            "    'git_marker_present': (cwd / '.git').exists(),\n"
+            "    'gitmodules_present': (cwd / '.gitmodules').exists(),\n"
+            "    'denied_present': (cwd / 'denied-secret.txt').exists(),\n"
+            "    'omitted_present': (cwd / 'omitted-private.txt').exists(),\n"
+            "    'payload_b64': base64.b64encode((cwd / 'payload.bin').read_bytes()).decode('ascii'),\n"
+            "    'payload_mode': stat.S_IMODE((cwd / 'payload.bin').stat().st_mode),\n"
+            "    'tool_b64': base64.b64encode((cwd / 'tool.sh').read_bytes()).decode('ascii'),\n"
+            "    'tool_mode': stat.S_IMODE((cwd / 'tool.sh').stat().st_mode),\n"
+            "}\n"
+            "sentinel.write_text(json.dumps(observation, sort_keys=True), encoding='utf-8')\n"
+            f"behavior = {behavior!r}\n"
+            "if behavior == 'positive':\n"
+            "    Path('payload.bin').write_bytes(b'\\x00reconciled-binary\\xfe\\xff\\n')\n"
+            "    os.chmod('payload.bin', 0o700)\n"
+            "    Path('tool.sh').write_bytes(b'#!/bin/sh\\nprintf \\\'reconciled\\\\n\\\'\\n')\n"
+            "    os.chmod('tool.sh', 0o600)\n"
+            "elif behavior == 'unauthorized':\n"
+            "    Path('unauthorized.bin').write_bytes(b'not-authorized\\n')\n"
+            "elif behavior == 'symlink':\n"
+            "    os.symlink('payload.bin', 'unauthorized-link')\n"
+            "elif behavior == 'fifo':\n"
+            "    os.mkfifo('unauthorized-fifo', 0o600)\n"
+            "elif behavior == 'source-drift':\n"
+            f"    Path({str(repo / 'payload.bin')!r}).write_bytes(b'external-source-drift\\n')\n"
+            "    Path('payload.bin').write_bytes(b'untrusted-stage-replacement\\n')\n"
+            f"events = {events!r}\n"
+            "for event in events:\n"
+            "    print(json.dumps(event, ensure_ascii=True, separators=(',', ':')), flush=True)\n",
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        scope_info = scope_path.stat()
+        command = {
+            "schema_version": 6, "kind": "agy-worker-dispatch-command",
+            "job_id": f"scope-acceptance-{label}", "workdir": str(repo),
+            "argv": ["agy", "--json-schema", str(schema), "--print", "task"],
+            "agy_version": "1.1.22", "agy_version_observed": True,
+            "idle_seconds": 2, "hard_seconds": 5, "max_seconds": 20, "notice_seconds": 3,
+            "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+            "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+            "selection_path": None, "selection_sha256": None, "selection_identity": None,
+            "provider_env": [], "provider_scope_path": str(scope_path),
+            "provider_scope_sha256": hashlib.sha256(scope_raw).hexdigest(),
+            "provider_scope_identity": list(MODULE._identity(scope_info)),
+            "approved_transmission_sha256": approved,
+        }
+        MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+        MODULE.create_state(job, "initial", resume=False)
+        return repo, job, bin_dir, sentinel, initial_payload, initial_tool
+
+    def narrow_provider_launch_is_gitless_and_reconciles_exact_bytes_and_modes() -> None:
+        """The provider sees only selected bytes in a Gitless stage and exact edits reconcile."""
+        repo, job, bin_dir, sentinel, initial_payload, initial_tool = scoped_controller_fixture(
+            "positive", "positive",
+        )
+        assert run_controller(job, bin_dir) == 0
+        observed = json.loads(sentinel.read_text(encoding="utf-8"))
+        stage_path = Path(observed["cwd"])
+        assert stage_path.parent == job and stage_path.name == "stage-001"
+        assert observed["cwd"] != str(repo) and observed["cwd_mode"] == 0o700
+        assert not observed["git_marker_present"] and not observed["gitmodules_present"]
+        assert not observed["denied_present"] and not observed["omitted_present"]
+        assert base64.b64decode(observed["payload_b64"]) == initial_payload
+        assert base64.b64decode(observed["tool_b64"]) == initial_tool
+        assert observed["payload_mode"] == 0o600 and observed["tool_mode"] == 0o700
+        assert (repo / "payload.bin").read_bytes() == b"\x00reconciled-binary\xfe\xff\n"
+        assert (repo / "tool.sh").read_bytes() == b"#!/bin/sh\nprintf 'reconciled\\n'\n"
+        assert stat.S_IMODE((repo / "payload.bin").stat().st_mode) == 0o700
+        assert stat.S_IMODE((repo / "tool.sh").stat().st_mode) == 0o600
+        state, _raw, _sha = MODULE.load_state(job)
+        assert state["status"] == "succeeded" and state["reconciliation_manifest_sha256"] is not None
+        assert state["provider_stage_path"] == str(stage_path) and not stage_path.exists()
+
+    check("narrow provider launch uses a Gitless selected-only stage and reconciles exact binary modes", narrow_provider_launch_is_gitless_and_reconciles_exact_bytes_and_modes)
+
+    def narrow_postlaunch_unauthorized_symlink_and_source_drift_fail_closed() -> None:
+        """Unapproved stage paths and concurrent source changes cannot reconcile."""
+        for behavior in ("unauthorized", "symlink", "fifo"):
+            repo, job, bin_dir, sentinel, initial_payload, initial_tool = scoped_controller_fixture(
+                behavior, behavior,
+            )
+            assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+            assert sentinel.exists(), f"{behavior} fixture did not reach the provider"
+            state, _raw, _sha = MODULE.load_state(job)
+            assert (state["status"], state["reason"], state["failure_stage"]) == (
+                "failed", "status_unavailable", "binding_failure",
+            )
+            assert (repo / "payload.bin").read_bytes() == initial_payload
+            assert (repo / "tool.sh").read_bytes() == initial_tool
+            assert not os.path.lexists(repo / "unauthorized.bin")
+            assert not os.path.lexists(repo / "unauthorized-link")
+            assert not os.path.lexists(repo / "unauthorized-fifo")
+            stage_path = Path(state["provider_stage_path"])
+            if behavior == "symlink":
+                retained = stage_path / "unauthorized-link"
+                assert stage_path.is_dir() and os.path.lexists(retained)
+                assert retained.is_symlink()
+            else:
+                assert not stage_path.exists()
+
+        repo, job, bin_dir, sentinel, _initial_payload, initial_tool = scoped_controller_fixture(
+            "source-drift", "source-drift",
+        )
+        assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        assert sentinel.exists()
+        state, _raw, _sha = MODULE.load_state(job)
+        assert (state["status"], state["reason"], state["failure_stage"]) == (
+            "failed", "status_unavailable", "binding_failure",
+        )
+        assert (repo / "payload.bin").read_bytes() == b"external-source-drift\n"
+        assert (repo / "payload.bin").read_bytes() != b"untrusted-stage-replacement\n"
+        assert (repo / "tool.sh").read_bytes() == initial_tool
+        assert not Path(state["provider_stage_path"]).exists()
+
+    check("narrow reconciliation rejects unauthorized paths symlinks and concurrent source drift", narrow_postlaunch_unauthorized_symlink_and_source_drift_fail_closed)
+
+    def narrow_preflight_symlink_race_and_copy_drift_never_launch_provider() -> None:
+        """Every scoped preflight failure leaves the provider sentinel untouched."""
+        repo, job, bin_dir, sentinel, _initial_payload, _initial_tool = scoped_controller_fixture(
+            "preflight-symlink", "positive",
+        )
+        (repo / "denied-secret.txt").unlink()
+        (repo / "denied-secret.txt").symlink_to(repo / "omitted-private.txt")
+        assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        assert not sentinel.exists()
+
+        repo, job, bin_dir, sentinel, _initial_payload, _initial_tool = scoped_controller_fixture(
+            "stage-race", "positive",
+        )
+        attacker_stage = job / "stage-001"; attacker_stage.mkdir(mode=0o700)
+        (attacker_stage / "attacker-owned.txt").write_text("preserve\n", encoding="utf-8")
+        assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        assert not sentinel.exists()
+        assert (attacker_stage / "attacker-owned.txt").read_text(encoding="utf-8") == "preserve\n"
+
+        repo, job, bin_dir, sentinel, _initial_payload, _initial_tool = scoped_controller_fixture(
+            "copy-drift", "positive",
+        )
+        original_materialize = MODULE._materialize_stage
+        injected = False
+        def drift_immediately_before_copy(source_root, stage_dir, scope, selected_manifest):
+            nonlocal injected
+            injected = True
+            (Path(source_root) / "payload.bin").write_bytes(b"copy-window-source-drift\n")
+            return original_materialize(source_root, stage_dir, scope, selected_manifest)
+        MODULE._materialize_stage = drift_immediately_before_copy
+        try:
+            assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        finally:
+            MODULE._materialize_stage = original_materialize
+        assert injected and not sentinel.exists()
+        assert (repo / "payload.bin").read_bytes() == b"copy-window-source-drift\n"
+        state, _raw, _sha = MODULE.load_state(job)
+        assert (state["status"], state["reason"]) == ("failed", "status_unavailable")
+        assert not (job / "stage-001").exists()
+
+    check("narrow preflight symlink stage-race and copy-drift failures never launch provider", narrow_preflight_symlink_race_and_copy_drift_never_launch_provider)
 
     def deleted_nested_directories_are_restored_after_later_failure() -> None:
         """Deleting an empty child before failure cannot produce a false rollback."""

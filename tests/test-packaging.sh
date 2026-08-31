@@ -1257,7 +1257,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.12.0"
+assert manifest["version"] == "0.13.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -1592,7 +1592,9 @@ if [[ -x "$ROOT/model-evidence-campaign.sh" ]] \
         && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-record.schema.json" ]] \
         && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-evaluation.schema.json" ]] \
         && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-aggregate.schema.json" ]] \
-        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-aggregate-preview.schema.json" ]]; then
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-aggregate-preview.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-advisory-summary.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-advisory-preview.schema.json" ]]; then
     ok "root and portable packages include Model Evidence Campaign"
 else
     bad "root and portable packages include Model Evidence Campaign"
@@ -1895,6 +1897,8 @@ required_runtime_dependencies=(
     schemas/model-evidence-campaign-evaluation.schema.json
     schemas/model-evidence-campaign-aggregate.schema.json
     schemas/model-evidence-campaign-aggregate-preview.schema.json
+    schemas/model-evidence-campaign-advisory-summary.schema.json
+    schemas/model-evidence-campaign-advisory-preview.schema.json
     schemas/delegation-policy.schema.json
     schemas/persona-dispatch.schema.json
     schemas/persona-human-review.schema.json
@@ -2065,6 +2069,8 @@ for specification in \
     'schemas/model-evidence-campaign-evaluation.schema.json:data' \
     'schemas/model-evidence-campaign-aggregate.schema.json:data' \
     'schemas/model-evidence-campaign-aggregate-preview.schema.json:data' \
+    'schemas/model-evidence-campaign-advisory-summary.schema.json:data' \
+    'schemas/model-evidence-campaign-advisory-preview.schema.json:data' \
     'schemas/delegation-policy.schema.json:data' \
     'schemas/persona-run-manifest.schema.json:data' \
     'schemas/persona-transition-approval.schema.json:data' \
@@ -3427,8 +3433,8 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (348 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
-        && grep -Fq 'EXPECTED_CHECKS = 100' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (100 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'EXPECTED_CHECKS = 103' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (103 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Do not pin exact suite counts in this instruction file' "$ROOT/AGENTS.md" \
         && grep -Fq '`docs/REPO_MAP.md` owns focused-suite inventory' "$ROOT/AGENTS.md" \
