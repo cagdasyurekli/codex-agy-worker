@@ -14,7 +14,7 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_BYTES = 100_000
 MAX_DECOMPRESSED_BYTES = 5_000_000
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
-BRAND_COLORS = {"#0A192F", "#E6EDF3", "#008C95", "#F59E0B"}
+BRAND_COLORS = {"#0F172A", "#F1F5F9", "#0284C7", "#38BDF8", "#B45309", "#FBBF24"}
 FORBIDDEN_MARKERS = ("openai", "google", "gemini", "claude", "github")
 FORBIDDEN_XML_SYNTAX = ("<!doctype", "<!entity", "<?xml-stylesheet")
 FORBIDDEN_VALUE_SYNTAX = ("@import", "url(", "javascript:", "data:", "http://", "https://", "//")
@@ -40,25 +40,25 @@ SVG_CONTRACT = {
         "1024",
         "1024",
         "0 0 1024 1024",
-        {"#0A192F", "#008C95", "#F59E0B"},
+        {"#0F172A", "#0284C7", "#B45309"},
     ),
     "logo-dark.svg": (
         "1024",
         "1024",
         "0 0 1024 1024",
-        {"#E6EDF3", "#008C95", "#F59E0B"},
+        {"#F1F5F9", "#38BDF8", "#FBBF24"},
     ),
     "logo-micro-light.svg": (
         "16",
         "16",
         "0 0 16 16",
-        {"#0A192F", "#008C95", "#F59E0B"},
+        {"#0F172A", "#0284C7", "#B45309"},
     ),
     "logo-micro-dark.svg": (
         "16",
         "16",
         "0 0 16 16",
-        {"#E6EDF3", "#008C95", "#F59E0B"},
+        {"#F1F5F9", "#38BDF8", "#FBBF24"},
     ),
 }
 
