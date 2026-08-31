@@ -324,6 +324,7 @@ source_required = {
     '"--full-index",': 1,
     '"--no-renames",': 1,
     '[GIT, "cat-file", "--batch"]': 1,
+    'EXACT_BINARY_BLOBS.get(path)': 1,
     '_check_head_blob(blob)': 1,
     'deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS': 1,
     'if output_seen > stdout_limit:': 1,
@@ -1103,6 +1104,121 @@ if ! run_ci_check "$TMP/ci-binary-repo" pull_request \
     ok "binary committed additions fail closed"
 else
     bad "binary committed additions fail closed"
+fi
+
+init_ci_repo "$TMP/ci-exact-brand-binary-repo"
+printf 'base\n' > "$TMP/ci-exact-brand-binary-repo/fixture.txt"
+git -C "$TMP/ci-exact-brand-binary-repo" add fixture.txt
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm base
+ci_exact_brand_base="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+mkdir -p "$TMP/ci-exact-brand-binary-repo/docs/assets/brand"
+for asset in \
+        logo-micro-dark-16.png \
+        logo-micro-dark-32.png \
+        logo-micro-dark-64.png \
+        logo-micro-light-16.png \
+        logo-micro-light-32.png \
+        logo-micro-light-64.png \
+        social-preview-1280x640.png; do
+    cp "$ROOT/docs/assets/brand/$asset" \
+        "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/$asset"
+done
+git -C "$TMP/ci-exact-brand-binary-repo" add docs/assets/brand
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm exact-brand-assets
+ci_exact_brand_head="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+if run_ci_check "$TMP/ci-exact-brand-binary-repo" pull_request \
+        "$ci_exact_brand_base" "$ci_exact_brand_head"; then
+    ok "exact path and blob-bound brand PNG set is accepted"
+else
+    bad "exact path and blob-bound brand PNG set is accepted"
+fi
+
+git -C "$TMP/ci-exact-brand-binary-repo" checkout -q -b wrong-brand-bytes \
+    "$ci_exact_brand_base"
+mkdir -p "$TMP/ci-exact-brand-binary-repo/docs/assets/brand"
+python3 - "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/logo-micro-dark-16.png" <<'PY'
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(b"different\x00brand\n")
+PY
+git -C "$TMP/ci-exact-brand-binary-repo" add docs/assets/brand
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm wrong-brand-bytes
+ci_wrong_brand_bytes="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-exact-brand-binary-repo" pull_request \
+        "$ci_exact_brand_base" "$ci_wrong_brand_bytes"; then
+    ok "allowlisted brand path rejects different binary bytes"
+else
+    bad "allowlisted brand path rejects different binary bytes"
+fi
+
+git -C "$TMP/ci-exact-brand-binary-repo" checkout -q -b wrong-brand-path \
+    "$ci_exact_brand_base"
+mkdir -p "$TMP/ci-exact-brand-binary-repo/docs/assets/brand"
+cp "$ROOT/docs/assets/brand/logo-micro-dark-16.png" \
+    "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/copied.png"
+git -C "$TMP/ci-exact-brand-binary-repo" add docs/assets/brand
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm wrong-brand-path
+ci_wrong_brand_path="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-exact-brand-binary-repo" pull_request \
+        "$ci_exact_brand_base" "$ci_wrong_brand_path"; then
+    ok "allowlisted brand blob rejects a different path"
+else
+    bad "allowlisted brand blob rejects a different path"
+fi
+
+git -C "$TMP/ci-exact-brand-binary-repo" checkout -q -b duplicate-brand-blob \
+    "$ci_exact_brand_base"
+mkdir -p "$TMP/ci-exact-brand-binary-repo/docs/assets/brand"
+cp "$ROOT/docs/assets/brand/logo-micro-dark-16.png" \
+    "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/logo-micro-dark-16.png"
+cp "$ROOT/docs/assets/brand/logo-micro-dark-16.png" \
+    "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/copied.png"
+git -C "$TMP/ci-exact-brand-binary-repo" add docs/assets/brand
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm duplicate-brand-blob
+ci_duplicate_brand_blob="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-exact-brand-binary-repo" pull_request \
+        "$ci_exact_brand_base" "$ci_duplicate_brand_blob"; then
+    ok "allowed and disallowed copies of one brand blob fail closed"
+else
+    bad "allowed and disallowed copies of one brand blob fail closed"
+fi
+
+mkdir "$TMP/ci-broad-brand-mutation"
+cp "$ROOT/scripts/ci-diff-check.sh" \
+    "$TMP/ci-broad-brand-mutation/ci-diff-check.sh"
+cp "$ROOT/scripts/ci_diff_check.py" \
+    "$TMP/ci-broad-brand-mutation/ci_diff_check.py"
+python3 - "$TMP/ci-broad-brand-mutation/ci_diff_check.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = """        if exact_binary_blob is not None:\n            if new_sha != exact_binary_blob:\n                raise CheckRejected\n            continue\n"""
+new = """        if exact_binary_blob is not None:\n            continue\n"""
+assert text.count(old) == 1
+text = text.replace(old, new)
+old_batch = "object_ids, deadline, frozenset(EXACT_BINARY_BLOBS.values())"
+assert text.count(old_batch) == 1
+path.write_text(
+    text.replace(old_batch, "object_ids, deadline, frozenset(object_ids)"),
+    encoding="utf-8",
+)
+PY
+chmod +x "$TMP/ci-broad-brand-mutation/ci-diff-check.sh"
+(
+    cd "$TMP/ci-exact-brand-binary-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=pull_request \
+        AGY_WORKER_CI_BASE_SHA="$ci_exact_brand_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_wrong_brand_bytes" \
+        "$TMP/ci-broad-brand-mutation/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_broad_brand_mutation_rc=$?
+if [[ "$ci_broad_brand_mutation_rc" == 0 ]]; then
+    ok "different-byte regression kills exact brand blob binding removal"
+else
+    bad "different-byte regression kills exact brand blob binding removal"
 fi
 
 init_ci_repo "$TMP/ci-oversize-repo"
