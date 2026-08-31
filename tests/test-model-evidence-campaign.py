@@ -31,6 +31,8 @@ RECORD_SCHEMA_PATH = ROOT / "skills" / "agy-worker" / "runtime" / "schemas" / "m
 EVAL_SCHEMA_PATH = ROOT / "skills" / "agy-worker" / "runtime" / "schemas" / "model-evidence-campaign-evaluation.schema.json"
 AGG_SCHEMA_PATH = ROOT / "skills" / "agy-worker" / "runtime" / "schemas" / "model-evidence-campaign-aggregate.schema.json"
 AGG_PREVIEW_SCHEMA_PATH = ROOT / "skills" / "agy-worker" / "runtime" / "schemas" / "model-evidence-campaign-aggregate-preview.schema.json"
+ADVISORY_SCHEMA_PATH = ROOT / "skills" / "agy-worker" / "runtime" / "schemas" / "model-evidence-campaign-advisory-summary.schema.json"
+ADVISORY_PREVIEW_SCHEMA_PATH = ROOT / "skills" / "agy-worker" / "runtime" / "schemas" / "model-evidence-campaign-advisory-preview.schema.json"
 
 passed = 0
 failed = 0
@@ -257,6 +259,19 @@ def bind_authoritative_plan(plan: dict[str, Any], artifacts: dict[str, Any]) -> 
         "dataset_sha256": artifacts["dataset_sha"],
     }
     return plan
+
+
+def advisory_context(artifacts: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "review": artifacts["review"],
+        "review_sha": artifacts["review_sha"],
+        "dataset": artifacts["dataset"],
+        "dataset_sha": artifacts["dataset_sha"],
+        "inventory": artifacts["inventory"],
+        "inventory_sha": artifacts["inventory_sha"],
+        "matrix": artifacts["matrix"],
+        "matrix_sha": artifacts["matrix_sha"],
+    }
 
 
 def evaluate_bound(
@@ -1007,10 +1022,14 @@ def test_aggregate_preview_and_export() -> bool:
     plan_vd = make_valid_plan(lane="vendor_declared")
     plan_vd_sha = hashlib.sha256(MODULE.canonical_bytes(plan_vd)).hexdigest()
     rec_vd = make_valid_record(plan_vd_sha, lane="vendor_declared")
+    rec_vd["scenario_id"] = "explore-review-v1"
+    rec_vd["model_identity"]["observed_model"] = None
 
     plan_obs = make_valid_plan(lane="observational")
     plan_obs_sha = hashlib.sha256(MODULE.canonical_bytes(plan_obs)).hexdigest()
     rec_obs = make_valid_record(plan_obs_sha, lane="observational")
+    rec_obs["scenario_id"] = "project-maintenance-v2"
+    rec_obs["model_identity"]["observed_model"] = "different-observed-model"
 
     records = [rec_m, anc_m, rec_vd, rec_obs]
     record_entries = [
@@ -1023,22 +1042,62 @@ def test_aggregate_preview_and_export() -> bool:
     evaluations = [eval_m, eval_vd, eval_obs]
 
     agg = MODULE.compute_aggregate(record_entries, evaluations)
+    assert agg["schema_version"] == 2
     assert agg["total_records"] == 4
     assert agg["by_lane"]["measured"] == 2
     assert agg["by_lane"]["vendor_declared"] == 1
     assert agg["by_lane"]["observational"] == 1
+    assert agg["by_workflow_category"] == {
+        "explore": 1, "task": 0, "project": 1, "benchmark": 2, "other": 0,
+    }
+    assert agg["by_requested_observed_model"] == {
+        "match": 2, "mismatch": 1, "missing": 1, "substituted": 0,
+    }
+    assert agg["identity_mismatch_counts"] == {
+        "candidate": 1, "anchor": 0, "total": 1,
+    }
     assert agg["total_samples"] == 80 * 4
     assert agg["total_invocations"] == 85 * 4
 
     preview_bytes = MODULE.canonical_bytes(agg)
     preview_sha = hashlib.sha256(preview_bytes).hexdigest()
     preview = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "agy-model-evidence-campaign-aggregate-preview",
         "preview_sha256": preview_sha,
         "payload": agg,
     }
     MODULE.validate_aggregate_preview(preview)
+
+    legacy_v1 = {
+        key: copy.deepcopy(value)
+        for key, value in agg.items()
+        if key not in {
+            "by_workflow_category", "by_requested_observed_model", "identity_mismatch_counts"
+        }
+    }
+    legacy_v1["schema_version"] = 1
+    MODULE.validate_aggregate(legacy_v1)
+    MODULE.validate_aggregate_preview({
+        "schema_version": 1,
+        "kind": "agy-model-evidence-campaign-aggregate-preview",
+        "preview_sha256": hashlib.sha256(MODULE.canonical_bytes(legacy_v1)).hexdigest(),
+        "payload": legacy_v1,
+    })
+    mismatched_preview = copy.deepcopy(preview)
+    mismatched_preview["schema_version"] = 1
+    try:
+        MODULE.validate_aggregate_preview(mismatched_preview)
+        return False
+    except MODULE.ModelEvidenceCampaignError:
+        pass
+    mislabeled_v1 = copy.deepcopy(agg)
+    mislabeled_v1["schema_version"] = 1
+    try:
+        MODULE.validate_aggregate(mislabeled_v1)
+        return False
+    except MODULE.ModelEvidenceCampaignError:
+        pass
 
     agg_text = json.dumps(agg)
     assert "gemini-3.7-flash" not in agg_text
@@ -1089,6 +1148,282 @@ def test_aggregate_preview_and_export() -> bool:
 check("aggregate status, preview, and export enforce closed integer counts, preview SHA approval, and canary privacy", test_aggregate_preview_and_export)
 
 
+def test_advisory_preview_export_and_privacy() -> bool:
+    artifacts = make_authoritative_artifacts()
+    context = advisory_context(artifacts)
+    plan = bind_authoritative_plan(make_valid_plan(lane="measured"), artifacts)
+    plan_sha = hashlib.sha256(MODULE.canonical_bytes(plan)).hexdigest()
+    candidate = make_valid_record(plan_sha, lane="measured")
+    anchor = make_valid_record(
+        plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor"
+    )
+    candidate_sha = hashlib.sha256(MODULE.canonical_bytes(candidate)).hexdigest()
+    anchor_sha = hashlib.sha256(MODULE.canonical_bytes(anchor)).hexdigest()
+    evaluation = evaluate_bound(
+        plan, plan_sha, candidate, candidate_sha, [(anchor, anchor_sha)]
+    )
+    summary = MODULE.compute_advisory_summary(
+        plan, plan_sha, [(candidate, candidate_sha), (anchor, anchor_sha)], evaluation,
+        **context,
+    )
+    assert summary["scenario"] == {
+        "workflow_category": "benchmark",
+        "scenario_version": "v1",
+        "harness_version": "1.0.0",
+        "evaluator_version": "1.0.0",
+        "policy_version": "1.0.0",
+    }
+    assert summary["recommendation"] == "candidate_evidence_only"
+    assert summary["rationale_code"] == "verified-measured-evidence"
+    assert summary["candidate"]["rationale_codes"] == ["within-bounds"]
+    assert summary["anchors"][0]["ordinal"] == 1
+    assert summary["anchors"][0]["provenance"] == "local"
+
+    serialized = json.dumps(summary)
+    for private_value in (
+        plan["scenario_id"], plan["candidate_model_id"], plan["anchor_model_ids"][0],
+        plan["harness"]["id"], plan["evaluator"]["id"], plan["policy"]["id"],
+        candidate["measured_metadata"]["source_uri"], plan_sha, candidate_sha, anchor_sha,
+    ):
+        assert private_value not in serialized
+    for forbidden_key in ("prompt", "path", "record_sha256", "model_id", "source_uri"):
+        assert f'"{forbidden_key}"' not in serialized
+
+    mismatch_candidate = copy.deepcopy(candidate)
+    mismatch_candidate["model_identity"]["observed_model"] = "different-observed-model"
+    mismatch_sha = hashlib.sha256(MODULE.canonical_bytes(mismatch_candidate)).hexdigest()
+    mismatch_evaluation = evaluate_bound(
+        plan, plan_sha, mismatch_candidate, mismatch_sha, [(anchor, anchor_sha)]
+    )
+    mismatch_summary = MODULE.compute_advisory_summary(
+        plan,
+        plan_sha,
+        [(mismatch_candidate, mismatch_sha), (anchor, anchor_sha)],
+        mismatch_evaluation,
+        **context,
+    )
+    assert mismatch_summary["recommendation"] == "no_recommendation"
+    assert mismatch_summary["candidate"]["identity"] == "mismatch"
+    assert "identity-mismatch" in mismatch_summary["candidate"]["rationale_codes"]
+
+    vendor_plan = bind_authoritative_plan(
+        make_valid_plan(lane="vendor_declared"), artifacts
+    )
+    vendor_sha = hashlib.sha256(MODULE.canonical_bytes(vendor_plan)).hexdigest()
+    vendor_candidate = make_valid_record(vendor_sha, lane="vendor_declared")
+    vendor_anchor = make_valid_record(
+        vendor_sha, lane="vendor_declared", model_id="gemini-3.5-flash-high", role="anchor"
+    )
+    vendor_candidate_sha = hashlib.sha256(MODULE.canonical_bytes(vendor_candidate)).hexdigest()
+    vendor_anchor_sha = hashlib.sha256(MODULE.canonical_bytes(vendor_anchor)).hexdigest()
+    vendor_evaluation = evaluate_bound(
+        vendor_plan,
+        vendor_sha,
+        vendor_candidate,
+        vendor_candidate_sha,
+        [(vendor_anchor, vendor_anchor_sha)],
+    )
+    vendor_summary = MODULE.compute_advisory_summary(
+        vendor_plan,
+        vendor_sha,
+        [(vendor_candidate, vendor_candidate_sha), (vendor_anchor, vendor_anchor_sha)],
+        vendor_evaluation,
+        **context,
+    )
+    assert vendor_summary["recommendation"] == "no_recommendation"
+    assert vendor_summary["candidate"]["provenance"] == "vendor_declared"
+    assert "lane-limitation" in vendor_summary["candidate"]["rationale_codes"]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(os.path.realpath(tmpdir))
+        plan_path = root / "plan.json"
+        candidate_path = root / "candidate.json"
+        anchor_path = root / "anchor.json"
+        evaluation_path = root / "evaluation.json"
+        review_path = root / "review.json"
+        export_path = root / "advisory.json"
+        plan_path.write_bytes(MODULE.canonical_bytes(plan))
+        candidate_path.write_bytes(MODULE.canonical_bytes(candidate))
+        anchor_path.write_bytes(MODULE.canonical_bytes(anchor))
+        evaluation_path.write_bytes(MODULE.canonical_bytes(evaluation))
+        review_path.write_bytes(MODULE.canonical_bytes(artifacts["review"]))
+        common = [
+            "--local-opt-in", f"--plan={plan_path}",
+            f"--candidate-record={candidate_path}", f"--anchor-record={anchor_path}",
+            f"--evaluation={evaluation_path}",
+            f"--review={review_path}", f"--dataset={SHIPPED_DATASET_PATH}",
+            f"--inventory={INVENTORY_PATH}", f"--matrix={MATRIX_PATH}",
+        ]
+        assert MODULE.main(["model-evidence-campaign", "advisory-preview", *common]) == 0
+        assert MODULE.main([
+            "model-evidence-campaign", "advisory-preview", *common[1:]
+        ]) == 2
+        preview_sha = hashlib.sha256(MODULE.canonical_bytes(summary)).hexdigest()
+        assert MODULE.main([
+            "model-evidence-campaign", "advisory-export", *common,
+            f"--approve-preview-sha={preview_sha}", f"--out={export_path}",
+        ]) == 0
+        assert json.loads(export_path.read_text(encoding="utf-8")) == summary
+        rejected_path = root / "rejected.json"
+        assert MODULE.main([
+            "model-evidence-campaign", "advisory-export", *common,
+            f"--approve-preview-sha={'f' * 64}", f"--out={rejected_path}",
+        ]) == 2
+        assert not rejected_path.exists()
+    return True
+
+
+check("advisory preview/export are privacy-bounded, SHA-approved, lane-separated, and fail closed", test_advisory_preview_export_and_privacy)
+
+
+def test_advisory_recomputes_caller_evaluation() -> bool:
+    artifacts = make_authoritative_artifacts()
+    context = advisory_context(artifacts)
+    plan = bind_authoritative_plan(make_valid_plan(lane="measured"), artifacts)
+    plan_sha = hashlib.sha256(MODULE.canonical_bytes(plan)).hexdigest()
+    candidate = make_valid_record(plan_sha, lane="measured")
+    anchor = make_valid_record(
+        plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor"
+    )
+    candidate_sha = hashlib.sha256(MODULE.canonical_bytes(candidate)).hexdigest()
+    anchor_sha = hashlib.sha256(MODULE.canonical_bytes(anchor)).hexdigest()
+    positive = evaluate_bound(
+        plan, plan_sha, candidate, candidate_sha, [(anchor, anchor_sha)]
+    )
+
+    incompatible = copy.deepcopy(candidate)
+    incompatible["telemetry"]["telemetry_bindings"] = ["only_accounting"]
+    incompatible_sha = hashlib.sha256(MODULE.canonical_bytes(incompatible)).hexdigest()
+    recomputed = evaluate_bound(
+        plan, plan_sha, incompatible, incompatible_sha, [(anchor, anchor_sha)]
+    )
+    assert recomputed["recommendation"] == "no_recommendation"
+    assert recomputed["reason_code"] == "telemetry-incompatible"
+
+    forged = copy.deepcopy(positive)
+    forged["candidate_record_sha256"] = incompatible_sha
+    MODULE.validate_evaluation(forged)
+    try:
+        MODULE.compute_advisory_summary(
+            plan,
+            plan_sha,
+            [(incompatible, incompatible_sha), (anchor, anchor_sha)],
+            forged,
+            **context,
+        )
+        return False
+    except MODULE.ModelEvidenceCampaignError:
+        pass
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(os.path.realpath(tmpdir))
+        paths = {
+            "plan": root / "plan.json",
+            "candidate": root / "candidate.json",
+            "anchor": root / "anchor.json",
+            "evaluation": root / "evaluation.json",
+            "review": root / "review.json",
+        }
+        for key, value in (
+            ("plan", plan), ("candidate", incompatible), ("anchor", anchor),
+            ("evaluation", forged), ("review", artifacts["review"]),
+        ):
+            paths[key].write_bytes(MODULE.canonical_bytes(value))
+        assert MODULE.main([
+            "model-evidence-campaign", "advisory-preview", "--local-opt-in",
+            f"--plan={paths['plan']}", f"--candidate-record={paths['candidate']}",
+            f"--anchor-record={paths['anchor']}", f"--evaluation={paths['evaluation']}",
+            f"--review={paths['review']}", f"--dataset={SHIPPED_DATASET_PATH}",
+            f"--inventory={INVENTORY_PATH}", f"--matrix={MATRIX_PATH}",
+        ]) == 2
+    return True
+
+
+check("advisory recomputes the exact cohort and rejects a forged same-lane positive evaluation", test_advisory_recomputes_caller_evaluation)
+
+
+def test_advisory_role_ordinal_schema_runtime_parity() -> bool:
+    artifacts = make_authoritative_artifacts()
+    plan = bind_authoritative_plan(make_valid_plan(lane="measured"), artifacts)
+    plan_sha = hashlib.sha256(MODULE.canonical_bytes(plan)).hexdigest()
+    candidate = make_valid_record(plan_sha, lane="measured")
+    anchor = make_valid_record(
+        plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor"
+    )
+    candidate_sha = hashlib.sha256(MODULE.canonical_bytes(candidate)).hexdigest()
+    anchor_sha = hashlib.sha256(MODULE.canonical_bytes(anchor)).hexdigest()
+    evaluation = evaluate_bound(
+        plan, plan_sha, candidate, candidate_sha, [(anchor, anchor_sha)]
+    )
+    summary = MODULE.compute_advisory_summary(
+        plan,
+        plan_sha,
+        [(candidate, candidate_sha), (anchor, anchor_sha)],
+        evaluation,
+        **advisory_context(artifacts),
+    )
+
+    for path, value in (
+        (("candidate", "role"), "anchor"),
+        (("candidate", "ordinal"), 1),
+        (("anchors", 0, "role"), "candidate"),
+        (("anchors", 0, "ordinal"), 2),
+    ):
+        mutated = copy.deepcopy(summary)
+        target: Any = mutated
+        for part in path[:-1]:
+            target = target[part]
+        target[path[-1]] = value
+        try:
+            MODULE.validate_advisory_summary(mutated)
+            return False
+        except MODULE.ModelEvidenceCampaignError:
+            pass
+
+    schema = json.loads(ADVISORY_SCHEMA_PATH.read_text(encoding="utf-8"))
+    candidate_rules = schema["properties"]["candidate"]["allOf"][1]["properties"]
+    assert candidate_rules["role"]["const"] == "candidate"
+    assert candidate_rules["ordinal"]["const"] == 0
+    anchors = schema["properties"]["anchors"]
+    assert anchors["additionalItems"] is False
+    assert [item["allOf"][1]["properties"]["role"]["const"] for item in anchors["items"]] == [
+        "anchor"
+    ] * 20
+    assert [item["allOf"][1]["properties"]["ordinal"]["const"] for item in anchors["items"]] == list(
+        range(1, 21)
+    )
+
+    aggregate_schema = json.loads(AGG_SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert aggregate_schema["oneOf"] == [
+        {"$ref": "#/definitions/v1"}, {"$ref": "#/definitions/v2"}
+    ]
+    assert aggregate_schema["definitions"]["v1"]["properties"]["schema_version"]["const"] == 1
+    assert aggregate_schema["definitions"]["v2"]["properties"]["schema_version"]["enum"] == [2]
+    aggregate_preview_schema = json.loads(AGG_PREVIEW_SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert aggregate_preview_schema["oneOf"] == [
+        {
+            "properties": {
+                "schema_version": {"const": 1},
+                "payload": {
+                    "$ref": "model-evidence-campaign-aggregate.schema.json#/definitions/v1"
+                },
+            }
+        },
+        {
+            "properties": {
+                "schema_version": {"const": 2},
+                "payload": {
+                    "$ref": "model-evidence-campaign-aggregate.schema.json#/definitions/v2"
+                },
+            }
+        },
+    ]
+    return True
+
+
+check("advisory role and ordinal constraints match runtime and schemas preserve aggregate v1/v2", test_advisory_role_ordinal_schema_runtime_parity)
+
+
 # Test 16: CLI subcommand parsing and prohibited flag rejection
 def test_cli_subcommands_and_prohibited_flags() -> bool:
     assert MODULE.main(["model-evidence-campaign"]) == 2
@@ -1106,7 +1441,11 @@ check("CLI subcommands reject missing arguments and prohibited network/backgroun
 
 # Test 17: Schema files exist and match draft-07 closure
 def test_schema_files_exist_and_closed() -> bool:
-    for schema_path in (PLAN_SCHEMA_PATH, RECORD_SCHEMA_PATH, EVAL_SCHEMA_PATH, AGG_SCHEMA_PATH, AGG_PREVIEW_SCHEMA_PATH):
+    for schema_path in (
+        PLAN_SCHEMA_PATH, RECORD_SCHEMA_PATH, EVAL_SCHEMA_PATH,
+        AGG_SCHEMA_PATH, AGG_PREVIEW_SCHEMA_PATH,
+        ADVISORY_SCHEMA_PATH, ADVISORY_PREVIEW_SCHEMA_PATH,
+    ):
         assert schema_path.exists(), f"Missing schema file: {schema_path}"
         data = json.loads(schema_path.read_text(encoding="utf-8"))
         assert data.get("additionalProperties") is False or data.get("$schema") is not None
