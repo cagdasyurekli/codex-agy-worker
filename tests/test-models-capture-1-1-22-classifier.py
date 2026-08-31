@@ -15,8 +15,8 @@ from typing import Any
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CLASSIFIER_PATH = ROOT / "scripts" / "models_capture_1_1_22_classifier.py"
-RUNNER_SOURCE_PATH = ROOT / "scripts" / "models_capture_1_1_22_runner.py"
+CLASSIFIER_PATH = ROOT / "scripts" / "version_manifest_capture_classifier.py"
+RUNNER_SOURCE_PATH = ROOT / "scripts" / "version_manifest_capture_runner.py"
 
 classifier_module = runpy.run_path(str(CLASSIFIER_PATH))
 classify_evidence_root = classifier_module["classify_evidence_root"]

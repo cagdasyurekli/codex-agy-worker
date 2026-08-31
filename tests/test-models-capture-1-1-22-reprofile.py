@@ -23,9 +23,9 @@ import types
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-REPROFILE_SOURCE = ROOT / "scripts" / "models_capture_1_1_22_reprofile.py"
-PROFILE_SOURCE = ROOT / "scripts" / "models_capture_1_1_22_profile.py"
-RUNNER_SOURCE = ROOT / "scripts" / "models_capture_1_1_22_runner.py"
+REPROFILE_SOURCE = ROOT / "scripts" / "version_manifest_reprofile.py"
+PROFILE_SOURCE = ROOT / "scripts" / "version_manifest_capture_profile.py"
+RUNNER_SOURCE = ROOT / "scripts" / "version_manifest_capture_runner.py"
 
 reprofile = runpy.run_path(str(REPROFILE_SOURCE))
 profile_mod = runpy.run_path(str(PROFILE_SOURCE))

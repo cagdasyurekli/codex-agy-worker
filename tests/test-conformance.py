@@ -67,6 +67,7 @@ def run(
     extra: Iterable[str] = (),
     timeout: float = 25.0,
 ) -> subprocess.CompletedProcess[bytes]:
+    gate = instrument_subprocess_gate(gate)
     return subprocess.run(
         [str(runner), "--gate", str(gate), *extra],
         cwd=str(ROOT),
@@ -84,26 +85,71 @@ def copy_kit(label: str) -> Path:
     return target
 
 
+OWNED_LOG = TMP / "owned-workspaces.log"
+owned_workspaces: set[Path] = set()
+real_private_workspace = MODULE._private_workspace
+
+
+def tracking_private_workspace() -> Path:
+    ws = real_private_workspace()
+    resolved = ws.resolve()
+    if resolved.name.startswith("agy-worker-conformance."):
+        owned_workspaces.add(resolved)
+    return ws
+
+
+MODULE._private_workspace = tracking_private_workspace
+
+
+def collect_owned_workspaces() -> set[Path]:
+    recorded = {p for p in owned_workspaces if p.name.startswith("agy-worker-conformance.")}
+    if OWNED_LOG.exists():
+        for line in OWNED_LOG.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    p = Path(line).resolve(strict=False)
+                except OSError:
+                    p = Path(line)
+                if p.name.startswith("agy-worker-conformance."):
+                    recorded.add(p)
+    return recorded
+
+
 def write_gate(label: str, body: str) -> Path:
     path = TMP / f"{label}.sh"
-    path.write_text("#!/usr/bin/env bash\nset -u\n" + body, encoding="utf-8")
+    record_cmd = (
+        'case "$PWD" in\n'
+        f'  */agy-worker-conformance.*) printf "%s\\n" "$PWD" >> {str(OWNED_LOG)!r} ;;\n'
+        'esac\n'
+    )
+    path.write_text("#!/usr/bin/env bash\nset -u\n" + record_cmd + body, encoding="utf-8")
     path.chmod(0o700)
     return path
 
 
-def roots() -> Tuple[str, ...]:
-    seen = set()
-    values = []
-    for raw in ("/private/tmp", "/tmp"):
-        try:
-            base = Path(raw).resolve(strict=True)
-        except OSError:
-            continue
-        if base in seen:
-            continue
-        seen.add(base)
-        values.extend(str(path) for path in base.glob("agy-worker-conformance.*"))
-    return tuple(sorted(values))
+instrumented_gate_count = 0
+
+
+def instrument_subprocess_gate(gate: Path) -> Path:
+    global instrumented_gate_count
+    try:
+        info = gate.stat()
+    except OSError:
+        return gate
+    if not stat.S_ISREG(info.st_mode) or not os.access(gate, os.X_OK):
+        return gate
+    try:
+        with gate.open("rb") as stream:
+            if stream.read(2) != b"#!":
+                return gate
+    except OSError:
+        return gate
+    instrumented_gate_count += 1
+    return write_gate(
+        f"subprocess-gate-{instrumented_gate_count}",
+        f'exec {str(gate)!r} "$@"\n',
+    )
 
 
 def mutant_gate(label: str, condition: str) -> Path:
@@ -116,7 +162,7 @@ while [[ $# -gt 0 ]]; do
     --envelope) envelope="$2"; shift 2 ;;
     --repo) repo="$2"; shift 2 ;;
     --base) base="$2"; shift 2 ;;
-    --verify) verifier="$2"; shift 2 ;;
+    --verify-argv) verifier="$2"; shift 2 ;;
     --allow|--only) shift 2 ;;
     --expect-edits) shift ;;
     *) shift ;;
@@ -128,7 +174,9 @@ exec {gate!r} "${{args[@]}}"
     return write_gate(label, body)
 
 
-before_roots = roots()
+foreign_candidate_dir = Path(tempfile.mkdtemp(prefix="agy-worker-conformance.", dir="/tmp")).resolve()
+foreign_candidate_dir.chmod(0o700)
+(foreign_candidate_dir / "foreign-sentinel").write_bytes(b"foreign-concurrent-workspace")
 
 result = run()
 check(
@@ -137,6 +185,45 @@ check(
 )
 check("success output is one bounded canonical line", lambda: len(result.stdout) < 128 and result.stdout.count(b"\n") == 1)
 check("success output discloses no private path", lambda: b"/private/" not in result.stdout and b"/tmp/" not in result.stdout)
+
+maintained_leak_path_file = TMP / "maintained-gate-leak.path"
+maintained_leak_runner = write_gate(
+    "maintained-gate-leak-runner",
+    f"""
+gate=''
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gate) gate="$2"; shift 2 ;;
+    *) exit 64 ;;
+  esac
+done
+workspace=$(/usr/bin/mktemp -d /tmp/agy-worker-conformance.XXXXXXXX) || exit 70
+/bin/chmod 700 "$workspace"
+printf "%s\\n" "$workspace" > {str(maintained_leak_path_file)!r}
+(cd "$workspace" && "$gate" >/dev/null 2>&1) || :
+exit 0
+""",
+)
+maintained_leak_result = run(runner=maintained_leak_runner)
+maintained_leak_path = Path(
+    maintained_leak_path_file.read_text(encoding="utf-8").strip()
+).resolve()
+maintained_leak_tracked = maintained_leak_path in collect_owned_workspaces()
+maintained_leak_existed = maintained_leak_path.is_dir()
+if (
+    maintained_leak_path.name.startswith("agy-worker-conformance.")
+    and maintained_leak_path.parent == Path("/private/tmp")
+):
+    shutil.rmtree(maintained_leak_path)
+check(
+    "maintained subprocess workspace leak is bound to suite cleanup",
+    lambda: (
+        maintained_leak_result.returncode == 0
+        and maintained_leak_existed
+        and maintained_leak_tracked
+        and not maintained_leak_path.exists()
+    ),
+)
 
 bad_args = subprocess.run([str(RUNNER)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 check("missing gate argument is usage exit 64", lambda: bad_args.returncode == 64 and not bad_args.stdout and not bad_args.stderr)
@@ -610,7 +697,7 @@ check("fatal non-reaping observation fails closed", lambda: waitid_failure_rejec
 mutants = (
     ("ignored-files", '[[ -n "$repo" && -e "$repo/ignored.tmp" ]]'),
     ("mutable-base", '[[ "$base" == "HEAD" ]]'),
-    ("skip-verification", '[[ "$verifier" == "/usr/bin/false" ]]'),
+    ("skip-verification", '[[ "$verifier" == "[\\\"/usr/bin/false\\\"]" ]]'),
     ("verifier-mutation", '[[ "$verifier" == *"verifier mutation"* ]]'),
     ("human-required", '[[ -n "$envelope" ]] && grep -Fq \"\\\"requires_human\\\":true\" "$envelope"'),
     ("worker-claim", '[[ -n "$envelope" ]] && grep -Fq \"worker-claim-must-not-run\" "$envelope"'),
@@ -624,21 +711,6 @@ overflow_result = run(overflow_gate)
 check("gate stdout overflow fails closed", lambda: overflow_result.returncode == 2 and overflow_result.stdout == b"")
 
 
-def workspace_roots():
-    roots = set()
-    seen = set()
-    for candidate in (Path("/private/tmp"), Path("/tmp")):
-        try:
-            parent = candidate.resolve(strict=True)
-        except OSError:
-            continue
-        if parent in seen:
-            continue
-        seen.add(parent)
-        roots.update(parent.glob("agy-worker-conformance.*"))
-    return roots
-
-
 def sanitized_cleanup_failure(result: subprocess.CompletedProcess[bytes]) -> bool:
     return (
         result.returncode == 2
@@ -649,46 +721,54 @@ def sanitized_cleanup_failure(result: subprocess.CompletedProcess[bytes]) -> boo
     )
 
 
-rename_before = workspace_roots()
-rename_result = run(write_gate("rename-cwd", '/bin/mv "$PWD" "$PWD.moved"\nexit 0\n'))
-rename_after = workspace_roots()
-rename_residuals = rename_after - rename_before
-rename_retained = len(rename_residuals) == 1
-for residual in rename_residuals:
-    shutil.rmtree(residual, ignore_errors=True)
+rename_gate = write_gate("rename-cwd", '/bin/mv "$PWD" "$PWD.moved"\nexit 0\n')
+rename_result = run(rename_gate)
+rename_lines = [
+    line.strip()
+    for line in OWNED_LOG.read_text(encoding="utf-8").splitlines()
+    if line.strip() and Path(line.strip()).name.startswith("agy-worker-conformance.")
+]
+rename_cwd = Path(rename_lines[-1])
+rename_residual = rename_cwd.parent / (rename_cwd.name + ".moved")
+rename_retained = rename_residual.is_dir()
+shutil.rmtree(rename_residual, ignore_errors=True)
 check(
     "same-parent workspace rename fails closed and retains the unchased residual",
     lambda: sanitized_cleanup_failure(rename_result) and rename_retained,
 )
 
-remove_before = workspace_roots()
-remove_result = run(write_gate("remove-cwd", '/bin/rm -rf "$PWD"\nexit 0\n'))
-remove_after = workspace_roots()
+remove_gate = write_gate("remove-cwd", '/bin/rm -rf "$PWD"\nexit 0\n')
+remove_result = run(remove_gate)
+remove_lines = [
+    line.strip()
+    for line in OWNED_LOG.read_text(encoding="utf-8").splitlines()
+    if line.strip() and Path(line.strip()).name.startswith("agy-worker-conformance.")
+]
+remove_cwd = Path(remove_lines[-1])
 check(
     "workspace removal fails closed without traceback or residual path output",
-    lambda: sanitized_cleanup_failure(remove_result) and remove_after == remove_before,
+    lambda: sanitized_cleanup_failure(remove_result) and not remove_cwd.exists(),
 )
 
-replacement_before = workspace_roots()
-replacement_result = run(
-    write_gate(
-        "replace-cwd",
-        '/bin/mv "$PWD" "$PWD.moved"\n/bin/mkdir "$PWD"\nprintf attacker > "$PWD/attacker-sentinel"\nexit 0\n',
-    )
+replacement_gate = write_gate(
+    "replace-cwd",
+    '/bin/mv "$PWD" "$PWD.moved"\n/bin/mkdir "$PWD"\nprintf attacker > "$PWD/attacker-sentinel"\nexit 0\n',
 )
-replacement_after = workspace_roots()
-replacement_new = replacement_after - replacement_before
+replacement_result = run(replacement_gate)
+replace_lines = [
+    line.strip()
+    for line in OWNED_LOG.read_text(encoding="utf-8").splitlines()
+    if line.strip() and Path(line.strip()).name.startswith("agy-worker-conformance.")
+]
+replace_cwd = Path(replace_lines[-1])
+saved_residual = replace_cwd.parent / (replace_cwd.name + ".moved")
 replacement_preserved = (
-    len(replacement_new) == 2
-    and sum(
-        path.joinpath("attacker-sentinel").is_file()
-        and path.joinpath("attacker-sentinel").read_bytes() == b"attacker"
-        for path in replacement_new
-    )
-    == 1
+    saved_residual.is_dir()
+    and replace_cwd.is_dir()
+    and (replace_cwd / "attacker-sentinel").read_bytes() == b"attacker"
 )
-for residual in replacement_new:
-    shutil.rmtree(residual, ignore_errors=True)
+shutil.rmtree(saved_residual, ignore_errors=True)
+shutil.rmtree(replace_cwd, ignore_errors=True)
 check(
     "rename drift preserves both the residual and attacker replacement",
     lambda: sanitized_cleanup_failure(replacement_result) and replacement_preserved,
@@ -708,24 +788,26 @@ check(
 symlink_target = TMP / "foreign-symlink-target"
 symlink_target.mkdir(mode=0o700)
 (symlink_target / "sentinel").write_bytes(b"foreign")
-symlink_before = workspace_roots()
-symlink_result = run(
-    write_gate(
-        "symlink-cwd",
-        f'/bin/mv "$PWD" "$PWD.moved"\n/bin/ln -s {str(symlink_target)!r} "$PWD"\nexit 0\n',
-    )
+symlink_gate = write_gate(
+    "symlink-cwd",
+    f'/bin/mv "$PWD" "$PWD.moved"\n/bin/ln -s {str(symlink_target)!r} "$PWD"\nexit 0\n',
 )
-symlink_after = workspace_roots()
-symlink_new = symlink_after - symlink_before
+symlink_result = run(symlink_gate)
+symlink_lines = [
+    line.strip()
+    for line in OWNED_LOG.read_text(encoding="utf-8").splitlines()
+    if line.strip() and Path(line.strip()).name.startswith("agy-worker-conformance.")
+]
+symlink_cwd = Path(symlink_lines[-1])
+symlink_saved = symlink_cwd.parent / (symlink_cwd.name + ".moved")
 symlink_preserved = (
-    len(symlink_new) == 2
+    symlink_saved.is_dir()
+    and symlink_cwd.is_symlink()
     and (symlink_target / "sentinel").read_bytes() == b"foreign"
 )
-for residual in symlink_new:
-    if residual.is_symlink():
-        residual.unlink()
-    else:
-        shutil.rmtree(residual, ignore_errors=True)
+if symlink_cwd.is_symlink():
+    symlink_cwd.unlink()
+shutil.rmtree(symlink_saved, ignore_errors=True)
 check(
     "symlink replacement and its foreign target survive fail-closed cleanup",
     lambda: sanitized_cleanup_failure(symlink_result) and symlink_preserved,
@@ -770,6 +852,7 @@ MODULE.ACTIVE_WORKSPACE_IDENTITY = None
 MODULE.ACTIVE_WORKSPACE_PARENT_IDENTITY = None
 shutil.rmtree(swap_root, ignore_errors=True)
 shutil.rmtree(swap_saved, ignore_errors=True)
+shutil.rmtree(swap_foreign, ignore_errors=True)
 check(
     "swap after precheck deletes only through the held root fd",
     lambda: swap_fd_bound,
@@ -1217,8 +1300,17 @@ check(
     ),
 )
 
-after_roots = roots()
-check("complete suite leaves no conformance workspace", lambda: before_roots == after_roots)
+all_owned = collect_owned_workspaces()
+check(
+    "complete suite leaves no observed owned conformance workspace",
+    lambda: len(all_owned) > 0 and all(not p.exists() for p in all_owned),
+)
+check(
+    "concurrent foreign workspace is preserved",
+    lambda: foreign_candidate_dir.is_dir()
+    and (foreign_candidate_dir / "foreign-sentinel").read_bytes() == b"foreign-concurrent-workspace",
+)
+shutil.rmtree(foreign_candidate_dir, ignore_errors=True)
 check(
     "kit imports no network stack or provider client",
     lambda: all(

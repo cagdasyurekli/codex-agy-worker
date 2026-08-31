@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import selectors
-import shlex
 import signal
 import stat
 import subprocess
@@ -566,33 +565,27 @@ def _prepare_fixture(
     return repo, base, envelope_path
 
 
-def _verifier(kind: str, repo: Path) -> Optional[str]:
-    quoted = shlex.quote(str(repo / "proof.txt"))
+def _verifier(kind: str, repo: Path) -> Optional[List[str]]:
+    proof = str(repo / "proof.txt")
     if kind == "none":
         return None
     if kind == "fail":
-        return "/usr/bin/false"
+        return ["/usr/bin/false"]
     if kind == "mutate":
-        return (
-            "/usr/bin/python3 -I -S -B -c "
-            + shlex.quote(
-                "from pathlib import Path; import sys; p=Path(sys.argv[1]); "
-                "p.write_bytes(p.read_bytes()+b'verifier mutation\\n')"
-            )
-            + " "
-            + quoted
-        )
+        return [
+            "/usr/bin/python3", "-I", "-S", "-B", "-c",
+            "from pathlib import Path; import sys; p=Path(sys.argv[1]); "
+            "p.write_bytes(p.read_bytes()+b'verifier mutation\\n')",
+            proof,
+        ]
     if kind == "content-match":
-        return (
-            "/usr/bin/python3 -I -S -B -c "
-            + shlex.quote(
-                "from pathlib import Path; import sys; "
-                "raise SystemExit(0 if Path(sys.argv[1]).read_bytes() in "
-                "(b'original synthetic value\\n',b'verified synthetic change\\n') else 1)"
-            )
-            + " "
-            + quoted
-        )
+        return [
+            "/usr/bin/python3", "-I", "-S", "-B", "-c",
+            "from pathlib import Path; import sys; "
+            "raise SystemExit(0 if Path(sys.argv[1]).read_bytes() in "
+            "(b'original synthetic value\\n',b'verified synthetic change\\n') else 1)",
+            proof,
+        ]
     raise ConformanceError("unknown verifier kind")
 
 
@@ -620,7 +613,10 @@ def _gate_argv(
         argv.append("--expect-edits")
     verifier = _verifier(fixture["verifier"], repo)
     if verifier is not None:
-        argv.extend(("--verify", verifier))
+        argv.extend((
+            "--verify-argv",
+            json.dumps(verifier, ensure_ascii=True, separators=(",", ":")),
+        ))
     return argv
 
 

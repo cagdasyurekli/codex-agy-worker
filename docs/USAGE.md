@@ -11,14 +11,22 @@ does not authorize provider dispatch or repository transmission.
 ## Before the first provider dispatch
 
 agy is backed by Google/Gemini services. Before the first dispatch for a repository,
-Codex must obtain explicit approval to send the task and the entire disposable
-worktree through agy to Google/Gemini unless that exact transmission was already
-approved. A narrower approval is valid only when the worktree contains only approved
-content. Before every initial `run`/`start`, `resume`, `continue`, or `restart`, ensure
+Codex must obtain explicit approval for the exact task, transmission mode, and bound
+content unless that transmission was already approved. Default dispatch without
+`--provider-scope` may expose the entire disposable worktree; `--add-dir`, prompt
+instructions, and later gate paths do not narrow it. Optional scoped dispatch binds
+exact reviewed read entries, their selected-content digest, and a write subset, then
+stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.
+Before every initial `run`/`start`, `resume`, `continue`, or `restart`, exclude
 credentials, secrets, private keys, unrelated private files, raw worker logs,
-controller state, and user-denied paths are absent from the entire worktree. Prompt
-instructions not to read a present file are not a privacy control. Read
-[PRIVACY.md](../PRIVACY.md) before use.
+controller state, and denied paths from the entire default transmission or all scoped
+entries. Read [PRIVACY.md](../PRIVACY.md) before use.
+
+Scoped staging reduces provider-visible content but is not a sandbox. The controller
+still locally enumerates and validates worktree paths and scope entries; filesystem,
+network, `PATH`, `HOME`, same-UID, local-owner, and portable mutation-race residuals
+remain. Approving the scope digest grants no provider execution, Git action, driver
+acceptance, or publication.
 
 Before every provider-launch attempt—initial `run`/`start`, `resume`, `continue`, and
 `restart`—Codex must tell the user in one or two concise sentences:
@@ -80,25 +88,82 @@ Codex creates an isolated worktree, dispatches the matching workflow, inspects t
 diff, and runs driver-owned checks. You do not need to supply a final file list, a
 persona, or every verification command before starting.
 
+## Primary run, status, verify-finalize path
+
+After Codex prepares the branch-backed disposable worktree and an owner-private
+state directory, the ordinary controller path is the portable `workflow.sh` facade:
+
+1. Run `workflow.sh run ... --preview` and review its exact canonical transmission
+   preview.
+2. Repeat the same binding with `--approve-preview-sha MANIFEST_SHA256` to dispatch.
+3. Use `workflow.sh status ...` for read-only, sanitized progress facts.
+4. Use `workflow.sh verify-finalize ...` with repeatable structured
+   `--verify-argv JSON_ARRAY` checks, `--approve-dispatch-sha` set to the exact
+   `dispatch.state_sha256` from step 3, and the exact owner-private driver
+   `--verification-json` when controller finalization is required.
+
+The facade delegates to the existing dispatcher, canonical transmission preview,
+verification receipt, and lifecycle finalizer. It does not create a second provider
+state machine, infer assurance, choose retry or Git actions, or conceal a finalizer
+failure. See [Operate and verify a local project](PROJECT_WORKFLOW.md) for the binding
+details and advanced recovery surfaces.
+
+The deprecated `--approve-state-sha` facade spelling remains a strict alias for
+`--approve-dispatch-sha` during the compatibility window; neither may be omitted for
+a bound dispatch and the facade never synthesizes an approval. Gate exits 10–15 keep
+their receipt but do not call the lifecycle finalizer. A local pre-dispatch rejection
+removes only the exact unchanged facade state created by that invocation when the
+dispatch artifact path never appeared, so a corrected invocation can retry safely.
+
 ## Two rules that make repository work reliable
 
 1. **Keep the worker off the shell.** Under agy's sandbox, shell tools run in
    `~/.gemini/antigravity-cli/scratch`, not the target repository. Worker file tools
    can reach the approved target. Let the worker edit with file tools; Codex owns
    every repository command.
-2. **Use absolute paths and `--add-dir`.** Name the absolute target in the task and
-   pass the same root with `--workdir` and `--add-dir`. Using only one can send the
-   worker to the wrong place. `--add-dir` does not narrow the `--workdir` read
-   boundary: all worktree content remains potentially readable and transmissible.
+2. **Bind the intended provider surface.** In default mode, name the absolute target
+   and pass the same root with `--workdir` and `--add-dir`; `--add-dir` helps agy file
+   tools reach the target but does not narrow provider reads. When the approved task
+   needs selected content only, use the mutually exclusive `--provider-scope` mode and
+   bind its exact preview digest.
 
-## Manual bounded task example
+## Optional selected-content dispatch
+
+A provider-scope JSON object has closed `read` entries and a `write` subset; each
+entry is a relative `file` or `tree` under the canonical worktree. Keep the descriptor
+outside the worktree. For example:
+
+```json
+{"schema_version":1,"kind":"agy-worker-provider-scope","read":[{"path":"src/parser.py","kind":"file"},{"path":"tests","kind":"tree"}],"write":[{"path":"tests","kind":"tree"}]}
+```
+
+Preview and review the exact policy, complete path/kind enumeration, selected-content
+digest, and unified transmission digest without starting a provider:
+
+```bash
+"$PIPELINE/agy-worker.sh" transmission-preview --workdir "$WT" \
+  --provider-scope "$SCOPE" --format json > "$STATE_DIR/scoped-preview.json"
+
+# After reviewing and obtaining approval for the exact transmission_sha256:
+printf '%s\n' "$TASK" | "$PIPELINE/agy-worker.sh" \
+  --workflow task --mode accept-edits --workdir "$WT" \
+  --provider-scope "$SCOPE" --approve-transmission-sha "$TRANSMISSION_SHA" \
+  > "$ENVELOPE"
+```
+
+`--provider-scope` conflicts with `--add-dir`. Each attempt gets a fresh
+owner-private mode-`0700` Gitless cwd containing only selected entries; only authorized
+write entries can reconcile back. The controller still enumerates and validates local
+worktree paths and identities before staging. Scope approval grants neither the
+provider launch itself, a Git action, driver acceptance, nor publication, and scoped
+staging is not a security sandbox.
+
+## Advanced: manual bounded task example
 
 This lower-level example preserves accepted work on a branch. Before running it,
-emit the mandatory provider notice and obtain whole-worktree transmission approval.
+emit the mandatory provider notice and obtain default whole-worktree transmission approval.
 Confirm that the worktree contains no secrets, user-denied paths, or unrelated private
-files. Keep the pipeline checkout and target explicit. The selected `bulk-test-writer` persona is
-experimental: it has been exercised on a real task but has not produced an accepted
-real delivery. Its inclusion here is not a quality claim.
+files. Keep the pipeline checkout and target explicit.
 
 ```bash
 PIPELINE=/absolute/path/to/codex-agy-worker
@@ -116,7 +181,7 @@ Edit ONLY files under $WT/tests/. Use file tools on absolute paths.
 Do NOT run shell commands — they execute in a scratch directory, not this repo.
 The driver runs every command. Return commands_run and tests_run as empty arrays." |
   AGY_WORKER_JOB_ID="$JOB_ID" "$PIPELINE/agy-worker.sh" \
-    --workflow task --mode accept-edits --tier bulk --persona bulk-test-writer \
+    --workflow task --mode accept-edits --tier bulk \
     --workdir "$WT" --add-dir "$WT" > "$ENVELOPE"; then
   echo "Dispatch failed; inspect the sanitized terminal state/result. Resume only a candidate-free failure; handle an ERROR candidate with Verification v2, and preserve/finalize or freshly restart a CANCELED candidate." >&2
   exit 1
@@ -124,8 +189,8 @@ fi
 
 if "$PIPELINE/qa-gate.sh" --envelope "$ENVELOPE" --repo "$WT" --base "$BASE" \
   --only 'tests/**' --expect-edits \
-  --verify "git -C '$WT' diff --check" \
-  --verify "cd '$WT' && python3 -m pytest -q tests/test_parser.py"; then
+  --verify-argv '["/usr/bin/git","diff","--check"]' \
+  --verify-argv '["python3","-m","pytest","-q","tests/test_parser.py"]'; then
   echo "Candidate passed the evidence gate; review the diff before preserving it."
 else
   GATE_RC=$?
@@ -137,8 +202,9 @@ fi
 Provider children/probes and gate verifiers receive only the documented baseline
 environment. If a selected tool genuinely needs another caller variable, opt in its
 exact name with repeated `--provider-env NAME`, or use `verify-job.sh --verify-env
-NAME` for a verifier child. Verifier-only values cross the gate through a private
-pipe, not its ambient environment. Values are not stored in dispatch or receipt
+NAME` for an ordinary verifier child. Credential-like names, including `HOME`, use
+`--verify-credential-env NAME` plus the credential acknowledgement. Verifier-only
+values cross the gate through a private pipe, not its ambient environment. Values are not stored in dispatch or receipt
 artifacts; unsafe startup, loader, schema-selector, and Git-control hooks are rejected.
 
 Exit 0 means the evidence gate accepted this exact candidate under the exercised
@@ -181,7 +247,7 @@ fi
 
 "$PIPELINE/qa-gate.sh" --envelope /tmp/inventory-envelope.json \
   --repo "$WT" --base "$BASE" \
-  --verify "git -C '$WT' diff --quiet '$BASE' --"
+  --verify-argv "[\"/usr/bin/git\",\"diff\",\"--quiet\",\"$BASE\",\"--\"]"
 
 # Open a sample of every claimed path and verify discovered commands against
 # package/CI files before using the inventory for planning.
@@ -202,8 +268,10 @@ prove the worker's architecture prose or completeness.
 | `--model EXACT_MODEL` | `AGY_WORKER_MODEL` | Reviewed exact slug or adjustable base used with effort. |
 | `--effort low|medium|high` | `AGY_WORKER_EFFORT` | Requires an adjustable base and resolves to one exact slug. |
 | `--literal-model EXACT_SLUG` | — | CLI-only unreconciled caller-owned pass-through. |
-| `--workdir DIR` | — | agy's workspace; treat all content as worker-readable and potentially transmissible. |
-| `--add-dir DIR` | — | Repeatable file-tool root inside `--workdir`; it does not narrow the worktree read boundary. |
+| `--workdir DIR` | — | Source worktree. Without `--provider-scope`, treat all content as worker-readable and potentially transmissible. |
+| `--add-dir DIR` | — | Repeatable file-tool root for default dispatch; it does not narrow provider reads and conflicts with scoped mode. |
+| `--provider-scope FILE` | — | Optional closed read/write policy; stages selected content only and requires `--approve-transmission-sha`. |
+| `--approve-transmission-sha SHA256` | — | Exact scoped policy/path/content approval binding; grants no execution or downstream authority. |
 | `--provider-env NAME` | — | Repeatable exact-name opt-in for an additional caller variable passed to local `agy` probes and provider launches. |
 | `--persona NAME` | — | Optional bounded prompt specialization; never authorization or quality evidence. |
 | `--allow-slash-commands` | — | Expert-only opt-in for a fully caller-controlled prompt; disables the normal embedded slash-command protection. |
@@ -222,7 +290,7 @@ entire prompt because it permits embedded `/skill` and slash-command text. The p
 dispatcher is the narrow built-in exception: it privately stages content and enables
 expansion only for its fixed driver prompt.
 
-## Personas and workload profiles
+## Deprecated onboarding: personas and workload profiles
 
 Personas are optional prompt specializations, not capability, approval, routing, or
 quality gates. Their evidence status and generated registry are owned by
@@ -232,6 +300,10 @@ Workload profiles are fixed data-only skeletons. They cannot contain a repositor
 path, command, selection, authorization, dispatch, acceptance decision, or Git
 action. See [data-only workload profiles](PROFILES.md) for their exact contract and
 commands.
+
+Persona and profile selection is deprecated for ordinary onboarding. The compatible
+commands and data remain available for at least two minor releases; this change does
+not physically remove them or make either one a prerequisite for the primary facade.
 
 ## Model and effort selection
 
@@ -309,10 +381,10 @@ For the underlying acceptance model, read
 
 Stop before dispatch, continuation, or external action when:
 
-- whole-worktree provider-transmission approval is absent, or a narrower approval does
-  not match the worktree's complete contents;
+- default whole-worktree approval is absent, or scoped mode lacks the exact reviewed
+  policy and matching `transmission_sha256`;
 - a credential, secret, private key, unrelated private file, or user-denied path is
-  present anywhere in the worktree before a provider launch;
+  present in the default worktree transmission or any entry selected for scoped staging;
 - a requested write path leaves the approved worktree, enters `.git`, follows a
   symlink escape, or violates the task's write policy;
 - a dangerous permission/approval bypass would be required; or

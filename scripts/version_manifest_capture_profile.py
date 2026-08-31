@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Process-inert profile preparation for the separately authorized 1.1.16 capture.
+"""Process-inert profile preparation for a manifest-bound capture.
 
 This file deliberately has no process-launch, network, Git, or account-discovery
 authority.  It only turns one closed request into a durable, canonical profile.
@@ -22,22 +22,23 @@ sys.dont_write_bytecode = True
 
 RUNTIME_MAJOR = 3
 RUNTIME_MINOR = 9
+ACTIVE_VERSION = "1.1.22"
 PROFILE_LIMIT = 16_384
-EXPECTED_SOURCE_SHA256 = "095705beb4e4591c8ee7f8b6261473e15228f0f4b1bec58c62c966a6d4bfab30"
-EXPECTED_RECOVERY_BINDING_SHA256 = "facf6adc18afc85ed5c232e3e1f9ad0fbcac7d62f1f98866cabb615d43069a57"
-EXPECTED_RECOVERY_STDOUT = b"1.1.16\n"
-EXPECTED_RECOVERY_RUNNER_SHA256 = "9c1a9d35c0db9fe137ed4490b47d2b11443fe7cfaf1e552eca7adf575b048d4c"
+EXPECTED_SOURCE_SHA256 = "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906"
+EXPECTED_RECOVERY_BINDING_SHA256 = "d9d830e65d3a5c76df6d9e07e6ea7e14e14f290ab4036bdbae8cb33502e29f2a"
+EXPECTED_RECOVERY_STDOUT = b"1.1.22\n"
+EXPECTED_RECOVERY_RUNNER_SHA256 = "e2f6a50cad78ebf572719d81a5d1d5fee40b31808d960a0ac3f800db2bf9b9b7"
 EXPECTED_RECOVERY_RUNNER_BYTES = 46_027
 EXPECTED_RECOVERY_SUMMARY_BYTES = 260
-EXPECTED_RELEASE_COMMIT = "efa16f096dc02fb654b7e86958d268195284d014"
-EXPECTED_DISTRIBUTION_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.16-6607970839166976/darwin-arm/cli_mac_arm64.tar.gz"
-EXPECTED_DISTRIBUTION_SHA512 = "fa3a94a7d9d96cb367bf643ecf0da3b4d6b45f3e390ec6db1d699fdac4f7750894617152fc3c1695712a36eee926fff4f00ff4a44d372b3f604cfc9ec6fdbea6"
-OUTPUT_NAME = "models.capture.1.1.16.profile.json"
+EXPECTED_RELEASE_COMMIT = "556846a4bb94117222f53846896c7eb0d645307e"
+EXPECTED_DISTRIBUTION_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.22-5711547746615296/darwin-arm/cli_mac_arm64.tar.gz"
+EXPECTED_DISTRIBUTION_SHA512 = "a8121185bd1c3455410ad41e88e2030ea237d496b8e40ccde313bf611c0551840fddf450b45c8e1a2575d9863c990b3324f19eef0f479936df8bfc6e4e80d30b"
+OUTPUT_NAME = "models.capture.1.1.22.profile.json"
 LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "40ec002effaa05982a389493c0cd4493e61501be269fd8f79baf0c39b545e4b4"
+MODULE_AST_SHA256 = "5ccefcb08072eebd91cf0467e9676642172c9a5a9ddd7b42d701d43187608900"
 ACTIVE_PROFILE_PATH: Optional[str] = None
 ACTIVE_PROFILE_IDENTITY: Optional[FileIdentity] = None
 ACTIVE_PROFILE_DIGEST: Optional[str] = None
@@ -299,8 +300,8 @@ def _validate_recovery(root: str, source_path: str, source: FileIdentity, snapsh
         if (binding.get("claim") != "snapshot-version-only" or not isinstance(source_value, dict) or not isinstance(snapshot_value, dict) or not isinstance(version_value, dict)
                 or source_value.get("pre") != dataclasses.asdict(source) or source_value.get("post") != dataclasses.asdict(source) or source_value.get("sha256") != EXPECTED_SOURCE_SHA256
                 or snapshot_value.get("pre") != dataclasses.asdict(snapshot) or snapshot_value.get("post") != dataclasses.asdict(snapshot) or snapshot_value.get("sha256") != EXPECTED_SOURCE_SHA256
-                or version_value.get("logical_argv") != [source_path, "--version"] or version_value.get("expected") != "1.1.16" or version_value.get("observed") != "1.1.16" or version_value.get("exit") != 0 or version_value.get("popen_count") != 1
-                or official != {"distribution_sha512": EXPECTED_DISTRIBUTION_SHA512, "distribution_url": EXPECTED_DISTRIBUTION_URL, "release_commit": EXPECTED_RELEASE_COMMIT, "version": "1.1.16"}
+                or version_value.get("logical_argv") != [source_path, "--version"] or version_value.get("expected") != ACTIVE_VERSION or version_value.get("observed") != ACTIVE_VERSION or version_value.get("exit") != 0 or version_value.get("popen_count") != 1
+                or official != {"distribution_sha512": EXPECTED_DISTRIBUTION_SHA512, "distribution_url": EXPECTED_DISTRIBUTION_URL, "release_commit": EXPECTED_RELEASE_COMMIT, "version": ACTIVE_VERSION}
                 or limitations != {"account_read": False, "metadata_advance_authorized": False, "models_called": False, "network_absence_os_enforced": False, "provider_backend_proven": False, "routing_authority": False}
                 or binding.get("inventory") != {"executable_version_bound": False}
                 or _read_at(fd, "version.stdout", 7) != EXPECTED_RECOVERY_STDOUT or _read_at(fd, "version.stderr", 0) != b""):
@@ -524,15 +525,15 @@ def validate_source_contract(data: bytes) -> dict[str, str]:
         return None
     request_calls = {(symbol(node.func), node.lineno) for node in ast.walk(functions["_from_request"]) if isinstance(node, ast.Call)}
     allowed_request_calls = {
-        ("isinstance", 334), ("set", 334), ("ProfileError", 335), ("_absolute", 336),
-        ("os.path.basename", 337), ("os.path.dirname", 337), ("os.path.basename", 338), ("os.path.dirname", 338),
-        ("os.path.basename", 339), ("os.path.dirname", 339), ("os.path.commonpath", 340), ("_disjoint", 341),
-        ("ProfileError", 342), ("_open_directory", 343), ("os.close", 343),
-        ("_open_directory", 344), ("os.close", 344), ("_open_directory", 345), ("os.close", 345),
-        ("_open_file", 346), ("_open_file", 347), ("_hash", 349), ("_hash", 349),
-        ("ProfileError", 350), ("_validate_recovery", 351), ("FileIdentity.from_stat", 352),
-        ("os.fstat", 352), ("FileIdentity.from_stat", 352), ("os.fstat", 352),
-        ("ProfileError", 353), ("os.close", 355), ("os.close", 355), ("CaptureProfile", 356),
+        ("isinstance", 335), ("set", 335), ("ProfileError", 336), ("_absolute", 337),
+        ("os.path.basename", 338), ("os.path.dirname", 338), ("os.path.basename", 339), ("os.path.dirname", 339),
+        ("os.path.basename", 340), ("os.path.dirname", 340), ("os.path.commonpath", 341), ("_disjoint", 342),
+        ("ProfileError", 343), ("_open_directory", 344), ("os.close", 344),
+        ("_open_directory", 345), ("os.close", 345), ("_open_directory", 346), ("os.close", 346),
+        ("_open_file", 347), ("_open_file", 348), ("_hash", 350), ("_hash", 350),
+        ("ProfileError", 351), ("_validate_recovery", 352), ("FileIdentity.from_stat", 353),
+        ("os.fstat", 353), ("FileIdentity.from_stat", 353), ("os.fstat", 353),
+        ("ProfileError", 354), ("os.close", 356), ("os.close", 356), ("CaptureProfile", 357),
     }
     if request_calls != allowed_request_calls:
         raise ProfileError("profile account authority changed")
@@ -661,7 +662,48 @@ def main(argv: Sequence[str]) -> int:
         return 1
 
 
+def _bind_version_manifest(version_name: str, manifest_path: Optional[str] = None) -> None:
+    global ACTIVE_VERSION
+    global EXPECTED_SOURCE_SHA256, EXPECTED_RECOVERY_BINDING_SHA256
+    global EXPECTED_RECOVERY_STDOUT, EXPECTED_RECOVERY_RUNNER_SHA256
+    global EXPECTED_RECOVERY_RUNNER_BYTES, EXPECTED_RECOVERY_SUMMARY_BYTES
+    global EXPECTED_RELEASE_COMMIT, EXPECTED_DISTRIBUTION_URL
+    global EXPECTED_DISTRIBUTION_SHA512, OUTPUT_NAME
+    script_directory = str(pathlib.Path(__file__).resolve().parent)
+    if script_directory not in sys.path:
+        sys.path.insert(0, script_directory)
+    import version_manifest_engine
+
+    spec = version_manifest_engine.get_version_spec(version_name, manifest_path)
+    values = version_manifest_engine.operation_constants(spec, "profile")
+    ACTIVE_VERSION = spec.version
+    EXPECTED_SOURCE_SHA256 = values["EXPECTED_SOURCE_SHA256"]
+    EXPECTED_RECOVERY_BINDING_SHA256 = values["EXPECTED_RECOVERY_BINDING_SHA256"]
+    EXPECTED_RECOVERY_STDOUT = values["EXPECTED_RECOVERY_STDOUT"]
+    EXPECTED_RECOVERY_RUNNER_SHA256 = values["EXPECTED_RECOVERY_RUNNER_SHA256"]
+    EXPECTED_RECOVERY_RUNNER_BYTES = values["EXPECTED_RECOVERY_RUNNER_BYTES"]
+    EXPECTED_RECOVERY_SUMMARY_BYTES = values["EXPECTED_RECOVERY_SUMMARY_BYTES"]
+    EXPECTED_RELEASE_COMMIT = values["EXPECTED_RELEASE_COMMIT"]
+    EXPECTED_DISTRIBUTION_URL = values["EXPECTED_DISTRIBUTION_URL"]
+    EXPECTED_DISTRIBUTION_SHA512 = values["EXPECTED_DISTRIBUTION_SHA512"]
+    OUTPUT_NAME = values["OUTPUT_NAME"]
+
+
+def main_for_version(
+    version_name: str, argv: Sequence[str], manifest_path: Optional[str] = None
+) -> int:
+    _bind_version_manifest(version_name, manifest_path)
+    return main(argv)
+
+
+_bind_version_manifest(ACTIVE_VERSION)
+
+
 if __name__ == "__main__":
     if not _runtime_supported():
         os._exit(64)
-    os._exit(main(sys.argv[1:]))
+    if len(sys.argv) < 3 or sys.argv[1] != "--manifest-version":
+        os._exit(64)
+    if len(sys.argv) >= 5 and sys.argv[3] == "--manifest":
+        os._exit(main_for_version(sys.argv[2], sys.argv[5:], sys.argv[4]))
+    os._exit(main_for_version(sys.argv[2], sys.argv[3:]))

@@ -3,7 +3,15 @@
 # canonical runtime. Derive a deterministic external state path when unset.
 set -euo pipefail
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+SCRIPT_SOURCE_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$SCRIPT_SOURCE_DIR" != "${BASH_SOURCE[0]}" ]] || SCRIPT_SOURCE_DIR=.
+SCRIPT_DIR="$(CDPATH= cd -- "$SCRIPT_SOURCE_DIR" && pwd -P)"
+if [[ "${1:-}" == transmission-preview || "${1:-}" == preview ]]; then
+    shift
+    exec /usr/bin/python3 -I -S -B \
+        "$SCRIPT_DIR/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" \
+        transmission-preview "$@"
+fi
 if [[ -z "${AGY_WORKER_LOG_DIR:-}" ]]; then
     if ! derived_log_dir="$(python3 -I -S -B - "$SCRIPT_DIR" <<'PY'
 import hashlib

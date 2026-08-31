@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -28,69 +27,21 @@ INTEGRITY_STATEMENT = (
     "self-authenticating."
 )
 
-STAGES: tuple[tuple[str, str], ...] = (
-    ("diff-hygiene", "working-tree diff hygiene"),
-    ("shell-syntax", "shell syntax"),
-    ("python-syntax", "Python syntax"),
-    ("qa-gate", "qa-gate suite"),
-    ("evidence-receipt", "Evidence Receipt v1 suite"),
-    ("evidence-report", "Evidence Report suite"),
-    ("offline-benchmark", "offline benchmark suite"),
-    ("swebench-workflow-study", "SWE-bench workflow study suite"),
-    ("persona-evidence", "persona evidence registry suite"),
-    ("job-lifecycle", "local job lifecycle suite"),
-    ("workload-profiles", "data-only workload profiles suite"),
-    ("dispatcher", "dispatcher suite"),
-    ("dispatcher-remediation", "dispatcher remediation suite"),
-    ("updater", "updater suite"),
-    ("adoption-measurement", "adoption measurement suite"),
-    ("update-notifier", "local update notifier suite"),
-    ("version-attestation-runner", "canonical version attestation runner"),
-    ("version-bootstrap-preflight", "repository-only version bootstrap runtime preflight"),
-    ("version-bootstrap-runner", "repository-only version bootstrap runner"),
-    ("version-initial-bootstrap-runner", "repository-only version initial bootstrap runner"),
-    ("version-recovery-1-1-12-runner", "fixed 1.1.12 version recovery runner"),
-    ("version-attestation-harness", "version attestation mutation harness"),
-    ("models-attestation-runner", "canonical models inventory attestation runner"),
-    ("models-capture-runner", "explicit-account models capture runner"),
-    ("models-capture-profile", "explicit-account models capture profile builder"),
-    ("models-capture-1-1-12-profile", "fixed 1.1.12 models capture profile builder"),
-    ("models-capture-1-1-12-runner", "fixed 1.1.12 models capture runner"),
-    ("models-capture-1-1-16-version-evidence", "fixed 1.1.16 models capture version evidence"),
-    ("models-capture-1-1-16-profile", "fixed 1.1.16 models capture profile builder"),
-    ("models-capture-1-1-16-runner", "fixed 1.1.16 models capture runner"),
-    ("models-capture-1-1-22-version-evidence", "fixed 1.1.22 models capture version evidence"),
-    ("models-capture-1-1-22-profile", "fixed 1.1.22 models capture profile builder"),
-    ("models-capture-1-1-22-runner", "fixed 1.1.22 models capture runner"),
-    ("models-capture-1-1-22-reprofile", "fixed 1.1.22 models capture reprofile adapter"),
-    ("models-capture-1-1-22-classifier", "fixed 1.1.22 models capture failure classifier"),
-    ("agy-1-1-16-activation", "1.1.16 activation binding"),
-    ("agy-1-1-22-activation", "1.1.22 activation binding"),
-    ("reporting", "reporting suite"),
-    ("feedback-triage", "feedback triage suite"),
-    ("model-intelligence", "Model Intelligence v1 suite"),
-    ("codex-usage-report", "Codex usage observation suite"),
-    ("delegation-policy", "delegation policy suite"),
-    ("packaging", "Codex distribution suite"),
-    ("doctor", "read-only doctor suite"),
-    ("conformance", "public gate conformance suite"),
-    ("proof-demo", "starter proof suite"),
-    ("bytecode-hygiene", "repository bytecode hygiene"),
+_script_dir = Path(__file__).resolve().parent
+if str(_script_dir) not in sys.path:
+    sys.path.insert(0, str(_script_dir))
+
+from ci_stages import (
+    STAGES,
+    canonical_bytes,
+    inventory_digest,
 )
+
+STAGE_ANNOUNCE_RE = re.compile(rb'''Stage\(\s*"[^"]+",\s*"([^"]+)",''')
 
 
 class TimingError(Exception):
     """A timing observation or publication boundary failed closed."""
-
-
-def canonical_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-
-
-def inventory_digest() -> str:
-    return hashlib.sha256(canonical_bytes(STAGES)).hexdigest()
 
 
 def _finite_duration(value: Any) -> bool:
@@ -127,10 +78,10 @@ def validate_report(data: dict[str, Any], expected_inventory_sha: str | None = N
     if not isinstance(suites, list) or len(suites) != len(STAGES):
         raise TimingError("timing report must contain the complete canonical inventory")
     statuses: list[str] = []
-    for index, ((expected_id, _), item) in enumerate(zip(STAGES, suites)):
+    for index, (stage, item) in enumerate(zip(STAGES, suites)):
         if not isinstance(item, dict) or set(item) != {"id", "status", "duration_seconds"}:
             raise TimingError(f"invalid suite entry at index {index}")
-        if item["id"] != expected_id:
+        if item["id"] != stage.id:
             raise TimingError(f"suite order mismatch at index {index}")
         status_value = item["status"]
         if status_value not in ("passed", "failed", "not-run"):
@@ -164,17 +115,23 @@ def validate_report(data: dict[str, Any], expected_inventory_sha: str | None = N
         raise TimingError("integrity block mismatch")
 
 
-def validate_gate_inventory(gate_script: Path) -> None:
+def validate_stage_inventory(stage_manifest: Path) -> None:
     try:
-        lines = gate_script.read_bytes().splitlines()
+        content = stage_manifest.read_bytes()
     except OSError as exc:
-        raise TimingError("cannot read the canonical offline gate") from exc
+        raise TimingError("cannot read the canonical stage manifest") from exc
+    lines = content.splitlines()
     observed = [
         match.group(1).decode("utf-8")
         for line in lines
         if (match := ANNOUNCE_RE.fullmatch(line))
     ]
-    expected = [announce for _, announce in STAGES]
+    if not observed:
+        observed = [
+            match.group(1).decode("utf-8")
+            for match in STAGE_ANNOUNCE_RE.finditer(content)
+        ]
+    expected = [stage.announcement for stage in STAGES]
     if observed != expected:
         raise TimingError("canonical offline gate announcement inventory drifted")
 
@@ -274,7 +231,7 @@ def observe_stream(
 ) -> tuple[int, dict[str, Any]]:
     if output is None:
         output = sys.stdout.buffer
-    expected_announces = [announce.encode("utf-8") for _, announce in STAGES]
+    expected_announces = [stage.announcement.encode("utf-8") for stage in STAGES]
     control_prefix = CONTROL_LABEL + nonce.encode("ascii") + b":"
     started: list[float] = []
     durations: list[float] = []
@@ -311,7 +268,7 @@ def observe_stream(
 
     suites: list[dict[str, Any]] = []
     observed_count = len(started)
-    for index, (stage_id, _) in enumerate(STAGES):
+    for index, stage in enumerate(STAGES):
         if index < observed_count - (1 if return_code != 0 else 0):
             status_value, duration = "passed", durations[index]
         elif return_code != 0 and index == observed_count - 1:
@@ -320,7 +277,7 @@ def observe_stream(
             status_value, duration = "passed", durations[index]
         else:
             status_value, duration = "not-run", None
-        suites.append({"id": stage_id, "status": status_value, "duration_seconds": duration})
+        suites.append({"id": stage.id, "status": status_value, "duration_seconds": duration})
 
     report = {
         "schema_version": 1,
@@ -342,8 +299,9 @@ def observe_stream(
 
 def run(repo_root: Path, report_path: Path) -> int:
     gate_script = repo_root / "scripts" / "ci-offline.sh"
+    stage_manifest = repo_root / "scripts" / "ci_stages.py"
     validate_publication_target(report_path)
-    validate_gate_inventory(gate_script)
+    validate_stage_inventory(stage_manifest)
     head_sha = resolve_clean_head(repo_root)
     nonce = secrets.token_hex(32)
     try:

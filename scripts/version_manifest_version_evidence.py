@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create one fresh 1.1.16 source/snapshot binding for a later models capture.
+"""Create one manifest-bound source/snapshot binding for a later models capture.
 
 This repository-only bridge is intentionally separate from
 ``version_bootstrap_runner.py``.  It never reads account state: an
@@ -29,20 +29,22 @@ from typing import NoReturn, Optional, Sequence
 
 RUNTIME_MAJOR = 3
 RUNTIME_MINOR = 9
-EXPECTED_VERSION = "1.1.16"
-EXPECTED_STDOUT = b"1.1.16\n"
-EXPECTED_SOURCE_SHA256 = "095705beb4e4591c8ee7f8b6261473e15228f0f4b1bec58c62c966a6d4bfab30"
-EXPECTED_SIZE = 177_516_656
-EXPECTED_RELEASE_COMMIT = "efa16f096dc02fb654b7e86958d268195284d014"
-EXPECTED_DISTRIBUTION_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.16-6607970839166976/darwin-arm/cli_mac_arm64.tar.gz"
-EXPECTED_DISTRIBUTION_SHA512 = "fa3a94a7d9d96cb367bf643ecf0da3b4d6b45f3e390ec6db1d699fdac4f7750894617152fc3c1695712a36eee926fff4f00ff4a44d372b3f604cfc9ec6fdbea6"
+ACTIVE_VERSION = "1.1.22"
+EXPECTED_VERSION = "1.1.22"
+EXPECTED_STDOUT = b"1.1.22\n"
+EXPECTED_SOURCE_SHA256 = "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906"
+EXPECTED_SIZE = 179_586_688
+EXPECTED_RELEASE_COMMIT = "556846a4bb94117222f53846896c7eb0d645307e"
+EXPECTED_DISTRIBUTION_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.22-5711547746615296/darwin-arm/cli_mac_arm64.tar.gz"
+EXPECTED_DISTRIBUTION_SHA512 = "a8121185bd1c3455410ad41e88e2030ea237d496b8e40ccde313bf611c0551840fddf450b45c8e1a2575d9863c990b3324f19eef0f479936df8bfc6e4e80d30b"
 PROFILE_LIMIT = 16_384
 MODULE_LIMIT = 128 * 1024
-MODULE_AST_SHA256 = "a839563d2668da50f790104bb563ad0557a106660e6a67151b5e217c69e59db4"
+MODULE_AST_SHA256 = "432dd81d2a071c9b6fdf924d864b0625b6848d1abfd4b6345ddd339c594a9789"
 VERSION_RUNNER_BYTES = 69_242
 VERSION_RUNNER_SHA256 = "0e2632c2de1dc2651693dce942429b3219d551eb5a979aa2d8d273ee0aa95d6b"
 HISTORICAL_RECOVERY_BINDING_SHA256 = "b469298550a9d16921dc4f47ae72a5a00dfae414c11286097d2652e498f89da6"
 HISTORICAL_RECOVERY_SOURCE_SHA256 = "c8fd3c0016e101689f923f82da1c068b0e6dce3abcb0089e282742693ad4d344"
+PRIOR_NAME = "agy-models-capture-1.1.22.version"
 SCRATCH_NAMES = ("cwd", "home", "tmp", "xdg-cache", "xdg-config", "xdg-state")
 EVIDENCE_FILES = frozenset(set(SCRATCH_NAMES) | {
     "agy.snapshot", "runner.py", "runner.py.sha256", "snapshot.post.json",
@@ -614,9 +616,9 @@ def validate_source_contract(data: bytes) -> dict[str, object]:
     }
     if (
         not isinstance(constants.get("EXPECTED_VERSION"), ast.Constant)
-        or constants["EXPECTED_VERSION"].value != "1.1.16"
+        or constants["EXPECTED_VERSION"].value != "1.1.22"
         or not isinstance(constants.get("EXPECTED_STDOUT"), ast.Constant)
-        or constants["EXPECTED_STDOUT"].value != b"1.1.16\n"
+        or constants["EXPECTED_STDOUT"].value != b"1.1.22\n"
     ):
         raise InitialBootstrapError("initial bootstrap local version authority changed")
     launch = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess" and node.func.attr == "Popen"]
@@ -730,7 +732,7 @@ def run_initial_bootstrap(profile: InitialProfile, *, lifecycle: Optional[Lifecy
         parent, name = os.path.split(profile.bootstrap_root)
         ledger = Ledger.create(parent, name)
         source = _copy_held(ledger, (), "agy.source", first, 0o755, controller)
-        prior_name = "agy-models-capture-1.1.16.version"
+        prior_name = PRIOR_NAME
         ledger.mkdir((), prior_name)
         prior = (prior_name,)
         snapshot = _copy_held(ledger, prior, "agy.snapshot", second, 0o500, controller)
@@ -852,6 +854,15 @@ def main(argv: Sequence[str]) -> NoReturn:
         _atomic_exit(2, sys.stderr.buffer.fileno(), b"version initial bootstrap: rejected\n")
     lifecycle: Optional[LifecycleState] = None
     try:
+        if list(argv) == ["--validate-source-contract"]:
+            data = sys.stdin.buffer.read(MODULE_LIMIT + 1)
+            if not data or len(data) > MODULE_LIMIT:
+                raise InitialBootstrapError("initial bootstrap source exceeds bound")
+            payload = _canonical_json(validate_source_contract(data))
+            if sys.stdout.buffer.write(payload) != len(payload):
+                raise InitialBootstrapError("source validation output write failed")
+            sys.stdout.buffer.flush()
+            os._exit(0)
         if list(argv) != ["--prepare-capture-version-evidence"]:
             _atomic_exit(64, sys.stderr.buffer.fileno(), b"version initial bootstrap: invalid invocation\n")
         validate_source_contract(_module_source())
@@ -873,5 +884,41 @@ def main(argv: Sequence[str]) -> NoReturn:
     _atomic_exit(2, sys.stderr.buffer.fileno(), b"version initial bootstrap: rejected\n")
 
 
+def _bind_version_manifest(version_name: str, manifest_path: Optional[str] = None) -> None:
+    global ACTIVE_VERSION, PRIOR_NAME
+    global EXPECTED_VERSION, EXPECTED_STDOUT, EXPECTED_SOURCE_SHA256, EXPECTED_SIZE
+    global EXPECTED_RELEASE_COMMIT, EXPECTED_DISTRIBUTION_URL, EXPECTED_DISTRIBUTION_SHA512
+    global HISTORICAL_RECOVERY_BINDING_SHA256, HISTORICAL_RECOVERY_SOURCE_SHA256
+    import version_manifest_engine
+
+    spec = version_manifest_engine.get_version_spec(version_name, manifest_path)
+    values = version_manifest_engine.operation_constants(spec, "version-evidence")
+    ACTIVE_VERSION = spec.version
+    PRIOR_NAME = spec.prior_name
+    EXPECTED_VERSION = values["EXPECTED_VERSION"]
+    EXPECTED_STDOUT = values["EXPECTED_STDOUT"]
+    EXPECTED_SOURCE_SHA256 = values["EXPECTED_SOURCE_SHA256"]
+    EXPECTED_SIZE = values["EXPECTED_SIZE"]
+    EXPECTED_RELEASE_COMMIT = values["EXPECTED_RELEASE_COMMIT"]
+    EXPECTED_DISTRIBUTION_URL = values["EXPECTED_DISTRIBUTION_URL"]
+    EXPECTED_DISTRIBUTION_SHA512 = values["EXPECTED_DISTRIBUTION_SHA512"]
+    HISTORICAL_RECOVERY_BINDING_SHA256 = values["HISTORICAL_RECOVERY_BINDING_SHA256"]
+    HISTORICAL_RECOVERY_SOURCE_SHA256 = values["HISTORICAL_RECOVERY_SOURCE_SHA256"]
+
+
+def main_for_version(
+    version_name: str, argv: Sequence[str], manifest_path: Optional[str] = None
+) -> NoReturn:
+    _bind_version_manifest(version_name, manifest_path)
+    main(argv)
+
+
+_bind_version_manifest(ACTIVE_VERSION)
+
+
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    if len(sys.argv) < 3 or sys.argv[1] != "--manifest-version":
+        _atomic_exit(64, sys.stderr.buffer.fileno(), b"version initial bootstrap: invalid invocation\n")
+    if len(sys.argv) >= 5 and sys.argv[3] == "--manifest":
+        main_for_version(sys.argv[2], sys.argv[5:], sys.argv[4])
+    main_for_version(sys.argv[2], sys.argv[3:])

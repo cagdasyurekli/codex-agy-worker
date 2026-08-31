@@ -32,7 +32,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 92
+EXPECTED_CHECKS = 100
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 
@@ -439,7 +439,7 @@ with tempfile.TemporaryDirectory() as temporary:
         state = MODULE.initial_state(command, "initial", 1, command_sha="0" * 64, command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None, state_schema=8)
         state.update({"phase": None, "assurance": None})
         state["schema_version"] = 4
-        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}:
+        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}:
             state.pop(key, None)
         migrated = MODULE.validate_state(state)
         assert migrated["candidate_source"] == "none"
@@ -460,7 +460,7 @@ with tempfile.TemporaryDirectory() as temporary:
         )
         original.update({"phase": None, "assurance": None})
         v3 = copy.deepcopy(original); v3["schema_version"] = 3
-        for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}:
+        for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}:
             v3.pop(key, None)
         validated_v3 = MODULE.validate_state(v3)
         assert validated_v3["schema_version"] == 3
@@ -510,7 +510,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 "last_success_identity": list(MODULE._identity(info)),
                 "phase": "awaiting-verification", "assurance": "pending", "resume_available": False,
             })
-            for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}:
+            for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}:
                 state.pop(key)
             MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             return job, worktree, artifact
@@ -2296,7 +2296,7 @@ with tempfile.TemporaryDirectory() as temporary:
             "phase": None, "assurance": None,
         })
         state["schema_version"] = 4
-        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}:
+        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}:
             state.pop(key)
         old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         loaded, _raw, read_sha = MODULE.read_state_snapshot(job)

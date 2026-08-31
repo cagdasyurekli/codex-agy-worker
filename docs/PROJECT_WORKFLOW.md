@@ -11,16 +11,25 @@ For the public synthetic gate contract, read [QA gate conformance v1](CONFORMANC
 
 ## Lifecycle at a glance
 
-1. Capture an immutable base commit and create an isolated worktree whose entire
-   content is approved as potentially provider-readable and transmissible.
-2. Dispatch only the approved task; requested paths constrain writes and candidate
-   acceptance, not provider reads.
-3. Retrieve the bound candidate and inspect its Git diff without trusting the worker
+1. Capture an immutable base commit and create an isolated worktree.
+2. Choose the transmission mode. The primary facade uses default whole-worktree
+   visibility, so its entire content must be approved as potentially provider-readable
+   and transmissible. Optional direct
+   `agy-worker.sh --provider-scope FILE --approve-transmission-sha SHA256` binds exact
+   reviewed read/write entries and a selected-content digest, then stages only selected
+   entries in a fresh owner-private mode-`0700` Gitless provider cwd.
+3. Dispatch only the approved task. In default mode, requested paths constrain writes
+   and candidate acceptance, not provider reads. Scoped staging narrows provider-visible
+   content, but the controller still locally enumerates and validates worktree paths;
+   it is not a sandbox, and scope approval grants no provider execution, Git,
+   acceptance, or publication authority. See
+   [optional selected-content dispatch](USAGE.md#optional-selected-content-dispatch).
+4. Retrieve the bound candidate and inspect its Git diff without trusting the worker
    report or executing any worker-reported command.
-4. Run writable build and test commands in a separate verification copy.
-5. Bind the driver findings to Verification v2, then choose a bounded repair in the
+5. Run writable build and test commands in a separate verification copy.
+6. Bind the driver findings to Verification v2, then choose a bounded repair in the
    same conversation or finalize an honest disposition.
-6. Preserve accepted work on its branch. Cleanup is available only for narrowly
+7. Preserve accepted work on its branch. Cleanup is available only for narrowly
    rejected or explicitly discarded candidates and requires current exact approvals.
 
 Assurance labels are deliberately practical. `verified` is available only when the
@@ -28,6 +37,47 @@ strict workflow policy is satisfied; `partially_verified` records useful work wi
 unresolved evidence; `rejected` records work Codex declines; and `blocked` records a
 genuine authority, repository-boundary, or execution block. A failed first check is
 a repair signal, not permission to erase the candidate or start a fresh conversation.
+
+## Primary facade and advanced recovery
+
+For ordinary operation, use the portable `workflow.sh` facade: `run --preview`
+produces the canonical transmission preview, approved `run` delegates dispatch,
+`status` returns read-only sanitized facts, and `verify-finalize` delegates structured
+driver checks and any explicitly supplied owner-private Verification v2 record. The
+ordinary run needs only `--repo ABSOLUTE_PATH --job-id ID` plus optional `--base`.
+When base is omitted, the first call resolves and binds `HEAD` once. The façade derives
+deterministic state, worktree, and branch bindings under an owner-private
+`XDG_STATE_HOME/agy-worker/workflows/` tree, or `HOME/.local/state/agy-worker/workflows/`,
+and invokes `job.sh init` as the Git lifecycle authority. The preview call retains
+those exact resources for the approved second call. The facade does not infer
+assurance or duplicate the provider lifecycle state machine.
+
+```bash
+./workflow.sh run --preview --repo "$TARGET" --job-id "$JOB_ID"
+./workflow.sh run --repo "$TARGET" --job-id "$JOB_ID" \
+  --approve-preview-sha "$PREVIEW_SHA" --workflow task --task "$TASK"
+```
+
+The explicit `--state`, `--worktree`, `--branch`, and full `--base` tuple remains an
+advanced compatibility mode. Partial mixing is rejected. A local pre-dispatch failure
+can invoke lifecycle-owned `rollback-ready` only for clean façade-created resources
+created by that same invocation. Exact job/state/repo/worktree/branch/base bindings,
+an unchanged empty candidate, and absence of every dispatch artifact are mandatory.
+Preview, stale approval, drift, or any dispatch evidence retains state for recovery;
+the facade never performs Git deletion itself.
+
+`workflow.sh status` also accepts an explicitly supplied existing low-level job state,
+dispatcher state, or dispatcher job ID. The projection reports its source, phase or
+controller phase, mechanically available actions, and advanced-recovery guidance.
+It never migrates legacy bytes or moves low-level mutations into the façade.
+For a bound dispatch, copy `dispatch.state_sha256` from facade `status` and pass it as
+`--approve-dispatch-sha`; missing, stale, or changed state fails before finalization.
+The deprecated `--approve-state-sha` spelling remains an exact mutually exclusive
+alias. Gate rejection/routing preserves its receipt without finalizing assurance.
+
+The lower-level dispatcher, gate, receipt, and lifecycle commands documented below
+remain the advanced recovery and compatibility surfaces. They are authorities that
+the facade composes, not parallel implementations to keep in sync.
 
 ## Quality and command boundary
 
@@ -39,8 +89,13 @@ The canonical gate has these core controls:
 
 - `--base FULL_COMMIT_ID` is required. Capture it before dispatch; mutable names such
   as `HEAD` and branch names are rejected.
-- `--verify COMMAND` is mandatory for acceptance and repeatable. Only these
-  driver-owned commands run; empty or whitespace-only commands are rejected.
+- At least one driver-owned verifier is mandatory. The normal repeatable path is
+  `--verify-argv CANONICAL_JSON_ARRAY`; it runs from the repository root without an
+  implicit shell. `--verify-shell` and legacy `--verify` remain advanced compatibility
+  paths and require their documented acknowledgements.
+- Ordinary verifier variables use `--verify-env NAME`. Credential-like names require
+  `--verify-credential-env NAME` plus the credential-access acknowledgement; neither
+  flag grants a missing value.
 - `--only PATHGLOB` is repeatable and constrains every changed path.
 - `--allow PATHGLOB` permits a known undeclared artifact but does not override
   `--only`.
@@ -55,8 +110,8 @@ BASE="$(git -C "$WT" rev-parse HEAD)"
 
 "$PIPELINE/qa-gate.sh" --envelope "$ENVELOPE" --repo "$WT" --base "$BASE" \
   --only 'tests/**' --expect-edits \
-  --verify "git -C '$WT' diff --check" \
-  --verify "cd '$WT' && python3 -m pytest -q tests/test_parser.py"
+  --verify-argv '["/usr/bin/git","diff","--check"]' \
+  --verify-argv '["python3","-m","pytest","-q","tests/test_parser.py"]'
 ```
 
 Exit `0` means only that the evidence gate accepted the exercised state and verifier
@@ -131,7 +186,7 @@ Read public lifecycle JSON in this order: first `status` for `state_sha256`,
 `available_actions`. `worktree_changes_present` describes current ambient dirtiness;
 `worktree_changed_since_dispatch` is the attribution-relevant signal.
 
-Controller-private V10 state also persists a sanitized
+Controller-private V11 state also persists a sanitized
 `provider_terminal_status`: `unknown`, `success`, `error`, or `cancelled`, derived
 only from the exact attempt's structurally valid outer terminal event. The public
 `status`, `wait`, and `result` JSON intentionally omit it. It is not candidate
@@ -140,7 +195,7 @@ acceptance, or billing evidence. A terminal without a recognized structured repo
 can retain that private enum while public `candidate_recognized` is false and
 `failure_stage` is `missing_structured_output`.
 
-Current V10 preserves every externally bound V9 transition and action decision
+Current V11 preserves every externally bound V10 transition and action decision
 atomically while adding this private diagnostic field; migration does not create new
 continuation, restart, or acceptance authority. Then use `candidate_sha256` only
 when `result_available` is
@@ -294,7 +349,7 @@ dispatcher. Then bind its envelope to the gate and Receipt protocol:
   --receipt "$STATE_DIR/receipt.json" \
   --envelope envelope.json \
   --only 'tests/**' --expect-edits \
-  --verify "git -C '$WORKTREE_DIR' diff --check"
+  --verify-argv '["/usr/bin/git","diff","--check"]'
 ```
 
 For `verified-gate-passed`, `preserve-instructions` prints review, commit, and
@@ -346,8 +401,8 @@ RECEIPT_DIR="$(mktemp -d -t agyworker-receipts.XXXXXX)"
 ./verify-job.sh --receipt "$RECEIPT_DIR/job.json" \
   --envelope envelope.json --repo "$WT" --base "$BASE" \
   --only 'tests/**' --expect-edits \
-  --verify "git -C '$WT' diff --check" \
-  --verify "cd '$WT' && python3 -m pytest -q tests/test_parser.py"
+  --verify-argv '["/usr/bin/git","diff","--check"]' \
+  --verify-argv '["python3","-m","pytest","-q","tests/test_parser.py"]'
 ```
 
 `--selection FILE` may bind one validated current selection record.

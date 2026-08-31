@@ -101,6 +101,8 @@ def _() -> None:
         "agy-model-effort-matrix.sha256",
         "agy-models-inventory-binding.json",
         "agy-models-inventory-binding.sha256",
+        "agy-version-manifest.json",
+        "agy-version-manifest.sha256",
     ):
         assert canonical(name).read_bytes() == portable(name).read_bytes()
 
@@ -158,6 +160,22 @@ def _() -> None:
         canonical("agy-models-inventory-binding.json"),
         canonical("agy-models-inventory-binding.sha256"),
     )
+
+
+@test("inventory binding rejects a missing mandatory version manifest")
+def _() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        binding_path = root / "agy-models-inventory-binding.json"
+        digest_path = root / "agy-models-inventory-binding.sha256"
+        binding_path.write_bytes(canonical("agy-models-inventory-binding.json").read_bytes())
+        digest_path.write_bytes(canonical("agy-models-inventory-binding.sha256").read_bytes())
+        try:
+            validate(binding_path, digest_path)
+        except compatibility.CompatibilityError as exc:
+            assert "manifest" in str(exc)
+            return
+    raise AssertionError("inventory binding without its version manifest was accepted")
 
 
 @test("capture and inventory hashes are exact")

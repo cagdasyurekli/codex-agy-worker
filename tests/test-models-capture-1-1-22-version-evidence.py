@@ -36,7 +36,8 @@ if not runtime_ok():
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "scripts" / "models_capture_1_1_22_version_evidence.py"
+MODULE_PATH = ROOT / "scripts" / "version_manifest_version_evidence.py"
+LEGACY_MODULE_PATH = ROOT / "scripts" / "models_capture_1_1_22_version_evidence.py"
 SPEC = importlib.util.spec_from_file_location("models_capture_1_1_22_version_evidence_tested", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -290,7 +291,7 @@ def source_repo_overlap_rejects() -> bool:
     old = fake_constants()
     try:
         profile = bound_test_profile(profile)
-        fake = ROOT / "scripts" / "models_capture_1_1_22_version_evidence.py"
+        fake = ROOT / "scripts" / "version_manifest_version_evidence.py"
         drift = dataclasses.replace(profile, source_path=str(fake))
         return rejects(lambda: MODULE.run_initial_bootstrap(drift))
     finally:
@@ -536,7 +537,7 @@ check("invalid CLI emits one usage exit before stdin/filesystem authority", inva
 
 
 def wrong_flags_reject_before_stdin() -> bool:
-    result = subprocess.run(["/usr/bin/python3", str(MODULE_PATH), "--prepare-capture-version-evidence"], input=encoded, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    result = subprocess.run(["/usr/bin/python3", str(LEGACY_MODULE_PATH), "--prepare-capture-version-evidence"], input=encoded, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     return result.returncode == 2 and result.stdout == b"" and result.stderr == b"version initial bootstrap: rejected\n"
 
 

@@ -95,6 +95,11 @@ make_demo_tree() {
         "$destination/skills/agy-worker/runtime/scripts/validate-envelope.py"
     cp "$ROOT/skills/agy-worker/runtime/scripts/candidate_state.py" \
         "$destination/skills/agy-worker/runtime/scripts/candidate_state.py"
+    cp "$ROOT/skills/agy-worker/runtime/scripts/evidence_receipt.py" \
+        "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
+        "$ROOT/skills/agy-worker/runtime/scripts/compatibility.py" \
+        "$ROOT/skills/agy-worker/runtime/scripts/recommendation_record.py" \
+        "$destination/skills/agy-worker/runtime/scripts/"
     cp "$ROOT/skills/agy-worker/runtime/schemas/worker-result.schema.json" \
         "$destination/skills/agy-worker/runtime/schemas/worker-result.schema.json"
     chmod +x "$destination/proof-demo.sh" "$destination/qa-gate.sh" \

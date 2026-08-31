@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -12,9 +13,25 @@ import secrets
 import stat
 import subprocess
 import sys
+import time
 from typing import Any, BinaryIO, Callable, Sequence
 
 sys.dont_write_bytecode = True
+
+_script_dir = Path(__file__).resolve().parent
+if str(_script_dir) not in sys.path:
+    sys.path.insert(0, str(_script_dir))
+
+from ci_stages import (
+    ANNOUNCE_MAP,
+    SHARDS,
+    STAGE_MAP,
+    STAGES,
+    Stage,
+    canonical_bytes,
+    inventory_digest,
+    receipt_v1_inventory_digest,
+)
 
 MAX_RECEIPT_BYTES = 64 * 1024
 MAX_RECEIPT_TREE_ENTRIES = 32
@@ -26,138 +43,27 @@ INTEGRITY_STATEMENT = (
     "self-authenticating."
 )
 
-STAGES: tuple[tuple[str, str], ...] = (
-    ("diff-hygiene", "working-tree diff hygiene"),
-    ("shell-syntax", "shell syntax"),
-    ("python-syntax", "Python syntax"),
-    ("qa-gate", "qa-gate suite"),
-    ("evidence-receipt", "Evidence Receipt v1 suite"),
-    ("evidence-report", "Evidence Report suite"),
-    ("offline-benchmark", "offline benchmark suite"),
-    ("swebench-workflow-study", "SWE-bench workflow study suite"),
-    ("persona-evidence", "persona evidence registry suite"),
-    ("job-lifecycle", "local job lifecycle suite"),
-    ("workload-profiles", "data-only workload profiles suite"),
-    ("dispatcher", "dispatcher suite"),
-    ("dispatcher-remediation", "dispatcher remediation suite"),
-    ("updater", "updater suite"),
-    ("adoption-measurement", "adoption measurement suite"),
-    ("update-notifier", "local update notifier suite"),
-    ("version-attestation-runner", "canonical version attestation runner"),
-    ("version-bootstrap-preflight", "repository-only version bootstrap runtime preflight"),
-    ("version-bootstrap-runner", "repository-only version bootstrap runner"),
-    ("version-initial-bootstrap-runner", "repository-only version initial bootstrap runner"),
-    ("version-recovery-1-1-12-runner", "fixed 1.1.12 version recovery runner"),
-    ("version-attestation-harness", "version attestation mutation harness"),
-    ("models-attestation-runner", "canonical models inventory attestation runner"),
-    ("models-capture-runner", "explicit-account models capture runner"),
-    ("models-capture-profile", "explicit-account models capture profile builder"),
-    ("models-capture-1-1-12-profile", "fixed 1.1.12 models capture profile builder"),
-    ("models-capture-1-1-12-runner", "fixed 1.1.12 models capture runner"),
-    ("models-capture-1-1-16-version-evidence", "fixed 1.1.16 models capture version evidence"),
-    ("models-capture-1-1-16-profile", "fixed 1.1.16 models capture profile builder"),
-    ("models-capture-1-1-16-runner", "fixed 1.1.16 models capture runner"),
-    ("models-capture-1-1-22-version-evidence", "fixed 1.1.22 models capture version evidence"),
-    ("models-capture-1-1-22-profile", "fixed 1.1.22 models capture profile builder"),
-    ("models-capture-1-1-22-runner", "fixed 1.1.22 models capture runner"),
-    ("models-capture-1-1-22-reprofile", "fixed 1.1.22 models capture reprofile adapter"),
-    ("models-capture-1-1-22-classifier", "fixed 1.1.22 models capture failure classifier"),
-    ("agy-1-1-16-activation", "1.1.16 activation binding"),
-    ("agy-1-1-22-activation", "1.1.22 activation binding"),
-    ("reporting", "reporting suite"),
-    ("feedback-triage", "feedback triage suite"),
-    ("model-intelligence", "Model Intelligence v1 suite"),
-    ("codex-usage-report", "Codex usage observation suite"),
-    ("delegation-policy", "delegation policy suite"),
-    ("packaging", "Codex distribution suite"),
-    ("doctor", "read-only doctor suite"),
-    ("conformance", "public gate conformance suite"),
-    ("proof-demo", "starter proof suite"),
-    ("bytecode-hygiene", "repository bytecode hygiene"),
-)
-
-STAGE_MAP: dict[str, str] = dict(STAGES)
-ANNOUNCE_MAP: dict[str, str] = {ann: stage_id for stage_id, ann in STAGES}
-
-SHARDS: dict[str, tuple[str, ...]] = {
-    "dispatcher": (
-        "dispatcher",
-    ),
-    "dispatcher-remediation": (
-        "dispatcher-remediation",
-    ),
-    "other-a": (
-        "diff-hygiene",
-        "shell-syntax",
-        "python-syntax",
-        "job-lifecycle",
-        "updater",
-        "version-bootstrap-runner",
-        "version-initial-bootstrap-runner",
-        "version-recovery-1-1-12-runner",
-        "models-attestation-runner",
-        "models-capture-profile",
-        "models-capture-1-1-12-profile",
-        "models-capture-1-1-16-profile",
-        "models-capture-1-1-22-version-evidence",
-        "models-capture-1-1-22-profile",
-        "models-capture-1-1-22-runner",
-        "agy-1-1-16-activation",
-        "agy-1-1-22-activation",
-        "reporting",
-        "feedback-triage",
-        "model-intelligence",
-        "packaging",
-        "doctor",
-        "proof-demo",
-    ),
-    "other-b": (
-        "qa-gate",
-        "evidence-receipt",
-        "evidence-report",
-        "offline-benchmark",
-        "swebench-workflow-study",
-        "persona-evidence",
-        "workload-profiles",
-        "adoption-measurement",
-        "update-notifier",
-        "version-attestation-runner",
-        "version-bootstrap-preflight",
-        "version-attestation-harness",
-        "models-capture-runner",
-        "models-capture-1-1-12-runner",
-        "models-capture-1-1-16-version-evidence",
-        "models-capture-1-1-16-runner",
-        "models-capture-1-1-22-reprofile",
-        "models-capture-1-1-22-classifier",
-        "codex-usage-report",
-        "delegation-policy",
-        "conformance",
-        "bytecode-hygiene",
-    ),
-}
-
-
 class ShardingError(Exception):
     """A CI sharding invariant, receipt, or aggregate validation failed closed."""
 
 
-def canonical_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-
-
-def inventory_digest() -> str:
-    return hashlib.sha256(canonical_bytes(STAGES)).hexdigest()
+def _finite_duration(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0.0
+    except (OverflowError, TypeError, ValueError):
+        return False
 
 
 def validate_receipt(
     data: dict[str, Any],
     expected_head_sha: str | None = None,
     expected_inventory_sha: str | None = None,
+    *,
+    required_schema_version: int | None = None,
 ) -> None:
-    root_keys = {
+    common_root_keys = {
         "schema_version",
         "kind",
         "head_sha",
@@ -168,10 +74,19 @@ def validate_receipt(
         "outcome",
         "integrity",
     }
+    if not isinstance(data, dict):
+        raise ShardingError("shard receipt root keys mismatch")
+    schema_version = data.get("schema_version")
+    if schema_version not in (1, 2) or data.get("kind") != "agy-worker-ci-shard-receipt":
+        raise ShardingError("shard receipt identity mismatch")
+    if required_schema_version is not None and schema_version != required_schema_version:
+        raise ShardingError(
+            f"shard receipt schema_version {schema_version} is not current version "
+            f"{required_schema_version}"
+        )
+    root_keys = common_root_keys | ({"stage_durations"} if schema_version == 2 else set())
     if not isinstance(data, dict) or set(data) != root_keys:
         raise ShardingError("shard receipt root keys mismatch")
-    if data["schema_version"] != 1 or data["kind"] != "agy-worker-ci-shard-receipt":
-        raise ShardingError("shard receipt identity mismatch")
     if not isinstance(data["head_sha"], str) or not COMMIT_RE.fullmatch(data["head_sha"]):
         raise ShardingError("head_sha must be a lowercase 40-character Git object ID")
     if expected_head_sha is not None and data["head_sha"] != expected_head_sha:
@@ -179,6 +94,11 @@ def validate_receipt(
     digest = data["inventory_sha256"]
     if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
         raise ShardingError("inventory_sha256 must be lowercase SHA-256")
+    schema_inventory_sha = (
+        receipt_v1_inventory_digest() if schema_version == 1 else inventory_digest()
+    )
+    if digest != schema_inventory_sha:
+        raise ShardingError("inventory_sha256 does not match receipt schema inventory")
     if expected_inventory_sha is not None and digest != expected_inventory_sha:
         raise ShardingError("inventory_sha256 does not match canonical inventory")
     shard_id = data["shard_id"]
@@ -207,6 +127,27 @@ def validate_receipt(
             raise ShardingError("failed shard receipt observed more stages than expected")
         if observed_stages != list(expected_stages[: len(observed_stages)]):
             raise ShardingError("failed shard receipt observed stages must be a prefix of expected stages")
+
+    if schema_version == 2:
+        stage_durations = data["stage_durations"]
+        if not isinstance(stage_durations, list):
+            raise ShardingError("stage_durations must be a list")
+        if len(stage_durations) != len(observed_stages):
+            raise ShardingError("stage_durations count must match observed_stage_ids count")
+
+        seen_stage_ids: set[str] = set()
+        for idx, item in enumerate(stage_durations):
+            if not isinstance(item, dict) or set(item) != {"id", "duration_seconds"}:
+                raise ShardingError(f"invalid stage duration entry at index {idx}")
+            stage_id = item["id"]
+            if stage_id != observed_stages[idx]:
+                raise ShardingError(f"stage duration order/id mismatch at index {idx}")
+            if stage_id in seen_stage_ids:
+                raise ShardingError(f"duplicate stage ID in stage_durations: {stage_id!r}")
+            seen_stage_ids.add(stage_id)
+            if not _finite_duration(item["duration_seconds"]):
+                raise ShardingError(f"invalid stage duration at index {idx}")
+
     if data["integrity"] != {
         "signed": False,
         "tamper_evident": False,
@@ -237,7 +178,11 @@ def validate_publication_target(target_path: Path) -> Path:
 
 
 def publish_receipt(target_path: Path, receipt: dict[str, Any]) -> None:
-    validate_receipt(receipt, expected_inventory_sha=inventory_digest())
+    validate_receipt(
+        receipt,
+        expected_inventory_sha=inventory_digest(),
+        required_schema_version=2,
+    )
     target = validate_publication_target(target_path)
     raw = canonical_bytes(receipt) + b"\n"
     if len(raw) > MAX_RECEIPT_BYTES:
@@ -309,6 +254,8 @@ def observe_stream(
     shard_id: str,
     nonce: str,
     output: BinaryIO | None = None,
+    *,
+    clock: Callable[[], float] = time.monotonic,
 ) -> tuple[int, dict[str, Any]]:
     if output is None:
         output = sys.stdout.buffer
@@ -318,6 +265,8 @@ def observe_stream(
     expected_announces = [STAGE_MAP[s].encode("utf-8") for s in expected_stage_ids]
     control_prefix = CONTROL_LABEL + nonce.encode("ascii") + b":"
     observed_stage_ids: list[str] = []
+    started: list[float] = []
+    durations: list[float] = []
     control_error = False
 
     for line in iter(lambda: stream.readline(8192), b""):
@@ -331,27 +280,40 @@ def observe_stream(
             ):
                 control_error = True
                 continue
+            now = clock()
+            if started:
+                durations.append(round(now - started[-1], 6))
+            started.append(now)
             observed_stage_ids.append(expected_stage_ids[next_index])
             continue
         output.write(line)
         output.flush()
 
     return_code = wait()
+    end = clock()
     if control_error:
         raise ShardingError("shard control marker is duplicated, reordered, or invalid")
+    if started:
+        durations.append(round(end - started[-1], 6))
     if return_code == 0 and len(observed_stage_ids) != len(expected_stage_ids):
         raise ShardingError("successful shard run omitted expected stage announcement(s)")
     if return_code != 0 and not observed_stage_ids:
         raise ShardingError("shard failed before the first stage announcement")
 
+    stage_durations = [
+        {"id": s_id, "duration_seconds": dur}
+        for s_id, dur in zip(observed_stage_ids, durations)
+    ]
+
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "agy-worker-ci-shard-receipt",
         "head_sha": head_sha,
         "inventory_sha256": inventory_digest(),
         "shard_id": shard_id,
         "expected_stage_ids": list(expected_stage_ids),
         "observed_stage_ids": list(observed_stage_ids),
+        "stage_durations": stage_durations,
         "outcome": "passed" if return_code == 0 else "failed",
         "integrity": {
             "signed": False,
@@ -359,7 +321,12 @@ def observe_stream(
             "statement": INTEGRITY_STATEMENT,
         },
     }
-    validate_receipt(receipt, head_sha, inventory_digest())
+    validate_receipt(
+        receipt,
+        head_sha,
+        inventory_digest(),
+        required_schema_version=2,
+    )
     return return_code, receipt
 
 
@@ -410,7 +377,12 @@ def validate_aggregate_receipts(
     all_observed_stages: list[str] = []
 
     for receipt in receipts:
-        validate_receipt(receipt, expected_head_sha, expected_inventory_sha)
+        validate_receipt(
+            receipt,
+            expected_head_sha,
+            expected_inventory_sha,
+            required_schema_version=2,
+        )
         shard_id = receipt["shard_id"]
         if shard_id in observed_shard_ids:
             raise ShardingError(f"duplicate shard receipt for {shard_id!r}")
@@ -425,7 +397,7 @@ def validate_aggregate_receipts(
         missing = set(SHARDS) - observed_shard_ids
         raise ShardingError(f"missing shard receipts: {sorted(missing)}")
 
-    expected_all_stage_ids = [s[0] for s in STAGES]
+    expected_all_stage_ids = [s.id for s in STAGES]
     if len(all_observed_stages) != len(expected_all_stage_ids):
         raise ShardingError(
             f"aggregate observed {len(all_observed_stages)} stages, expected {len(expected_all_stage_ids)}"
@@ -651,7 +623,7 @@ def main(argv: Sequence[str]) -> int:
             if len(argv) == 5 and argv[3] == "--expected-head":
                 expected_head = argv[4]
             data = _read_receipt(receipt_path)
-            validate_receipt(data, expected_head, inventory_digest())
+            validate_receipt(data, expected_head)
             print("ok: receipt is valid")
             return 0
 

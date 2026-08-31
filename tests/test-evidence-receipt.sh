@@ -7,6 +7,12 @@ ROOT="$(CDPATH= cd -- "$HERE/.." && pwd -P)"
 VERIFY="$ROOT/verify-job.sh"
 GATE="$ROOT/qa-gate.sh"
 VALIDATOR="$ROOT/skills/agy-worker/runtime/scripts/evidence_receipt.py"
+SHELL_ACK=(--acknowledge-verifier-network --acknowledge-verifier-credential-access)
+argv_json() {
+    python3 -I -S -B -c \
+        'import json,sys;print(json.dumps(sys.argv[1:],ensure_ascii=True,separators=(",",":")))' \
+        "$@"
+}
 INTERNAL_EVIDENCE_TOKEN="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 INTERNAL_PYTHON="$(python3 -I -S -B -c 'import pathlib,sys; print(pathlib.Path(sys.executable).resolve())')"
 TMP="$(mktemp -d -t agyworker-receipt.XXXXXX)"
@@ -111,46 +117,63 @@ run_receipt_case() {
 }
 
 echo "Evidence Receipt v1 offline test suite"
+if python3 -I -S -B - "$VALIDATOR" <<'PY'
+import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location('receipt_module',sys.argv[1])
+assert spec is not None and spec.loader is not None
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+canonical=lambda value: json.dumps(value,ensure_ascii=True,sort_keys=True,separators=(',',':'))
+assert module.validate_verifier_argv(canonical(['true']+['']*255))[0]=='true'
+for value in (
+    ['true']+['']*256,
+    ['x'*(module.MAX_VERIFY_ARGV_ELEMENT_BYTES+1)],
+    ['true']+['x'*60000]*5,
+):
+    try: module.validate_verifier_argv(canonical(value))
+    except module.UsageFailure: pass
+    else: raise AssertionError('verifier argv bound was not enforced')
+PY
+then ok "argv element count element bytes and aggregate bytes are bounded"; else bad "argv element count element bytes and aggregate bytes are bounded"; fi
 echo
 echo "durable gate outcome matrix:"
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 run_receipt_case "exit 0 publishes gate-passed" pass 0 gate-passed gate-passed honest.json \
-    --only a.txt --expect-edits --verify true
+    --only a.txt --expect-edits --verify-argv '["true"]'
 
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 run_receipt_case "exit 10 publishes rejected scope result" scope 10 scope-violation rejected honest.json \
-    --only 'tests/**' --verify true
+    --only 'tests/**' --verify-argv '["true"]'
 
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 run_receipt_case "exit 11 publishes rejected claim result" claim 11 untrusted-worker-claim rejected command.json \
-    --verify true
+    --verify-argv '["true"]'
 
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 run_receipt_case "exit 12 publishes rejected envelope result" malformed 12 invalid-envelope rejected malformed.json \
-    --verify true
+    --verify-argv '["true"]'
 
 reset_repo
 run_receipt_case "exit 13 publishes rejected missing-edit result" missing 13 expected-edits-missing rejected no-edits.json \
-    --expect-edits --verify true
+    --expect-edits --verify-argv '["true"]'
 
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 run_receipt_case "exit 14 publishes rejected verifier result" verifier 14 driver-verification-failed rejected honest.json \
-    --verify false
+    --verify-argv '["false"]'
 
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 run_receipt_case "exit 15 publishes routed worker escalation" routed 15 worker-escalation routed partial.json \
-    --verify true
+    --verify-argv '["true"]'
 
 echo
 echo "legacy gate behavior and narrow FD handoff:"
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 "$GATE" --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --only a.txt --expect-edits --verify true \
+    --only a.txt --expect-edits --verify-argv '["true"]' \
     > "$TMP/direct.out" 2> "$TMP/direct.err"
 direct_rc=$?
 cat > "$TMP/direct.expected" <<'EOF'
 qa-gate: scope OK (1 file(s) changed)
-qa-gate: driver verification: true
+qa-gate: driver verification: verify-001 (argv)
 qa-gate: scope OK (1 file(s) changed)
 qa-gate: ACCEPTED
 EOF
@@ -166,7 +189,7 @@ for blocked_verify_env in AGY_WORKER_SCHEMA GIT_DIR GIT_WORK_TREE GIT_CONFIG_COU
     /usr/bin/env "$blocked_verify_env=blocked" \
         "$VERIFY" --receipt "$blocked_target" --envelope "$TMP/honest.json" \
             --repo "$REPO" --base "$BASE" --only a.txt \
-            --verify-env "$blocked_verify_env" --verify true \
+            --verify-env "$blocked_verify_env" --verify-argv '["true"]' \
             >/dev/null 2>&1
     if [[ $? == 64 && ! -e "$blocked_target" ]]; then
         ok "wrapper rejects $blocked_verify_env as verifier environment control"
@@ -180,12 +203,12 @@ cat > "$TMP/unsupported-worker-schema.json" <<'EOF'
 EOF
 AGY_WORKER_SCHEMA="$TMP/unsupported-worker-schema.json" \
     "$GATE" --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-        --only a.txt --verify true >/dev/null 2>&1
+        --only a.txt --verify-argv '["true"]' >/dev/null 2>&1
 override_gate_rc=$?
 schema_target="$RECEIPTS/canonical-schema.json"
 AGY_WORKER_SCHEMA="$TMP/unsupported-worker-schema.json" \
     "$VERIFY" --receipt "$schema_target" --envelope "$TMP/honest.json" \
-        --repo "$REPO" --base "$BASE" --only a.txt --verify true \
+        --repo "$REPO" --base "$BASE" --only a.txt --verify-argv '["true"]' \
         >/dev/null 2>&1
 override_wrapper_rc=$?
 if [[ "$override_gate_rc" == 12 && "$override_wrapper_rc" == 0 \
@@ -197,7 +220,7 @@ fi
 
 exec 9> "$TMP/direct-handoff.jsonl"
 run_internal_gate --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --only a.txt --verify true --evidence-fd 9 \
+    --only a.txt --verify-argv '["true"]' --evidence-fd 9 \
     > "$TMP/fd.out" 2> "$TMP/fd.err"
 fd_rc=$?
 exec 9>&-
@@ -218,7 +241,7 @@ then ok "optional evidence FD receives exactly one bounded gate JSON line"; else
 
 exec 9> "$TMP/unbound-handoff.jsonl"
 "$GATE" --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --only a.txt --verify true --evidence-fd 9 >/dev/null 2>&1
+    --only a.txt --verify-argv '["true"]' --evidence-fd 9 >/dev/null 2>&1
 unbound_fd_rc=$?
 exec 9>&-
 if [[ "$unbound_fd_rc" == 64 && ! -s "$TMP/unbound-handoff.jsonl" ]]; then
@@ -231,7 +254,7 @@ fd_probe='printf child >&8; if { printf forged >&9; } 2>/dev/null; then exit 41;
 exec 8> "$TMP/fd-control.txt"
 exec 9> "$TMP/exclusive-handoff.jsonl"
 run_internal_gate --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --only a.txt --verify "$fd_probe" --evidence-fd 9 \
+    --only a.txt "${SHELL_ACK[@]}" --verify-shell "$fd_probe" --evidence-fd 9 \
     > "$TMP/exclusive-fd.out" 2> "$TMP/exclusive-fd.err"
 exclusive_fd_rc=$?
 exec 9>&-
@@ -264,7 +287,7 @@ AGY_WORKER_INTERNAL_EVIDENCE_TOKEN="$INTERNAL_EVIDENCE_TOKEN" \
 AGY_WORKER_INTERNAL_PYTHON="$INTERNAL_PYTHON" \
 "$LEAK_RUNTIME/qa-gate.sh" --evidence-token "$INTERNAL_EVIDENCE_TOKEN" \
     --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --only a.txt --verify 'printf forged >&9' --evidence-fd 9 \
+    --only a.txt "${SHELL_ACK[@]}" --verify-shell 'printf forged >&9' --evidence-fd 9 \
     >"$TMP/leaky.out" 2>"$TMP/leaky.err"
 leaky_fd_rc=$?
 exec 9>&-
@@ -284,7 +307,7 @@ for descriptor in range(3, 256):
     except OSError: pass'"
 "$LEAK_RUNTIME/verify-job.sh" --receipt "$leaky_receipt" \
     --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --only a.txt --verify "$leak_scan" >/dev/null 2>&1
+    --only a.txt "${SHELL_ACK[@]}" --verify-shell "$leak_scan" >/dev/null 2>&1
 leaky_wrapper_rc=$?
 if [[ "$leaky_wrapper_rc" == 70 && ! -e "$leaky_receipt" ]]; then
     ok "wrapper rejects a close mutation that lets a verifier scan and forge the FD"
@@ -330,7 +353,7 @@ SAFE_VERIFIER_ENV=keep \
     "$VERIFY" --receipt "$hostile_target" --envelope "$TMP/honest.json" \
         --repo "$REPO" --base "$BASE" --only a.txt \
         --verify-env SAFE_VERIFIER_ENV \
-        --verify "$startup_verifier" \
+        "${SHELL_ACK[@]}" --verify-shell "$startup_verifier" \
         >"$TMP/hostile-startup.out" 2>"$TMP/hostile-startup.err"
 hostile_startup_rc=$?
 if [[ "$hostile_startup_rc" == 0 && -f "$hostile_target" ]] \
@@ -351,7 +374,7 @@ COMPLEX_VERIFIER_ENV="$complex_value" EMPTY_VERIFIER_ENV= \
     "$VERIFY" --receipt "$complex_target" --envelope "$TMP/honest.json" \
         --repo "$REPO" --base "$BASE" --only a.txt \
         --verify-env COMPLEX_VERIFIER_ENV --verify-env EMPTY_VERIFIER_ENV \
-        --verify "$complex_verifier" \
+        "${SHELL_ACK[@]}" --verify-shell "$complex_verifier" \
         >"$TMP/complex-verifier-env.out" 2>"$TMP/complex-verifier-env.err"
 if [[ $? == 0 && -f "$complex_target" ]] \
         && ! grep -Fq 'space = value' "$complex_target" \
@@ -360,6 +383,114 @@ if [[ $? == 0 && -f "$complex_target" ]] \
     ok "private verifier environment preserves complex and empty values without persistence"
 else
     bad "private verifier environment preserves complex and empty values without persistence"
+fi
+
+credential_home="$TMP/private-verifier-home"
+mkdir "$credential_home"
+credential_token='private-lowercase-token-value'
+credential_pg='private-pg-password-value'
+credential_mysql='private-mysql-password-value'
+credential_pat='private-gh-pat-value'
+credential_database='postgres://private-database-value'
+credential_target="$RECEIPTS/credential-verifier-env.json"
+credential_argv="$(argv_json /usr/bin/python3 -I -S -B -c \
+    'import os,sys;names=("HOME","api_token","PGPASSWORD","MYSQL_PWD","GH_PAT","DATABASE_URL");sys.exit(0 if [os.environ.get(n) for n in names]==sys.argv[1:] else 1)' \
+    "$credential_home" "$credential_token" "$credential_pg" "$credential_mysql" \
+    "$credential_pat" "$credential_database")"
+HOME="$credential_home" api_token="$credential_token" PGPASSWORD="$credential_pg" \
+MYSQL_PWD="$credential_mysql" GH_PAT="$credential_pat" DATABASE_URL="$credential_database" \
+"$VERIFY" --receipt "$credential_target" \
+    --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" --only a.txt \
+    --verify-credential-env HOME --verify-credential-env api_token \
+    --verify-credential-env PGPASSWORD --verify-credential-env MYSQL_PWD \
+    --verify-credential-env GH_PAT --verify-credential-env DATABASE_URL \
+    --acknowledge-verifier-credential-access \
+    --verify-argv "$credential_argv" >"$TMP/credential.out" 2>"$TMP/credential.err"
+credential_rc=$?
+ordinary_home_target="$RECEIPTS/ordinary-home.json"
+HOME="$credential_home" "$VERIFY" --receipt "$ordinary_home_target" \
+    --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" --only a.txt \
+    --verify-env HOME --verify-argv '["true"]' >/dev/null 2>&1
+ordinary_home_rc=$?
+ordinary_credential_rc=0
+for ordinary_name in PGPASSWORD MYSQL_PWD GH_PAT DATABASE_URL; do
+    ordinary_target="$RECEIPTS/ordinary-$ordinary_name.json"
+    "$VERIFY" --receipt "$ordinary_target" --envelope "$TMP/honest.json" \
+        --repo "$REPO" --base "$BASE" --only a.txt \
+        --verify-env "$ordinary_name" --verify-argv '["true"]' \
+        >"$TMP/ordinary-$ordinary_name.out" 2>"$TMP/ordinary-$ordinary_name.err"
+    [[ $? == 64 && ! -e "$ordinary_target" ]] || ordinary_credential_rc=1
+done
+ack_only_target="$RECEIPTS/ack-only-home.json"
+HOME="$credential_home" "$VERIFY" --receipt "$ack_only_target" \
+    --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" --only a.txt \
+    --acknowledge-verifier-credential-access \
+    --verify-argv "$(argv_json /usr/bin/python3 -I -S -B -c \
+        'import os,sys;sys.exit(1 if "HOME" in os.environ else 0)')" \
+    >/dev/null 2>&1
+ack_only_rc=$?
+if [[ "$credential_rc" == 0 && "$ordinary_home_rc" == 64 \
+        && "$ordinary_credential_rc" == 0 && "$ack_only_rc" == 0 \
+        && ! -e "$ordinary_home_target" ]] \
+        && ! grep -Fq "$credential_home" "$credential_target" \
+        && ! grep -Fq "$credential_token" "$credential_target" \
+        && ! grep -Fq "$credential_pg" "$credential_target" \
+        && ! grep -Fq "$credential_mysql" "$credential_target" \
+        && ! grep -Fq "$credential_pat" "$credential_target" \
+        && ! grep -Fq "$credential_database" "$credential_target" \
+        && ! grep -Fq "$credential_home" "$TMP/credential.out" \
+        && ! grep -Fq "$credential_home" "$TMP/credential.err" \
+        && ! grep -R -F -e "$credential_pg" -e "$credential_mysql" \
+            -e "$credential_pat" -e "$credential_database" \
+            "$TMP"/ordinary-*.out "$TMP"/ordinary-*.err >/dev/null 2>&1; then
+    ok "credential env needs its own flag and acknowledgement; acknowledgement alone grants no value"
+else
+    bad "credential env needs its own flag and acknowledgement; acknowledgement alone grants no value"
+fi
+
+surrogate_spec='["true","\ud800"]'
+surrogate_target="$RECEIPTS/lone-surrogate.json"
+printf '%s' "$surrogate_spec" | python3 -I -S -B "$VALIDATOR" \
+    validate-verifier argv >"$TMP/surrogate-validator.out" 2>"$TMP/surrogate-validator.err"
+surrogate_validator_rc=$?
+"$GATE" --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
+    --only a.txt --verify-argv "$surrogate_spec" \
+    >"$TMP/surrogate-gate.out" 2>"$TMP/surrogate-gate.err"
+surrogate_gate_rc=$?
+"$VERIFY" --receipt "$surrogate_target" --envelope "$TMP/honest.json" \
+    --repo "$REPO" --base "$BASE" --only a.txt --verify-argv "$surrogate_spec" \
+    >"$TMP/surrogate-wrapper.out" 2>"$TMP/surrogate-wrapper.err"
+surrogate_wrapper_rc=$?
+if [[ "$surrogate_validator_rc" == 64 && "$surrogate_gate_rc" == 64 \
+        && "$surrogate_wrapper_rc" == 64 && ! -e "$surrogate_target" ]] \
+        && ! grep -R -Eq 'Traceback|\\ud800|lone-surrogate' \
+            "$TMP"/surrogate-*.out "$TMP"/surrogate-*.err; then
+    ok "lone-surrogate argv is sanitized usage failure at every public boundary"
+else
+    bad "lone-surrogate argv is sanitized usage failure at every public boundary"
+fi
+
+split_wrapper_sentinel="$TMP/split-wrapper-sentinel"
+split_wrapper_ok=1
+split_quote_spec="$(argv_json /usr/bin/env -S \
+    "ba\"\"sh -c \"touch $split_wrapper_sentinel\"")"
+split_expansion_spec="$(argv_json /usr/bin/env -S \
+    "z\${UNSET_FOR_AGY_RECEIPT}sh -c \"touch $split_wrapper_sentinel\"")"
+for split_case in quote expansion; do
+    if [[ "$split_case" == quote ]]; then split_spec="$split_quote_spec"; else split_spec="$split_expansion_spec"; fi
+    split_target="$RECEIPTS/split-$split_case.json"
+    "$VERIFY" --receipt "$split_target" --envelope "$TMP/honest.json" \
+        --repo "$REPO" --base "$BASE" --only a.txt --verify-argv "$split_spec" \
+        >"$TMP/split-wrapper-$split_case.out" 2>"$TMP/split-wrapper-$split_case.err"
+    [[ $? == 64 && ! -e "$split_target" \
+        && ! -s "$TMP/split-wrapper-$split_case.out" ]] || split_wrapper_ok=0
+    grep -Fq "$split_wrapper_sentinel" "$TMP/split-wrapper-$split_case.err" \
+        && split_wrapper_ok=0
+done
+if [[ "$split_wrapper_ok" == 1 && ! -e "$split_wrapper_sentinel" ]]; then
+    ok "env split-string transforms fail before wrapper execution or receipt"
+else
+    bad "env split-string transforms fail before wrapper execution or receipt"
 fi
 
 UNSANITIZED_RUNTIME="$TMP/unsanitized-runtime"
@@ -377,7 +508,7 @@ PYTHONPATH="$HOSTILE_PYTHON" \
 HOSTILE_STARTUP_SENTINEL="$hostile_sentinel" \
     "$UNSANITIZED_RUNTIME/verify-job.sh" --receipt "$unsanitized_target" \
         --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-        --only a.txt --verify true >/dev/null 2>&1
+        --only a.txt --verify-argv '["true"]' >/dev/null 2>&1
 unsanitized_rc=$?
 if [[ "$unsanitized_rc" == 70 && ! -e "$unsanitized_target" ]]; then
     ok "removing gate environment sanitization contaminates evidence and returns 70"
@@ -387,7 +518,7 @@ fi
 
 exec 9> "$TMP/duplicate-fd.jsonl"
 run_internal_gate --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --verify true --evidence-fd 9 --evidence-fd 9 >/dev/null 2>&1
+    --verify-argv '["true"]' --evidence-fd 9 --evidence-fd 9 >/dev/null 2>&1
 duplicate_fd_rc=$?
 exec 9>&-
 if [[ "$duplicate_fd_rc" == 64 && ! -s "$TMP/duplicate-fd.jsonl" ]]; then
@@ -397,18 +528,23 @@ else
 fi
 
 run_internal_gate --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --verify true --evidence-fd 999999999999999999999 >/dev/null 2>&1
+    --verify-argv '["true"]' --evidence-fd 999999999999999999999 >/dev/null 2>&1
 if [[ $? == 64 ]]; then ok "closed or overflowing evidence FD fails before gate work"; else bad "closed or overflowing evidence FD fails before gate work"; fi
 
 exec 8< "$TMP/direct-handoff.jsonl"
 run_internal_gate --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --verify true --evidence-fd 8 >/dev/null 2>&1
+    --verify-argv '["true"]' --evidence-fd 8 >/dev/null 2>&1
 readonly_fd_rc=$?
 exec 8>&-
 if [[ "$readonly_fd_rc" == 64 ]]; then ok "read-only evidence FD fails before gate work"; else bad "read-only evidence FD fails before gate work"; fi
 
 echo
 echo "wrapper preflight and safe target policy:"
+legacy_wrapper_target="$RECEIPTS/legacy-wrapper.json"
+"$VERIFY" --receipt "$legacy_wrapper_target" --envelope "$TMP/honest.json" \
+    --repo "$REPO" --base "$BASE" --legacy-shell-verification \
+    "${SHELL_ACK[@]}" --verify true >/dev/null 2>&1
+if [[ $? == 0 && -f "$legacy_wrapper_target" ]]; then ok "legacy wrapper spelling works only with explicit legacy and shell acknowledgements"; else bad "legacy wrapper spelling works only with explicit legacy and shell acknowledgements"; fi
 no_receipt="$RECEIPTS/no-verify.json"
 "$VERIFY" --receipt "$no_receipt" --envelope "$TMP/honest.json" \
     --repo "$REPO" --base "$BASE" >/dev/null 2>&1
@@ -417,44 +553,44 @@ if [[ $? == 64 && ! -e "$no_receipt" ]]; then ok "missing verifier exits 64 with
 existing="$RECEIPTS/existing.json"
 printf 'keep-me\n' > "$existing"
 "$VERIFY" --receipt "$existing" --envelope "$TMP/honest.json" \
-    --repo "$REPO" --base "$BASE" --verify true >/dev/null 2>&1
+    --repo "$REPO" --base "$BASE" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && "$(<"$existing")" == keep-me ]]; then ok "existing target is never overwritten"; else bad "existing target is never overwritten"; fi
 
 symlink_target="$RECEIPTS/symlink.json"
 ln -s "$TMP/nowhere" "$symlink_target"
 "$VERIFY" --receipt "$symlink_target" --envelope "$TMP/honest.json" \
-    --repo "$REPO" --base "$BASE" --verify true >/dev/null 2>&1
+    --repo "$REPO" --base "$BASE" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && -L "$symlink_target" ]]; then ok "symlink receipt target is rejected without following"; else bad "symlink receipt target is rejected without following"; fi
 
 mkdir -m 700 "$TMP/real-receipt-parent"
 ln -s "$TMP/real-receipt-parent" "$TMP/linked-receipt-parent"
 linked_parent_target="$TMP/linked-receipt-parent/receipt.json"
 "$VERIFY" --receipt "$linked_parent_target" --envelope "$TMP/honest.json" \
-    --repo "$REPO" --base "$BASE" --verify true >/dev/null 2>&1
+    --repo "$REPO" --base "$BASE" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$linked_parent_target" ]]; then ok "symlinked receipt parent is rejected"; else bad "symlinked receipt parent is rejected"; fi
 
 ln -s "$TMP/honest.json" "$TMP/envelope-link.json"
 linked_envelope_target="$RECEIPTS/linked-envelope.json"
 "$VERIFY" --receipt "$linked_envelope_target" --envelope "$TMP/envelope-link.json" \
-    --repo "$REPO" --base "$BASE" --verify true >/dev/null 2>&1
+    --repo "$REPO" --base "$BASE" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$linked_envelope_target" ]]; then ok "symlinked envelope input is rejected before gate"; else bad "symlinked envelope input is rejected before gate"; fi
 
 in_repo="$REPO/receipt.json"
 "$VERIFY" --receipt "$in_repo" --envelope "$TMP/honest.json" \
-    --repo "$REPO" --base "$BASE" --verify true >/dev/null 2>&1
+    --repo "$REPO" --base "$BASE" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$in_repo" ]]; then ok "receipt target inside audited repository is rejected"; else bad "receipt target inside audited repository is rejected"; fi
 
 mkdir -m 755 "$TMP/public-parent"
 public_target="$(CDPATH= cd -- "$TMP/public-parent" && pwd -P)/receipt.json"
 "$VERIFY" --receipt "$public_target" --envelope "$TMP/honest.json" \
-    --repo "$REPO" --base "$BASE" --verify true >/dev/null 2>&1
+    --repo "$REPO" --base "$BASE" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$public_target" ]]; then ok "non-private receipt parent is rejected"; else bad "non-private receipt parent is rejected"; fi
 
 mkdir -m 300 "$TMP/owner-incomplete"
 owner_incomplete_parent="$(CDPATH= cd -- "$TMP/owner-incomplete" && pwd -P)"
 owner_incomplete_target="$owner_incomplete_parent/receipt.json"
 "$VERIFY" --receipt "$owner_incomplete_target" --envelope "$TMP/honest.json" \
-    --repo "$REPO" --base "$BASE" --verify true >/dev/null 2>&1
+    --repo "$REPO" --base "$BASE" --verify-argv '["true"]' >/dev/null 2>&1
 owner_incomplete_rc=$?
 chmod 700 "$owner_incomplete_parent"
 if [[ "$owner_incomplete_rc" == 64 && ! -e "$owner_incomplete_target" ]]; then
@@ -464,12 +600,12 @@ else
 fi
 
 "$VERIFY" --receipt relative-receipt.json --envelope "$TMP/honest.json" \
-    --repo "$REPO" --base "$BASE" --verify true >/dev/null 2>&1
+    --repo "$REPO" --base "$BASE" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && ! -e relative-receipt.json ]]; then ok "relative receipt target is rejected"; else bad "relative receipt target is rejected"; fi
 
 duplicate_target="$RECEIPTS/duplicate-option.json"
 "$VERIFY" --receipt "$duplicate_target" --receipt "$duplicate_target" \
-    --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" --verify true \
+    --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" --verify-argv '["true"]' \
     >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$duplicate_target" ]]; then ok "singleton wrapper options reject repetition"; else bad "singleton wrapper options reject repetition"; fi
 
@@ -482,7 +618,7 @@ reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 bound="$RECEIPTS/bound.json"
 "$VERIFY" --receipt "$bound" --envelope "$TMP/honest.json" --repo "$REPO" \
     --base "$BASE" --selection "$TMP/selection.json" \
-    --pre-recommendation "$TMP/recommendation.json" --verify true \
+    --pre-recommendation "$TMP/recommendation.json" --verify-argv '["true"]' \
     > "$TMP/bound.out" 2> "$TMP/bound.err"
 if [[ $? == 0 ]] && python3 -B - "$bound" "$TMP/selection.json" "$TMP/recommendation.json" <<'PY'
 import json,sys
@@ -503,7 +639,7 @@ for optional_mode in selection recommendation; do
         optional_args=(--pre-recommendation "$TMP/recommendation.json")
     fi
     "$VERIFY" --receipt "$optional_target" --envelope "$TMP/honest.json" \
-        --repo "$REPO" --base "$BASE" "${optional_args[@]}" --verify true \
+        --repo "$REPO" --base "$BASE" "${optional_args[@]}" --verify-argv '["true"]' \
         >/dev/null 2>&1
     if [[ $? == 0 && -f "$optional_target" ]]; then ok "$optional_mode input is independently optional"; else bad "$optional_mode input is independently optional"; fi
 done
@@ -512,7 +648,7 @@ done
     --evidence gate-accepted > "$TMP/post.json"
 post_target="$RECEIPTS/post.json"
 "$VERIFY" --receipt "$post_target" --envelope "$TMP/honest.json" --repo "$REPO" \
-    --base "$BASE" --pre-recommendation "$TMP/post.json" --verify true >/dev/null 2>&1
+    --base "$BASE" --pre-recommendation "$TMP/post.json" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$post_target" ]]; then ok "post-gate advisory cannot bind in P0-A"; else bad "post-gate advisory cannot bind in P0-A"; fi
 
 python3 -B - "$TMP/recommendation.json" "$TMP/applied.json" <<'PY'
@@ -522,7 +658,7 @@ json.dump(value,open(sys.argv[2],'w'))
 PY
 applied_target="$RECEIPTS/applied.json"
 "$VERIFY" --receipt "$applied_target" --envelope "$TMP/honest.json" --repo "$REPO" \
-    --base "$BASE" --pre-recommendation "$TMP/applied.json" --verify true >/dev/null 2>&1
+    --base "$BASE" --pre-recommendation "$TMP/applied.json" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$applied_target" ]]; then ok "advisory claiming application is rejected before gate"; else bad "advisory claiming application is rejected before gate"; fi
 
 "$ROOT/model-recommendation.sh" --stage pre-dispatch --selected-tier cheap \
@@ -530,7 +666,7 @@ if [[ $? == 64 && ! -e "$applied_target" ]]; then ok "advisory claiming applicat
 mismatch_target="$RECEIPTS/mismatch-selection.json"
 "$VERIFY" --receipt "$mismatch_target" --envelope "$TMP/honest.json" --repo "$REPO" \
     --base "$BASE" --selection "$TMP/selection.json" \
-    --pre-recommendation "$TMP/mismatch-recommendation.json" --verify true >/dev/null 2>&1
+    --pre-recommendation "$TMP/mismatch-recommendation.json" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$mismatch_target" ]]; then ok "selection and advisory mismatch is rejected before gate"; else bad "selection and advisory mismatch is rejected before gate"; fi
 
 mkdir -p "$TMP/selection-bin"
@@ -567,7 +703,7 @@ reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 direct_target="$RECEIPTS/direct-selection.json"
 "$VERIFY" --receipt "$direct_target" --envelope "$TMP/honest.json" \
     --repo "$REPO" --base "$BASE" --selection "$TMP/direct-selection.json" \
-    --pre-recommendation "$TMP/direct-recommendation.json" --verify true \
+    --pre-recommendation "$TMP/direct-recommendation.json" --verify-argv '["true"]' \
     >/dev/null 2>&1
 if [[ $? == 0 ]] && python3 -B - "$direct_target" <<'PY'
 import json,sys
@@ -596,7 +732,7 @@ PY
     invalid_direct_target="$RECEIPTS/direct-$direct_mutation.json"
     "$VERIFY" --receipt "$invalid_direct_target" --envelope "$TMP/honest.json" \
         --repo "$REPO" --base "$BASE" --selection "$TMP/direct-$direct_mutation.json" \
-        --verify true >/dev/null 2>&1
+        --verify-argv '["true"]' >/dev/null 2>&1
     if [[ $? == 64 && ! -e "$invalid_direct_target" ]]; then ok "direct $direct_mutation mutation is rejected before gate"; else bad "direct $direct_mutation mutation is rejected before gate"; fi
 done
 
@@ -607,14 +743,18 @@ private_target="$RECEIPTS/privacy.json"
 private_command="printf PRIVATE-VERIFY-SECRET >/dev/null"
 "$VERIFY" --receipt "$private_target" --envelope "$TMP/honest.json" --repo "$REPO" \
     --base "$BASE" --allow first --allow second --only a.txt \
-    --verify "$private_command" --verify true >/dev/null 2>&1
+    "${SHELL_ACK[@]}" --verify-shell "$private_command" --verify-argv '["true"]' >/dev/null 2>&1
 if [[ $? == 0 ]] && python3 -B - "$private_target" "$REPO" "$TMP" "$private_command" <<'PY'
 import hashlib,json,sys
 raw=open(sys.argv[1],'rb').read(); value=json.loads(raw)
 for forbidden in sys.argv[2:]: assert forbidden.encode() not in raw
+def spec_hash(mode,spec):
+    payload={'domain':'agy-worker-verifier-spec-v1','mode':mode,'spec':spec}
+    raw=json.dumps(payload,ensure_ascii=True,sort_keys=True,separators=(',',':')).encode()
+    return hashlib.sha256(raw).hexdigest()
 assert value['verifiers']==[
- {'label':'verify-001','command_sha256':hashlib.sha256(sys.argv[4].encode()).hexdigest()},
- {'label':'verify-002','command_sha256':hashlib.sha256(b'true').hexdigest()}]
+ {'label':'verify-001','command_sha256':spec_hash('shell',sys.argv[4])},
+ {'label':'verify-002','command_sha256':spec_hash('argv',['true'])}]
 assert not any(k in value for k in ('repo','command','diff','prompt','log','provider'))
 PY
 then ok "receipt exposes hashes and labels but no paths, commands, prose, or logs"; else bad "receipt exposes hashes and labels but no paths, commands, prose, or logs"; fi
@@ -622,7 +762,7 @@ then ok "receipt exposes hashes and labels but no paths, commands, prose, or log
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 mutation_target="$RECEIPTS/mutation.json"
 "$VERIFY" --receipt "$mutation_target" --envelope "$TMP/honest.json" --repo "$REPO" \
-    --base "$BASE" --verify "printf mutation >> '$REPO/a.txt'" >/dev/null 2>&1
+    --base "$BASE" "${SHELL_ACK[@]}" --verify-shell "printf mutation >> '$REPO/a.txt'" >/dev/null 2>&1
 if [[ $? == 14 ]] && python3 -B - "$mutation_target" <<'PY'
 import json,sys
 value=json.load(open(sys.argv[1]))
@@ -634,15 +774,35 @@ then ok "verifier mutation is rejected and gate digests preserve the change"; el
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 first_order="$RECEIPTS/order-one.json"; second_order="$RECEIPTS/order-two.json"
 "$VERIFY" --receipt "$first_order" --envelope "$TMP/honest.json" --repo "$REPO" \
-    --base "$BASE" --allow one --allow two --verify true >/dev/null 2>&1
+    --base "$BASE" --allow one --allow two --verify-argv '["true"]' >/dev/null 2>&1
 "$VERIFY" --receipt "$second_order" --envelope "$TMP/honest.json" --repo "$REPO" \
-    --base "$BASE" --allow two --allow one --verify true >/dev/null 2>&1
+    --base "$BASE" --allow two --allow one --verify-argv '["true"]' >/dev/null 2>&1
 if python3 -B - "$first_order" "$second_order" <<'PY'
 import json,sys
 one=json.load(open(sys.argv[1])); two=json.load(open(sys.argv[2]))
 assert one['path_policy_sha256'] != two['path_policy_sha256']
 PY
 then ok "ordered path policy changes its canonical binding hash"; else bad "ordered path policy changes its canonical binding hash"; fi
+
+policy_mode="$RECEIPTS/policy-mode.json"
+policy_ack="$RECEIPTS/policy-ack.json"
+policy_ordinary="$RECEIPTS/policy-ordinary.json"
+policy_credential="$RECEIPTS/policy-credential.json"
+"$VERIFY" --receipt "$policy_mode" --envelope "$TMP/honest.json" --repo "$REPO" \
+    --base "$BASE" "${SHELL_ACK[@]}" --verify-shell true >/dev/null 2>&1
+"$VERIFY" --receipt "$policy_ack" --envelope "$TMP/honest.json" --repo "$REPO" \
+    --base "$BASE" --acknowledge-verifier-network --verify-argv '["true"]' >/dev/null 2>&1
+"$VERIFY" --receipt "$policy_ordinary" --envelope "$TMP/honest.json" --repo "$REPO" \
+    --base "$BASE" --verify-env SAFE_POLICY_NAME --verify-argv '["true"]' >/dev/null 2>&1
+"$VERIFY" --receipt "$policy_credential" --envelope "$TMP/honest.json" --repo "$REPO" \
+    --base "$BASE" --verify-credential-env HOME \
+    --acknowledge-verifier-credential-access --verify-argv '["true"]' >/dev/null 2>&1
+if python3 -B - "$first_order" "$policy_mode" "$policy_ack" "$policy_ordinary" "$policy_credential" <<'PY'
+import json,sys
+hashes={json.load(open(path))['path_policy_sha256'] for path in sys.argv[1:]}
+assert len(hashes)==len(sys.argv)-1
+PY
+then ok "path policy binds verifier modes acknowledgements and both env-name classes"; else bad "path policy binds verifier modes acknowledgements and both env-name classes"; fi
 
 echo
 echo "receipt validation and trusted external bindings:"
@@ -773,14 +933,14 @@ for protocol_mode in missing malformed duplicate mismatch wrong-exit unknown sig
     FAKE_GATE_MODE="$protocol_mode" \
         "$FAKE_RUNTIME/verify-job.sh" --receipt "$protocol_target" \
         --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-        --verify-env FAKE_GATE_MODE --verify true \
+        --verify-env FAKE_GATE_MODE --verify-argv '["true"]' \
         >/dev/null 2>&1
     if [[ $? == 70 && ! -e "$protocol_target" ]]; then ok "$protocol_mode gate protocol failure exits 70 with no receipt"; else bad "$protocol_mode gate protocol failure exits 70 with no receipt"; fi
 done
 protocol64_target="$RECEIPTS/protocol-64.json"
 FAKE_GATE_MODE=exit64 "$FAKE_RUNTIME/verify-job.sh" --receipt "$protocol64_target" \
     --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
-    --verify-env FAKE_GATE_MODE --verify true \
+    --verify-env FAKE_GATE_MODE --verify-argv '["true"]' \
     >/dev/null 2>&1
 if [[ $? == 64 && ! -e "$protocol64_target" ]]; then ok "gate preflight 64 passes through with no receipt"; else bad "gate preflight 64 passes through with no receipt"; fi
 
@@ -793,7 +953,7 @@ for signal_name in HUP INT TERM; do
     signal_child="$TMP/signal-$signal_name.child"
     signal_command="printf '%s\\n' \"\$\$\" > '$signal_child'; : > '$signal_ready'; while :; do /bin/sleep 1; done"
     "$VERIFY" --receipt "$signal_target" --envelope "$TMP/honest.json" \
-        --repo "$REPO" --base "$BASE" --verify "$signal_command" \
+        --repo "$REPO" --base "$BASE" "${SHELL_ACK[@]}" --verify-shell "$signal_command" \
         > "$TMP/signal-$signal_name.out" 2> "$TMP/signal-$signal_name.err" &
     wrapper_pid=$!
     ready=0
@@ -870,7 +1030,7 @@ for signal_name in ('HUP','INT','TERM'):
     module.interruption_checkpoint=checkpoint
     rc=module.main([
         'verify','--receipt',str(target),'--envelope',envelope,
-        '--repo',repo,'--base',base,'--only','a.txt','--verify','true'])
+        '--repo',repo,'--base',base,'--only','a.txt','--verify-argv','["true"]'])
     assert triggered['value'] and rc == 70
     assert not target.exists() and not target.is_symlink()
     assert not tuple(parent.iterdir())
@@ -907,7 +1067,7 @@ def checkpoint(name):
 module.interruption_checkpoint=checkpoint
 rc=module.main([
     'verify','--receipt',str(target),'--envelope',envelope,
-    '--repo',repo,'--base',base,'--only','a.txt','--verify','true'])
+    '--repo',repo,'--base',base,'--only','a.txt','--verify-argv','["true"]'])
 assert triggered['value'] and rc == 70
 assert target.read_bytes() == b'attacker replacement\n'
 assert tuple(parent.iterdir()) == (target,)
@@ -1045,7 +1205,7 @@ then ok "cleanup preserves a raced replacement after publication identity change
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 race_target="$RECEIPTS/race.json"
 "$VERIFY" --receipt "$race_target" --envelope "$TMP/honest.json" --repo "$REPO" \
-    --base "$BASE" --verify "printf attacker > '$race_target'" >/dev/null 2>&1
+    --base "$BASE" "${SHELL_ACK[@]}" --verify-shell "printf attacker > '$race_target'" >/dev/null 2>&1
 race_rc=$?
 if [[ "$race_rc" == 74 && "$(<"$race_target")" == attacker ]]; then
     ok "atomic hard-link publication refuses a raced target without overwriting it"
@@ -1057,7 +1217,7 @@ rm -f -- "$race_target"
 reset_repo; printf 'worker edit\n' > "$REPO/a.txt"
 mode_target="$RECEIPTS/parent-mode.json"
 "$VERIFY" --receipt "$mode_target" --envelope "$TMP/honest.json" --repo "$REPO" \
-    --base "$BASE" --verify "chmod 755 '$RECEIPTS'" >/dev/null 2>&1
+    --base "$BASE" "${SHELL_ACK[@]}" --verify-shell "chmod 755 '$RECEIPTS'" >/dev/null 2>&1
 mode_rc=$?
 chmod 700 "$RECEIPTS"
 if [[ "$mode_rc" == 74 && ! -e "$mode_target" ]]; then ok "parent privacy drift before publication exits 74 with no receipt"; else bad "parent privacy drift before publication exits 74 with no receipt"; fi

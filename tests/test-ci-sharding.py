@@ -17,11 +17,17 @@ from typing import Any, Callable
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS_DIR = ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
 SCRIPT = ROOT / "scripts" / "ci_sharding.py"
 SPEC = importlib.util.spec_from_file_location("ci_sharding_tested", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+
+import ci_stages as STAGE_MODULE
 
 passed = 0
 failed = 0
@@ -43,23 +49,57 @@ def check(label: str, test: Callable[[], bool] | bool) -> None:
 
 
 # 1. Shard Partition Invariants
-check("inventory has 47 ordered unique stage IDs", len(MODULE.STAGES) == 47 and len({x[0] for x in MODULE.STAGES}) == 47)
+check("inventory has 42 ordered unique stage IDs", len(MODULE.STAGES) == 42 and len({s.id for s in MODULE.STAGES}) == 42)
 check("exactly four frozen shard IDs exist", set(MODULE.SHARDS) == {"dispatcher", "dispatcher-remediation", "other-a", "other-b"})
 
 all_shard_stages: list[str] = []
 for shard_id, stages in MODULE.SHARDS.items():
     all_shard_stages.extend(stages)
 
-check("total stage count across four shards is 47", len(all_shard_stages) == 47)
-check("all stages across shards are disjoint and unique", len(set(all_shard_stages)) == 47)
-check("union of shard stages equals canonical inventory stages", set(all_shard_stages) == {x[0] for x in MODULE.STAGES})
+check("total stage count across four shards is 42", len(all_shard_stages) == 42)
+check("all stages across shards are disjoint and unique", len(set(all_shard_stages)) == 42)
+check("union of shard stages equals canonical inventory stages", set(all_shard_stages) == {s.id for s in MODULE.STAGES})
 
-canonical_order_index = {stage_id: idx for idx, (stage_id, _) in enumerate(MODULE.STAGES)}
+canonical_order_index = {stage.id: idx for idx, stage in enumerate(MODULE.STAGES)}
 for shard_id, stages in MODULE.SHARDS.items():
     indexes = [canonical_order_index[s] for s in stages]
     check(f"shard {shard_id} stages strictly preserve canonical inventory order", indexes == sorted(indexes))
 
 check("inventory digest is lowercase SHA-256", MODULE.SHA256_RE.fullmatch(MODULE.inventory_digest()) is not None)
+check(
+    "receipt v1 inventory digest remains frozen-base compatible",
+    MODULE.receipt_v1_inventory_digest()
+    == "452ecfe85d9b5896280341aaef06bf54a58448d824af69329ab924cfcd2d240d",
+)
+
+
+def _stage_environment_isolated() -> bool:
+    ambient = {
+        "PYTHONPYCACHEPREFIX": "/ambient/cache",
+        "AGY_WORKER_CI_PYCACHE_DIR": "/ambient/private-cache",
+        "PRESERVED": "yes",
+    }
+    pycache = Path("/private/ci-python-cache")
+    syntax_stage = next(stage for stage in MODULE.STAGES if stage.id == "python-syntax")
+    dispatcher_stage = next(stage for stage in MODULE.STAGES if stage.id == "dispatcher")
+    syntax_env = STAGE_MODULE.stage_environment(ambient, syntax_stage, pycache)
+    dispatcher_env = STAGE_MODULE.stage_environment(ambient, dispatcher_stage, pycache)
+    return (
+        syntax_env["AGY_WORKER_CI_PYCACHE_DIR"] == str(pycache)
+        and "PYTHONPYCACHEPREFIX" not in syntax_env
+        and syntax_env["PYTHONDONTWRITEBYTECODE"] == "1"
+        and "PYTHONPYCACHEPREFIX" not in dispatcher_env
+        and "AGY_WORKER_CI_PYCACHE_DIR" not in dispatcher_env
+        and dispatcher_env["PYTHONDONTWRITEBYTECODE"] == "1"
+        and dispatcher_env["PRESERVED"] == "yes"
+        and ambient["PYTHONPYCACHEPREFIX"] == "/ambient/cache"
+    )
+
+
+check(
+    "runner isolates syntax bytecode without leaking a cache prefix to ordinary stages",
+    _stage_environment_isolated,
+)
 
 TIMING_SCRIPT = ROOT / "scripts" / "ci_timing.py"
 TIMING_SPEC = importlib.util.spec_from_file_location("ci_timing_inventory", TIMING_SCRIPT)
@@ -77,21 +117,16 @@ check(
 )
 
 
-def _shell_gate_announcements() -> list[str]:
-    gate_script = ROOT / "scripts" / "ci-offline.sh"
-    lines = gate_script.read_bytes().splitlines()
-    observed = []
-    pattern = MODULE.re.compile(rb"^(?:if\s+)?announce '([^']+)'(?:;\s*then)?$")
-    for line in lines:
-        m = pattern.fullmatch(line.strip())
-        if m:
-            observed.append(m.group(1).decode("utf-8"))
-    return observed
+def _stage_manifest_announcements() -> list[str]:
+    manifest_script = ROOT / "scripts" / "ci_stages.py"
+    content = manifest_script.read_bytes()
+    pattern = MODULE.re.compile(rb'''Stage\(\s*"[^"]+",\s*"([^"]+)",''')
+    return [m.group(1).decode("utf-8") for m in pattern.finditer(content)]
 
 
 check(
-    "shell script announcements match canonical 47 stages exactly",
-    _shell_gate_announcements() == [ann for _, ann in MODULE.STAGES],
+    "stage manifest announcements match canonical 42 stages exactly",
+    _stage_manifest_announcements() == [s.announcement for s in MODULE.STAGES],
 )
 
 
@@ -102,14 +137,19 @@ def valid_receipt(shard_id: str = "other-a", outcome: str = "passed", failed_ind
         observed = list(expected)
     else:
         observed = list(expected[:failed_index])
+    stage_durations = [
+        {"id": stage_id, "duration_seconds": 0.05}
+        for stage_id in observed
+    ]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "agy-worker-ci-shard-receipt",
         "head_sha": "a" * 40,
         "inventory_sha256": MODULE.inventory_digest(),
         "shard_id": shard_id,
         "expected_stage_ids": expected,
         "observed_stage_ids": observed,
+        "stage_durations": stage_durations,
         "outcome": outcome,
         "integrity": {
             "signed": False,
@@ -127,6 +167,72 @@ def receipt_rejected(receipt: dict[str, Any], expected_head: str = "a" * 40) -> 
     return False
 
 
+def valid_v1_receipt(shard_id: str = "other-a") -> dict[str, Any]:
+    expected = list(MODULE.SHARDS[shard_id])
+    return {
+        "schema_version": 1,
+        "kind": "agy-worker-ci-shard-receipt",
+        "head_sha": "a" * 40,
+        "inventory_sha256": MODULE.receipt_v1_inventory_digest(),
+        "shard_id": shard_id,
+        "expected_stage_ids": expected,
+        "observed_stage_ids": expected,
+        "outcome": "passed",
+        "integrity": {
+            "signed": False,
+            "tamper_evident": False,
+            "statement": MODULE.INTEGRITY_STATEMENT,
+        },
+    }
+
+
+legacy_v1_receipt = valid_v1_receipt()
+check(
+    "standalone validator preserves frozen-base receipt v1 compatibility",
+    lambda: (MODULE.validate_receipt(legacy_v1_receipt, "a" * 40) or True),
+)
+legacy_v1_with_current_digest = copy.deepcopy(legacy_v1_receipt)
+legacy_v1_with_current_digest["inventory_sha256"] = MODULE.inventory_digest()
+check(
+    "receipt v1 rejects the manifest-expanded current digest",
+    lambda: receipt_rejected(legacy_v1_with_current_digest),
+)
+legacy_v1_with_durations = copy.deepcopy(legacy_v1_receipt)
+legacy_v1_with_durations["stage_durations"] = []
+check(
+    "receipt v1 rejects receipt-v2 duration fields",
+    lambda: receipt_rejected(legacy_v1_with_durations),
+)
+
+
+def _legacy_v1_cli_validates() -> bool:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        receipt_path = Path(temp_dir) / "legacy-v1.json"
+        receipt_path.write_text(json.dumps(legacy_v1_receipt), encoding="utf-8")
+        result = subprocess.run(
+            [
+                "/usr/bin/python3",
+                "-I",
+                "-S",
+                "-B",
+                os.fspath(SCRIPT),
+                "validate-receipt",
+                os.fspath(receipt_path),
+                "--expected-head",
+                "a" * 40,
+            ],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return result.returncode == 0 and result.stdout == b"ok: receipt is valid\n"
+
+
+check("validate-receipt CLI accepts a frozen-base receipt v1", _legacy_v1_cli_validates)
+
+
 for shard in ("dispatcher", "dispatcher-remediation", "other-a", "other-b"):
     rec = valid_receipt(shard)
     check(f"valid passed receipt for {shard} validates", not receipt_rejected(rec))
@@ -139,7 +245,7 @@ failed_receipt = valid_receipt("other-a", "failed", 3)
 for label, mutate in (
     ("extra root field is rejected", lambda r: r.__setitem__("path", "/private/example")),
     ("missing root field is rejected", lambda r: r.pop("shard_id")),
-    ("wrong schema_version is rejected", lambda r: r.__setitem__("schema_version", 2)),
+    ("wrong schema_version is rejected", lambda r: r.__setitem__("schema_version", 3)),
     ("wrong kind is rejected", lambda r: r.__setitem__("kind", "wrong-kind")),
     ("malformed head_sha is rejected", lambda r: r.__setitem__("head_sha", "A" * 40)),
     ("short head_sha is rejected", lambda r: r.__setitem__("head_sha", "a" * 39)),
@@ -151,11 +257,24 @@ for label, mutate in (
     ("reordered expected_stage_ids is rejected", lambda r: r["expected_stage_ids"].reverse()),
     ("passed outcome with missing observed stage is rejected", lambda r: r["observed_stage_ids"].pop()),
     ("passed outcome with reordered observed stages is rejected", lambda r: r["observed_stage_ids"].reverse()),
-    ("failed outcome with empty observed stages is rejected", lambda r: r.__setitem__("observed_stage_ids", [])),
-    ("failed outcome with non-prefix observed stages is rejected", lambda r: r.__setitem__("observed_stage_ids", ["qa-gate"])),
+    ("failed outcome with empty observed stages is rejected", lambda r: (r.__setitem__("observed_stage_ids", []), r.__setitem__("stage_durations", []))),
+    ("failed outcome with non-prefix observed stages is rejected", lambda r: (r.__setitem__("observed_stage_ids", ["qa-gate"]), r.__setitem__("stage_durations", [{"id": "qa-gate", "duration_seconds": 0.1}]))),
     ("invalid outcome value is rejected", lambda r: r.__setitem__("outcome", "cancelled")),
     ("tampered integrity block is rejected", lambda r: r["integrity"].update(signed=True)),
     ("tampered integrity statement is rejected", lambda r: r["integrity"].update(statement="changed")),
+    ("missing stage_durations is rejected", lambda r: r.pop("stage_durations")),
+    ("stage_durations not list is rejected", lambda r: r.__setitem__("stage_durations", "bad")),
+    ("stage_durations count mismatch is rejected", lambda r: r["stage_durations"].pop()),
+    ("stage_durations extra key is rejected", lambda r: r["stage_durations"][0].update(extra="val")),
+    ("stage_durations missing key is rejected", lambda r: r["stage_durations"][0].pop("duration_seconds")),
+    ("stage_durations wrong stage ID is rejected", lambda r: r["stage_durations"][0].update(id="wrong-stage")),
+    ("stage_durations reordered is rejected", lambda r: r["stage_durations"].reverse()),
+    ("stage_durations negative duration is rejected", lambda r: r["stage_durations"][0].update(duration_seconds=-1.0)),
+    ("stage_durations boolean duration is rejected", lambda r: r["stage_durations"][0].update(duration_seconds=True)),
+    ("stage_durations NaN duration is rejected", lambda r: r["stage_durations"][0].update(duration_seconds=float("nan"))),
+    ("stage_durations inf duration is rejected", lambda r: r["stage_durations"][0].update(duration_seconds=float("inf"))),
+    ("stage_durations huge integer duration is rejected", lambda r: r["stage_durations"][0].update(duration_seconds=10**309)),
+    ("stage_durations string duration is rejected", lambda r: r["stage_durations"][0].update(duration_seconds="0.5")),
 ):
     candidate = copy.deepcopy(failed_receipt if "failed outcome with non-prefix" in label or "failed outcome with empty" in label else passed_receipt)
     mutate(candidate)
@@ -166,6 +285,43 @@ complete_failed_receipt["outcome"] = "failed"
 check(
     "failed outcome may observe every stage when the final stage fails",
     not receipt_rejected(complete_failed_receipt),
+)
+
+
+def _huge_duration_cli_rejected() -> bool:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        receipt_path = Path(temp_dir) / "huge-duration.json"
+        candidate = copy.deepcopy(passed_receipt)
+        candidate["stage_durations"][0]["duration_seconds"] = 10**309
+        receipt_path.write_text(json.dumps(candidate), encoding="utf-8")
+        result = subprocess.run(
+            [
+                "/usr/bin/python3",
+                "-I",
+                "-S",
+                "-B",
+                os.fspath(SCRIPT),
+                "validate-receipt",
+                os.fspath(receipt_path),
+            ],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return (
+            result.returncode == 1
+            and result.stdout == b""
+            and result.stderr == b"ci sharding error: invalid stage duration at index 0\n"
+            and b"Traceback" not in result.stderr
+            and os.fspath(receipt_path).encode() not in result.stderr
+        )
+
+
+check(
+    "validate-receipt CLI rejects huge integer duration without traceback or path",
+    _huge_duration_cli_rejected,
 )
 
 for forbidden in ("command", "environment", "logs", "credential", "provider", "account", "timestamp", "hostname", "cost", "path"):
@@ -307,7 +463,7 @@ def _duplicate_control_rejected() -> bool:
     ).encode()
     try:
         MODULE.observe_stream(
-            io.BytesIO(raw), lambda: 1, "c" * 40, "dispatcher", NONCE, io.BytesIO()
+            io.BytesIO(raw), lambda: 1, "c" * 40, "dispatcher", NONCE, output=io.BytesIO()
         )
     except MODULE.ShardingError:
         return True
@@ -315,6 +471,49 @@ def _duplicate_control_rejected() -> bool:
 
 
 check("duplicate shard control marker is rejected", _duplicate_control_rejected)
+
+
+class FakeClock:
+    def __init__(self, values: list[float]) -> None:
+        self.values = iter(values)
+
+    def __call__(self) -> float:
+        return next(self.values)
+
+
+def _deterministic_stage_durations() -> bool:
+    stages = MODULE.SHARDS["other-a"][:3]
+    raw = b"ordinary output\n" + b"".join(
+        f"@@agy-worker-ci-shard:{NONCE}:{MODULE.STAGE_MAP[stage_id]}\n".encode()
+        for stage_id in stages
+    )
+    output = io.BytesIO()
+    return_code, receipt = MODULE.observe_stream(
+        io.BytesIO(raw),
+        lambda: 1,
+        "c" * 40,
+        "other-a",
+        NONCE,
+        output,
+        clock=FakeClock([10.0, 11.25, 13.75, 14.5]),
+    )
+    return (
+        return_code == 1
+        and output.getvalue() == b"ordinary output\n"
+        and receipt["schema_version"] == 2
+        and receipt["stage_durations"]
+        == [
+            {"id": stages[0], "duration_seconds": 1.25},
+            {"id": stages[1], "duration_seconds": 2.5},
+            {"id": stages[2], "duration_seconds": 0.75},
+        ]
+    )
+
+
+check(
+    "observer preserves sixth-positional output and records fake-clock intervals",
+    _deterministic_stage_durations,
+)
 
 
 # 6. Aggregate Verification
@@ -337,6 +536,13 @@ def aggregate_rejected(receipts: list[dict[str, Any]], expected_head: str = "a" 
     except MODULE.ShardingError:
         return True
     return False
+
+
+legacy_aggregate = [valid_v1_receipt(shard) for shard in MODULE.SHARDS]
+check(
+    "same-run aggregate rejects otherwise valid legacy receipt v1 artifacts",
+    lambda: aggregate_rejected(legacy_aggregate),
+)
 
 
 check("missing shard receipt (3 receipts) is rejected", aggregate_rejected(valid_aggregate[:3]))
@@ -410,6 +616,18 @@ def _artifact_tree_rejected(mutate: Callable[[Path, list[Path]], None]) -> bool:
     return False
 
 
+def _replace_duration_with_huge_integer(_root: Path, files: list[Path]) -> None:
+    receipt = json.loads(files[0].read_text(encoding="utf-8"))
+    receipt["stage_durations"][0]["duration_seconds"] = 10**309
+    files[0].write_text(json.dumps(receipt), encoding="utf-8")
+
+
+check(
+    "aggregate artifact rejects huge integer duration through ShardingError",
+    lambda: _artifact_tree_rejected(_replace_duration_with_huge_integer),
+)
+
+
 check(
     "duplicate extra receipt artifact is rejected",
     lambda: _artifact_tree_rejected(
@@ -430,7 +648,7 @@ check(
     "duplicate receipt JSON key is rejected",
     lambda: _artifact_tree_rejected(
         lambda root, files: files[0].write_text(
-            '{"schema_version":1,' + json.dumps(valid_aggregate[0])[1:], encoding="utf-8"
+            '{"schema_version":2,' + json.dumps(valid_aggregate[0])[1:], encoding="utf-8"
         )
     ),
 )
