@@ -12,12 +12,30 @@ export PYTHONDONTWRITEBYTECODE=1
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$HERE/.."
 CI_OFFLINE="$ROOT/scripts/ci-offline.sh"
+CI_STAGES="$ROOT/scripts/ci_stages.py"
 TMP="$(mktemp -d -t agyworker-packaging.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
 
 ok() { printf '  ok   %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail+1)); }
+
+ci_stage_registered() {
+    python3 -B - "$CI_STAGES" "$1" <<'PY'
+from pathlib import Path
+import sys
+
+stages_file = Path(sys.argv[1])
+cmd_str = sys.argv[2]
+
+sys.path.insert(0, str(stages_file.parent))
+import ci_stages
+
+all_cmds = {" ".join(s.argv) for s in ci_stages.STAGES}
+if cmd_str not in all_cmds:
+    raise SystemExit(1)
+PY
+}
 
 ground_truth_phase_contract() {
     local fixture="$TMP/ground-truth-phase" rc
@@ -109,13 +127,29 @@ paths.update((
     "scripts/models_capture_1_1_22_version_evidence.py",
     "scripts/models_capture_1_1_22_profile.py",
     "scripts/models_capture_1_1_22_runner.py",
+    "scripts/models_capture_1_1_22_classifier.py",
     "tests/test-models-capture-1-1-22.py",
     "tests/test-models-capture-1-1-22-version-evidence.py",
     "tests/test-models-capture-1-1-22-profile.py",
     "tests/test-models-capture-1-1-22-runner.py",
     "scripts/models_capture_1_1_22_reprofile.py",
+    "scripts/version_manifest_version_evidence.py",
+    "scripts/version_manifest_capture_profile.py",
+    "scripts/version_manifest_capture_runner.py",
+    "scripts/version_manifest_capture_classifier.py",
+    "scripts/version_manifest_reprofile.py",
+    "tests/test-models-capture-1-1-22-classifier.py",
     "tests/test-models-capture-1-1-22-reprofile.py",
     "tests/test-agy-1-1-16-activation.py",
+    "scripts/version_manifest_engine.py",
+    "scripts/version_copy_guard.py",
+    "tests/test-version-manifest-engine.py",
+    "compat/agy-version-manifest.json",
+    "compat/agy-version-manifest.sha256",
+    "compat/version-manifest.schema.json",
+    "skills/agy-worker/runtime/compat/agy-version-manifest.json",
+    "skills/agy-worker/runtime/compat/agy-version-manifest.sha256",
+    "skills/agy-worker/runtime/compat/version-manifest.schema.json",
 ))
 for relative in sorted(paths):
     path = root / relative
@@ -309,58 +343,50 @@ PY
 }
 
 ci_offline_contract() {
-    python3 - "$1" <<'PY'
+    python3 - "$1" "$ROOT/scripts/ci_stages.py" <<'PY'
 from pathlib import Path
 import sys
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-required = (
+offline_text = Path(sys.argv[1]).read_text(encoding="utf-8")
+stages_file = Path(sys.argv[2])
+
+required_offline = (
     "set -eu\n",
-    'bash "$root/scripts/ci-worktree-check.sh"',
-    "bash -n \"$file\"\n",
-    'PYTHONPYCACHEPREFIX="$pycache"',
-    "python3 -m py_compile conformance/v1/*.py scripts/*.py",
-    "./tests/test-qa-gate.sh",
-    "./tests/test-evidence-receipt.sh",
-    "./tests/test-evidence-report.sh",
-    "/usr/bin/python3 -I -S -B tests/test-benchmark.py",
-    "/usr/bin/python3 -I -S -B tests/test-persona-evidence.py",
-    "/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py",
-    "/usr/bin/python3 -I -S -B tests/test-workload-profiles.py",
-    "./tests/test-agy-worker.sh",
-    "/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py",
-    "./tests/test-update.sh",
-    "/usr/bin/python3 -I -S -B tests/test-adoption-measurement.py",
-    "/usr/bin/python3 -I -S -B tests/test-update-notifier.py",
-    "/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-version-evidence.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-profile.py",
-    "/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-runner.py",
-    "/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py",
-    "./tests/test-reporting.sh",
-    "/usr/bin/python3 -I -S -B tests/test-feedback-triage.py",
-    "./tests/test-packaging.sh",
-    "./tests/test-doctor.sh",
-    "/usr/bin/python3 -I -S -B tests/test-conformance.py",
-    "./tests/test-proof-demo.sh",
-    "if announce 'repository bytecode hygiene'; then",
-    "find . -type d -name __pycache__ -print -quit",
+    'exec /usr/bin/python3 -I -S -B "$root/scripts/ci_stages.py"',
+    'exec /usr/bin/python3 -I -S -B "$root/scripts/ci_timing.py"',
+    'exec /usr/bin/python3 -I -S -B "$root/scripts/ci_sharding.py"',
 )
-assert all(text.count(item) == 1 for item in required)
-assert "HOME" not in text
-assert not any(token in text for token in ("curl ", "wget ", "git fetch", "agy "))
+assert all(item in offline_text for item in required_offline)
+assert "HOME" not in offline_text
+assert not any(token in offline_text for token in ("curl ", "wget ", "git fetch", "agy "))
+
+sys.path.insert(0, str(stages_file.parent))
+import ci_stages
+
+assert len(ci_stages.STAGES) == 42
+assert len({s.id for s in ci_stages.STAGES}) == 42
+assert set(ci_stages.SHARDS) == {"dispatcher", "dispatcher-remediation", "other-a", "other-b"}
+
+required_stage_ids = (
+    "diff-hygiene", "shell-syntax", "python-syntax", "qa-gate", "evidence-receipt",
+    "evidence-report", "offline-benchmark", "swebench-workflow-study", "persona-evidence",
+    "job-lifecycle", "workload-profiles", "dispatcher", "dispatcher-remediation",
+    "updater", "adoption-measurement", "update-notifier", "version-attestation-runner",
+    "version-bootstrap-preflight", "version-bootstrap-runner",
+    "version-initial-bootstrap-runner",
+    "version-attestation-harness", "models-attestation-runner", "models-capture-runner",
+    "models-capture-profile", "models-capture-1-1-22-version-evidence",
+    "models-capture-1-1-22-profile", "models-capture-1-1-22-runner",
+    "models-capture-1-1-22-reprofile", "models-capture-1-1-22-classifier",
+    "agy-1-1-22-activation", "reporting", "feedback-triage",
+    "model-intelligence", "model-evidence-campaign", "codex-usage-report",
+    "delegation-policy", "workflow", "packaging",
+    "doctor", "conformance", "proof-demo", "bytecode-hygiene",
+)
+assert tuple(s.id for s in ci_stages.STAGES) == required_stage_ids
+stages_text = stages_file.read_text(encoding="utf-8")
+assert "HOME" not in stages_text
+assert not any(token in stages_text for token in ("curl ", "wget ", "git fetch", "agy "))
 PY
 }
 
@@ -389,6 +415,7 @@ if ci_workflow_contract "$ROOT/.github/workflows/test.yml" \
         && [[ -x "$ROOT/scripts/ci-diff-check.sh" ]] \
         && [[ -x "$ROOT/scripts/ci_diff_check.py" ]] \
         && [[ -f "$ROOT/scripts/ci-worktree-check.sh" ]] \
+        && [[ -f "$ROOT/scripts/ci_stages.py" ]] \
         && [[ -x "$ROOT/scripts/ci_timing.py" ]] \
         && [[ -x "$ROOT/scripts/ci_sharding.py" ]] \
         && [[ -x "$ROOT/scripts/ci-offline.sh" ]]; then
@@ -1220,10 +1247,15 @@ import sys
 
 root = Path(sys.argv[1])
 manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
-skill = (root / "skills/agy-worker/SKILL.md").read_text(encoding="utf-8")
+package_root = root / "skills/agy-worker"
+package_readme = package_root / "README.md"
+skill_path = package_root / "SKILL.md"
+skill = skill_path.read_text(encoding="utf-8")
 agents = (root / "AGENTS.md").read_text(encoding="utf-8")
 agents_flat = " ".join(agents.split())
-security_reference = root / "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md"
+security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
+lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
+troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
 assert manifest["version"] == "0.12.0"
 assert manifest["skills"] == "./skills/"
@@ -1236,14 +1268,94 @@ assert f'  version: "{manifest["version"]}"' in skill
 assert 'compatibility: Requires OpenAI Codex CLI' in skill
 assert 'Claude and Claude Code hosts are not supported.' in skill
 assert 'Use when ' in re.search(r"^description: (.+)$", skill, re.M).group(1)
+assert len(skill.splitlines()) <= 180
+assert '[Package README](README.md)' in skill
+assert '[Project lifecycle and verification](references/PROJECT_LIFECYCLE_AND_VERIFICATION.md)' in skill
 assert '[Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md)' in skill
-assert security_reference.is_file() and not security_reference.is_symlink()
+assert '[Troubleshooting](references/TROUBLESHOOTING.md)' in skill
+for package_doc in (
+    package_readme, skill_path, lifecycle_reference, security_reference,
+    troubleshooting_reference,
+):
+    assert package_doc.is_file() and not package_doc.is_symlink(), package_doc
+    assert "Issue #116 implementation placeholder" not in package_doc.read_text(encoding="utf-8")
+assert '## Resolve the bundled runtime' in package_readme.read_text(encoding="utf-8")
+assert '## Package guide' in package_readme.read_text(encoding="utf-8")
+lifecycle_text = lifecycle_reference.read_text(encoding="utf-8")
+assert '## Verification v2' in lifecycle_text
+assert '## State approval is stale' in troubleshooting_reference.read_text(encoding="utf-8")
+
+def lifecycle_invocation_contract(text: str) -> bool:
+    approved_start = text.find('ENVELOPE="$STATE_DIR/envelope.json"')
+    approved_end = text.find('This facade invocation uses default whole-worktree dispatch;', approved_start)
+    verify_start = text.find('RECEIPT="$STATE_DIR/evidence-receipt.json"')
+    verify_end = text.find('Choose commands from the candidate repository', verify_start)
+    if min(approved_start, approved_end, verify_start, verify_end) < 0:
+        return False
+    approved = text[approved_start:approved_end]
+    verify = text[verify_start:verify_end]
+    return all((
+        'test ! -e "$ENVELOPE"' in approved,
+        '--approve-preview-sha "$PREVIEW_SHA"' in approved,
+        '> "$ENVELOPE"' in approved,
+        'test -s "$ENVELOPE"' in approved,
+        'test ! -e "$RECEIPT"' in verify,
+        '--receipt "$RECEIPT"' in verify,
+        '--envelope "$ENVELOPE"' in verify,
+        '--approve-dispatch-sha "$DISPATCH_STATE_SHA"' in verify,
+        '--verification-json "$STATE_DIR/verification-v2.json"' in verify,
+        '--assurance verified' in verify,
+    ))
+
+assert lifecycle_invocation_contract(lifecycle_text)
+for required_fragment in (
+    '> "$ENVELOPE"', '--receipt "$RECEIPT"', '--envelope "$ENVELOPE"',
+    'test ! -e "$RECEIPT"',
+):
+    assert lifecycle_invocation_contract(
+        lifecycle_text.replace(required_fragment, '', 1)
+    ) is False, required_fragment
+workflow_source = (
+    root / "skills/agy-worker/runtime/scripts/workflow.py"
+).read_text(encoding="utf-8")
+assert 'vf_parser.add_argument("--receipt", required=True' in workflow_source
+assert 'vf_parser.add_argument("--envelope", required=True' in workflow_source
+runtime_wrapper = (
+    root / "skills/agy-worker/runtime/agy-worker.sh"
+).read_text(encoding="utf-8")
+assert '--provider-scope conflicts with --add-dir' in runtime_wrapper
+assert '--provider-scope requires --approve-transmission-sha' in runtime_wrapper
+scope_recovery_tests = (
+    root / "tests/agy_worker_remediation_recovery_cases.py"
+).read_text(encoding="utf-8")
+for required_case in (
+    "linked preview SHA authorizes exact V11 initial and prelaunch scope binding",
+    "mid-write materialization failure removes the partial private stage",
+    "cleanup failure is visible and fail closed",
+    "narrow stage rejects unselected writes and reconciles an authorized replacement",
+    "later failure recreates deleted nested empty directories before clearing the ledger",
+):
+    assert required_case in scope_recovery_tests, required_case
 reference_text = security_reference.read_text(encoding="utf-8")
 assert 'It is not a Claude or Claude Code skill.' in reference_text
 assert '`verify-job.sh --verify-env NAME`' in reference_text
 assert 'dispatch-time `agy` version, help, and model-selection' in reference_text
 assert 'diagnostics and feedback-draft generation' in reference_text
 assert 'Provider children and local `agy` interface probes' not in reference_text
+assert not (package_root / "assets").exists()
+for package_doc in (
+    package_readme, skill_path, lifecycle_reference, security_reference,
+    troubleshooting_reference,
+):
+    text = package_doc.read_text(encoding="utf-8")
+    assert "![" not in text and "<img" not in text, package_doc
+    for target in re.findall(r"(?<!!)\[[^\]]+\]\(([^)]+)\)", text):
+        target = target.split("#", 1)[0]
+        if not target or "://" in target or target.startswith("mailto:"):
+            continue
+        resolved = (package_doc.parent / target).resolve()
+        assert resolved.is_relative_to(package_root.resolve()), (package_doc, target)
+        assert resolved.is_file() and not resolved.is_symlink(), (package_doc, target)
 assert 'After a green full run, classify later changes before rerunning it.' in agents_flat
 assert 'do not repeat the full local suite solely to attach it to a new commit SHA' in agents_flat
 assert 'Treat the required GitHub check as the exact PR-head full gate.' in agents_flat
@@ -1302,9 +1414,16 @@ def validate(root: Path) -> None:
     require_directory(root / "skills")
     require_directory(skill_root)
     require_directory(runtime_root)
+    require_regular(skill_root / "README.md")
     require_regular(skill_root / "SKILL.md")
+    require_directory(skill_root / "agents")
+    require_regular(skill_root / "agents/openai.yaml")
     require_directory(skill_root / "references")
+    require_regular(skill_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md")
     require_regular(skill_root / "references/SECURITY_AND_COMPATIBILITY.md")
+    require_regular(skill_root / "references/TROUBLESHOOTING.md")
+    require_directory(skill_root / "scripts")
+    require_regular(skill_root / "scripts/resolve-pipeline.sh")
     assert [path.relative_to(root).as_posix() for path in root.rglob("SKILL.md")] == [
         "skills/agy-worker/SKILL.md"
     ]
@@ -1380,6 +1499,11 @@ metadata = (root / "skills/agy-worker/agents/openai.yaml").read_text()
 assert skill.startswith("---\nname: agy-worker\ndescription:")
 assert len(re.search(r"^description: (.+)$", skill, re.M).group(1)) <= 1024
 assert 'display_name: "Verified agy Worker"' in metadata
+assert 'short_description: "Use when Codex should delegate repository work to agy and verify it"' in metadata
+assert 'default_prompt: "Use $agy-worker when this repository task benefits from delegated exploration or implementation.' in metadata
+assert 'provider transmission approval explicit' in metadata
+assert 'inspect the actual diff' in metadata
+assert 'run driver-owned checks' in metadata
 assert "$agy-worker" in metadata
 PY
 then ok "canonical Agent Skill has matching OpenAI UI metadata"; else bad "canonical Agent Skill has matching OpenAI UI metadata"; fi
@@ -1459,6 +1583,21 @@ else
     bad "root and portable packages include Model Intelligence v1"
 fi
 
+if [[ -x "$ROOT/model-evidence-campaign.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/model-evidence-campaign.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/model_evidence_campaign.py" ]] \
+        && grep -Fq 'model-evidence-campaign.sh' "$ROOT/skills/agy-worker/scripts/resolve-pipeline.sh" \
+        && grep -Fq 'scripts/model_evidence_campaign.py' "$ROOT/skills/agy-worker/runtime/doctor.sh" \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-plan.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-record.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-evaluation.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-aggregate.schema.json" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/model-evidence-campaign-aggregate-preview.schema.json" ]]; then
+    ok "root and portable packages include Model Evidence Campaign"
+else
+    bad "root and portable packages include Model Evidence Campaign"
+fi
+
 if [[ -x "$ROOT/delegation-policy.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/delegation-policy.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/delegation_policy.py" ]] \
@@ -1466,6 +1605,21 @@ if [[ -x "$ROOT/delegation-policy.sh" ]] \
     ok "root and portable packages include the Delegation Policy evaluator"
 else
     bad "root and portable packages include the Delegation Policy evaluator"
+fi
+
+if [[ -x "$ROOT/workflow.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/workflow.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/workflow.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/workflow-state.schema.json" ]] \
+        && grep -Fq '## Primary `run`, `status`, `verify-finalize` path' \
+            "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
+        && grep -Fq '## Primary run, status, verify-finalize path' "$ROOT/docs/USAGE.md" \
+        && grep -Fq '## Primary facade and advanced recovery' "$ROOT/docs/PROJECT_WORKFLOW.md" \
+        && grep -Fq 'at least two minor releases' "$ROOT/docs/USAGE.md" \
+        && ! grep -Fq 'os.chmod(' "$ROOT/skills/agy-worker/runtime/scripts/workflow.py"; then
+    ok "root and portable packages include the canonical workflow facade"
+else
+    bad "root and portable packages include the canonical workflow facade"
 fi
 
 if [[ -x "$ROOT/agy-worker.sh" ]] \
@@ -1683,6 +1837,7 @@ else
 fi
 
 required_runtime_dependencies=(
+    workflow.sh
     agy-worker.sh
     job.sh
     qa-gate.sh
@@ -1697,7 +1852,9 @@ required_runtime_dependencies=(
     doctor.sh
     feedback-triage.sh
     model-intelligence.sh
+    model-evidence-campaign.sh
     delegation-policy.sh
+    scripts/workflow.py
     scripts/validate-envelope.py
     scripts/evidence_receipt.py
     scripts/evidence_report.py
@@ -1712,11 +1869,14 @@ required_runtime_dependencies=(
     scripts/candidate_state.py
     scripts/agy_dispatch.py
     scripts/agy_dispatch_worktree.py
+    scripts/version_manifest_engine.py
     scripts/job_lifecycle.py
     scripts/doctor-metadata.py
     scripts/feedback-triage.py
     scripts/model_intelligence.py
+    scripts/model_evidence_campaign.py
     scripts/delegation_policy.py
+    schemas/workflow-state.schema.json
     schemas/worker-result.schema.json
     schemas/worker-result.provider.schema.json
     schemas/evidence-receipt.schema.json
@@ -1730,6 +1890,11 @@ required_runtime_dependencies=(
     schemas/swebench-workflow-study-advisory.schema.json
     schemas/model-intelligence-evidence.schema.json
     schemas/model-intelligence-advisory.schema.json
+    schemas/model-evidence-campaign-plan.schema.json
+    schemas/model-evidence-campaign-record.schema.json
+    schemas/model-evidence-campaign-evaluation.schema.json
+    schemas/model-evidence-campaign-aggregate.schema.json
+    schemas/model-evidence-campaign-aggregate-preview.schema.json
     schemas/delegation-policy.schema.json
     schemas/persona-dispatch.schema.json
     schemas/persona-human-review.schema.json
@@ -1766,6 +1931,9 @@ required_runtime_dependencies=(
     compat/agy-model-effort-matrix.json
     compat/model-effort-matrix.schema.json
     compat/agy-model-effort-matrix.sha256
+    compat/agy-version-manifest.json
+    compat/agy-version-manifest.sha256
+    compat/version-manifest.schema.json
 )
 for dependency in "${required_runtime_dependencies[@]}"; do
     label="${dependency//\//-}"
@@ -1852,6 +2020,7 @@ for parent in scripts agents schemas compat benchmarks profiles; do
 done
 
 for specification in \
+    'workflow.sh:executable' \
     'job.sh:executable' \
     'qa-gate.sh:executable' \
     'verify-job.sh:executable' \
@@ -1861,7 +2030,9 @@ for specification in \
     'persona-evidence.sh:executable' \
     'profile.sh:executable' \
     'model-intelligence.sh:executable' \
+    'model-evidence-campaign.sh:executable' \
     'delegation-policy.sh:executable' \
+    'scripts/workflow.py:executable' \
     'scripts/validate-envelope.py:executable' \
     'scripts/evidence_receipt.py:executable' \
     'scripts/evidence_report.py:executable' \
@@ -1876,7 +2047,9 @@ for specification in \
     'scripts/job_lifecycle.py:executable' \
     'scripts/model_selection.py:executable' \
     'scripts/model_intelligence.py:executable' \
+    'scripts/model_evidence_campaign.py:executable' \
     'scripts/delegation_policy.py:executable' \
+    'schemas/workflow-state.schema.json:data' \
     'schemas/worker-result.schema.json:data' \
     'schemas/evidence-receipt.schema.json:data' \
     'schemas/job-state.schema.json:data' \
@@ -1887,6 +2060,11 @@ for specification in \
     'schemas/swebench-workflow-study-advisory.schema.json:data' \
     'schemas/model-intelligence-evidence.schema.json:data' \
     'schemas/model-intelligence-advisory.schema.json:data' \
+    'schemas/model-evidence-campaign-plan.schema.json:data' \
+    'schemas/model-evidence-campaign-record.schema.json:data' \
+    'schemas/model-evidence-campaign-evaluation.schema.json:data' \
+    'schemas/model-evidence-campaign-aggregate.schema.json:data' \
+    'schemas/model-evidence-campaign-aggregate-preview.schema.json:data' \
     'schemas/delegation-policy.schema.json:data' \
     'schemas/persona-run-manifest.schema.json:data' \
     'schemas/persona-transition-approval.schema.json:data' \
@@ -1960,7 +2138,7 @@ for helper_mode in malformed side-effect exit stale; do
     fi
 done
 
-if grep -Fq './tests/test-doctor.sh' "$CI_OFFLINE" \
+if ci_stage_registered './tests/test-doctor.sh' \
         && grep -Fq 'runs-on: macos-latest' "$ROOT/.github/workflows/test.yml"; then
     ok "macOS CI runs the dedicated offline doctor suite"
 else
@@ -1996,8 +2174,7 @@ else
     bad "weekly feedback watch is fixed, read-only, and metadata-only"
 fi
 
-if grep -Fq '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
-        "$CI_OFFLINE" \
+if ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-benchmark.py' \
         && grep -Fq '[Benchmarking](docs/BENCHMARKING.md)' "$ROOT/README.md" \
         && grep -Fq 'Live benchmarking is not implemented' "$ROOT/docs/BENCHMARKING.md" \
         && grep -Fq 'no live provider mode' "$ROOT/docs/index.md"; then
@@ -2006,7 +2183,7 @@ else
     bad "CI and public docs expose only provider-independent Benchmark v1"
 fi
 
-if grep -Fq '/usr/bin/python3 -I -S -B tests/test-swebench-workflow-study.py' "$CI_OFFLINE" \
+if ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-swebench-workflow-study.py' \
         && grep -Fq '## SWE-bench Workflow Study v1' "$ROOT/docs/BENCHMARKING.md" \
         && grep -Fq 'authority false and never' "$ROOT/docs/BENCHMARKING.md" \
         && grep -Fq 'influences `qa-gate` acceptance.' "$ROOT/docs/BENCHMARKING.md" ; then
@@ -2015,8 +2192,7 @@ else
     bad "CI and public docs expose SWE-bench Workflow Study v1"
 fi
 
-if grep -Fq '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
-        "$CI_OFFLINE" \
+if ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
         && [[ -x "$ROOT/persona-evidence.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/persona-evidence.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/scripts/persona_registry.py" ]] \
@@ -2032,8 +2208,7 @@ else
     bad "CI and public docs expose the non-authoritative persona registry"
 fi
 
-if grep -Fq '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
-        "$CI_OFFLINE" \
+if ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
         && [[ -x "$ROOT/profile.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/profile.sh" \
             && -x "$ROOT/skills/agy-worker/runtime/scripts/workload_profiles.py" ]] \
@@ -2046,7 +2221,7 @@ else
     bad "CI and public docs expose only fixed data-only workload profiles"
 fi
 
-if grep -Fq './tests/test-evidence-report.sh' "$CI_OFFLINE" \
+if ci_stage_registered './tests/test-evidence-report.sh' \
         && grep -Fq 'runs-on: macos-latest' "$ROOT/.github/workflows/test.yml"; then
     ok "macOS CI runs the dedicated offline Evidence Report suite"
 else
@@ -2078,19 +2253,25 @@ cp "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
     "$workflow_compile_fixture/skills/agy-worker/runtime/scripts/model_selection.py"
 (
     cd "$workflow_compile_fixture" || exit 1
-    PYTHONPYCACHEPREFIX="$TMP/workflow-python-cache" \
-        python3 -m py_compile conformance/v1/*.py scripts/*.py skills/*/runtime/scripts/*.py
+    AGY_WORKER_CI_PYCACHE_DIR="$TMP/workflow-python-cache" \
+        /usr/bin/python3 -I -S -B -c \
+        "import glob, os, py_compile, sys; sys.pycache_prefix = os.environ['AGY_WORKER_CI_PYCACHE_DIR']; [py_compile.compile(f, doraise=True) for f in sorted(set(glob.glob('conformance/v1/*.py') + glob.glob('scripts/*.py') + glob.glob('skills/*/runtime/scripts/*.py')))]"
 )
 workflow_compile_rc=$?
-python3 -B - "$CI_OFFLINE" <<'PY'
+python3 -B - "$CI_STAGES" <<'PY'
 from pathlib import Path
-import re
 import sys
 
-script = Path(sys.argv[1]).read_text(encoding="utf-8")
-assert script.count('PYTHONPYCACHEPREFIX="$pycache"') == 1
-assert script.count('python3 -m py_compile conformance/v1/*.py scripts/*.py') == 1
-assert 'runner.temp' not in script
+stages_file = Path(sys.argv[1])
+sys.path.insert(0, str(stages_file.parent))
+import ci_stages
+
+py_stage = [s for s in ci_stages.STAGES if s.id == "python-syntax"][0]
+assert py_stage.argv[:5] == ("/usr/bin/python3", "-I", "-S", "-B", "-c")
+assert "conformance/v1/*.py" in py_stage.argv[5]
+assert "sys.pycache_prefix = os.environ['AGY_WORKER_CI_PYCACHE_DIR']" in py_stage.argv[5]
+assert "PYTHONPYCACHEPREFIX" not in py_stage.argv[5]
+assert "runner.temp" not in stages_file.read_text(encoding="utf-8")
 PY
 workflow_contract_rc=$?
 if [[ "$workflow_compile_rc" == 0 ]] \
@@ -2142,20 +2323,19 @@ if [[ -x "$ROOT/conformance/run.sh" ]] \
             "$ROOT/conformance/v1/run.py" \
         && grep -Fq 'fixture compatibility only' "$ROOT/README.md" \
         && grep -Fq 'security certification' "$ROOT/docs/CONFORMANCE.md" \
-        && grep -Fq '/usr/bin/python3 -I -S -B tests/test-conformance.py' \
-            "$CI_OFFLINE"; then
+        && ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-conformance.py'; then
     ok "distribution includes the bounded non-certifying v1 conformance contract"
 else
     bad "distribution includes the bounded non-certifying v1 conformance contract"
 fi
 
-if grep -Fq './tests/test-proof-demo.sh' "$CI_OFFLINE"; then
+if ci_stage_registered './tests/test-proof-demo.sh'; then
     ok "macOS CI runs the dedicated offline starter-proof suite"
 else
     bad "macOS CI runs the dedicated offline starter-proof suite"
 fi
 
-if grep -Fq './tests/test-evidence-receipt.sh' "$CI_OFFLINE"; then
+if ci_stage_registered './tests/test-evidence-receipt.sh'; then
     ok "macOS CI runs the dedicated Evidence Receipt v1 suite"
 else
     bad "macOS CI runs the dedicated Evidence Receipt v1 suite"
@@ -2217,6 +2397,36 @@ then
     ok "portable resolver matrix, schema, and exact SHA are byte-synchronized"
 else
     bad "portable resolver matrix, schema, and exact SHA are byte-synchronized"
+fi
+
+if cmp -s "$ROOT/compat/agy-version-manifest.json" \
+        "$ROOT/skills/agy-worker/runtime/compat/agy-version-manifest.json" \
+        && cmp -s "$ROOT/compat/agy-version-manifest.sha256" \
+            "$ROOT/skills/agy-worker/runtime/compat/agy-version-manifest.sha256" \
+        && cmp -s "$ROOT/compat/version-manifest.schema.json" \
+            "$ROOT/skills/agy-worker/runtime/compat/version-manifest.schema.json" \
+        && python3 - "$ROOT/compat/agy-version-manifest.json" \
+            "$ROOT/compat/agy-version-manifest.sha256" <<'PY'
+import hashlib
+import sys
+
+actual = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
+expected = open(sys.argv[2], encoding="ascii").read().strip()
+assert actual == expected
+PY
+then
+    ok "portable version manifest, schema, and exact SHA are byte-synchronized"
+else
+    bad "portable version manifest, schema, and exact SHA are byte-synchronized"
+fi
+
+if [[ -f "$ROOT/scripts/version_manifest_engine.py" ]] \
+        && [[ -f "$ROOT/scripts/version_copy_guard.py" ]] \
+        && /usr/bin/python3 -I -S -B "$ROOT/scripts/version_copy_guard.py" \
+        && /usr/bin/python3 -I -S -B "$ROOT/tests/test-version-manifest-engine.py"; then
+    ok "version manifest engine and copy guard pass offline contracts"
+else
+    bad "version manifest engine and copy guard pass offline contracts"
 fi
 
 if python3 -B - "$ROOT/skills/agy-worker/runtime/schemas/model-selection.schema.json" \
@@ -2557,7 +2767,7 @@ PATH="$TMP/receipt-no-network-bin:$PATH" NETWORK_MARKER="$TMP/receipt-network-ca
     --receipt "$portable_receipt_parent/receipt.json" \
     --envelope "$TMP/portable-envelope.json" \
     --repo "$TMP/portable-receipt-repo" --base "$portable_receipt_base" \
-    --only a.txt --expect-edits --verify true \
+    --only a.txt --expect-edits --verify-argv '["true"]' \
     > "$TMP/portable-receipt.out" 2> "$TMP/portable-receipt.err"
 portable_receipt_rc=$?
 if [[ "$portable_receipt_rc" == 0 && ! -e "$TMP/receipt-network-called" ]] \
@@ -2739,7 +2949,8 @@ if [[ -x "$ROOT/agy-worker.sh" ]] \
         && [[ -f "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
         && [[ ! -x "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
         && [[ -x "$TMP/installed/agy-worker/runtime/scripts/doctor-metadata.py" ]] \
-        && grep -Fq '`"$PIPELINE/scripts/agy_dispatch.py"`' "$TMP/installed/agy-worker/SKILL.md" \
+        && grep -Fq '`"$PIPELINE/scripts/agy_dispatch.py"`' \
+            "$TMP/installed/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$TMP/installed/agy-worker/runtime/compat/agy-verified-version.txt" \
         && cmp -s "$ROOT/compat/agy-upstream-head.txt" \
@@ -2919,10 +3130,11 @@ else
 fi
 
 provider_read_scope_clauses=(
-    'Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of the requested edit paths.'
-    'A narrower transmission approval is valid only when the disposable worktree contains only approved content; otherwise obtain approval for the entire worktree or do not dispatch.'
-    'Prompt denylist instructions describe requested writes, while `qa-gate --only` constrains candidate changed paths after dispatch. `--allow` merely exempts matching undeclared artifacts from rejection; it narrows neither reads nor writes. None provide read isolation, and `--add-dir` does not narrow the `--workdir` read boundary.'
-    'Before every provider-launch attempt, ensure credentials, secrets, private keys, user-denied paths, and unrelated private files are absent from the entire disposable worktree; telling the worker not to read them is not a control.'
+    'Without `--provider-scope`, treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that default read boundary.'
+    'Optional `--provider-scope FILE --approve-transmission-sha SHA256` instead binds exact reviewed read entries, their selected-content digest, and a write subset, then stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.'
+    'The controller still locally enumerates and validates worktree paths and the scope policy before staging; scoped mode is not a filesystem, network, `PATH`, `HOME`, or same-UID sandbox and retains the documented local-owner and mutation-race residuals.'
+    'Provider-scope approval grants neither provider execution, Git action, driver acceptance, nor publication.'
+    'Before each launch, ensure secrets, credentials, private keys, user-denied paths, and unrelated private files are absent from every entry approved for provider transmission; telling the worker not to read an approved entry is not a control.'
 )
 
 provider_read_scope_skill_contract() {
@@ -2934,9 +3146,9 @@ provider_read_scope_skill_contract() {
 
 if provider_read_scope_skill_contract "$ROOT/skills/agy-worker/SKILL.md" \
         && provider_read_scope_skill_contract "$TMP/installed/agy-worker/SKILL.md"; then
-    ok "source and installed skills preserve the whole-worktree provider read contract"
+    ok "source and installed skills preserve default and scoped provider read contracts"
 else
-    bad "source and installed skills preserve the whole-worktree provider read contract"
+    bad "source and installed skills preserve default and scoped provider read contracts"
 fi
 
 provider_read_scope_mutants_rejected=1
@@ -2966,20 +3178,20 @@ PY
     fi
 done
 if [[ "$provider_read_scope_mutants_rejected" == "1" ]]; then
-    ok "whole-worktree provider read contract rejects every independent clause deletion"
+    ok "default and scoped provider contracts reject every independent clause deletion"
 else
-    bad "whole-worktree provider read contract rejects every independent clause deletion"
+    bad "default and scoped provider contracts reject every independent clause deletion"
 fi
 
 provider_read_scope_weakening_mutants_rejected=1
 provider_read_scope_weakening_mutant_index=0
 provider_read_scope_weakening_replacements=(
-    'regardless of the requested edit paths::except for requested edit paths'
-    'otherwise obtain approval for the entire worktree or do not dispatch::otherwise proceed with a prompt denylist'
-    'None provide read isolation::All provide read isolation'
-    '`--add-dir` does not narrow the `--workdir` read boundary::`--add-dir` narrows the `--workdir` read boundary'
-    '`--allow` merely exempts matching undeclared artifacts from rejection::`--allow` constrains requested writes'
-    'telling the worker not to read them is not a control::telling the worker not to read them is sufficient'
+    'do not narrow that default read boundary::narrow that default read boundary'
+    'a write subset::an unrelated write set'
+    'stages only selected entries::may stage unselected entries'
+    'is not a filesystem, network, `PATH`, `HOME`, or same-UID sandbox::is a complete security sandbox'
+    'grants neither provider execution, Git action, driver acceptance, nor publication::grants provider execution and Git authority'
+    'telling the worker not to read an approved entry is not a control::telling the worker not to read an approved entry is sufficient'
 )
 for pair in "${provider_read_scope_weakening_replacements[@]}"; do
     provider_read_scope_weakening_mutant_index=$((provider_read_scope_weakening_mutant_index + 1))
@@ -3010,27 +3222,80 @@ PY
     fi
 done
 if [[ "$provider_read_scope_weakening_mutants_rejected" == "1" ]]; then
-    ok "whole-worktree provider read contract rejects every weakening mutation"
+    ok "default and scoped provider contracts reject every weakening mutation"
 else
-    bad "whole-worktree provider read contract rejects every weakening mutation"
+    bad "default and scoped provider contracts reject every weakening mutation"
 fi
 
-if grep -Fq 'treat every file in the disposable worktree as readable' "$ROOT/README.md" \
-        && grep -Fq 'Treat the entire disposable worktree passed as `--workdir` as' "$ROOT/PRIVACY.md" \
-        && grep -Fq 'worktree through agy to Google/Gemini unless that exact transmission' "$ROOT/docs/USAGE.md" \
-        && grep -Fq 'This is a write-acceptance boundary applied after dispatch.' "$ROOT/docs/VERIFYING_AGENT_OUTPUT.md" \
-        && grep -Fq 'Those paths constrain candidate acceptance, not provider reads' "$ROOT/docs/index.md" \
-        && grep -Fq 'requested paths constrain writes and candidate' "$ROOT/docs/PROJECT_WORKFLOW.md" \
-        && grep -Fq 'approval for the entire disposable worktree sent' "$ROOT/docs/MARKETPLACE.md" \
-        && grep -Fq 'Treat the entire disposable worktree as worker-readable' "$ROOT/AGENTS.md" \
-        && grep -Fq 'The entire disposable `--workdir` is worker-readable' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Prompt denylist and gate path policies govern task writes' "$ROOT/docs/lessons_learned.md" \
-        && ! grep -Fq 'explicit file scope for dispatch' "$ROOT/docs/REPO_MAP.md" \
-        && ! grep -Fq 'Use a clean disposable worktree or explicit file scope.' "$ROOT/docs/lessons_learned.md" \
-        && ! grep -Fq 'exact repository/path scope sent' "$ROOT/docs/MARKETPLACE.md"; then
-    ok "public and contributor docs distinguish whole-worktree reads from write acceptance"
+if python3 -B - "$ROOT" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+required = {
+    "README.md": (
+        "Default dispatch may expose every file in the disposable worktree",
+        "Optional `--provider-scope` instead binds exact reviewed read entries",
+        "In default facade mode, `agy` may read the whole disposable worktree",
+        "Optional direct `--provider-scope` dispatch instead binds exact reviewed read/write entries",
+        "the stage is not a sandbox, and scope approval grants no provider execution, Git, acceptance, or publication authority",
+    ),
+    "PRIVACY.md": (
+        "Without `--provider-scope`, treat the entire disposable `--workdir`",
+        "Optional `--provider-scope FILE --approve-transmission-sha SHA256` binds exact reviewed read entries",
+    ),
+    "SECURITY.md": (
+        "Default dispatch exposes the entire disposable worktree",
+        "Optional `--provider-scope` binds exact reviewed read/write entries",
+    ),
+    "AGENTS.md": (
+        "Without `--provider-scope`, treat the entire disposable worktree as worker-readable",
+        "Optional scope mode binds exact reviewed read entries",
+    ),
+    "docs/USAGE.md": (
+        "Default dispatch without `--provider-scope` may expose the entire disposable worktree",
+        "Optional scoped dispatch binds exact reviewed read entries",
+    ),
+    "docs/VERIFYING_AGENT_OUTPUT.md": (
+        "Without `--provider-scope`, the entire disposable worktree may be read",
+        "Optional provider-scope mode instead binds exact reviewed read entries",
+    ),
+    "docs/MARKETPLACE.md": (
+        "Default mode may send the entire disposable worktree",
+        "Optional `--provider-scope` binds exact reviewed read/write entries",
+    ),
+    "docs/REPO_MAP.md": (
+        "Default dispatch exposes the entire disposable `--workdir`",
+        "Optional provider-scope mode binds exact reviewed read entries",
+    ),
+    "docs/index.md": (
+        "With default facade dispatch, those paths constrain candidate acceptance, not provider reads",
+        "Optional direct `--provider-scope` dispatch instead binds exact reviewed read/write entries",
+        "scoped staging is not a sandbox, and its approval grants no provider execution, Git, acceptance, or publication authority",
+    ),
+    "docs/PROJECT_WORKFLOW.md": (
+        "The primary facade uses default whole-worktree visibility",
+        "`agy-worker.sh --provider-scope FILE --approve-transmission-sha SHA256` binds exact reviewed read/write entries",
+        "it is not a sandbox, and scope approval grants no provider execution, Git, acceptance, or publication authority",
+    ),
+    "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md": (
+        "Default dispatch without `--provider-scope` makes the entire disposable worktree worker-readable",
+        "Provider-scope approval binds reviewed content and policy; it grants neither provider execution, Git action, driver acceptance, nor publication.",
+    ),
+}
+for relative, phrases in required.items():
+    flattened = " ".join((root / relative).read_text(encoding="utf-8").split())
+    assert all(phrase in flattened for phrase in phrases), (relative, phrases)
+
+# Historical lessons are not rewritten merely because an optional scoped mode now exists.
+lessons = (root / "docs/lessons_learned.md").read_text(encoding="utf-8")
+assert "Prompt denylist and gate path policies govern task writes" in lessons
+assert "Use a clean disposable worktree or explicit file scope." not in lessons
+PY
+then
+    ok "public and contributor docs distinguish default whole-worktree and scoped staging boundaries"
 else
-    bad "public and contributor docs distinguish whole-worktree reads from write acceptance"
+    bad "public and contributor docs distinguish default whole-worktree and scoped staging boundaries"
 fi
 
 if grep -Fq 'Before every provider-launch attempt—initial `run`/`start`, `resume`, `continue`, and' \
@@ -3067,22 +3332,26 @@ else
 fi
 
 governance_docs_contract() {
-    /usr/bin/python3 -I -S -B - "$CI_OFFLINE" "$ROOT/CONTRIBUTING.md" \
+    /usr/bin/python3 -I -S -B - "$CI_STAGES" "$ROOT/CONTRIBUTING.md" \
         "$ROOT/.github/pull_request_template.md" <<'PY'
 from pathlib import Path
-import re
 import sys
 
-ci = Path(sys.argv[1]).read_text(encoding="utf-8")
+stages_file = Path(sys.argv[1])
 contributing = Path(sys.argv[2]).read_text(encoding="utf-8")
 template = Path(sys.argv[3]).read_text(encoding="utf-8")
-suite_commands = re.findall(r"^\./tests/test-[^\s]+\.sh$", ci, re.MULTILINE)
-suite_commands += re.findall(
-    r"^/usr/bin/python3 -I -S -B tests/test-[^\s]+\.py$", ci, re.MULTILINE
-)
+
+sys.path.insert(0, str(stages_file.parent))
+import ci_stages
+
+suite_commands = [
+    " ".join(s.argv)
+    for s in ci_stages.STAGES
+    if s.argv and (s.argv[0].startswith("./tests/test-") or (len(s.argv) > 4 and s.argv[4].startswith("tests/test-")))
+]
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 42
+    len(suite_commands) == len(set(suite_commands)) == 37
     and all(command in contributing for command in suite_commands)
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
@@ -3102,10 +3371,8 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The forty-seven offline stages' "$ROOT/docs/OPERATIONS.md" \
-        && grep -Fq 'all forty-seven offline stages' "$ROOT/CONTRIBUTING.md" \
-        && grep -Fq 'Adoption measurement: 41 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'Local update notifier: 89 offline' "$ROOT/AGENTS.md" \
+        && grep -Fq 'The forty-two offline stages' "$ROOT/docs/OPERATIONS.md" \
+        && grep -Fq 'all forty-two offline stages' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq '`tests/test-adoption-measurement.py` (41 offline cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-update-notifier.py` (89 offline fake-control cases)' "$ROOT/docs/REPO_MAP.md" \
         && [[ -f "$ROOT/docs/MEASUREMENT.md" ]] \
@@ -3138,11 +3405,12 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'V5/V6 retains its exact legacy digest' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses the caller-resolved' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
-        && grep -Fq 'Controller-private V10 state also persists a sanitized' \
+        && grep -Fq 'Controller-private V11 state also persists a sanitized' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
         && grep -Fq '`status`, `wait`, and `result` JSON intentionally omit it' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
-        && grep -Fq 'Current V10 uses `dispatching`' "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq 'Current V11 uses `dispatching`' \
+            "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && grep -Fq '| `--allow-slash-commands` |' "$ROOT/docs/USAGE.md" \
         && grep -Fq 'Leave slash expansion disabled when any prompt content comes from a repository or' \
             "$ROOT/docs/USAGE.md" \
@@ -3157,16 +3425,19 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq '`status`, `wait`, `result`, `resume`, `restart`,' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
-            "$ROOT/skills/agy-worker/SKILL.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (337 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
-        && grep -Fq 'EXPECTED_CHECKS = 92' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (92 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+            "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (348 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
+        && grep -Fq 'EXPECTED_CHECKS = 100' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (100 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 486 offline.' "$ROOT/AGENTS.md" \
+        && grep -Fq 'Do not pin exact suite counts in this instruction file' "$ROOT/AGENTS.md" \
+        && grep -Fq '`docs/REPO_MAP.md` owns focused-suite inventory' "$ROOT/AGENTS.md" \
+        && grep -Fq '`scripts/ci_stages.py` owns the' "$ROOT/AGENTS.md" \
+        && ! grep -Eq '[0-9]+ offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
-        && ! grep -Fq '`tests/test-agy-worker.sh` (300 cases)' "$ROOT/docs/REPO_MAP.md" \
+        && ! grep -Fq '`tests/test-agy-worker.sh` (338 cases)' "$ROOT/docs/REPO_MAP.md" \
         && ! grep -Fq 'resolution remains blocked until installed agy exactly matches' \
             "$ROOT/docs/INSTALLATION.md"; then
     ok "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
@@ -3174,89 +3445,84 @@ else
     bad "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
 fi
 
-bootstrap_preflight_line="$(grep -nF "if announce 'repository-only version bootstrap runtime preflight'; then" \
-    "$CI_OFFLINE" | cut -d: -f1)"
-bootstrap_suite_line="$(grep -nF "if announce 'repository-only version bootstrap runner'; then" \
-    "$CI_OFFLINE" | cut -d: -f1)"
-if grep -Fq 'Canonical version-attestation runner: 165 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
+bootstrap_preflight_line="$(python3 -c "import sys; from pathlib import Path; sys.path.insert(0, '$ROOT/scripts'); import ci_stages; print([i for i, s in enumerate(ci_stages.STAGES) if s.id == 'version-bootstrap-preflight'][0])")"
+bootstrap_suite_line="$(python3 -c "import sys; from pathlib import Path; sys.path.insert(0, '$ROOT/scripts'); import ci_stages; print([i for i, s in enumerate(ci_stages.STAGES) if s.id == 'version-bootstrap-runner'][0])")"
+if grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Version-attestation mutation harness: 60 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-version-attestation-harness.py` (60 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Canonical models-inventory attestation runner: 116 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-attestation-runner.py` (116 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Explicit-account models capture runner: 84 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-capture-runner.py` (84 fake-account cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Repository-only version bootstrap runner: 139 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-version-bootstrap-runner.py` (139 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Repository-only version initial-bootstrap runner: 43 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-version-initial-bootstrap-runner.py` (43 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.12 version recovery runner: 75 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-version-recovery-1-1-12-runner.py` (75 synthetic cases)' \
-            "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Explicit-account models capture profile builder: 121 offline' "$ROOT/AGENTS.md" \
         && grep -Fq 'tests/test-models-capture-profile.py` (121 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.12 models capture profile builder: 30 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-profile.py` (30 offline cases)' \
+        && grep -Fq '`tests/test-version-manifest-engine.py` (24 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.12 models capture runner: 56 offline' "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-12-runner.py` (56 offline runner cases' \
+        && grep -Fq 'previous 1.1.16 permits only generic version-evidence/profile/capture' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.16 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; historical activation: 8 offline.' \
-            "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-16-version-evidence.py` (45 offline cases)' \
+        && grep -Fq 'historical 1.1.12 permits no executable operation' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-16-profile.py` (30 offline cases)' \
+        && grep -Fq 'Fixed 1.1.22 suites: version evidence 45, profile 30, runner 58, classifier 24, reprofile 88 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-16-runner.py` (58 offline cases' \
-            "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; reprofile: 88 offline.' \
-            "$ROOT/AGENTS.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-22-version-evidence.py` (45 offline cases)' \
-            "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-22-profile.py` (30 offline cases)' \
-            "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-models-capture-1-1-22-runner.py` (58 offline cases' \
-            "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-agy-1-1-16-activation.py` (8 historical cases)' \
-            "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'tests/test-agy-1-1-22-activation.py` (24 active cases)' \
+        && grep -Fq 'tests/test-agy-1-1-22-activation.py` (25 active cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && [[ -n "$bootstrap_preflight_line" ]] \
         && [[ -n "$bootstrap_suite_line" ]] \
         && (( bootstrap_preflight_line < bootstrap_suite_line )) \
-        && grep -Fq '/usr/bin/python3 -I -S -B -' "$CI_OFFLINE" \
-        && grep -Fq 'sys.implementation.name == "cpython"' "$CI_OFFLINE" \
-        && grep -Fq 'sys.version_info[:2] == (3, 9)' "$CI_OFFLINE" \
-        && grep -Fq 'sys.flags.isolated == 1' "$CI_OFFLINE" \
-        && grep -Fq 'sys.flags.no_site == 1' "$CI_OFFLINE" \
-        && grep -Fq 'sys.flags.dont_write_bytecode == 1' "$CI_OFFLINE" \
-        && grep -Fq 'sys.flags.ignore_environment == 1' "$CI_OFFLINE" \
-        && grep -Fq '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py' \
-            "$CI_OFFLINE"; then
-    ok "bootstrap, recovery, and independent capture-bridge measured counts stay synchronized"
+        && grep -Fq 'sys.implementation.name == \"cpython\"' "$CI_STAGES" \
+        && grep -Fq 'sys.version_info[:2] == (3, 9)' "$CI_STAGES" \
+        && grep -Fq 'sys.flags.isolated == 1' "$CI_STAGES" \
+        && grep -Fq 'sys.flags.no_site == 1' "$CI_STAGES" \
+        && grep -Fq 'sys.flags.dont_write_bytecode == 1' "$CI_STAGES" \
+        && grep -Fq 'sys.flags.ignore_environment == 1' "$CI_STAGES" \
+        && ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py'; then
+    ok "bootstrap and manifest-driven compatibility measured counts stay synchronized"
 else
-    bad "bootstrap, recovery, and independent capture-bridge measured counts stay synchronized"
+    bad "bootstrap and manifest-driven compatibility measured counts stay synchronized"
 fi
 
-if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
-        && [[ -x "$ROOT/scripts/models_capture_1_1_12_runner.py" ]] \
-        && [[ -x "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" ]] \
-        && [[ -x "$ROOT/scripts/models_capture_1_1_16_profile.py" ]] \
-        && [[ -x "$ROOT/scripts/models_capture_1_1_16_runner.py" ]] \
+retired_version_surfaces_absent=1
+for retired_surface in \
+        scripts/models_capture_1_1_12_profile.py \
+        scripts/models_capture_1_1_12_runner.py \
+        scripts/version_recovery_1_1_12_runner.py \
+        tests/test-models-capture-1-1-12-profile.py \
+        tests/test-models-capture-1-1-12-runner.py \
+        tests/test-models-capture-1-1-12.py \
+        tests/test-version-recovery-1-1-12-runner.py \
+        scripts/models_capture_1_1_16_profile.py \
+        scripts/models_capture_1_1_16_runner.py \
+        scripts/models_capture_1_1_16_version_evidence.py \
+        tests/test-agy-1-1-16-activation.py \
+        tests/test-models-capture-1-1-16-profile.py \
+        tests/test-models-capture-1-1-16-runner.py \
+        tests/test-models-capture-1-1-16-version-evidence.py \
+        tests/test-models-capture-1-1-16.py; do
+    [[ ! -e "$ROOT/$retired_surface" ]] || retired_version_surfaces_absent=0
+done
+
+if [[ "$retired_version_surfaces_absent" == 1 ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_22_version_evidence.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_22_profile.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_22_runner.py" ]] \
         && [[ -x "$ROOT/scripts/models_capture_1_1_22_reprofile.py" ]] \
-        && grep -Fq 'EXPECTED_VERSION = "1.1.16"' \
-            "$ROOT/scripts/models_capture_1_1_16_version_evidence.py" \
-        && grep -Fq 'private raw `captured` evidence' \
+        && [[ -x "$ROOT/scripts/version_manifest_version_evidence.py" ]] \
+        && [[ -x "$ROOT/scripts/version_manifest_capture_profile.py" ]] \
+        && [[ -x "$ROOT/scripts/version_manifest_capture_runner.py" ]] \
+        && [[ -x "$ROOT/scripts/version_manifest_capture_classifier.py" ]] \
+        && [[ -x "$ROOT/scripts/version_manifest_reprofile.py" ]] \
+        && [[ -f "$ROOT/compat/agy-version-manifest.json" ]] \
+        && [[ -f "$ROOT/compat/version-manifest.schema.json" ]] \
+        && grep -Fq '"support_tier": "previous"' \
+            "$ROOT/compat/agy-version-manifest.json" \
+        && grep -Fq '"support_tier": "historical"' \
+            "$ROOT/compat/agy-version-manifest.json" \
+        && grep -Fq 'The retired 1.1.12/1.1.16 version-stamped algorithms are absent' \
             "$ROOT/docs/REPO_MAP.md" \
         && [[ -f "$ROOT/compat/reviews/agy-1.1.12.md" ]] \
         && ! [[ -e "$ROOT/compat/reviews/agy-1.1.12-decision.md" ]] \
@@ -3289,8 +3555,6 @@ if [[ -x "$ROOT/scripts/models_capture_1_1_12_profile.py" ]] \
         && [[ -f "$ROOT/compat/reviews/agy-1.1.22-activation.md" ]] \
         && grep -Fq '626623c2c7b3b126efc2161c36554ecfa7fad3ce46e9dfcee8419c685ccaf2e3' \
             "$ROOT/compat/reviews/agy-1.1.22-activation.md" \
-        && grep -Fq 'Active 1.1.22 compatibility binding: 24 offline.' \
-            "$ROOT/AGENTS.md" \
         && [[ -f "$ROOT/compat/reviews/agy-1.1.22.md" ]] \
         && grep -Fq 'cab32a092e67b5199c1777e45f65623f703a94812b75a0732e7b3156302e9f77' \
             "$ROOT/compat/reviews/agy-1.1.22.md" \
@@ -3340,13 +3604,14 @@ else
     bad "initial bootstrap remains a separate HOME-inert repository-only surface"
 fi
 
-if [[ -x "$ROOT/scripts/version_recovery_1_1_12_runner.py" ]] \
-        && [[ -x "$ROOT/tests/test-version-recovery-1-1-12-runner.py" ]] \
-        && ! grep -Fq 'version_recovery_1_1_12_runner.py' "$ROOT/skills/agy-worker/runtime" -r \
-        && grep -Fq 'grants no account or provider authority itself' "$ROOT/docs/REPO_MAP.md"; then
-    ok "fixed recovery remains a separate non-authorizing repository-only surface"
+if [[ ! -e "$ROOT/scripts/version_recovery_1_1_12_runner.py" ]] \
+        && [[ ! -e "$ROOT/tests/test-version-recovery-1-1-12-runner.py" ]] \
+        && grep -Fq '"support_tier": "historical"' "$ROOT/compat/agy-version-manifest.json" \
+        && grep -Fq '"allowed_operations": []' "$ROOT/compat/agy-version-manifest.json" \
+        && [[ -f "$ROOT/compat/reviews/agy-1.1.12.md" ]]; then
+    ok "fixed 1.1.12 recovery execution is retired while historical evidence remains"
 else
-    bad "fixed recovery remains a separate non-authorizing repository-only surface"
+    bad "fixed 1.1.12 recovery retirement and historical evidence boundary"
 fi
 
 profile_builder_identity="$(/usr/bin/python3 -I -S -B - "$ROOT/scripts/models_capture_profile.py" <<'PY'
@@ -3428,7 +3693,7 @@ if [[ "$brand_valid_rc" == "0" ]] \
         && grep -Fq 'git clone https://github.com/cagdasyurekli/codex-agy-worker.git' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq 'does not authorize a provider dispatch or repository transmission' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq './proof-demo.sh' < <(sed -n '1,120p' "$ROOT/README.md") \
-        && grep -Fq 'read [PRIVACY.md](PRIVACY.md) before use' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq 'Read [PRIVACY.md](PRIVACY.md) before use' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq '<picture>' "$ROOT/README.md" \
         && grep -Fq 'srcset="docs/assets/brand/logo-dark.svg"' "$ROOT/README.md" \
         && grep -Fq 'src="docs/assets/brand/logo-light.svg" alt=""' "$ROOT/README.md" \
@@ -3861,7 +4126,7 @@ fi
 
 if grep -Fq '24 quota exhausted' "$ROOT/skills/agy-worker/runtime/agy-worker.sh" \
         && grep -Fq 'exact agy `1.1.13` terminal quota response' \
-            "$ROOT/skills/agy-worker/SKILL.md" \
+            "$ROOT/skills/agy-worker/references/TROUBLESHOOTING.md" \
         && grep -Fq 'terminal phases are `completed` or `blocked`; exact Codex driver decisions/dispositions' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Controller terminal phases are `completed` or' \
@@ -3871,7 +4136,7 @@ if grep -Fq '24 quota exhausted' "$ROOT/skills/agy-worker/runtime/agy-worker.sh"
         && grep -Fq 'are `invalid_envelope`, exit `4`, and `failure_stage=missing_structured_output`.' \
             "$ROOT/compat/reviews/agy-1.1.13-quota-terminal.md" \
         && grep -Fq 'Wrong-version or altered quota terminals without a' \
-            "$ROOT/skills/agy-worker/SKILL.md" \
+            "$ROOT/skills/agy-worker/references/TROUBLESHOOTING.md" \
         && grep -Fq 'Classify authentication, quota, timeout, or provider failures only from reviewed' \
             "$ROOT/docs/INSTALLATION.md" \
         && grep -Fq 'Before every reviewed direct' "$ROOT/docs/INSTALLATION.md" \
@@ -3879,7 +4144,7 @@ if grep -Fq '24 quota exhausted' "$ROOT/skills/agy-worker/runtime/agy-worker.sh"
             "$ROOT/docs/INSTALLATION.md" \
         && grep -Fq 'Before every' "$ROOT/skills/agy-worker/SKILL.md" \
         && grep -Fq 'reviewed direct dispatch, including an exact-version match, Codex must inspect' \
-            "$ROOT/skills/agy-worker/SKILL.md" \
+            "$ROOT/skills/agy-worker/references/TROUBLESHOOTING.md" \
         && grep -Fq 'Codex inspects current bounded raw help before every reviewed direct dispatch' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Exact-version structural acceptance is only mechanical' \

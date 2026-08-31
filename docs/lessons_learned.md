@@ -11,7 +11,9 @@ scope comparison, but every claim must be re-derived by the driver.
 - Validate the complete envelope shape before reading it.
 - Compare every declared path and change kind with Git reality.
 - Never execute `commands_run` or `tests_run`; they are untrusted text. Only
-  driver-authored `--verify` commands may execute.
+  driver-authored verifier specs may execute. Prefer canonical `--verify-argv` arrays
+  so argument bytes never cross an implicit shell; shell verification needs explicit
+  network and credential acknowledgements, and diagnostics identify only label/mode.
 - Provider-facing envelopes may omit only those report-only arrays; canonicalization
   restores them empty before validating the complete contract. A canonical summary is
   bounded to 8,192 characters. Omission is ergonomics, not permission for a worker
@@ -544,15 +546,22 @@ model slug is not host compatibility. Put the fuller execution-boundary explanat
 a focused skill reference, and do not add empty assets or unsupported integrations to
 raise a directory score.
 
-An inherited shell environment is also a trust boundary. Provider processes, local
-interface probes, and driver-owned verification commands should start from a small
-operational baseline; additional variables require exact-name opt-in, and only their
-names—not values—belong in frozen command or receipt policy. Verifier-only values must
+An inherited shell environment is also a trust boundary. Provider processes and local
+interface probes start from a small operational baseline; driver-owned verification
+uses a stricter baseline without `HOME`. Additional variables require exact-name opt-in,
+and only their names—not values—belong in frozen command or receipt policy. Verifier-only values must
 cross the outer gate through a private descriptor and enter only the `env -i` verifier
 child; ambient preservation would let schema or Git controls influence gate work.
-This reduces accidental
-secret exposure but does not isolate `HOME`, `PATH`, filesystem, network, or same-user
-processes. A trusted test command can still import unreviewed candidate code.
+Credential-like verifier names require a separate flag and acknowledgement; an
+acknowledgement never supplies the value. This reduces accidental secret exposure but
+does not isolate `PATH`, filesystem, network, or same-user processes. A trusted test
+command can still import unreviewed candidate code.
+
+A provider-readable path preview is useful only if it branches before prompt, model,
+provider, logging, state, stdin, and network work. Build it from two complete bounded
+no-follow scans, expose only relative path/kind entries, and keep the root `.git`
+control marker out of the public manifest. A path digest is review evidence, not
+transmission approval and not a future-launch binding.
 
 Keep distribution surfaces no broader than the maintained product. A Codex package
 manifest and an explicitly approved repo marketplace descriptor can validate one local
@@ -572,9 +581,10 @@ outside this repository's publication slice.
 
 Treat Python syntax compilation as a package-boundary write. `-B` does not suppress
 bytecode emitted by an explicit `py_compile` invocation, so CI and contributor checks
-must direct `PYTHONPYCACHEPREFIX` to a private external temporary directory. A cache
-inside the public skill is a distribution leak, not harmless ignored state; keep the
-positive external-cache path and a plain-compile negative control paired offline.
+must set `sys.pycache_prefix` to a private external temporary directory inside an
+isolated interpreter (`-I` ignores `PYTHONPYCACHEPREFIX`). A cache inside the public
+skill is a distribution leak, not harmless ignored state; keep the positive
+external-cache path and a plain-compile negative control paired offline.
 
 ## Public discovery claims need the same evidence discipline
 
@@ -931,7 +941,7 @@ Observation: Parallelizing a long-running offline CI gate across shard jobs redu
 but sharded workflows must not silently drop stages, reuse cross-run artifacts, weaken checkout
 immutability, or conflate lower wall time with lower total compute or weaker acceptance.
 Change: Four frozen shard IDs and stage memberships (`dispatcher`, `dispatcher-remediation`, `other-a`,
-`other-b`) partition the canonical 45-stage inventory. In CI, each shard checks out the exact immutable
+`other-b`) partition the canonical 42-stage inventory. In CI, each shard checks out the exact immutable
 head SHA (`github.event.pull_request.head.sha` for pull requests or validated `head_sha` for manual dispatch),
 enforces committed diff hygiene, executes its stage subset, and emits a local mode-0600 shard receipt
 binding the schema, exact head SHA, inventory digest, shard ID, expected and observed stage lists, and outcome.
@@ -942,6 +952,49 @@ receipt artifacts for one day under repository Actions access. Any failure, canc
 or schema mismatch fails closed. Local `./scripts/ci-offline.sh` retains its default all-stage execution, and
 lower CI wall time is explicitly documented as not reducing total compute, provider usage, tokens, cost, or
 verification rigor.
+
+### Conformance workspace ownership and concurrent isolation (2026-08-30)
+
+Observation: Global filesystem cleanup assertions that match all temporary workspace directories
+cause false positive failures during concurrent test execution or when foreign residual directories exist,
+creating an accidental coupling between unrelated jobs.
+Change: The public conformance suite records and proves the cleanup of only its own owned workspaces.
+A concurrent foreign workspace is preserved, ignored, and causes zero test failure, while adversarial
+fail-closed cleanup and workspace mutation assertions remain fully enforced without global set diffs.
+
+### Declarative canonical stage manifest, shard monotonic durations, and pure model selection validation (2026-08-30)
+
+Observation: Duplicating the offline CI stage inventory across shell scripts, timing observers, and
+sharding verifiers creates inventory drift hazards and maintenance overhead. In addition, exhaustive
+combinatorial matrix testing in full subprocess wrappers consumes excessive process execution time.
+Change: `scripts/ci_stages.py` defines the single declarative canonical 42-stage manifest (stage ID,
+announcement, shard, exact argv, and receipt metadata) from which execution, timing, sharding, inventory digest,
+and gate validation are derived without `eval` or unsafe shell reconstruction. Shard receipts include
+per-stage monotonic durations (`stage_durations`) under schema v2 with strict fail-closed validation;
+same-run publication and aggregation require v2, while standalone validation preserves the frozen v1
+shape and its historical stage-ID/announcement digest. The runner routes explicit syntax-check bytecode
+to a disposable cache without leaking `PYTHONPYCACHEPREFIX` into ordinary suites whose negative controls
+must observe fixture-local bytecode. Exhaustive model/effort
+matrix combinations are validated in the pure unit layer, retaining representative end-to-end worker cases
+for CLI selection, environment selection, fixed models, conflicts, unsupported choices, and preflight failures.
+
+### Manifest-driven common engine and mechanical version copy guard (2026-08-30)
+
+Observation: Version-specific executable algorithm copies create maintenance debt, drift risk, and AST/file churn across multiple supported CLI versions.
+Change: Moved version evidence, capture profile/runner, classification, and reprofile into version-neutral production modules backed by a digest-bound common engine and `compat/agy-version-manifest.json`; the stable 1.1.22 filenames are thin CLI adapters. The fixed suites exercise the shared implementations, and synthetic subprocess coverage binds a new manifest version through every real entry point without editing source. Compatibility activation requires the manifest and fails closed when it is absent. A manifest row remains configuration rather than activation authority: separate evidence, canary, and activation review are required. The copy guard rejects new version-stamped algorithm copies while preserving frozen historical evidence.
+
+### Narrow provider scope and external 0700 staged worktree (2026-08-30)
+
+Observation: Whole-worktree dispatch gives an external provider read and write visibility over
+the entire disposable repository, which can be unnecessarily broad for a bounded task.
+Change: An optional closed `--provider-scope` policy binds readable and writable file-or-tree
+entries, the selected-content manifest, and approval under one transmission SHA. Each provider
+attempt materializes only that scope into a fresh Git-less owner-private mode-0700 stage and runs
+agy there. Descriptor-relative no-follow copying rejects aliases, hardlinks, special nodes, Git
+administration, and normalization collisions. After the child is reaped, source and stage are
+revalidated and only authorized mutations are reconciled transactionally with durable backups,
+fsync, an atomic recovery ledger, equality checks, and exact rollback. The stage narrows provider
+scope but is not an OS sandbox and grants no execution, Git, acceptance, or publication authority.
 
 ## Transparent provider dispatch notice and truthful boundaries
 

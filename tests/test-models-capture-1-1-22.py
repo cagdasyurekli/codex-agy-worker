@@ -20,8 +20,8 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PROFILE_SOURCE = ROOT / "scripts" / "models_capture_1_1_22_profile.py"
-RUNNER_SOURCE = ROOT / "scripts" / "models_capture_1_1_22_runner.py"
+PROFILE_SOURCE = ROOT / "scripts" / "version_manifest_capture_profile.py"
+RUNNER_SOURCE = ROOT / "scripts" / "version_manifest_capture_runner.py"
 profile = runpy.run_path(str(PROFILE_SOURCE))
 runner = runpy.run_path(str(RUNNER_SOURCE))
 

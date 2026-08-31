@@ -34,9 +34,14 @@ Keep these hard boundaries regardless of workflow:
   symlink. User denylist paths constrain requested writes. Gate `--only` constrains
   candidate changed paths after dispatch; `--allow` only exempts matching undeclared
   artifacts from rejection. None of these isolate provider reads.
-- Treat the entire disposable worktree as worker-readable and potentially transmissible
-  to Google/Gemini. Before every provider launch, require credentials, secrets,
-  user-denied paths, and unrelated private files to be absent from that worktree.
+- Without `--provider-scope`, treat the entire disposable worktree as worker-readable
+  and potentially transmissible to Google/Gemini; `--add-dir` does not narrow it.
+  Optional scope mode binds exact reviewed read entries, a selected-content digest, and a
+  write subset, then stages only those entries in a fresh owner-private mode-`0700`
+  Gitless provider cwd. The controller still locally enumerates and validates
+  worktree/scope paths, and the stage is not a filesystem, network, `PATH`, `HOME`, or
+  same-UID sandbox. Keep secrets, denied paths, and unrelated private content outside
+  every entry approved for either transmission mode.
 - Provider, probe, and verifier children start with an operational allowlist. Do not
   pass `--provider-env` or `--verify-env` without approval for each variable name and
   its resulting provider/verifier exposure; values are not persisted, and filtering
@@ -55,8 +60,10 @@ Keep these hard boundaries regardless of workflow:
   If baseline activation needs new evidence or authority, keep the goal active and
   report that exact blocker instead of silently narrowing the requested outcome.
 
-Before external agy dispatch, confirm approval for the entire disposable worktree.
-A narrower approval is valid only when that worktree contains only approved content.
+Before external agy dispatch, confirm approval for the exact mode and content. Default
+mode requires whole-worktree approval. Scoped mode requires the exact reviewed policy
+and `transmission_sha256`; that approval grants neither provider execution, Git action,
+driver acceptance, nor publication.
 
 For ambiguous architecture or trust decisions, do not lock onto the first plausible
 approach. Preserve the hard boundaries, then compare at least two viable options by
@@ -74,6 +81,11 @@ Use the public workflow surface rather than inventing an ad hoc dispatch protoco
 | Explore, understand, review, or plan | `explore` | Read-only report; spot-check material claims and label coverage limits. |
 | Implement a feature, refactor, or tests | `task` | Edit in the worktree, run relevant checks, and request bounded repair on failure. |
 | Build an app/project or audit-and-fix broadly | `project` | Allow repo-wide worktree changes, run build/test/lint, then use the same conversation for bounded repair. |
+
+Use `workflow.sh run`, `status`, and `verify-finalize` as the ordinary controller
+facade. Treat direct dispatcher, gate, receipt, and lifecycle commands as advanced
+recovery or compatibility surfaces; the facade delegates to them and does not own a
+second lifecycle state machine or infer driver assurance.
 
 `project` state is a local controller record, not provider truth. Use its status/wait
 commands for progress, `continue` only with driver-owned strict verification JSON, and
@@ -120,6 +132,15 @@ this file concise and repository-wide; put detailed lifecycle lessons in
 `docs/lessons_learned.md`, release history in the roadmap/release notes, and mechanical
 checks in tests or CI.
 
+Treat SkillStore maintenance as a publication-close gate when a released change
+materially alters the packaged skill's behavior, workflow, trust boundaries,
+documentation, or specification metadata. Never report an unmerged local candidate as
+published behavior. After the exact public commit or tag is final and any required
+history remediation is complete, run a fresh assessment, obtain action-time approval
+for the external update, submit an accurate change summary, and read the listing back.
+If the release does not affect the SkillStore package or claims, record that no update
+is needed instead of resubmitting it.
+
 ## Documentation governance
 
 Follow `docs/DOCUMENTATION_POLICY.md` for README and public documentation changes.
@@ -147,20 +168,10 @@ fresh contexts; neither may accept its own plan or implementation. The independe
 reviewer remains the final acceptor. Purely mechanical changes are exempt.
 
 Each profile is data, not a driver: it cannot name a repository, path, command,
-selection, authorization, dispatch, or Git action. These offline coverage counts are
-not live-provider claims:
-
-- Adoption measurement: 41 offline; Local update notifier: 89 offline; Doctor: 257 offline; Packaging: 486 offline.
-- Canonical version-attestation runner: 165 offline; Version-attestation mutation harness: 60 offline.
-- Canonical models-inventory attestation runner: 116 offline; Explicit-account models capture runner: 84 offline.
-- Repository-only version bootstrap runner: 139 offline; Repository-only version initial-bootstrap runner: 43 offline.
-- Fixed 1.1.12 version recovery runner: 75 offline; Explicit-account models capture profile builder: 121 offline.
-- Fixed 1.1.12 models capture profile builder: 30 offline; Fixed 1.1.12 models capture runner: 56 offline.
-- Fixed 1.1.16 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; historical activation: 8 offline.
-- Fixed 1.1.22 version evidence: 45 offline; capture profile: 30 offline; capture runner: 58 offline; reprofile: 88 offline.
-- Active 1.1.22 compatibility binding: 24 offline.
-- CI sharding and aggregate verifier: 79 offline; CI timing telemetry: 44 offline.
-- Model Intelligence v1: 6 offline; Delegation-first coordinator policy: 8 offline.
+selection, authorization, dispatch, or Git action. Offline coverage is not a
+live-provider claim. Do not pin exact suite counts in this instruction file;
+`docs/REPO_MAP.md` owns focused-suite inventory and `scripts/ci_stages.py` owns the
+canonical CI stage registry.
 
 Some conformance cleanup controls trust loaded code, the local owner, same-UID
 processes, and OS administrators. They do not establish same-user tamper-resistance or guaranteed hostile-gate cleanup; preserve a residual on identity drift instead of chasing it.
@@ -185,5 +196,8 @@ the owning verification command. Graphify is an ignored local machine index for
 cross-file relationships, paths, and impact analysis. Never load both as competing
 inventories: route with one relevant map row, then use a narrow current-graph query
 only when relationships materially help. Check graph freshness and verify every
-material edge against source and tests; never add generated `graphify-out/` artifacts
-to Git or an agy prompt.
+material edge against source and tests. When relevant source changes make the graph
+stale and a current relationship or impact query would materially help, follow the
+Graphify skill's incremental update workflow before relying on it. Never add generated
+`graphify-out/` artifacts to Git or an agy prompt, and keep owner-private evidence or
+untracked campaign material outside the Graphify corpus.

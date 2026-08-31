@@ -30,11 +30,13 @@ changed files cannot replace it.
 
 ## 2. Keep the worker report as untrusted input
 
-Dispatch only after approving the entire disposable worktree as content that may be
-read and sent through `agy` to Google/Gemini. A narrower approval is valid only when
-the worktree contains only approved content. Before every provider attempt, ensure
-credentials, secrets, denied paths, and unrelated private files are absent; a prompt
-denylist does not isolate reads.
+Dispatch only after approving one exact transmission mode. Without
+`--provider-scope`, the entire disposable worktree may be read and sent through `agy`
+to Google/Gemini; `--add-dir`, prompt denylists, and gate path policies do not narrow
+that default boundary. Optional provider-scope mode instead binds exact reviewed read
+entries, their selected-content digest, and a write subset, then stages only selected
+entries in a fresh owner-private mode-`0700` Gitless provider cwd. Exclude credentials,
+secrets, denied paths, and unrelated private content from every approved entry.
 
 ```bash
 echo "$TASK" | AGY_WORKER_MODE=accept-edits ./agy-worker.sh \
@@ -56,7 +58,7 @@ against both that policy and the envelope:
   --base "$BASE" \
   --only 'tests/**' \
   --expect-edits \
-  --verify "cd $WT && python3 -m pytest -q tests/test_parser.py"
+  --verify-argv '["python3","-m","pytest","-q","tests/test_parser.py"]'
 ```
 
 The maintained gate rejects undeclared or missing paths, outside-policy edits,
@@ -64,17 +66,27 @@ malformed envelopes, an unexpected no-op, mutable base evidence, and verifier-cr
 mutations. It also accounts for nontracked paths, including ignored files, within its
 documented trust boundary.
 
-This is a write-acceptance boundary applied after dispatch. `--only`, `--allow`, and
-prompt denylist instructions do not prevent the worker from reading other files that
-are present in `--workdir`, and `--add-dir` does not narrow that read boundary.
+This is a write-acceptance boundary applied after dispatch. In default mode,
+`--only`, `--allow`, prompt denylists, and `--add-dir` do not prevent reads elsewhere
+in `--workdir`. Optional provider-scope staging is a distinct pre-dispatch content
+boundary: it copies only selected entries, but the controller still locally enumerates
+and validates worktree/scope paths. It is not filesystem, network, `PATH`, `HOME`, or
+same-UID isolation, and scope approval grants no execution, Git, acceptance, or
+publication authority. See [selected-content dispatch](USAGE.md#optional-selected-content-dispatch).
 
 ## 4. Let the driver own verification
 
-`--verify` is mandatory for gate acceptance. Choose it from the target repository's
-source, configuration, and documented test surface—not from the worker report. A
-passing check proves only the exercised command against the exact candidate. Review
-the diff for semantic correctness and run additional checks when the change warrants
-them.
+At least one driver-owned verifier is mandatory. The normal repeatable path is a
+strict canonical `--verify-argv` JSON string array chosen from the target repository's
+source, configuration, and documented test surface—not from the worker report.
+Multiple arrays run in order from the repository root without an implicit shell;
+direct shell interpreters and every `env -S`/`--split-string` form are rejected.
+Advanced `--verify-shell` and legacy `--verify` compatibility require both network
+and credential-access acknowledgements. Ordinary exact-name environment opt-ins use
+`--verify-env`; credential-like names instead require `--verify-credential-env` and
+the credential-access acknowledgement. A passing check proves only the
+exercised command against the exact candidate. Review the diff for semantic correctness
+and run additional checks when the change warrants them.
 
 The useful distinction is simple:
 

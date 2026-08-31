@@ -191,7 +191,7 @@ proof_init_repo() {
 
 proof_main() {
     local script_dir gate fixture_root honest_fixture mismatch_fixture
-    local honest_repo mismatch_repo honest_base mismatch_base gate_rc verify_command
+    local honest_repo mismatch_repo honest_base mismatch_base gate_rc verify_argv
 
     [[ $# == 0 ]] || exit 64
     script_dir="$(CDPATH= cd -- "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd -P)" \
@@ -232,18 +232,17 @@ proof_main() {
     mismatch_base="$(git -C "$mismatch_repo" rev-parse HEAD 2>/dev/null)" || proof_fail
 
     printf 'verified synthetic change\n' > "$honest_repo/proof.txt" || proof_fail
-    verify_command="grep -Fxq 'verified synthetic change' '$honest_repo/proof.txt' && test \"\$(wc -l < '$honest_repo/proof.txt')\" -eq 1"
+    verify_argv='["/usr/bin/python3","-I","-S","-B","-c","from pathlib import Path;import sys;sys.exit(0 if Path(\"proof.txt\").read_text()==\"verified synthetic change\\n\" else 1)"]'
     proof_run "$gate" --envelope "$honest_fixture" --repo "$honest_repo" \
         --base "$honest_base" --only proof.txt --expect-edits \
-        --verify "$verify_command"
+        --verify-argv "$verify_argv"
     gate_rc=$?
     [[ "$gate_rc" == 0 ]] || proof_fail
 
     printf 'verified synthetic change\n' > "$mismatch_repo/proof.txt" || proof_fail
     printf 'undeclared synthetic change\n' > "$mismatch_repo/hidden.txt" || proof_fail
-    verify_command="grep -Fxq 'verified synthetic change' '$mismatch_repo/proof.txt' && test \"\$(wc -l < '$mismatch_repo/proof.txt')\" -eq 1"
     proof_run "$gate" --envelope "$mismatch_fixture" --repo "$mismatch_repo" \
-        --base "$mismatch_base" --expect-edits --verify "$verify_command"
+        --base "$mismatch_base" --expect-edits --verify-argv "$verify_argv"
     gate_rc=$?
     [[ "$gate_rc" == 10 ]] || proof_fail
 

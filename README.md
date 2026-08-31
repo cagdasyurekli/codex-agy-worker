@@ -58,12 +58,36 @@ correctness.
 
 ### First real task
 
-Before an agy-backed request, treat every file in the disposable worktree as readable
-and potentially transmissible through `agy` to Google/Gemini. Approve the whole
-worktree; a narrower approval is safe only when it contains only approved content.
-Before every provider attempt, ensure credentials, secrets, denied paths, and unrelated
-private files are absent. Prompt restrictions and later `qa-gate --only` checks do not
-isolate reads; read [PRIVACY.md](PRIVACY.md) before use.
+Before an agy-backed request, choose and approve one transmission mode. Default
+dispatch may expose every file in the disposable worktree through `agy` to
+Google/Gemini; `--add-dir`, prompt restrictions, and later `qa-gate --only` checks do
+not narrow that read boundary. Optional `--provider-scope` instead binds exact reviewed
+read entries, their selected-content digest, and a write subset, then stages only those
+entries in a fresh owner-private mode-`0700` Gitless provider cwd. Scoped staging is
+not a sandbox, and its approval grants no provider execution, Git action, acceptance,
+or publication. Read [PRIVACY.md](PRIVACY.md) before use.
+
+Before approval, inspect the content-free path boundary without starting `agy`, a
+provider probe, or network activity:
+
+```bash
+./agy-worker.sh transmission-preview --workdir "$WT"
+
+# Optional selected-content preview. Review its transmission_sha256, then bind the
+# same scope and digest on direct dispatch as documented in docs/USAGE.md.
+./agy-worker.sh transmission-preview --workdir "$WT" \
+  --provider-scope "$SCOPE" --format json
+```
+
+The preview requires a canonical branch-backed linked worktree. It lists directories,
+regular files, and contained symlink aliases (including ignored and untracked paths),
+but excludes the root `.git` control marker. In default mode, it does not read file
+contents and the digest binds path names and kinds only. Scoped preview reads selected
+content to compute its digest and binds that digest plus the scope policy into
+`transmission_sha256`. Both previews are review evidence, not approval or
+provider-launch authority. The controller still locally enumerates and validates
+worktree paths; a fixed bounded Git worktree-list check proves registration, and no
+`agy`, provider, credential probe, or network process is started.
 
 After installation, start a new Codex session and ask:
 
@@ -83,23 +107,51 @@ limited to mechanical edits or a predeclared file list.
 Bash + Python 3 + git. No Node runtime and no MCP daemon. A deliberately started job
 may have one private, per-job local controller; it is not a shared service.
 
-```bash
-# Codex dispatches a bounded job to agy...
-BASE="$(git -C "$WT" rev-parse HEAD)"
-echo "$TASK" | AGY_WORKER_MODE=accept-edits ./agy-worker.sh \
-    --workdir "$WT" --add-dir "$WT" > envelope.json
+The primary lifecycle is `workflow.sh run`, `workflow.sh status`, and
+`workflow.sh verify-finalize`. For ordinary `run`, Codex supplies an absolute reviewed
+repository and job ID. The façade binds the current `HEAD` once when `--base` is
+omitted, derives owner-private state plus an isolated branch/worktree under
+`XDG_STATE_HOME` (or `HOME/.local/state`), and delegates their creation to the existing
+job lifecycle. It still creates no second state machine and never infers assurance.
 
-# ...then verifies the candidate independently.
-./qa-gate.sh --envelope envelope.json --repo "$WT" --base "$BASE" \
-    --only 'tests/**' --expect-edits \
-    --verify "cd $WT && pytest -q"
+```bash
+# Review the canonical path/kind preview before provider approval.
+./workflow.sh run --preview --repo "$TARGET" --job-id "$JOB_ID"
+
+# The preview call retains its exact private lifecycle bindings. After approval,
+# repeat the repo/job ID with --approve-preview-sha SHA256, --workflow task,
+# and --task "$TASK". An optional full --base can be supplied on the first call.
+# Then use status, copy dispatch.state_sha256, and call verify-finalize with
+# --approve-dispatch-sha plus driver-authored --verify-argv and, for controller
+# finalization, --verification-json.
 ```
+
+The former explicit `--state`, `--worktree`, `--branch`, and `--base` tuple remains
+available together as an advanced compatibility surface. A failed invocation may
+roll back only the clean façade-created resources that same invocation created before
+any dispatch evidence; preview and stale approval retain resources for inspection.
+
+`--verify-argv` accepts a canonical JSON array and runs it from the repository root
+without an implicit shell. Explicit `--verify-shell SCRIPT` is an advanced surface
+that requires both verifier network and credential-access acknowledgements. Historical
+`--verify SCRIPT` additionally requires `--legacy-shell-verification`.
+For a bound dispatch, `verify-finalize` requires the exact dispatch-state SHA reported
+by facade `status`; it never substitutes a current state approval. The deprecated
+`--approve-state-sha` spelling remains a strict mutually exclusive alias during the
+compatibility window. Rejected or routed gate receipts are preserved without invoking
+the lifecycle finalizer.
 
 The worker envelope is input, not acceptance evidence:
 
 1. Codex freezes an immutable Git base in a disposable worktree.
-2. `agy` may read the whole disposable worktree; requested paths constrain the task,
-   not provider read access.
+2. In default facade mode, `agy` may read the whole disposable worktree; requested
+   paths constrain the task, not provider read access. Optional direct
+   `--provider-scope` dispatch instead binds exact reviewed read/write entries and a
+   selected-content digest, then stages only selected entries in a fresh owner-private
+   mode-`0700` Gitless provider cwd. See
+   [selected-content dispatch](docs/USAGE.md#optional-selected-content-dispatch); the
+   stage is not a sandbox, and scope approval grants no provider execution, Git,
+   acceptance, or publication authority.
 3. The gate derives changed paths from Git instead of trusting `files_changed`.
 4. Codex runs driver-owned verification; worker-reported commands are never executed.
 5. Codex reports `verified`, `partially_verified`, or `blocked` for that exact
@@ -171,7 +223,7 @@ Choose a guide by what you need to do:
 | Inspect the Codex marketplace package contract | [Marketplace](docs/MARKETPLACE.md) |
 | Verify a candidate without trusting its report | [Verification tutorial](docs/VERIFYING_AGENT_OUTPUT.md) |
 | Integrate against the bounded public gate fixtures | [Conformance](docs/CONFORMANCE.md) |
-| Understand persona evidence or data-only profiles | [Personas](docs/PERSONAS.md) · [Profiles](docs/PROFILES.md) |
+| Maintain deprecated-onboarding persona evidence or data-only profiles | [Personas](docs/PERSONAS.md) · [Profiles](docs/PROFILES.md) |
 | Review offline benchmark and adoption evidence | [Benchmarking](docs/BENCHMARKING.md) · [Measurement](docs/MEASUREMENT.md) |
 | Understand source ownership or product direction | [Repository map](docs/REPO_MAP.md) · [Roadmap](docs/ROADMAP.md) |
 
@@ -208,9 +260,11 @@ Use normal language and state the repository, allowed scope, desired result, and
 driver-owned checks. For broader work, Codex can discover ordinary structure and test
 commands instead of requiring a predeclared file list.
 
-Personas are optional prompt specializations. Workload profiles are data only: they
-cannot select a repository, command, model, authorization, or Git action. Model and
-effort selection remain caller-owned, while recommendations remain advisory.
+Personas remain optional prompt templates and workload profiles remain data only, but
+their registry/profile commands are deprecated from ordinary onboarding and retained
+for at least two minor releases. They cannot select a repository, command, model,
+authorization, or Git action. Model and effort selection remain caller-owned, while
+recommendations remain advisory.
 
 See [Usage](docs/USAGE.md) for workflow examples, manual invocation, read-only
 inventory, common options, and explicit model-selection behavior.
@@ -285,9 +339,10 @@ and the verification command for each maintained surface.
 - Partial/promisor Git clones are unsupported for disposable worker worktrees.
 - Unresolved merge resolve-undo metadata (REUC) rejects dispatch with resolve_undo_present; the controller never clears index metadata.
 - Each job audits one worktree. Mutation across additional repositories is rejected.
-- Provider transmission requires explicit approval for the whole disposable worktree;
-  installation is never that approval. Narrow approval is valid only when the
-  worktree contains only approved content.
+- Provider transmission requires explicit approval for the selected mode and content;
+  installation is never that approval. Default mode covers the whole disposable
+  worktree. Optional provider-scope mode binds exact reviewed entries and their
+  selected-content digest without turning scoped staging into a sandbox.
 - Direct model/effort selection has strong offline mechanism coverage but does not
   prove backend identity, availability, quality, cost, or quota efficiency.
 - A green gate proves only the exact candidate, immutable base, path policy, and

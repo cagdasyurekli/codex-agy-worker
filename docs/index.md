@@ -32,9 +32,15 @@ then run the offline proof below.
 
 Each edit job runs in one branch-backed Git worktree. The driver captures an immutable
 base commit, declares allowed write paths, and supplies the verification commands
-before dispatch. Those paths constrain candidate acceptance, not provider reads: all
-content in the disposable worktree is potentially readable and transmissible. The
-gate rejects undeclared files, outside-policy changes, malformed worker output,
+before dispatch. With default facade dispatch, those paths constrain candidate
+acceptance, not provider reads: all content in the disposable worktree is potentially
+readable and transmissible. Optional direct `--provider-scope` dispatch instead binds
+exact reviewed read/write entries and a selected-content digest, then stages only
+selected entries in a fresh owner-private mode-`0700` Gitless provider cwd. The
+controller still locally enumerates and validates worktree paths; scoped staging is
+not a sandbox, and its approval grants no provider execution, Git, acceptance, or
+publication authority. See [optional selected-content dispatch](USAGE.md#optional-selected-content-dispatch).
+The gate rejects undeclared files, outside-policy changes, malformed worker output,
 missing edits, failed verification, and verifier-created mutations.
 
 ## Small runtime, explicit boundaries

@@ -656,7 +656,631 @@ def test_issue_78_canonical_five_arm_study_import() -> bool:
 check("issue-78 study import validates canonical five-arm chain and rejects hash mutations fail-closed", test_issue_78_canonical_five_arm_study_import)
 
 
-# 6. CLI Invocation Checks
+# 6. Benchmark Review Due on Inventory Additions, Removals, and Semantic Binding Changes
+def test_benchmark_review_inventory_changes() -> bool:
+    base_inv = {
+        "schema_version": 1,
+        "status": "accepted-current-inventory",
+        "agy_version": "1.1.22",
+        "reviewed_source_revision": "556846a4bb94117222f53846896c7eb0d645307e",
+        "source_sha256": "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906",
+        "version_binding_sha256": "d9d830e65d3a5c76df6d9e07e6ea7e14e14f290ab4036bdbae8cb33502e29f2a",
+        "slugs": ["gemini-3.7-flash-medium", "claude-sonnet-4-6", "gpt-oss-120b-medium"],
+    }
+
+    # A. Model addition: unchanged common models must NOT be marked binding-changed
+    cand_add = copy.deepcopy(base_inv)
+    cand_add["slugs"].append("gemini-3.8-flash-high")
+    rev_add = MODULE.track_benchmark_review(
+        baseline_inventory=base_inv,
+        candidate_inventory=cand_add,
+        reference_date="2026-08-30",
+    )
+    assert rev_add["status"] == "benchmark-review-due"
+    assert rev_add["kind"] == "agy-benchmark-review-tracker"
+    assert rev_add["maintainer_disposition"] is None
+    assert rev_add["applied"] is False
+    assert rev_add["dispatch_authorized"] is False
+    assert rev_add["model_change_authorized"] is False
+    assert rev_add["git_authorized"] is False
+    assert rev_add["benchmark_run_authorized"] is False
+    assert len(rev_add["reviews_due"]) == 1
+    assert rev_add["reviews_due"][0] == {"model_id": "gemini-3.8-flash-high", "evidence_state": "inventory-added"}
+
+    # B. Model removal: unchanged common models must NOT be marked binding-changed
+    cand_rem = copy.deepcopy(base_inv)
+    cand_rem["slugs"].remove("gpt-oss-120b-medium")
+    rev_rem = MODULE.track_benchmark_review(
+        baseline_inventory=base_inv,
+        candidate_inventory=cand_rem,
+        reference_date="2026-08-30",
+    )
+    assert rev_rem["status"] == "benchmark-review-due"
+    assert len(rev_rem["reviews_due"]) == 1
+    assert rev_rem["reviews_due"][0] == {"model_id": "gpt-oss-120b-medium", "evidence_state": "inventory-removed"}
+
+    # C. Global inventory digest changes must NOT mark common slugs binding-changed
+    cand_digest = copy.deepcopy(base_inv)
+    cand_digest["version_binding_sha256"] = "1" * 64
+    cand_digest["source_sha256"] = "2" * 64
+    rev_digest = MODULE.track_benchmark_review(
+        baseline_inventory=base_inv,
+        candidate_inventory=cand_digest,
+        reference_date="2026-08-30",
+    )
+    assert rev_digest["status"] == "unchanged"
+    assert rev_digest["reviews_due"] == []
+
+    # D. Semantic per-model mapping changes in matrix (e.g. unsupported_efforts change)
+    base_mat = {
+        "schema_version": 1,
+        "resolution_status": "active",
+        "inventory": {"agy_version": "1.1.22", "reviewed_source_revision": "556846a4bb94117222f53846896c7eb0d645307e"},
+        "adjustable_models": [
+            {
+                "model": "gemini-3.7-flash",
+                "resolutions": {"low": "gemini-3.7-flash-low", "medium": "gemini-3.7-flash-medium"},
+                "unsupported_efforts": ["high"],
+            }
+        ],
+        "fixed_models": [{"model_slug": "claude-sonnet-4-6"}],
+    }
+    cand_mat_binding_change = copy.deepcopy(base_mat)
+    cand_mat_binding_change["adjustable_models"][0]["unsupported_efforts"] = []
+    rev_mat_binding = MODULE.track_benchmark_review(
+        baseline_matrix=base_mat,
+        candidate_matrix=cand_mat_binding_change,
+        reference_date="2026-08-30",
+    )
+    assert rev_mat_binding["status"] == "benchmark-review-due"
+    assert len(rev_mat_binding["reviews_due"]) == 2
+    assert rev_mat_binding["reviews_due"] == [
+        {"model_id": "gemini-3.7-flash-low", "evidence_state": "binding-changed"},
+        {"model_id": "gemini-3.7-flash-medium", "evidence_state": "binding-changed"},
+    ]
+
+    # E. Matrix-based comparison with modified effort resolution addition
+    cand_mat_add = copy.deepcopy(base_mat)
+    cand_mat_add["adjustable_models"][0]["resolutions"]["high"] = "gemini-3.7-flash-high"
+    rev_mat_add = MODULE.track_benchmark_review(
+        baseline_matrix=base_mat,
+        candidate_matrix=cand_mat_add,
+        reference_date="2026-08-30",
+    )
+    assert rev_mat_add["status"] == "benchmark-review-due"
+    assert len(rev_mat_add["reviews_due"]) == 1
+    assert rev_mat_add["reviews_due"][0] == {"model_id": "gemini-3.7-flash-high", "evidence_state": "inventory-added"}
+    return True
+
+
+check("inventory additions, removals, and binding changes yield bounded benchmark-review-due facts", test_benchmark_review_inventory_changes)
+
+
+# 7. Unchanged Inventory Yields No Review-Due Facts
+def test_benchmark_review_unchanged_inventory() -> bool:
+    inv = {
+        "schema_version": 1,
+        "status": "accepted-current-inventory",
+        "agy_version": "1.1.22",
+        "reviewed_source_revision": "556846a4bb94117222f53846896c7eb0d645307e",
+        "source_sha256": "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906",
+        "version_binding_sha256": "d9d830e65d3a5c76df6d9e07e6ea7e14e14f290ab4036bdbae8cb33502e29f2a",
+        "slugs": ["gemini-3.7-flash-medium", "claude-sonnet-4-6"],
+    }
+    dataset = {
+        "schema_version": 1,
+        "kind": "agy-model-intelligence-evidence",
+        "dataset_id": "test-clean",
+        "dataset_version": "1.0.0",
+        "created_date": "2026-08-25",
+        "freshness_window_days": 90,
+        "expiry_date": "2026-11-23",
+        "items": [],
+    }
+    rev = MODULE.track_benchmark_review(
+        dataset=dataset,
+        baseline_inventory=inv,
+        candidate_inventory=copy.deepcopy(inv),
+        reference_date="2026-08-30",
+    )
+    assert rev["status"] == "unchanged"
+    assert rev["reviews_due"] == []
+    assert rev["maintainer_disposition"] is None
+    assert rev["applied"] is False
+    assert rev["dispatch_authorized"] is False
+    assert rev["git_authorized"] is False
+
+    # Setting a disposition when nothing is due must fail closed
+    try:
+        MODULE.track_benchmark_review(
+            dataset=dataset,
+            baseline_inventory=inv,
+            candidate_inventory=copy.deepcopy(inv),
+            reference_date="2026-08-30",
+            maintainer_disposition="collect",
+        )
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    return True
+
+
+check("unchanged inventory yields no model-change review-due facts", test_benchmark_review_unchanged_inventory)
+
+
+# 8. Dataset Expiry Yields Review-Due Without Execution Authority
+def test_benchmark_review_dataset_expiry() -> bool:
+    inv = {
+        "schema_version": 1,
+        "status": "accepted-current-inventory",
+        "slugs": ["gemini-3.7-flash-medium"],
+    }
+    dataset = {
+        "schema_version": 1,
+        "kind": "agy-model-intelligence-evidence",
+        "dataset_id": "test-exp",
+        "dataset_version": "1.0.0",
+        "created_date": "2026-08-01",
+        "freshness_window_days": 90,
+        "expiry_date": "2026-08-20",
+        "items": [
+            {
+                "id": "sample-1",
+                "provenance_type": "local",
+                "source_uri": "local://sample1",
+                "observed_date": "2026-08-01",
+                "expiry_date": "2026-08-20",
+                "harness": "test-harness",
+                "harness_version": "1.0",
+                "agy_version": "1.1.22",
+                "requested_model": "gemini-3.7-flash-medium",
+                "observed_model": "gemini-3.7-flash-medium",
+                "substituted": False,
+                "effort": "medium",
+                "task_taxonomy": "repo-repair",
+                "sample_size": 100,
+                "calibration_only": True,
+                "metrics": {
+                    "quality_score": 90.0,
+                    "latency_p50_seconds": 10.0,
+                    "latency_p95_seconds": 20.0,
+                    "mean_input_tokens": 1000.0,
+                    "mean_output_tokens": 100.0,
+                    "mean_cached_tokens": 500.0,
+                    "mean_thinking_tokens": 50.0,
+                },
+                "telemetry_bindings": {
+                    "accounting": "native-v1",
+                    "tokenizer": "tok-v1",
+                    "currency": "USD",
+                    "cost_basis": None,
+                    "estimated_cost_per_task": None,
+                },
+                "confidence": None,
+                "limitations": [],
+            }
+        ],
+    }
+
+    # Root expiry exceeded relative to 2026-08-30
+    rev_exp = MODULE.track_benchmark_review(
+        dataset=dataset,
+        baseline_inventory=inv,
+        candidate_inventory=inv,
+        reference_date="2026-08-30",
+    )
+    assert rev_exp["status"] == "benchmark-review-due"
+    assert len(rev_exp["reviews_due"]) == 1
+    assert rev_exp["reviews_due"][0] == {"model_id": "gemini-3.7-flash-medium", "evidence_state": "dataset-expired"}
+    assert rev_exp["applied"] is False
+    assert rev_exp["dispatch_authorized"] is False
+    assert rev_exp["model_change_authorized"] is False
+    assert rev_exp["git_authorized"] is False
+    assert rev_exp["benchmark_run_authorized"] is False
+    assert rev_exp["provider_call_authorized"] is False
+
+    # Freshness window exceeded
+    fresh_data = copy.deepcopy(dataset)
+    fresh_data["created_date"] = "2026-01-01"
+    fresh_data["freshness_window_days"] = 30
+    fresh_data["expiry_date"] = "2026-12-31"
+    fresh_data["items"][0]["observed_date"] = "2026-01-01"
+    fresh_data["items"][0]["expiry_date"] = "2026-12-31"
+    rev_stale = MODULE.track_benchmark_review(
+        dataset=fresh_data,
+        baseline_inventory=inv,
+        candidate_inventory=inv,
+        reference_date="2026-08-30",
+    )
+    assert rev_stale["status"] == "benchmark-review-due"
+    assert rev_stale["reviews_due"][0] == {"model_id": "gemini-3.7-flash-medium", "evidence_state": "stale-evidence"}
+
+    # Expired empty shipped dataset: target models resolved from current reviewed inventory without comparison fallback
+    shipped_data, _, _ = MODULE.read_json_file(SHIPPED_DATASET_PATH)
+    rev_shipped_exp = MODULE.track_benchmark_review(
+        dataset=shipped_data,
+        reference_date="2027-01-01",
+    )
+    assert rev_shipped_exp["status"] == "benchmark-review-due"
+    assert len(rev_shipped_exp["reviews_due"]) == 14
+    for it in rev_shipped_exp["reviews_due"]:
+        assert it["evidence_state"] == "dataset-expired"
+        assert set(it.keys()) == {"model_id", "evidence_state"}
+
+    # Missing or malformed reviewed inventory cannot turn an expired empty
+    # dataset into an unchanged result.
+    original_module_file = MODULE.__file__
+    with tempfile.TemporaryDirectory() as td:
+        fake_script = Path(td) / "runtime" / "scripts" / "model_intelligence.py"
+        fake_binding = fake_script.parent.parent / "compat" / "agy-models-inventory-binding.json"
+        try:
+            MODULE.__file__ = str(fake_script)
+            for malformed in (None, "{not-json"):
+                if malformed is None:
+                    fake_binding.unlink(missing_ok=True)
+                else:
+                    fake_binding.parent.mkdir(parents=True, exist_ok=True)
+                    fake_binding.write_text(malformed, encoding="utf-8")
+                try:
+                    MODULE.track_benchmark_review(
+                        dataset=shipped_data,
+                        reference_date="2027-01-01",
+                    )
+                except MODULE.ModelIntelligenceError as exc:
+                    assert str(exc) == "reviewed inventory evidence is unavailable"
+                else:
+                    return False
+        finally:
+            MODULE.__file__ = original_module_file
+
+    return True
+
+
+check("dataset root and item expiry yield review-due without execution authority", test_benchmark_review_dataset_expiry)
+
+
+# 9. Fail-Closed Validation and Adversarial Inputs
+def test_benchmark_review_fail_closed() -> bool:
+    inv = {"schema_version": 1, "status": "accepted", "slugs": ["model-a"]}
+    mat = {
+        "schema_version": 1,
+        "resolution_status": "active",
+        "adjustable_models": [{"model": "model-a", "resolutions": {"low": "model-a-low"}}],
+        "fixed_models": [],
+    }
+
+    # Missing reference date
+    try:
+        MODULE.track_benchmark_review(reference_date=None)
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Invalid calendar date
+    try:
+        MODULE.track_benchmark_review(reference_date="2026-02-31")
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Mixed source pairs (inventory binding vs matrix)
+    try:
+        MODULE.track_benchmark_review(baseline_inventory=inv, candidate_inventory=mat, reference_date="2026-08-30")
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Complete inventory and matrix pairs are ambiguous, not ordered fallbacks.
+    try:
+        MODULE.track_benchmark_review(
+            baseline_inventory=inv,
+            candidate_inventory=inv,
+            baseline_matrix=mat,
+            candidate_matrix=mat,
+            reference_date="2026-08-30",
+        )
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # A single document cannot mix inventory representations either.
+    mixed_inv = copy.deepcopy(inv)
+    mixed_inv.update({"adjustable_models": [], "fixed_models": []})
+    try:
+        MODULE.track_benchmark_review(
+            baseline_inventory=inv,
+            candidate_inventory=mixed_inv,
+            reference_date="2026-08-30",
+        )
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Duplicate slugs in inventory binding
+    dup_inv = {"schema_version": 1, "status": "accepted", "slugs": ["model-a", "model-a"]}
+    try:
+        MODULE.track_benchmark_review(baseline_inventory=inv, candidate_inventory=dup_inv, reference_date="2026-08-30")
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Hash-unfriendly rows are rejected as model-intelligence errors, never TypeError.
+    for malformed_inv in (
+        {"schema_version": 1, "slugs": [{}]},
+        {"schema_version": 1, "models": [{}]},
+    ):
+        try:
+            MODULE._extract_model_inventory(malformed_inv, "malformed_inventory")
+        except MODULE.ModelIntelligenceError:
+            pass
+        else:
+            return False
+
+    # Duplicate models in matrix
+    dup_mat = {
+        "schema_version": 1,
+        "resolution_status": "active",
+        "adjustable_models": [
+            {"model": "model-a", "resolutions": {"low": "model-a-low"}},
+            {"model": "model-a", "resolutions": {"low": "model-a-low2"}},
+        ],
+        "fixed_models": [],
+    }
+    try:
+        MODULE.track_benchmark_review(baseline_matrix=mat, candidate_matrix=dup_mat, reference_date="2026-08-30")
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Matrix rows and derived slugs share one aggregate public bound.
+    oversized_matrix = {
+        "schema_version": 1,
+        "adjustable_models": [],
+        "fixed_models": [
+            {"model_slug": f"model-{index}"}
+            for index in range(MODULE.MAX_TRACKED_MODELS + 1)
+        ],
+    }
+    try:
+        MODULE.track_benchmark_review(
+            baseline_matrix=mat,
+            candidate_matrix=oversized_matrix,
+            reference_date="2026-08-30",
+        )
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Unpaired inventory baseline/candidate
+    try:
+        MODULE.track_benchmark_review(candidate_inventory=inv, reference_date="2026-08-30")
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    try:
+        MODULE.track_benchmark_review(baseline_inventory=inv, reference_date="2026-08-30")
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Unsafe / private model slug injection
+    bad_inv = {
+        "schema_version": 1,
+        "status": "accepted",
+        "slugs": ["model\nwith-newline", "secret_token_1234567890"],
+    }
+    try:
+        MODULE.track_benchmark_review(baseline_inventory=inv, candidate_inventory=bad_inv, reference_date="2026-08-30")
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Non-dict inventory
+    try:
+        MODULE.track_benchmark_review(baseline_inventory=inv, candidate_inventory=["not-a-dict"], reference_date="2026-08-30")  # type: ignore[arg-type]
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    # Output validation enforces semantic invariants, ordering, uniqueness, and
+    # bounded string-only limitations in addition to exact top-level keys.
+    valid_output = MODULE.track_benchmark_review(
+        baseline_inventory=inv,
+        candidate_inventory={"schema_version": 1, "slugs": ["model-a", "model-b"]},
+        reference_date="2026-08-30",
+    )
+    output_mutations = []
+
+    wrong_status = copy.deepcopy(valid_output)
+    wrong_status["status"] = "unchanged"
+    output_mutations.append(wrong_status)
+
+    duplicate_review = copy.deepcopy(valid_output)
+    duplicate_review["reviews_due"].append(copy.deepcopy(duplicate_review["reviews_due"][0]))
+    output_mutations.append(duplicate_review)
+
+    extra_key = copy.deepcopy(valid_output)
+    extra_key["unexpected"] = False
+    output_mutations.append(extra_key)
+
+    invalid_limitations = copy.deepcopy(valid_output)
+    invalid_limitations["limitations"] = [{}]
+    output_mutations.append(invalid_limitations)
+
+    unordered_reviews = MODULE.track_benchmark_review(
+        baseline_inventory=inv,
+        candidate_inventory={"schema_version": 1, "slugs": ["model-a", "model-b", "model-c"]},
+        reference_date="2026-08-30",
+    )
+    unordered_reviews["reviews_due"].reverse()
+    output_mutations.append(unordered_reviews)
+
+    unbounded_reviews = copy.deepcopy(valid_output)
+    unbounded_reviews["reviews_due"] = [
+        {"model_id": f"model-{index}", "evidence_state": "inventory-added"}
+        for index in range(MODULE.MAX_TRACKED_MODELS + 1)
+    ]
+    output_mutations.append(unbounded_reviews)
+
+    for mutated_output in output_mutations:
+        try:
+            MODULE.validate_benchmark_review_output(mutated_output)
+        except MODULE.ModelIntelligenceError:
+            pass
+        else:
+            return False
+
+    return True
+
+
+check("malformed, stale, private, and oversized inputs fail closed with sanitized error output", test_benchmark_review_fail_closed)
+
+
+# 10. Explicit Maintainer Dispositions
+def test_benchmark_review_maintainer_dispositions() -> bool:
+    inv_add = {
+        "schema_version": 1,
+        "status": "accepted",
+        "slugs": ["gemini-3.7-flash-medium", "new-model"],
+    }
+    inv_base = {
+        "schema_version": 1,
+        "status": "accepted",
+        "slugs": ["gemini-3.7-flash-medium"],
+    }
+
+    # Default is null (unassigned)
+    rev_def = MODULE.track_benchmark_review(
+        baseline_inventory=inv_base, candidate_inventory=inv_add, reference_date="2026-08-30"
+    )
+    assert rev_def["maintainer_disposition"] is None
+
+    # Explicit collect
+    rev_collect = MODULE.track_benchmark_review(
+        baseline_inventory=inv_base, candidate_inventory=inv_add, reference_date="2026-08-30",
+        maintainer_disposition="collect",
+    )
+    assert rev_collect["maintainer_disposition"] == "collect"
+
+    # Explicit defer
+    rev_defer = MODULE.track_benchmark_review(
+        baseline_inventory=inv_base, candidate_inventory=inv_add, reference_date="2026-08-30",
+        maintainer_disposition="defer",
+    )
+    assert rev_defer["maintainer_disposition"] == "defer"
+
+    # Explicit not-applicable
+    rev_na = MODULE.track_benchmark_review(
+        baseline_inventory=inv_base, candidate_inventory=inv_add, reference_date="2026-08-30",
+        maintainer_disposition="not-applicable",
+    )
+    assert rev_na["maintainer_disposition"] == "not-applicable"
+
+    # Unauthorized automatic or invalid disposition rejected
+    for invalid in ("auto", "automatic", "accept", "proceed", "unreviewed", "collect; rm -rf"):
+        try:
+            MODULE.track_benchmark_review(
+                baseline_inventory=inv_base, candidate_inventory=inv_add, reference_date="2026-08-30",
+                maintainer_disposition=invalid,
+            )
+        except MODULE.ModelIntelligenceError:
+            pass
+        else:
+            return False
+
+    return True
+
+
+check("maintainer dispositions are explicit only and never chosen automatically", test_benchmark_review_maintainer_dispositions)
+
+
+# 11. Deterministic Reviewed-Inventory Workflow Integration Test
+def test_reviewed_inventory_workflow_integration() -> bool:
+    base_inv = {
+        "schema_version": 1,
+        "status": "accepted-current-inventory",
+        "agy_version": "1.1.22",
+        "reviewed_source_revision": "556846a4bb94117222f53846896c7eb0d645307e",
+        "slugs": ["gemini-3.7-flash-medium", "claude-sonnet-4-6"],
+    }
+    cand_inv = {
+        "schema_version": 1,
+        "status": "accepted-current-inventory",
+        "agy_version": "1.1.22",
+        "reviewed_source_revision": "556846a4bb94117222f53846896c7eb0d645307e",
+        "slugs": ["gemini-3.7-flash-medium", "claude-sonnet-4-6", "gemini-3.8-flash-high"],
+    }
+
+    # Step 1: Detect newly added model
+    review_due_result = MODULE.track_benchmark_review(
+        baseline_inventory=base_inv,
+        candidate_inventory=cand_inv,
+        reference_date="2026-08-30",
+    )
+    assert review_due_result["status"] == "benchmark-review-due"
+    assert review_due_result["reviews_due"] == [
+        {"model_id": "gemini-3.8-flash-high", "evidence_state": "inventory-added"}
+    ]
+    assert review_due_result["maintainer_disposition"] is None
+    assert review_due_result["applied"] is False
+    assert review_due_result["dispatch_authorized"] is False
+    assert review_due_result["git_authorized"] is False
+
+    # Step 2: Maintainer explicitly records collect disposition
+    review_collect = MODULE.track_benchmark_review(
+        baseline_inventory=base_inv,
+        candidate_inventory=cand_inv,
+        reference_date="2026-08-30",
+        maintainer_disposition="collect",
+    )
+    assert review_collect["status"] == "benchmark-review-due"
+    assert review_collect["maintainer_disposition"] == "collect"
+
+    # Step 3: Once review is complete and candidate becomes new baseline
+    post_review_result = MODULE.track_benchmark_review(
+        baseline_inventory=cand_inv,
+        candidate_inventory=copy.deepcopy(cand_inv),
+        reference_date="2026-08-30",
+    )
+    assert post_review_result["status"] == "unchanged"
+    assert post_review_result["reviews_due"] == []
+    assert post_review_result["maintainer_disposition"] is None
+
+    # Step 4: Verify disposition on unchanged state is rejected
+    try:
+        MODULE.track_benchmark_review(
+            baseline_inventory=cand_inv,
+            candidate_inventory=cand_inv,
+            reference_date="2026-08-30",
+            maintainer_disposition="collect",
+        )
+    except MODULE.ModelIntelligenceError:
+        pass
+    else:
+        return False
+
+    return True
+
+
+check("deterministic reviewed-inventory workflow integration succeeds with zero execution authority", test_reviewed_inventory_workflow_integration)
+
+
+# 12. CLI Subcommands for Benchmark Review
 def test_cli_subcommands() -> bool:
     # validate subcommand
     res_val = subprocess.run(
@@ -686,6 +1310,94 @@ def test_cli_subcommands() -> bool:
     )
     assert res_adv_no_date.returncode == 2
 
+    # benchmark-review subcommand with reference date
+    res_rev = subprocess.run(
+        [sys.executable, "-I", "-S", "-B", str(SCRIPT), "benchmark-review", f"--dataset={SHIPPED_DATASET_PATH}", "--reference-date=2026-08-25"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    assert res_rev.returncode == 0, res_rev.stderr
+    out_rev = json.loads(res_rev.stdout)
+    assert out_rev["kind"] == "agy-benchmark-review-tracker"
+    assert out_rev["status"] == "unchanged"
+    assert out_rev["maintainer_disposition"] is None
+    assert out_rev["applied"] is False
+
+    # benchmark-review without reference date must fail with exit 2
+    res_rev_no_date = subprocess.run(
+        [sys.executable, "-I", "-S", "-B", str(SCRIPT), "benchmark-review", f"--dataset={SHIPPED_DATASET_PATH}"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    assert res_rev_no_date.returncode == 2
+
+    # Malformed inventory rows fail at the sanitized CLI boundary without a
+    # Python traceback, including the legacy models-list representation.
+    with tempfile.TemporaryDirectory() as td:
+        base_inventory = Path(td) / "base.json"
+        candidate_inventory = Path(td) / "candidate.json"
+        for baseline_data, candidate_data in (
+            (
+                {"schema_version": 1, "slugs": ["model-a"]},
+                {"schema_version": 1, "slugs": [{}]},
+            ),
+            (
+                {"models": ["model-a"]},
+                {"models": [{}]},
+            ),
+        ):
+            base_inventory.write_text(json.dumps(baseline_data), encoding="utf-8")
+            candidate_inventory.write_text(json.dumps(candidate_data), encoding="utf-8")
+            malformed_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(SCRIPT),
+                    "benchmark-review",
+                    f"--baseline-inventory={base_inventory}",
+                    f"--candidate-inventory={candidate_inventory}",
+                    "--reference-date=2026-08-30",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            assert malformed_result.returncode == 1
+            assert malformed_result.stdout == b""
+            assert malformed_result.stderr == b"model-intelligence benchmark-review error: operation failed closed\n"
+            assert b"Traceback" not in malformed_result.stderr
+
+        private_output = Path(td) / "private-sensitive-parent" / "missing" / "review.json"
+        output_failure = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                str(SCRIPT),
+                "benchmark-review",
+                f"--dataset={SHIPPED_DATASET_PATH}",
+                "--reference-date=2026-08-25",
+                f"--out={private_output}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        assert output_failure.returncode == 1
+        assert output_failure.stdout == b""
+        assert output_failure.stderr == b"model-intelligence benchmark-review error: operation failed closed\n"
+        assert b"Traceback" not in output_failure.stderr
+        assert os.fsencode(private_output) not in output_failure.stderr
+        assert not private_output.exists()
+
+    # track-review alias is removed and must be rejected as unknown subcommand (exit 2)
+    res_alias = subprocess.run(
+        [sys.executable, "-I", "-S", "-B", str(SCRIPT), "track-review", f"--dataset={SHIPPED_DATASET_PATH}", "--reference-date=2026-08-25"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    assert res_alias.returncode == 2
+
     # rejected arguments
     res_bad = subprocess.run(
         [sys.executable, "-I", "-S", "-B", str(SCRIPT), "--invalid-arg"],
@@ -696,7 +1408,7 @@ def test_cli_subcommands() -> bool:
     return True
 
 
-check("CLI interface supports validate, advise, import-study, and enforces reference date", test_cli_subcommands)
+check("CLI interface supports validate, advise, import-study, benchmark-review, and enforces reference date", test_cli_subcommands)
 
 print()
 print(f"PASSED: {passed} tests")

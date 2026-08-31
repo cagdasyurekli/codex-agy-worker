@@ -36,7 +36,7 @@ requesting review:
 
 It is fail-fast, requires no network or provider call, does not intentionally inspect
 account-HOME contents, externalizes temporary bytecode, and runs the static checks plus
-all forty-seven offline stages. Ambient local tools may still consult ordinary user
+all forty-two offline stages. Ambient local tools may still consult ordinary user
 configuration. In GitHub Actions, the suite is partitioned across four fail-closed shards
 (`dispatcher`, `dispatcher-remediation`, `other-a`, `other-b`) and validated by the required aggregate
 `test` check; lower CI wall time from parallelization does not mean lower total compute, provider usage,
@@ -67,28 +67,23 @@ stable-candidate full gate:
 /usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py
 /usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py
 /usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py
-/usr/bin/python3 -I -S -B tests/test-version-recovery-1-1-12-runner.py
 /usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py
 /usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-runner.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-profile.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-profile.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-12-runner.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-version-evidence.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-profile.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-16-runner.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-version-evidence.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-profile.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-runner.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-reprofile.py
 /usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-classifier.py
-/usr/bin/python3 -I -S -B tests/test-agy-1-1-16-activation.py
 /usr/bin/python3 -I -S -B tests/test-agy-1-1-22-activation.py
 ./tests/test-reporting.sh
 /usr/bin/python3 -I -S -B tests/test-feedback-triage.py
 /usr/bin/python3 -I -S -B tests/test-model-intelligence.py
+/usr/bin/python3 -I -S -B tests/test-model-evidence-campaign.py
 /usr/bin/python3 -I -S -B tests/test-codex-usage-report.py
 /usr/bin/python3 -I -S -B tests/test-delegation-policy.py
+/usr/bin/python3 -I -S -B tests/test-workflow.py
 ./tests/test-packaging.sh
 ./tests/test-doctor.sh
 /usr/bin/python3 -I -S -B tests/test-conformance.py

@@ -16,21 +16,26 @@ configuration.
 ## When data can leave the machine
 
 When a user explicitly dispatches a job, `agy-worker.sh` passes the task prompt to the
-locally installed Antigravity CLI (`agy`). `agy` is an external tool backed by
-Google/Gemini services. Treat the entire disposable worktree passed as `--workdir` as
-worker-readable and potentially transmissible to that external service under its own
-terms and privacy policy, even when the task requests edits to only a few paths.
+locally installed Antigravity CLI (`agy`), an external tool backed by Google/Gemini
+services. Without `--provider-scope`, treat the entire disposable `--workdir` as
+worker-readable and potentially transmissible to that service, even when the task
+names only a few paths. Prompt denylist instructions, `qa-gate --only`, `--allow`, and
+`--add-dir` do not narrow that default read boundary.
 
-The skill requires explicit approval for that whole-worktree transmission before the
-first dispatch unless it was already approved. A narrower approval is valid only when
-the worktree contains only approved content. Prompt denylist instructions describe
-requested writes, while `qa-gate --only` constrains candidate changed paths after
-dispatch. `--allow` merely exempts matching undeclared artifacts from rejection; it
-does not narrow reads or writes. None prevent reads or transmission, and `--add-dir`
-does not narrow the `--workdir` read boundary. Before every initial, resumed, continued, or restarted
-provider attempt, credentials, secrets, private keys, regulated or user-denied data,
-and unrelated private files must be absent from the entire worktree. Telling the
-worker not to read a present file is not a privacy control.
+Optional `--provider-scope FILE --approve-transmission-sha SHA256` binds exact reviewed
+read entries, their selected-content digest, and a write subset, then copies only
+selected entries into a fresh owner-private mode-`0700` Gitless provider cwd. The
+controller still locally enumerates and validates the complete worktree path/kind
+surface and scope entries before staging. Scoped mode reduces provider-visible content
+but is not filesystem, network, `PATH`, `HOME`, or same-UID isolation and retains the
+documented local-owner and mutation-race residuals. Its approval grants no provider
+execution, Git action, driver acceptance, or publication.
+
+Before each initial, resumed, continued, or restarted provider attempt, approve the
+exact mode and transmission digest. Credentials, secrets, private keys, regulated or
+user-denied data, and unrelated private files must be absent from the entire default
+worktree transmission or every entry selected for scoped staging. Telling the worker
+not to read approved content is not a privacy control.
 
 The project does not automatically submit GitHub issues, push code, merge branches,
 or publish releases. Those are separate actions with separate approval boundaries.
@@ -136,14 +141,15 @@ logs, credentials, provider/account data, timestamps, host identity, and cost cl
 
 CI shard execution (`scripts/ci_sharding.py` and `scripts/ci-offline.sh --shard`) publishes
 one mode-`0600`, no-overwrite shard receipt to a mode-`0700` local directory. It binds
-only the schema version, kind (`agy-worker-ci-shard-receipt`), exact lowercase Git HEAD commit SHA,
+only the schema version (currently v2), kind (`agy-worker-ci-shard-receipt`), exact lowercase Git HEAD commit SHA,
 deterministic canonical stage inventory digest, shard ID, expected stage IDs, observed stage IDs,
-outcome, and fixed unsigned integrity statement. It strictly excludes repository paths, commands,
+per-stage monotonic durations, outcome, and fixed unsigned integrity statement. It strictly excludes repository paths, commands,
 environment values, logs, credentials, provider/account data, timestamps, host identity, and cost claims.
 GitHub Actions uploads these deliberately privacy-safe receipts as one-day workflow artifacts;
 uploaded copies inherit repository Actions access rather than local filesystem ownership.
 The aggregate `test` check verifies all four receipts within the same workflow run and fails closed
-on missing, malformed, duplicate, or mismatched evidence.
+on missing, malformed, duplicate, version-stale, or mismatched evidence. Standalone validation retains
+read-only compatibility with the smaller historical v1 receipt and its stage-identity digest.
 
 `job.sh` stores one explicitly named mode-`0600` lifecycle state file in an
 owner-private external directory. It contains canonical absolute repository,

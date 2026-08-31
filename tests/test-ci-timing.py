@@ -17,6 +17,10 @@ from typing import Any, Callable
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS_DIR = ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
 SCRIPT = ROOT / "scripts" / "ci_timing.py"
 SPEC = importlib.util.spec_from_file_location("ci_timing_tested", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -44,7 +48,8 @@ def check(label: str, test: Callable[[], bool] | bool) -> None:
 
 def valid_report(outcome: str = "gate-passed", failed_index: int = 2) -> dict[str, Any]:
     suites = []
-    for index, (stage_id, _) in enumerate(MODULE.STAGES):
+    for index, stage in enumerate(MODULE.STAGES):
+        stage_id = stage.id
         if outcome == "gate-passed" or index < failed_index:
             status_value, duration = "passed", 0.25
         elif index == failed_index:
@@ -76,9 +81,9 @@ def rejected(report: dict[str, Any]) -> bool:
     return False
 
 
-check("inventory has 47 ordered unique stage IDs", len(MODULE.STAGES) == 47 and len({x[0] for x in MODULE.STAGES}) == 47)
+check("inventory has 42 ordered unique stage IDs", len(MODULE.STAGES) == 42 and len({s.id for s in MODULE.STAGES}) == 42)
 check("inventory digest is lowercase SHA-256", MODULE.SHA256_RE.fullmatch(MODULE.inventory_digest()) is not None)
-check("canonical shell announcement inventory matches observer", lambda: (MODULE.validate_gate_inventory(ROOT / "scripts" / "ci-offline.sh") or True))
+check("canonical stage announcement inventory matches observer", lambda: (MODULE.validate_stage_inventory(ROOT / "scripts" / "ci_stages.py") or True))
 
 passed_report = valid_report()
 failed_report = valid_report("failed", 3)
@@ -119,11 +124,11 @@ check("non-finite total duration is rejected", rejected(candidate))
 
 def _inventory_mutation_rejected() -> bool:
     with tempfile.TemporaryDirectory() as temp_dir:
-        target = Path(temp_dir) / "gate.sh"
-        text = (ROOT / "scripts" / "ci-offline.sh").read_text(encoding="utf-8")
-        target.write_text(text.replace("announce 'shell syntax'", "announce 'changed syntax'"), encoding="utf-8")
+        target = Path(temp_dir) / "stages.py"
+        text = (ROOT / "scripts" / "ci_stages.py").read_text(encoding="utf-8")
+        target.write_text(text.replace('"shell syntax"', '"changed syntax"'), encoding="utf-8")
         try:
-            MODULE.validate_gate_inventory(target)
+                MODULE.validate_stage_inventory(target)
         except MODULE.TimingError:
             return True
     return False
@@ -138,7 +143,7 @@ def _canonical_nan_rejected() -> bool:
 
 
 check("canonical JSON refuses NaN", _canonical_nan_rejected)
-check("changed shell announcement inventory is rejected", _inventory_mutation_rejected)
+check("changed stage announcement inventory is rejected", _inventory_mutation_rejected)
 
 
 class FakeClock:
@@ -156,8 +161,9 @@ NONCE = "d" * 64
 def observed(return_code: int, count: int, spoof_stdout: bool = False) -> tuple[int, dict[str, Any]]:
     lines: list[bytes] = []
     if spoof_stdout:
-        lines.append(f"==> {MODULE.STAGES[1][1]}\n".encode())
-    for _, announce in MODULE.STAGES[:count]:
+        lines.append(f"==> {MODULE.STAGES[1].announcement}\n".encode())
+    for stage in MODULE.STAGES[:count]:
+        announce = stage.announcement
         lines.append(f"==> {announce}\n".encode())
         lines.append(f"@@agy-worker-ci-timing:{NONCE}:{announce}\n".encode())
     raw = b"".join(lines)
@@ -186,7 +192,7 @@ check(
 
 
 def _duplicate_control_rejected() -> bool:
-    announce = MODULE.STAGES[0][1]
+    announce = MODULE.STAGES[0].announcement
     raw = (
         f"@@agy-worker-ci-timing:{NONCE}:{announce}\n"
         f"@@agy-worker-ci-timing:{NONCE}:{announce}\n"

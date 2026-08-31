@@ -29,10 +29,14 @@ codex plugin add codex-agy-worker@codex-agy-worker
 
 Start a new Codex session after installation. This enables the local plugin only; it
 does not authorize a provider call or transmission of repository content. Before
-dispatch, the skill still requires approval for the entire disposable worktree sent
-through `agy` to Google/Gemini unless that transmission was already approved. Narrower
-approval is valid only when the worktree contains only approved content; secrets,
-denied paths, and unrelated private files must be absent before every provider attempt.
+dispatch, the skill still requires approval for the exact transmission mode and
+content. Default mode may send the entire disposable worktree through `agy` to
+Google/Gemini. Optional `--provider-scope` binds exact reviewed read/write entries and
+selected content, then stages only selected entries in a fresh owner-private
+mode-`0700` Gitless provider cwd. The controller still validates local worktree paths,
+and scoped staging is not a sandbox. Its approval grants no provider execution, Git
+action, acceptance, or publication. Secrets, denied paths, and unrelated private files
+must be absent from all content approved for either mode.
 
 Validate the package manifest before a release-oriented review with the installed
 plugin-creator skill's `scripts/validate_plugin.py`, passing this repository root as

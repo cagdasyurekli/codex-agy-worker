@@ -6,7 +6,396 @@ from __future__ import annotations
 def run(context: dict[str, object]) -> None:
     """Run the retained tail with the canonical suite's exact context."""
     globals().update(context)
-    def normal_standard_and_linked_worktrees_create_bound_v10_state() -> None:
+    def linked_preview_authorizes_v11_initial_and_prelaunch_binding() -> None:
+        """The public preview digest is the exact V11 launch authorization."""
+        fixture = root / "linked-preview-v11"; fixture.mkdir()
+        source_repo = fixture / "source"; source_repo.mkdir()
+        linked = fixture / "linked"
+        try:
+            subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+            subprocess.run(["git", "-C", str(source_repo), "config", "user.email", "fixture@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(source_repo), "config", "user.name", "Fixture"], check=True)
+            (source_repo / "selected.txt").write_text("selected\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source_repo), "add", "selected.txt"], check=True)
+            subprocess.run(["git", "-C", str(source_repo), "commit", "-qm", "base"], check=True)
+            subprocess.run(
+                ["git", "-C", str(source_repo), "worktree", "add", "-q", "-b", "linked-preview-v11", str(linked)],
+                check=True,
+            )
+            linked = linked.resolve()
+            scope_path = fixture / "scope.json"
+            scope = {
+                "schema_version": 1, "kind": "agy-worker-provider-scope",
+                "read": [{"path": "selected.txt", "kind": "file"}],
+                "write": [{"path": "selected.txt", "kind": "file"}],
+            }
+            scope_raw = json.dumps(scope, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
+            scope_path.write_bytes(scope_raw); scope_path.chmod(0o600)
+            preview = subprocess.run(
+                [
+                    str(ROOT / "skills/agy-worker/runtime/agy-worker.sh"),
+                    "transmission-preview", "--workdir", str(linked),
+                    "--provider-scope", str(scope_path), "--format", "json",
+                ],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            approved = json.loads(preview.stdout)["transmission_sha256"]
+            schema = fixture / "provider.json"; provider_schema(schema)
+            scope_info = scope_path.stat()
+            command = {
+                "schema_version": 6, "kind": "agy-worker-dispatch-command", "job_id": "linked-preview-v11",
+                "workdir": str(linked), "argv": ["agy", "--json-schema", str(schema), "--print", "task"],
+                "agy_version": "1.1.22", "agy_version_observed": True,
+                "idle_seconds": 2, "hard_seconds": 3, "max_seconds": 20, "notice_seconds": 3,
+                "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+                "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+                "selection_path": None, "selection_sha256": None, "selection_identity": None,
+                "provider_env": [], "provider_scope_path": str(scope_path),
+                "provider_scope_sha256": hashlib.sha256(scope_raw).hexdigest(),
+                "provider_scope_identity": list(MODULE._identity(scope_info)),
+                "approved_transmission_sha256": approved,
+            }
+            job = fixture / "job"; job.mkdir(mode=0o700)
+            state = MODULE.initial_state(
+                command, "initial", 1, command_sha="0" * 64,
+                command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None,
+                schema_bindings=MODULE._schema_bindings(command),
+            )
+            assert state["transmission_sha256"] == approved
+            rebound_command, rebound_state = MODULE._bound_lifecycle_inputs(job, state, command)
+            assert rebound_command is command and rebound_state is state
+
+            mismatched = dict(command); mismatched["approved_transmission_sha256"] = "0" * 64
+            try:
+                MODULE.initial_state(
+                    mismatched, "initial", 1, command_sha="0" * 64,
+                    command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None,
+                    schema_bindings=MODULE._schema_bindings(mismatched),
+                )
+            except MODULE.DispatchError as exc:
+                assert str(exc) == "approved transmission SHA does not match current worktree scope"
+            else:
+                raise AssertionError("V11 initial state accepted a mismatched preview approval")
+            drifted = dict(state); drifted["transmission_sha256"] = "0" * 64
+            try:
+                MODULE._bound_lifecycle_inputs(job, drifted, command)
+            except MODULE.DispatchError as exc:
+                assert str(exc) == "worktree scope transmission binding changed"
+            else:
+                raise AssertionError("prelaunch lifecycle accepted a mismatched transmission binding")
+        finally:
+            if linked.exists():
+                subprocess.run(["git", "-C", str(source_repo), "worktree", "remove", "--force", str(linked)], check=True)
+            shutil.rmtree(fixture)
+
+    check("linked preview SHA authorizes exact V11 initial and prelaunch scope binding", linked_preview_authorizes_v11_initial_and_prelaunch_binding)
+
+    def materialization_failure_removes_partial_private_stage() -> None:
+        """A mid-copy failure cannot leave selected bytes in a partial stage."""
+        fixture = root / "materialize-mid-write"; fixture.mkdir()
+        source = fixture / "source"; source.mkdir()
+        (source / "selected.txt").write_bytes(b"selected-private-bytes\n")
+        stage = fixture / "stage"
+        scope = {
+            "schema_version": 1, "kind": "agy-worker-provider-scope",
+            "read": [{"path": "selected.txt", "kind": "file"}],
+            "write": [{"path": "selected.txt", "kind": "file"}],
+        }
+        selected = MODULE._build_selected_content_manifest(source, scope)
+        original_write = MODULE.os.write
+        writes = 0
+        def fail_after_partial_write(descriptor, payload):
+            nonlocal writes
+            writes += 1
+            if writes == 1:
+                return original_write(descriptor, bytes(payload[:3]))
+            raise OSError("injected mid-write failure")
+        MODULE.os.write = fail_after_partial_write
+        try:
+            try:
+                MODULE._materialize_stage(source, stage, scope, selected)
+            except OSError as exc:
+                assert str(exc) == "injected mid-write failure"
+            else:
+                raise AssertionError("materialization accepted an injected mid-write failure")
+        finally:
+            MODULE.os.write = original_write
+        assert writes == 2
+        assert not stage.exists()
+        assert list(fixture.rglob("selected-private-bytes")) == []
+        shutil.rmtree(fixture)
+
+    check("mid-write materialization failure removes the partial private stage", materialization_failure_removes_partial_private_stage)
+
+    def pre_chmod_failure_removes_bound_stage() -> None:
+        """The first post-identity chmod failure still removes the exact stage."""
+        fixture = root / "materialize-pre-chmod"; fixture.mkdir()
+        source = fixture / "source"; source.mkdir()
+        (source / "selected.txt").write_bytes(b"selected-private-bytes\n")
+        stage = fixture / "stage"
+        scope = {
+            "schema_version": 1, "kind": "agy-worker-provider-scope",
+            "read": [{"path": "selected.txt", "kind": "file"}],
+            "write": [{"path": "selected.txt", "kind": "file"}],
+        }
+        selected = MODULE._build_selected_content_manifest(source, scope)
+        original_fchmod = MODULE.os.fchmod
+        def fail_stage_chmod(_descriptor, _mode):
+            raise OSError("injected pre-chmod failure")
+        MODULE.os.fchmod = fail_stage_chmod
+        try:
+            try:
+                MODULE._materialize_stage(source, stage, scope, selected)
+            except OSError as exc:
+                assert str(exc) == "injected pre-chmod failure"
+            else:
+                raise AssertionError("materialization accepted an injected pre-chmod failure")
+        finally:
+            MODULE.os.fchmod = original_fchmod
+        assert not stage.exists()
+        shutil.rmtree(fixture)
+
+    check("pre-chmod failure removes only the bound own-created stage", pre_chmod_failure_removes_bound_stage)
+
+    def pre_lstat_failure_and_replacement_are_fail_closed() -> None:
+        """A bound stage is cleaned, but a replacement at its path is preserved."""
+        fixture = root / "materialize-pre-lstat"; fixture.mkdir()
+        source = fixture / "source"; source.mkdir()
+        (source / "selected.txt").write_bytes(b"selected-private-bytes\n")
+        scope = {
+            "schema_version": 1, "kind": "agy-worker-provider-scope",
+            "read": [{"path": "selected.txt", "kind": "file"}],
+            "write": [{"path": "selected.txt", "kind": "file"}],
+        }
+        selected = MODULE._build_selected_content_manifest(source, scope)
+        original_lstat = MODULE.os.lstat
+
+        stage = fixture / "stage-lstat-failure"
+        failed_once = False
+        def fail_first_stage_lstat(path):
+            nonlocal failed_once
+            if str(path) == str(stage) and not failed_once:
+                failed_once = True
+                raise OSError("injected pre-lstat failure")
+            return original_lstat(path)
+        MODULE.os.lstat = fail_first_stage_lstat
+        try:
+            try:
+                MODULE._materialize_stage(source, stage, scope, selected)
+            except OSError as exc:
+                assert str(exc) == "injected pre-lstat failure"
+            else:
+                raise AssertionError("materialization accepted an injected pre-lstat failure")
+        finally:
+            MODULE.os.lstat = original_lstat
+        assert failed_once and not stage.exists()
+
+        stage = fixture / "stage-replaced"
+        displaced = fixture / "displaced-own-stage"
+        replacement_created = False
+        def replace_before_identity_validation(path):
+            nonlocal replacement_created
+            if str(path) == str(stage) and not replacement_created:
+                replacement_created = True
+                os.rename(stage, displaced)
+                stage.mkdir(mode=0o700)
+                (stage / "user-owned.txt").write_text("preserve\n", encoding="utf-8")
+            return original_lstat(path)
+        MODULE.os.lstat = replace_before_identity_validation
+        try:
+            try:
+                MODULE._materialize_stage(source, stage, scope, selected)
+            except MODULE.DispatchError as exc:
+                assert str(exc) == "stage materialization failed and cleanup is uncertain"
+                assert isinstance(exc.__cause__, MODULE.DispatchError)
+                assert str(exc.__cause__) == "stage directory identity changed; cleanup refused"
+            else:
+                raise AssertionError("materialization removed or accepted a replacement stage path")
+        finally:
+            MODULE.os.lstat = original_lstat
+        assert replacement_created
+        assert (stage / "user-owned.txt").read_text(encoding="utf-8") == "preserve\n"
+        assert displaced.is_dir()
+        shutil.rmtree(fixture)
+
+    check("pre-lstat cleanup is exact and preserves a replacement path", pre_lstat_failure_and_replacement_are_fail_closed)
+
+    def cleanup_failure_is_visible_and_fail_closed() -> None:
+        """An uncertain cleanup cannot be hidden behind the materialization error."""
+        fixture = root / "materialize-cleanup-failure"; fixture.mkdir()
+        source = fixture / "source"; source.mkdir()
+        (source / "selected.txt").write_bytes(b"selected-private-bytes\n")
+        stage = fixture / "stage"
+        scope = {
+            "schema_version": 1, "kind": "agy-worker-provider-scope",
+            "read": [{"path": "selected.txt", "kind": "file"}],
+            "write": [{"path": "selected.txt", "kind": "file"}],
+        }
+        selected = MODULE._build_selected_content_manifest(source, scope)
+        original_fchmod = MODULE.os.fchmod
+        original_cleanup = MODULE._cleanup_stage
+        def fail_stage_chmod(_descriptor, _mode):
+            raise OSError("injected pre-chmod failure")
+        def fail_cleanup(_stage, _identity):
+            raise OSError("injected cleanup failure")
+        MODULE.os.fchmod = fail_stage_chmod
+        MODULE._cleanup_stage = fail_cleanup
+        try:
+            try:
+                MODULE._materialize_stage(source, stage, scope, selected)
+            except MODULE.DispatchError as exc:
+                assert str(exc) == "stage materialization failed and cleanup is uncertain"
+                assert isinstance(exc.__cause__, OSError)
+                assert str(exc.__cause__) == "injected cleanup failure"
+            else:
+                raise AssertionError("materialization hid an injected cleanup failure")
+        finally:
+            MODULE.os.fchmod = original_fchmod
+            MODULE._cleanup_stage = original_cleanup
+        assert stage.is_dir()
+        shutil.rmtree(fixture)
+
+    check("cleanup failure is visible and fail closed", cleanup_failure_is_visible_and_fail_closed)
+
+    def narrow_stage_authorization_and_reconciliation_are_end_to_end() -> None:
+        """Authorized stage edits reconcile; an unselected write fails closed."""
+        fixture = root / "narrow-stage-reconcile"; fixture.mkdir()
+        source = fixture / "source"; source.mkdir()
+        (source / "selected.txt").write_text("before\n", encoding="utf-8")
+        stage = fixture / "stage"
+        job = fixture / "job"; job.mkdir(mode=0o700)
+        scope = {
+            "schema_version": 1, "kind": "agy-worker-provider-scope",
+            "read": [{"path": "selected.txt", "kind": "file"}],
+            "write": [{"path": "selected.txt", "kind": "file"}],
+        }
+        selected = MODULE._build_selected_content_manifest(source, scope)
+        stage_identity, _stage_sha = MODULE._materialize_stage(source, stage, scope, selected)
+        (stage / "selected.txt").write_text("after\n", encoding="utf-8")
+        (stage / "unauthorized.txt").write_text("outside scope\n", encoding="utf-8")
+        try:
+            MODULE._scan_stage_mutations(stage, scope, selected)
+        except MODULE.DispatchError as exc:
+            assert str(exc) == "unauthorized creation of path: unauthorized.txt"
+        else:
+            raise AssertionError("stage mutation scan accepted an unselected write")
+        (stage / "unauthorized.txt").unlink()
+        operations, _operation_sha = MODULE._scan_stage_mutations(stage, scope, selected)
+        assert [item["op"] for item in operations] == ["replace"]
+        reconciliation_sha = MODULE._reconcile_stage_to_source(source, stage, operations, job)
+        assert MODULE.SHA_RE.fullmatch(reconciliation_sha)
+        assert (source / "selected.txt").read_text(encoding="utf-8") == "after\n"
+        assert not list(job.iterdir())
+        MODULE._cleanup_stage(stage, stage_identity)
+        assert not stage.exists()
+        shutil.rmtree(fixture)
+
+    check("narrow stage rejects unselected writes and reconciles an authorized replacement", narrow_stage_authorization_and_reconciliation_are_end_to_end)
+
+    def deleted_nested_directories_are_restored_after_later_failure() -> None:
+        """Deleting an empty child before failure cannot produce a false rollback."""
+        fixture = root / "nested-directory-rollback"; fixture.mkdir()
+        source = fixture / "source"; source.mkdir()
+        nested = source / "empty" / "inner"; nested.mkdir(parents=True)
+        (source / "selected.txt").write_text("before rollback\n", encoding="utf-8")
+        (source / "empty").chmod(0o750); nested.chmod(0o710)
+        stage = fixture / "stage"
+        job = fixture / "job"; job.mkdir(mode=0o700)
+        scope = {
+            "schema_version": 1, "kind": "agy-worker-provider-scope",
+            "read": [
+                {"path": "empty", "kind": "tree"},
+                {"path": "selected.txt", "kind": "file"},
+            ],
+            "write": [
+                {"path": "empty", "kind": "tree"},
+                {"path": "selected.txt", "kind": "file"},
+            ],
+        }
+        selected = MODULE._build_selected_content_manifest(source, scope)
+        MODULE._materialize_stage(source, stage, scope, selected)
+        (stage / "selected.txt").write_text("must roll back\n", encoding="utf-8")
+        (stage / "empty" / "inner").rmdir(); (stage / "empty").rmdir()
+        operations, _operation_sha = MODULE._scan_stage_mutations(stage, scope, selected)
+        assert [item["path"] for item in operations] == ["selected.txt", "empty/inner", "empty"]
+        original_rmdir = MODULE.os.rmdir
+        injected = False
+        def fail_after_child_delete(name, *args, **kwargs):
+            nonlocal injected
+            result = original_rmdir(name, *args, **kwargs)
+            if name == "inner" and not injected:
+                injected = True
+                raise OSError("injected after child directory deletion")
+            return result
+        MODULE.os.rmdir = fail_after_child_delete
+        try:
+            try:
+                MODULE._reconcile_stage_to_source(source, stage, operations, job)
+            except MODULE.DispatchError as exc:
+                assert str(exc).startswith("reconciliation failed and was rolled back:")
+            else:
+                raise AssertionError("injected post-delete failure was accepted")
+        finally:
+            MODULE.os.rmdir = original_rmdir
+        assert injected and (source / "empty" / "inner").is_dir()
+        assert stat.S_IMODE((source / "empty").stat().st_mode) == 0o750
+        assert stat.S_IMODE((source / "empty" / "inner").stat().st_mode) == 0o710
+        assert (source / "selected.txt").read_text(encoding="utf-8") == "before rollback\n"
+        assert not list(job.iterdir())
+        assert MODULE._recover_reconciliation(source, job) is False
+        shutil.rmtree(fixture)
+
+    check("later failure recreates deleted nested empty directories before clearing the ledger", deleted_nested_directories_are_restored_after_later_failure)
+
+    def interrupted_empty_directory_recovery_is_durable_and_idempotent() -> None:
+        """A crash after rmdir leaves a bound ledger that one recovery consumes."""
+        fixture = root / "interrupted-directory-recovery"; fixture.mkdir()
+        source = fixture / "source"; source.mkdir()
+        empty = source / "empty"; empty.mkdir(); empty.chmod(0o751)
+        stage = fixture / "stage"
+        job = fixture / "job"; job.mkdir(mode=0o700)
+        scope = {
+            "schema_version": 1, "kind": "agy-worker-provider-scope",
+            "read": [{"path": "empty", "kind": "tree"}],
+            "write": [{"path": "empty", "kind": "tree"}],
+        }
+        selected = MODULE._build_selected_content_manifest(source, scope)
+        MODULE._materialize_stage(source, stage, scope, selected)
+        (stage / "empty").rmdir()
+        operations, _operation_sha = MODULE._scan_stage_mutations(stage, scope, selected)
+        original_rmdir = MODULE.os.rmdir
+        interrupted = False
+        def interrupt_after_delete(name, *args, **kwargs):
+            nonlocal interrupted
+            result = original_rmdir(name, *args, **kwargs)
+            if name == "empty" and not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt("injected reconciliation interruption")
+            return result
+        MODULE.os.rmdir = interrupt_after_delete
+        try:
+            try:
+                MODULE._reconcile_stage_to_source(source, stage, operations, job)
+            except KeyboardInterrupt:
+                pass
+            else:
+                raise AssertionError("injected interruption did not escape reconciliation")
+        finally:
+            MODULE.os.rmdir = original_rmdir
+        assert interrupted and not empty.exists()
+        marker = json.loads((job / "reconciliation-in-progress.json").read_text(encoding="utf-8"))
+        assert marker["schema_version"] == 1
+        assert marker["directory_backups"]["empty"]["mode"] == 0o751
+        assert len(marker["directory_backups"]["empty"]["prior_identity"]) == 5
+        assert MODULE._recover_reconciliation(source, job) is True
+        assert empty.is_dir() and stat.S_IMODE(empty.stat().st_mode) == 0o751
+        assert not list(job.iterdir())
+        assert MODULE._recover_reconciliation(source, job) is False
+        shutil.rmtree(fixture)
+
+    check("interrupted empty-directory reconciliation recovers durably and idempotently", interrupted_empty_directory_recovery_is_durable_and_idempotent)
+
+    def normal_standard_and_linked_worktrees_create_bound_v11_state() -> None:
         fixture = root / "bound-positive-controls"; fixture.mkdir()
         source_repo = fixture / "source"; source_repo.mkdir()
         linked = fixture / "linked-worktree"
@@ -37,7 +426,7 @@ def run(context: dict[str, object]) -> None:
                 MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
                 state, _state_sha = MODULE.create_state(job, "initial", resume=False)
                 persisted = json.loads((job / MODULE.STATE_NAME).read_text(encoding="utf-8"))
-                assert state["schema_version"] == persisted["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 10, label
+                assert state["schema_version"] == persisted["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 11, label
                 assert state["worktree_snapshot_algorithm"] == MODULE.CURRENT_WORKTREE_SNAPSHOT_ALGORITHM, label
                 assert state["worktree_baseline"] is not None, label
                 assert state["worktree_root_identity"] is not None, label
@@ -113,7 +502,7 @@ def run(context: dict[str, object]) -> None:
 
     # Keep the established current dispatch-state case as the inventory owner: this
     # is its plumbing-alias integration branch, not a new suite count.
-    check("normal standard and linked worktrees persist a bound V10 dispatch state", normal_standard_and_linked_worktrees_create_bound_v10_state)
+    check("normal standard and linked worktrees persist a bound V11 dispatch state", normal_standard_and_linked_worktrees_create_bound_v11_state)
 
     def extracted_worktree_facade_preserves_all_signatures_and_patch_seams() -> None:
         """The split keeps the old module surface and its intentional test seams."""
@@ -773,6 +1162,8 @@ def run(context: dict[str, object]) -> None:
         })
         state.pop("worktree_snapshot_algorithm")
         state.pop("provider_terminal_status")
+        for field in MODULE.STATE_V11_FIELDS:
+            state.pop(field)
         root_identity = state.pop("worktree_root_identity")
         legacy_raw, legacy_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         loaded, _raw, loaded_sha = MODULE.load_state(job)
@@ -859,7 +1250,7 @@ def run(context: dict[str, object]) -> None:
     check("v6 candidate readback retains its legacy digest then atomically migrates to a fresh v9 semantic binding", v6_snapshot_readback_uses_legacy_digest_and_rejects_semantic_substitution)
 
     def v5_through_v9_status_parity_and_migration_are_exact() -> None:
-        """Legacy status is read-only; eligible writes acquire one V10 binding."""
+        """Legacy status is read-only; eligible writes acquire one V11 binding."""
         for version in (5, 6, 7, 8, 9):
             job, state, _sha, _envelope = current_candidate_fixture(
                 f"v{version}-migration", selection=version == 9,
@@ -887,6 +1278,8 @@ def run(context: dict[str, object]) -> None:
                 state.pop("worktree_root_identity")
             if version < MODULE.CURRENT_STATE_SCHEMA:
                 state.pop("provider_terminal_status")
+                for field in MODULE.STATE_V11_FIELDS:
+                    state.pop(field)
             _raw, legacy_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             loaded, _raw, loaded_sha = MODULE.load_state(job)
             assert loaded_sha == legacy_sha and loaded["schema_version"] == version
@@ -912,7 +1305,7 @@ def run(context: dict[str, object]) -> None:
             assert queued["worktree_root_identity"] == MODULE._dispatch_root_identity(command["workdir"])
             assert queued["provider_terminal_status"] == "unknown"
 
-        # A V9 state cannot acquire V10 authority from a different selection
+        # A V9 state cannot acquire V11 authority from a different selection
         # binding, even when the command, root, schemas, and worktree remain valid.
         _job, v9_state, _sha, _envelope = current_candidate_fixture(
             "v9-selection-drift", selection=True,
@@ -920,6 +1313,8 @@ def run(context: dict[str, object]) -> None:
         v9_command = json.loads((_job / MODULE.COMMAND_NAME).read_text(encoding="utf-8"))
         v9_state["schema_version"] = 9
         v9_state.pop("provider_terminal_status")
+        for field in MODULE.STATE_V11_FIELDS:
+            v9_state.pop(field)
         v9_state["selection_sha256"] = "0" * 64
         MODULE.validate_state(v9_state)
         try:
@@ -927,7 +1322,7 @@ def run(context: dict[str, object]) -> None:
         except MODULE.DispatchError as exc:
             assert str(exc) == "dispatch selection binding changed"
         else:
-            raise AssertionError("V9 selection drift acquired V10 authority")
+            raise AssertionError("V9 selection drift acquired V11 authority")
 
     def v1_candidate_status_is_read_only_and_all_mutations_fail_without_writes() -> None:
         """V1 result evidence remains readable but has no lifecycle authority."""
@@ -948,7 +1343,7 @@ def run(context: dict[str, object]) -> None:
                     workflow=workflow, linked=workflow == "project",
                 )
                 state["schema_version"] = version
-                removed = {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS}
+                removed = {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}
                 if version == 1:
                     removed.update(MODULE.STATE_PROJECT_FIELDS)
                     removed.update({"provider_retry_after_seconds", "provider_retry_observed_epoch"})
@@ -1050,7 +1445,7 @@ def run(context: dict[str, object]) -> None:
             for key in {
                 *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS,
                 *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS,
-                *MODULE.STATE_V10_FIELDS,
+                *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS,
             }:
                 state.pop(key, None)
             if version == 3:
@@ -1194,7 +1589,7 @@ def run(context: dict[str, object]) -> None:
             assert restart_res.returncode != 0
             assert (unsafe_job / MODULE.STATE_NAME).read_bytes() == raw
 
-    def v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v10() -> None:
+    def v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v11() -> None:
         """Every migratable legacy generation can prove and use its actions."""
         for version in (5, 6, 7, 8):
             job, state, _sha, _envelope = current_candidate_fixture(f"v{version}-status-positive")
@@ -1216,6 +1611,8 @@ def run(context: dict[str, object]) -> None:
                 state.pop("worktree_snapshot_algorithm")
             state.pop("worktree_root_identity")
             state.pop("provider_terminal_status")
+            for field in MODULE.STATE_V11_FIELDS:
+                state.pop(field)
             old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             loaded, _raw, loaded_sha = MODULE.load_state(job)
             assert loaded_sha == old_sha
@@ -1261,7 +1658,7 @@ def run(context: dict[str, object]) -> None:
         v5_through_v9_status_parity_and_migration_are_exact()
         v1_candidate_status_is_read_only_and_all_mutations_fail_without_writes()
         v3_v4_migration_requires_state_command_agreement_before_any_write()
-        v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v10()
+        v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v11()
 
     if FOCUSED_CHECK == "V3/V4 migration state-command binding rejects before any write":
         check(FOCUSED_CHECK, v3_v4_migration_requires_state_command_agreement_before_any_write)
@@ -1270,17 +1667,17 @@ def run(context: dict[str, object]) -> None:
     else:
         check("legacy status separates readback from proved v5-v9 mutation authority", legacy_read_and_mutation_authority_contracts)
 
-    def current_v10_candidate_inside_worktree_is_driver_only() -> None:
+    def current_v11_candidate_inside_worktree_is_driver_only() -> None:
         """Preserve current evidence without reviving provider authority.
 
         This is intentionally distinct from the V3/V4 migration fixture above
-        and the no-candidate recovery fixture below: it is one current V10 bound
+        and the no-candidate recovery fixture below: it is one current V11 bound
         candidate whose controller directory already exists inside its worktree.
         """
         job, state, _sha, _envelope = current_candidate_fixture(
             "v10-inside-worktree", inside_worktree=True,
         )
-        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 10
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 11
         state["continue_available"] = True
         before, sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         state, loaded_raw, loaded_sha = MODULE.load_state(job)
@@ -1381,8 +1778,8 @@ def run(context: dict[str, object]) -> None:
         assert json.loads(final_result.stdout)["summary"] == "candidate-v10-inside-worktree"
 
     check(
-        "current V10 inside-worktree candidate remains result-finalize only without provider mutation",
-        current_v10_candidate_inside_worktree_is_driver_only,
+        "current V11 inside-worktree candidate remains result-finalize only without provider mutation",
+        current_v11_candidate_inside_worktree_is_driver_only,
     )
 
     def independent_nonempty_snapshot_reference_preserves_v6_v7_and_v8() -> None:
@@ -1639,6 +2036,8 @@ def run(context: dict[str, object]) -> None:
         v7.pop("worktree_snapshot_algorithm")
         v7.pop("worktree_root_identity")
         v7.pop("provider_terminal_status")
+        for field in MODULE.STATE_V11_FIELDS:
+            v7.pop(field)
         assert MODULE.validate_state(v7)["schema_version"] == 7
         assert MODULE._state_worktree_snapshot(v7, command["workdir"]) == MODULE._worktree_snapshot(command["workdir"])
 
@@ -2533,7 +2932,7 @@ def run(context: dict[str, object]) -> None:
 
         for documentation in (
             ROOT / "docs/PROJECT_WORKFLOW.md",
-            ROOT / "skills/agy-worker/SKILL.md",
+            ROOT / "skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md",
         ):
             text = documentation.read_text(encoding="utf-8")
             assert "CANDIDATE_SHA" in text and "STATE_AND_CANDIDATE" in text
@@ -2548,6 +2947,11 @@ def run(context: dict[str, object]) -> None:
                     pass
                 else:
                     raise AssertionError("Verification v2 accepted a non-lowercase-64hex candidate SHA")
+
+        skill_text = (ROOT / "skills/agy-worker/SKILL.md").read_text(encoding="utf-8")
+        assert "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" in skill_text
+        assert "Verification v2" in skill_text
+        assert "STATE_AND_CANDIDATE" not in skill_text and "CANDIDATE_SHA" not in skill_text
 
         null_job, null_state, _null_sha, _null_envelope = current_candidate_fixture(
             "verification-null", wrapper_addressable=True,
@@ -2588,17 +2992,23 @@ def run(context: dict[str, object]) -> None:
     def v10_sanitized_outer_terminal_disposition_contracts() -> None:
         """Issue #82: Sanitized outer terminal disposition and V10 migration."""
         job, state, state_sha, _envelope = current_candidate_fixture("v10-terminal-disposition")
-        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 10
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 11
         assert state["provider_terminal_status"] == "unknown"
 
         # 1. State validation bounds on provider_terminal_status enum
         for valid_status in ("unknown", "success", "error", "cancelled"):
             candidate_state = dict(state)
+            candidate_state["schema_version"] = 10
+            for field in MODULE.STATE_V11_FIELDS:
+                candidate_state.pop(field)
             candidate_state["provider_terminal_status"] = valid_status
             MODULE.validate_state(candidate_state)
 
         for invalid_status in ("canceled", "SUCCESS", "ERROR", "CANCELLED", None, 123, "", "other"):
             candidate_state = dict(state)
+            candidate_state["schema_version"] = 10
+            for field in MODULE.STATE_V11_FIELDS:
+                candidate_state.pop(field)
             candidate_state["provider_terminal_status"] = invalid_status
             try:
                 MODULE.validate_state(candidate_state)
@@ -2670,6 +3080,8 @@ def run(context: dict[str, object]) -> None:
         candidate_state_v9["status"] = "succeeded"
         candidate_state_v9["driver_disposition"] = "unreviewed"
         candidate_state_v9.pop("provider_terminal_status", None)
+        for field in MODULE.STATE_V11_FIELDS:
+            candidate_state_v9.pop(field)
         v9_actions = [item["action"] for item in MODULE.public_status(candidate_state_v9, "0" * 64, job=job)["available_actions"]]
         assert "verification-copy" in v9_actions, f"verification-copy missing in v9 actions: {v9_actions}"
 

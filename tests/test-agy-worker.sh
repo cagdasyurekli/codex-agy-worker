@@ -212,8 +212,369 @@ git -C "$TMP/repo" init -q
 git -C "$TMP/repo" -c user.name='agy-worker test' -c user.email='test@example.invalid' \
     commit --allow-empty -q -m initial
 git -C "$TMP/repo" worktree add --detach -q "$TMP/project-worktree" HEAD
+git -C "$TMP/repo" worktree add -q -b preview-boundary "$TMP/preview-worktree" HEAD
+PREVIEW_WORKTREE="$(cd "$TMP/preview-worktree" && pwd -P)"
+PRIMARY_WORKTREE="$(cd "$TMP/repo" && pwd -P)"
+DETACHED_WORKTREE="$(cd "$TMP/project-worktree" && pwd -P)"
 chmod 0755 "$TMP/logs"
 LOGS_REAL="$(cd "$TMP/logs" && pwd -P)"
+
+echo "transmission preview boundary:"
+if python3 -I -S -B - "$WORKER" "$ROOT" "$PRIMARY_WORKTREE" \
+        "$PREVIEW_WORKTREE" "$DETACHED_WORKTREE" "$TMP" <<'PY'
+import importlib.util
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import sys
+import time
+
+worker, root_text, primary_text, worktree_text, detached_text, temp_text = sys.argv[1:]
+root = Path(root_text)
+primary = Path(primary_text)
+worktree = Path(worktree_text)
+temp = Path(temp_text)
+(worktree / ".gitignore").write_text("ignored-path\n")
+(worktree / "ignored-path").write_text("ignored")
+(worktree / ".visible-dotfile").write_text("dot")
+(worktree / "empty-directory").mkdir()
+route = temp / "preview-route"
+route.mkdir()
+marker = temp / "preview-external-called"
+for name in ("agy", "git", "curl", "ssh"):
+    path = route / name
+    path.write_text(f"#!/bin/sh\nprintf called >> '{marker}'\nexit 99\n")
+    path.chmod(0o755)
+state = temp / "preview-state-must-not-exist"
+prompt = temp / "preview-prompt"
+prompt.write_text("PROMPT-MUST-NOT-BE-CONSUMED")
+environment = dict(os.environ)
+environment["PATH"] = str(route) + os.pathsep + environment["PATH"]
+environment["AGY_WORKER_LOG_DIR"] = str(state)
+
+def preview() -> tuple[subprocess.CompletedProcess[bytes], dict]:
+    with prompt.open("rb") as source:
+        completed = subprocess.run(
+            [worker, "transmission-preview", "--workdir", str(worktree)],
+            stdin=source, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=environment, check=False,
+        )
+        assert source.tell() == 0
+    value = json.loads(completed.stdout) if completed.returncode == 0 else {}
+    return completed, value
+
+first_run, first = preview()
+second_run, second = preview()
+assert first_run.returncode == second_run.returncode == 0
+assert first == second
+assert first["provider_launched"] is False
+assert first["network_used"] is False
+assert first["contents_read"] is False
+assert first["resolved_root"] == str(worktree)
+assert first["manifest"]["entry_count"] == len(first["manifest"]["entries"])
+manifest_bytes = json.dumps(
+    first["manifest"], ensure_ascii=True, sort_keys=True, separators=(",", ":")
+).encode()
+assert hashlib.sha256(manifest_bytes).hexdigest() == first["manifest_sha256"]
+paths = [entry["path"] for entry in first["manifest"]["entries"]]
+assert [path.encode() for path in paths] == sorted(path.encode() for path in paths)
+for expected in (".gitignore", "ignored-path", ".visible-dotfile", "empty-directory"):
+    assert expected in paths
+assert not marker.exists() and not state.exists()
+assert all(entry["path"] != ".git" for entry in first["manifest"]["entries"])
+
+secret = worktree / "visible-secret-name.txt"
+secret.write_text("SECRET-CONTENT-MUST-NOT-APPEAR")
+content_one_run, content_one = preview()
+secret.write_text("CHANGED-SECRET-CONTENT-MUST-NOT-APPEAR")
+content_two_run, content_two = preview()
+assert content_one_run.returncode == content_two_run.returncode == 0
+assert content_one["manifest_sha256"] == content_two["manifest_sha256"]
+assert b"visible-secret-name.txt" in content_one_run.stdout
+assert b"SECRET-CONTENT-MUST-NOT-APPEAR" not in content_one_run.stdout
+assert b"CHANGED-SECRET-CONTENT-MUST-NOT-APPEAR" not in content_two_run.stdout
+
+scope_path = temp / "preview-scope.json"
+scope_path.write_text(json.dumps({
+    "schema_version": 1,
+    "kind": "agy-worker-provider-scope",
+    "read": [{"path": "visible-secret-name.txt", "kind": "file"}],
+    "write": [],
+}))
+scope_path.chmod(0o600)
+scoped_run = subprocess.run(
+    [
+        worker, "transmission-preview", "--workdir", str(worktree),
+        "--provider-scope", str(scope_path), "--format", "json",
+    ],
+    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    env=environment, check=False,
+)
+scoped = json.loads(scoped_run.stdout) if scoped_run.returncode == 0 else {}
+assert scoped_run.returncode == 0
+assert scoped["contents_read"] is True
+assert scoped["provider_launched"] is False
+assert scoped["network_used"] is False
+assert b"CHANGED-SECRET-CONTENT-MUST-NOT-APPEAR" not in scoped_run.stdout
+
+typed = worktree / "type-boundary"
+typed.write_text("x")
+_file_run, file_preview = preview()
+typed.unlink(); typed.mkdir()
+_dir_run, directory_preview = preview()
+assert file_preview["manifest_sha256"] != directory_preview["manifest_sha256"]
+
+contained_target = worktree / "contained-target"
+contained_target.mkdir()
+(worktree / "contained-alias").symlink_to("contained-target")
+contained_run, contained = preview()
+assert contained_run.returncode == 0
+assert {"kind": "symlink", "path": "contained-alias"} in contained["manifest"]["entries"]
+(worktree / "contained-alias").unlink()
+
+outside = temp / "preview-outside"
+outside.write_text("outside")
+(worktree / "outward-alias").symlink_to(outside)
+failed, _ = preview()
+assert failed.returncode == 20 and not failed.stdout
+assert failed.stderr == b"agy-worker.sh: transmission preview unavailable\n"
+(worktree / "outward-alias").unlink()
+
+nested = worktree / "nested-marker"
+nested.mkdir(); (nested / ".GIT").write_text("marker")
+failed, _ = preview()
+assert failed.returncode == 20 and not failed.stdout
+shutil.rmtree(nested)
+
+primary_failure = subprocess.run(
+    [worker, "transmission-preview", "--workdir", str(primary)],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+)
+assert primary_failure.returncode == 20 and not primary_failure.stdout
+detached_failure = subprocess.run(
+    [worker, "transmission-preview", "--workdir", detached_text],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+)
+assert detached_failure.returncode == 20 and not detached_failure.stdout
+
+fake_root = temp / "fake-worktree"
+fake_admin = temp / "fake-worktree-admin"
+fake_root.mkdir(); fake_admin.mkdir()
+(fake_root / ".git").write_text(f"gitdir: {fake_admin}\n")
+(fake_admin / "gitdir").write_text(f"{fake_root / '.git'}\n")
+(fake_admin / "HEAD").write_text("ref: refs/heads/fake-preview\n")
+fake_failure = subprocess.run(
+    [worker, "transmission-preview", "--workdir", str(fake_root)],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+)
+assert fake_failure.returncode == 20 and not fake_failure.stdout
+assert fake_failure.stderr == b"agy-worker.sh: transmission preview unavailable\n"
+
+alias = temp / "preview-root-alias"
+alias.symlink_to(worktree, target_is_directory=True)
+alias_failure = subprocess.run(
+    [worker, "transmission-preview", "--workdir", str(alias)],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+)
+assert alias_failure.returncode == 20 and not alias_failure.stdout
+
+broken = worktree / "broken-alias"
+broken.symlink_to("missing-target")
+broken_failure, _ = preview()
+assert broken_failure.returncode == 20 and not broken_failure.stdout
+broken.unlink()
+
+fifo = worktree / "special-node"
+os.mkfifo(fifo)
+special_failure, _ = preview()
+assert special_failure.returncode == 20 and not special_failure.stdout
+fifo.unlink()
+
+unreadable = worktree / "unreadable-directory"
+unreadable.mkdir(); unreadable.chmod(0)
+unreadable_failure, _ = preview()
+unreadable.chmod(0o700); unreadable.rmdir()
+assert unreadable_failure.returncode == 20 and not unreadable_failure.stdout
+
+helper_path = root / "skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py"
+spec = importlib.util.spec_from_file_location("preview_helper", helper_path)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+try:
+    module._decode_manifest_path(b"non-utf8-\xff")
+except module.ReadableManifestError:
+    pass
+else:
+    raise AssertionError("non-UTF-8 manifest path was accepted")
+git_calls = []
+socket_called = False
+real_popen = subprocess.Popen
+real_socket = socket.socket
+def guarded_popen(*args, **kwargs):
+    command = args[0] if args else kwargs.get("args")
+    assert isinstance(command, list) and command[0] == "/usr/bin/git"
+    assert command[-6:] == ["-C", str(worktree), "worktree", "list", "--porcelain", "-z"]
+    assert kwargs.get("stdin") is subprocess.DEVNULL
+    assert kwargs.get("stderr") is subprocess.DEVNULL
+    git_calls.append(tuple(command))
+    return real_popen(*args, **kwargs)
+def blocked_socket(*args, **kwargs):
+    global socket_called
+    socket_called = True
+    raise AssertionError("preview opened a socket")
+subprocess.Popen = guarded_popen
+socket.socket = blocked_socket
+try:
+    direct = module.readable_path_manifest(str(worktree))
+finally:
+    subprocess.Popen = real_popen
+    socket.socket = real_socket
+assert direct["provider_launched"] is False and len(git_calls) == 2 and not socket_called
+
+real_scandir = module.os.scandir
+class FakeEntry:
+    def __init__(self, name): self.name = name
+class FakeIterator:
+    def __init__(self, *, delay=0.0):
+        self.delay = delay; self.index = 0; self.closed = False
+    def __enter__(self): return self
+    def __exit__(self, *_args): self.closed = True
+    def __iter__(self): return self
+    def __next__(self):
+        self.index += 1
+        if self.delay: time.sleep(self.delay)
+        return FakeEntry(f"fake-{self.index:03d}")
+
+oversized_iterator = FakeIterator()
+original_entry_limit = module.READABLE_MANIFEST_MAX_ENTRIES
+module.READABLE_MANIFEST_MAX_ENTRIES = 2
+module.os.scandir = lambda _fd: oversized_iterator
+try:
+    try: module._scan_readable_paths(str(worktree))
+    except module.ReadableManifestError: pass
+    else: raise AssertionError("oversized iterator was accepted")
+finally:
+    module.os.scandir = real_scandir
+    module.READABLE_MANIFEST_MAX_ENTRIES = original_entry_limit
+assert oversized_iterator.index == 3 and oversized_iterator.closed
+
+delayed_iterator = FakeIterator(delay=0.02)
+original_scan_seconds = module.READABLE_MANIFEST_SCAN_SECONDS
+module.READABLE_MANIFEST_SCAN_SECONDS = 0.001
+module.os.scandir = lambda _fd: delayed_iterator
+try:
+    try: module._scan_readable_paths(str(worktree))
+    except module.ReadableManifestError: pass
+    else: raise AssertionError("delayed iterator exceeded no deadline")
+finally:
+    module.os.scandir = real_scandir
+    module.READABLE_MANIFEST_SCAN_SECONDS = original_scan_seconds
+assert delayed_iterator.index == 1 and delayed_iterator.closed
+
+depth_parent = worktree / "depth-parent"
+(depth_parent / "depth-child").mkdir(parents=True)
+for attribute, constrained in (
+    ("READABLE_MANIFEST_MAX_ENTRIES", 1),
+    ("READABLE_MANIFEST_MAX_BYTES", 64),
+    ("READABLE_MANIFEST_MAX_DEPTH", 1),
+    ("READABLE_MANIFEST_SCAN_SECONDS", -1.0),
+):
+    original = getattr(module, attribute)
+    setattr(module, attribute, constrained)
+    try:
+        try: module.readable_path_manifest(str(worktree))
+        except module.ReadableManifestError: pass
+        else: raise AssertionError(f"{attribute} bound was not enforced")
+    finally:
+        setattr(module, attribute, original)
+shutil.rmtree(depth_parent)
+
+original_scan = module._scan_readable_paths
+scan_count = 0
+drift = worktree / "between-scan-drift"
+def drifting_scan(path):
+    global scan_count
+    result = original_scan(path)
+    scan_count += 1
+    if scan_count == 1:
+        drift.write_text("drift")
+    return result
+module._scan_readable_paths = drifting_scan
+try:
+    try:
+        module.readable_path_manifest(str(worktree))
+    except module.ReadableManifestError:
+        pass
+    else:
+        raise AssertionError("between-scan drift was accepted")
+finally:
+    module._scan_readable_paths = original_scan
+    drift.unlink(missing_ok=True)
+
+original_authority = module._preview_worktree_authority
+authority_count = 0
+def racing_authority(path):
+    global authority_count
+    result = original_authority(path)
+    authority_count += 1
+    return result if authority_count == 1 else result + (("raced",),)
+module._preview_worktree_authority = racing_authority
+try:
+    try:
+        module.readable_path_manifest(str(worktree))
+    except module.ReadableManifestError:
+        pass
+    else:
+        raise AssertionError("racing worktree registration was accepted")
+finally:
+    module._preview_worktree_authority = original_authority
+PY
+then
+    ok "preview is stable, content-free, provider-free, bounded, and fail-closed"
+else
+    bad "preview is stable, content-free, provider-free, bounded, and fail-closed"
+fi
+
+if python3 -B - "$WORKER" "$ROOT" <<'PY'
+from pathlib import Path
+import json, subprocess, sys
+
+worker = sys.argv[1]
+root = Path(sys.argv[2])
+
+helper_path = root / "skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py"
+spec = __import__("importlib.util").util.spec_from_file_location("worktree_helper", helper_path)
+module = __import__("importlib.util").util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+valid_scope = b'{"schema_version": 1, "kind": "agy-worker-provider-scope", "read": [{"path": "a.txt", "kind": "file"}], "write": [{"path": "a.txt", "kind": "file"}]}'
+parsed = module._parse_provider_scope(valid_scope)
+assert parsed["read"] == [{"path": "a.txt", "kind": "file"}]
+
+for bad_scope in [
+    b'{}',
+    b'{"schema_version": 2, "kind": "agy-worker-provider-scope", "read": [], "write": []}',
+    b'{"schema_version": 1, "kind": "wrong", "read": [], "write": []}',
+    b'{"schema_version": 1, "kind": "agy-worker-provider-scope", "read": [{"path": "../a", "kind": "file"}], "write": []}',
+    b'{"schema_version": 1, "kind": "agy-worker-provider-scope", "read": [{"path": ".git", "kind": "file"}], "write": []}',
+    b'{"schema_version": 1, "kind": "agy-worker-provider-scope", "read": [{"path": "a.txt", "kind": "file"}], "write": [{"path": "b.txt", "kind": "file"}]}',
+]:
+    try:
+        module._parse_provider_scope(bad_scope)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"bad scope accepted: {bad_scope}")
+PY
+then
+    ok "provider scope parser validates schema, paths, and write-covered-by-read invariants"
+else
+    bad "provider scope parser validates schema, paths, and write-covered-by-read invariants"
+fi
 
 # Help is an informational CLI surface, never a result-envelope path.  It must
 # succeed before log/state setup for the top level and every public subcommand;
@@ -984,6 +1345,8 @@ else
     bad "direct selector locale/hash parity or executable binding"
 fi
 
+# BEGIN model-selection coverage
+# BEGIN exhaustive pure-policy model-selection coverage
 if PYTHONDONTWRITEBYTECODE=1 python3 -B - "$ROOT" <<'PY'
 from pathlib import Path
 import sys
@@ -1006,94 +1369,238 @@ else
     bad "macOS executable path alias normalization boundary"
 fi
 
-pair_index=0
-direct_pairs=(
-    'gemini-3.7-flash|low|gemini-3.7-flash-low'
-    'gemini-3.7-flash|medium|gemini-3.7-flash-medium'
-    'gemini-3.7-flash|high|gemini-3.7-flash-high'
-    'gemini-3.6-flash|low|gemini-3.6-flash-low'
-    'gemini-3.6-flash|medium|gemini-3.6-flash-medium'
-    'gemini-3.6-flash|high|gemini-3.6-flash-high'
-    'gemini-3.5-flash|low|gemini-3.5-flash-low'
-    'gemini-3.5-flash|medium|gemini-3.5-flash-medium'
-    'gemini-3.5-flash|high|gemini-3.5-flash-high'
-    'gemini-3.1-pro|low|gemini-3.1-pro-low'
-    'gemini-3.1-pro|high|gemini-3.1-pro-high'
-)
-for direct_pair in "${direct_pairs[@]}"; do
-    IFS='|' read -r pair_model pair_effort pair_resolved <<< "$direct_pair"
-    pair_index=$((pair_index+1))
-    for source_mode in cli-cli cli-env env-cli env-env; do
-        pair_job="direct-pair-$pair_index-$source_mode"
-        case "$source_mode" in
-            cli-cli)
-                printf 'direct pair %s %s\n' "$pair_index" "$source_mode" | \
-                    run_worker "$pair_job" --model "$pair_model" --effort "$pair_effort" \
-                    > "$TMP/$pair_job.out" 2> "$TMP/$pair_job.err" ;;
-            cli-env)
-                printf 'direct pair %s %s\n' "$pair_index" "$source_mode" | \
-                    AGY_WORKER_EFFORT="$pair_effort" run_worker "$pair_job" --model "$pair_model" \
-                    > "$TMP/$pair_job.out" 2> "$TMP/$pair_job.err" ;;
-            env-cli)
-                printf 'direct pair %s %s\n' "$pair_index" "$source_mode" | \
-                    AGY_WORKER_MODEL="$pair_model" run_worker "$pair_job" --effort "$pair_effort" \
-                    > "$TMP/$pair_job.out" 2> "$TMP/$pair_job.err" ;;
-            env-env)
-                printf 'direct pair %s %s\n' "$pair_index" "$source_mode" | \
-                    AGY_WORKER_MODEL="$pair_model" AGY_WORKER_EFFORT="$pair_effort" \
-                    run_worker "$pair_job" > "$TMP/$pair_job.out" 2> "$TMP/$pair_job.err" ;;
-        esac
-        rc=$?
-        case "$source_mode" in
-            cli-cli) expected_model_source=cli; expected_effort_source=cli ;;
-            cli-env) expected_model_source=cli; expected_effort_source=environment ;;
-            env-cli) expected_model_source=environment; expected_effort_source=cli ;;
-            env-env) expected_model_source=environment; expected_effort_source=environment ;;
-        esac
-        if [[ "$rc" == 0 ]]; then
-            assert_direct_result "reviewed pair $pair_model/$pair_effort accepts $source_mode" \
-                "$pair_job" "$pair_resolved" "$pair_model" "$pair_effort" \
-                "$expected_model_source" "$expected_effort_source"
-        else
-            bad "reviewed pair $pair_model/$pair_effort accepts $source_mode (exit $rc)"
-        fi
-    done
-done
+if PYTHONDONTWRITEBYTECODE=1 python3 -B - "$ROOT" <<'PY'
+from pathlib import Path
+import sys
 
-exact_index=0
-for exact_model in \
-    gemini-3.7-flash-low gemini-3.7-flash-medium gemini-3.7-flash-high \
-    gemini-3.6-flash-low gemini-3.6-flash-medium gemini-3.6-flash-high \
-    gemini-3.5-flash-low gemini-3.5-flash-medium gemini-3.5-flash-high \
-    gemini-3.1-pro-low gemini-3.1-pro-high \
-    claude-sonnet-4-6 claude-opus-4-6-thinking gpt-oss-120b-medium
-do
-    exact_index=$((exact_index+1))
-    for exact_source in cli env; do
-        exact_job="direct-exact-$exact_index-$exact_source"
-        if [[ "$exact_source" == cli ]]; then
-            printf 'direct exact %s cli\n' "$exact_index" | run_worker "$exact_job" \
-                --model "$exact_model" > "$TMP/$exact_job.out" 2> "$TMP/$exact_job.err"
-        else
-            printf 'direct exact %s env\n' "$exact_index" | \
-                AGY_WORKER_MODEL="$exact_model" run_worker "$exact_job" \
-                > "$TMP/$exact_job.out" 2> "$TMP/$exact_job.err"
-        fi
-        rc=$?
-        if [[ "$exact_source" == cli ]]; then
-            exact_model_source=cli
-        else
-            exact_model_source=environment
-        fi
-        if [[ "$rc" == 0 ]]; then
-            assert_direct_result "reviewed exact model $exact_model accepts $exact_source" \
-                "$exact_job" "$exact_model" "$exact_model" "" \
-                "$exact_model_source" ""
-        else
-            bad "reviewed exact model $exact_model accepts $exact_source (exit $rc)"
-        fi
-    done
-done
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "skills" / "agy-worker" / "runtime" / "scripts"))
+import model_selection
+
+matrix, actual_sha, version, revision = model_selection.load_policy()
+
+direct_pairs = (
+    ("gemini-3.7-flash", "low", "gemini-3.7-flash-low"),
+    ("gemini-3.7-flash", "medium", "gemini-3.7-flash-medium"),
+    ("gemini-3.7-flash", "high", "gemini-3.7-flash-high"),
+    ("gemini-3.6-flash", "low", "gemini-3.6-flash-low"),
+    ("gemini-3.6-flash", "medium", "gemini-3.6-flash-medium"),
+    ("gemini-3.6-flash", "high", "gemini-3.6-flash-high"),
+    ("gemini-3.5-flash", "low", "gemini-3.5-flash-low"),
+    ("gemini-3.5-flash", "medium", "gemini-3.5-flash-medium"),
+    ("gemini-3.5-flash", "high", "gemini-3.5-flash-high"),
+    ("gemini-3.1-pro", "low", "gemini-3.1-pro-low"),
+    ("gemini-3.1-pro", "high", "gemini-3.1-pro-high"),
+)
+
+exact_models = (
+    "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high",
+    "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-high",
+    "gemini-3.5-flash-low", "gemini-3.5-flash-medium", "gemini-3.5-flash-high",
+    "gemini-3.1-pro-low", "gemini-3.1-pro-high",
+    "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
+)
+
+# Exhaustive resolution of all direct pairs
+for base_model, effort, expected_slug in direct_pairs:
+    resolved, kind = model_selection.resolve_model(matrix, base_model, effort)
+    assert resolved == expected_slug
+    assert kind == "model-effort"
+
+# Exhaustive resolution of all exact/fixed models
+for exact_model in exact_models:
+    resolved, kind = model_selection.resolve_model(matrix, exact_model, None)
+    assert resolved == exact_model
+    assert kind == "exact-model"
+
+# Exhaustive rejection of unsupported choices
+# 1. Pro medium
+try:
+    model_selection.resolve_model(matrix, "gemini-3.1-pro", "medium")
+    raise AssertionError("Pro medium should be rejected")
+except model_selection.CallerError:
+    pass
+
+# 2. Base models without effort
+for base_model in ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-pro"):
+    try:
+        model_selection.resolve_model(matrix, base_model, None)
+        raise AssertionError(f"Base model {base_model} without effort should be rejected")
+    except model_selection.CallerError:
+        pass
+
+# 3. Fixed models with effort
+for fixed_model in ("claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"):
+    for effort in ("low", "medium", "high"):
+        try:
+            model_selection.resolve_model(matrix, fixed_model, effort)
+            raise AssertionError(f"Fixed model {fixed_model} with effort should be rejected")
+        except model_selection.CallerError:
+            pass
+
+# 4. Exact compound slugs with effort
+for exact_model in exact_models:
+    if exact_model not in ("claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"):
+        try:
+            model_selection.resolve_model(matrix, exact_model, "high")
+            raise AssertionError(f"Exact slug {exact_model} with effort should be rejected")
+        except model_selection.CallerError:
+            pass
+PY
+then
+    ok "exhaustive pure unit validation of model and effort matrix combinations"
+else
+    bad "exhaustive pure unit validation of model and effort matrix combinations"
+fi
+# END exhaustive pure-policy model-selection coverage
+
+# BEGIN representative model-selection worker dispatches
+# Representative end-to-end direct pair worker dispatches
+printf 'representative direct pair cli-cli\n' | \
+    run_worker direct-pair-rep-cli-cli --model gemini-3.7-flash --effort high \
+    > "$TMP/direct-pair-rep-cli-cli.out" 2> "$TMP/direct-pair-rep-cli-cli.err"
+if [[ $? == 0 ]]; then
+    assert_direct_result "representative pair gemini-3.7-flash/high accepts cli-cli" \
+        "direct-pair-rep-cli-cli" "gemini-3.7-flash-high" "gemini-3.7-flash" "high" \
+        "cli" "cli"
+else
+    bad "representative pair gemini-3.7-flash/high accepts cli-cli"
+fi
+
+printf 'representative direct pair cli-env\n' | \
+    AGY_WORKER_EFFORT="medium" run_worker direct-pair-rep-cli-env --model gemini-3.6-flash \
+    > "$TMP/direct-pair-rep-cli-env.out" 2> "$TMP/direct-pair-rep-cli-env.err"
+if [[ $? == 0 ]]; then
+    assert_direct_result "representative pair gemini-3.6-flash/medium accepts cli-env" \
+        "direct-pair-rep-cli-env" "gemini-3.6-flash-medium" "gemini-3.6-flash" "medium" \
+        "cli" "environment"
+else
+    bad "representative pair gemini-3.6-flash/medium accepts cli-env"
+fi
+
+printf 'representative direct pair env-cli\n' | \
+    AGY_WORKER_MODEL="gemini-3.5-flash" run_worker direct-pair-rep-env-cli --effort low \
+    > "$TMP/direct-pair-rep-env-cli.out" 2> "$TMP/direct-pair-rep-env-cli.err"
+if [[ $? == 0 ]]; then
+    assert_direct_result "representative pair gemini-3.5-flash/low accepts env-cli" \
+        "direct-pair-rep-env-cli" "gemini-3.5-flash-low" "gemini-3.5-flash" "low" \
+        "environment" "cli"
+else
+    bad "representative pair gemini-3.5-flash/low accepts env-cli"
+fi
+
+printf 'representative direct pair env-env\n' | \
+    AGY_WORKER_MODEL="gemini-3.1-pro" AGY_WORKER_EFFORT="high" \
+    run_worker direct-pair-rep-env-env \
+    > "$TMP/direct-pair-rep-env-env.out" 2> "$TMP/direct-pair-rep-env-env.err"
+if [[ $? == 0 ]]; then
+    assert_direct_result "representative pair gemini-3.1-pro/high accepts env-env" \
+        "direct-pair-rep-env-env" "gemini-3.1-pro-high" "gemini-3.1-pro" "high" \
+        "environment" "environment"
+else
+    bad "representative pair gemini-3.1-pro/high accepts env-env"
+fi
+
+# Representative end-to-end exact and fixed model worker dispatches
+printf 'representative exact cli\n' | run_worker direct-exact-rep-cli \
+    --model gemini-3.7-flash-high > "$TMP/direct-exact-rep-cli.out" 2> "$TMP/direct-exact-rep-cli.err"
+if [[ $? == 0 ]]; then
+    assert_direct_result "representative exact model gemini-3.7-flash-high accepts cli" \
+        "direct-exact-rep-cli" "gemini-3.7-flash-high" "gemini-3.7-flash-high" "" \
+        "cli" ""
+else
+    bad "representative exact model gemini-3.7-flash-high accepts cli"
+fi
+
+printf 'representative exact env\n' | \
+    AGY_WORKER_MODEL="gemini-3.6-flash-low" run_worker direct-exact-rep-env \
+    > "$TMP/direct-exact-rep-env.out" 2> "$TMP/direct-exact-rep-env.err"
+if [[ $? == 0 ]]; then
+    assert_direct_result "representative exact model gemini-3.6-flash-low accepts env" \
+        "direct-exact-rep-env" "gemini-3.6-flash-low" "gemini-3.6-flash-low" "" \
+        "environment" ""
+else
+    bad "representative exact model gemini-3.6-flash-low accepts env"
+fi
+
+printf 'representative fixed cli\n' | run_worker direct-fixed-rep-cli \
+    --model claude-sonnet-4-6 > "$TMP/direct-fixed-rep-cli.out" 2> "$TMP/direct-fixed-rep-cli.err"
+if [[ $? == 0 ]]; then
+    assert_direct_result "representative fixed model claude-sonnet-4-6 accepts cli" \
+        "direct-fixed-rep-cli" "claude-sonnet-4-6" "claude-sonnet-4-6" "" \
+        "cli" ""
+else
+    bad "representative fixed model claude-sonnet-4-6 accepts cli"
+fi
+
+printf 'representative fixed env\n' | \
+    AGY_WORKER_MODEL="gpt-oss-120b-medium" run_worker direct-fixed-rep-env \
+    > "$TMP/direct-fixed-rep-env.out" 2> "$TMP/direct-fixed-rep-env.err"
+if [[ $? == 0 ]]; then
+    assert_direct_result "representative fixed model gpt-oss-120b-medium accepts env" \
+        "direct-fixed-rep-env" "gpt-oss-120b-medium" "gpt-oss-120b-medium" "" \
+        "environment" ""
+else
+    bad "representative fixed model gpt-oss-120b-medium accepts env"
+fi
+# END representative model-selection worker dispatches
+
+# Keep the reduced dispatch set mechanically bound to this exact source region:
+# the eight representative jobs cover the four provenance classes plus exact and
+# fixed model paths, while the preceding pure-policy block remains exhaustive.
+if PYTHONDONTWRITEBYTECODE=1 python3 -B - "$ROOT/tests/test-agy-worker.sh" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+def bounded(begin: str, end: str) -> str:
+    assert source.count(begin) == 1, begin
+    assert source.count(end) == 1, end
+    start = source.index(begin) + len(begin)
+    finish = source.index(end)
+    assert start < finish, (begin, end)
+    return source[start:finish]
+
+coverage_tag = "model" + "-selection coverage"
+selection = bounded("# BEGIN " + coverage_tag, "# END " + coverage_tag)
+policy_tag = "exhaustive pure-policy " + coverage_tag
+policy = bounded("# BEGIN " + policy_tag, "# END " + policy_tag)
+representative_tag = "representative model-selection worker dispatches"
+representative = bounded("# BEGIN " + representative_tag, "# END " + representative_tag)
+
+for required in (
+    "# Exhaustive resolution of all direct pairs",
+    "# Exhaustive resolution of all exact/fixed models",
+    "# Exhaustive rejection of unsupported choices",
+    "for base_model, effort, expected_slug in direct_pairs:",
+    "for exact_model in exact_models:",
+    "model_selection.resolve_model",
+):
+    assert required in policy, required
+
+expected_jobs = [
+    "direct-pair-rep-cli-cli",
+    "direct-pair-rep-cli-env",
+    "direct-pair-rep-env-cli",
+    "direct-pair-rep-env-env",
+    "direct-exact-rep-cli",
+    "direct-exact-rep-env",
+    "direct-fixed-rep-cli",
+    "direct-fixed-rep-env",
+]
+runner = "run" + "_worker"
+assert selection.count(runner) == len(expected_jobs)
+assert re.findall(rf"\b{runner}\s+([a-z0-9-]+)\b", representative) == expected_jobs
+assert not re.search(r"^\s*(?:for|while)\b", representative, flags=re.MULTILINE)
+PY
+then
+    ok "model-selection source guard binds exhaustive policy and eight representative dispatches"
+else
+    bad "model-selection source guard binds exhaustive policy and eight representative dispatches"
+fi
+# END model-selection coverage
 
 expect_selector_reject() {
     local name="$1" job="$2"; shift 2
@@ -3148,7 +3655,7 @@ state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
 for field in module.STATE_V5_FIELDS:
     state.pop(field)
-for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS}:
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS}:
     state.pop(field)
 state["schema_version"] = 3
 state["phase"] = None
@@ -3600,7 +4107,7 @@ state = module.initial_state(
     command_identity=(1, 1, os.getuid(), os.getgid(), 0o600),
     stage_sha=None, stage_identity=None,
 )
-assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 10
+assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 11
 assert state["worktree_root_identity"] is not None
 assert state["worktree_baseline"] is not None
 assert state["worktree_snapshot_algorithm"] == module.WORKTREE_SNAPSHOT_SEMANTIC_V1
@@ -4462,7 +4969,7 @@ for field in module.STATE_PROJECT_FIELDS:
     state.pop(field)
 for field in module.STATE_V5_FIELDS:
     state.pop(field)
-for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS}:
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS}:
     state.pop(field)
 state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")

@@ -130,21 +130,27 @@ class Fixture:
         self.job_id = f"job-{label}"
         self.branch = f"codex/{label}"
 
-    def init(self) -> subprocess.CompletedProcess[bytes]:
-        return self.init_as(self.branch)
+    def init(self, *, facade_created: bool = False) -> subprocess.CompletedProcess[bytes]:
+        return self.init_as(self.branch, facade_created=facade_created)
 
     def init_as(
         self,
         branch: str,
         *,
         env: dict[str, str] | None = None,
+        facade_created: bool = False,
     ) -> subprocess.CompletedProcess[bytes]:
-        return run_cli(
+        argv = [
             "init", "--state", str(self.state), "--repo", str(self.repo),
             "--worktree", str(self.worktree), "--branch", branch,
             "--base", self.base, "--job-id", self.job_id,
-            env=env,
-        )
+        ]
+        if facade_created:
+            argv.extend([
+                "--facade-created", "--dispatch-job-dir",
+                str(self.root / "dispatch-job"),
+            ])
+        return run_cli(*argv, env=env)
 
     def value(self) -> dict[str, Any]:
         return json.loads(self.state.read_bytes())
@@ -166,7 +172,8 @@ class Fixture:
         self.write_envelope()
         return run_cli(
             "verify", "--state", str(self.state), "--receipt", str(self.receipt),
-            "--envelope", str(self.envelope), "--only", "tests/**", "--verify", "true",
+            "--envelope", str(self.envelope), "--only", "tests/**",
+            "--verify-argv", '["true"]',
         )
 
     def cleanup(self, *, state_sha: str | None = None, job: str | None = None, candidate: str | None = None) -> subprocess.CompletedProcess[bytes]:
@@ -178,6 +185,31 @@ class Fixture:
             "--approve-state-sha", state_sha or self.state_sha(),
             "--approve-candidate-sha", candidate or bound.get("final_candidate_state_sha256", "0" * 64),
         )
+
+    def rollback_argv(
+        self,
+        *,
+        state_sha: str | None = None,
+        job: str | None = None,
+        repo: Path | None = None,
+        worktree: Path | None = None,
+        branch: str | None = None,
+        base: str | None = None,
+        dispatch_job_dir: Path | None = None,
+    ) -> list[str]:
+        return [
+            "rollback-ready", "--state", str(self.state),
+            "--approve-job", job or self.job_id,
+            "--approve-state-sha", state_sha or self.state_sha(),
+            "--repo", str(repo or self.repo),
+            "--worktree", str(worktree or self.worktree),
+            "--branch", branch or self.branch,
+            "--base", base or self.base,
+            "--dispatch-job-dir", str(dispatch_job_dir or (self.root / "dispatch-job")),
+        ]
+
+    def rollback(self, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        return run_cli(*self.rollback_argv(**kwargs))
 
     def make_failed_dispatch(
         self, label: str = "dispatch", *, status: str = "failed",
@@ -500,6 +532,331 @@ mutated = dict(original); mutated["repo_path"] += "/../x"
 check("state rejects noncanonical bound paths", lambda: rejects(lambda: MODULE.validate_state(mutated)))
 
 
+facade_schema = Fixture("facade-schema")
+assert facade_schema.init(facade_created=True).returncode == 0
+facade_schema_value = facade_schema.value()
+check(
+    "facade init creates exact schema-v2 origin without changing low-level schema-v1",
+    lambda: (
+        facade_schema_value["schema_version"] == 2
+        and facade_schema_value["origin"] == "workflow-facade"
+        and facade_schema_value["dispatch_job_dir"] == str(
+            facade_schema.root / "dispatch-job"
+        )
+        and original["schema_version"] == 1
+        and "origin" not in original
+    ),
+)
+check(
+    "validator reads facade schema-v2 state without migration",
+    lambda: MODULE.validate_state(facade_schema_value) is facade_schema_value,
+)
+invalid_facade = dict(facade_schema_value); invalid_facade["origin"] = "other"
+check(
+    "schema-v2 state requires the exact workflow facade origin",
+    lambda: rejects(lambda: MODULE.validate_state(invalid_facade)),
+)
+missing_dispatch_binding = dict(facade_schema_value)
+missing_dispatch_binding.pop("dispatch_job_dir")
+check(
+    "schema-v2 state requires the exact dispatch job directory binding",
+    lambda: rejects(lambda: MODULE.validate_state(missing_dispatch_binding)),
+)
+clean_fixture(facade_schema)
+
+
+rollback_v1 = Fixture("rollback-v1")
+assert rollback_v1.init().returncode == 0
+check(
+    "rollback-ready refuses non-facade schema-v1 lifecycle state",
+    lambda: (
+        rollback_v1.rollback().returncode == 64
+        and rollback_v1.state.exists()
+        and rollback_v1.worktree.exists()
+        and git(
+            rollback_v1.repo, "rev-parse", "--verify",
+            f"refs/heads/{rollback_v1.branch}", check_result=False,
+        ) != b""
+    ),
+)
+clean_fixture(rollback_v1)
+
+
+rollback_bindings = Fixture("rollback-bindings")
+assert rollback_bindings.init(facade_created=True).returncode == 0
+wrong_binding_results = [
+    rollback_bindings.rollback(state_sha="0" * 64).returncode,
+    rollback_bindings.rollback(job="other-job").returncode,
+    rollback_bindings.rollback(repo=TMP).returncode,
+    rollback_bindings.rollback(worktree=rollback_bindings.root).returncode,
+    rollback_bindings.rollback(branch="codex/other").returncode,
+    rollback_bindings.rollback(base="0" * len(rollback_bindings.base)).returncode,
+]
+check(
+    "rollback-ready refuses stale approval and every wrong resource binding",
+    lambda: (
+        wrong_binding_results == [64] * len(wrong_binding_results)
+        and rollback_bindings.state.exists()
+        and rollback_bindings.worktree.exists()
+    ),
+)
+clean_fixture(rollback_bindings)
+
+
+rollback_candidate = Fixture("rollback-candidate")
+assert rollback_candidate.init(facade_created=True).returncode == 0
+rollback_candidate.worktree.joinpath("fixture.txt").write_text(
+    "candidate drift\n", encoding="utf-8"
+)
+check(
+    "rollback-ready refuses candidate drift and preserves resources",
+    lambda: (
+        rollback_candidate.rollback().returncode == 64
+        and rollback_candidate.state.exists()
+        and rollback_candidate.worktree.exists()
+    ),
+)
+clean_fixture(rollback_candidate)
+
+
+rollback_ref = Fixture("rollback-ref")
+assert rollback_ref.init(facade_created=True).returncode == 0
+(rollback_ref.repo / "fixture.txt").write_text("next\n", encoding="utf-8")
+git(rollback_ref.repo, "add", "fixture.txt")
+git(rollback_ref.repo, "commit", "-qm", "next")
+next_commit = git(rollback_ref.repo, "rev-parse", "HEAD").decode("ascii").strip()
+git(rollback_ref.repo, "update-ref", f"refs/heads/{rollback_ref.branch}", next_commit, rollback_ref.base)
+check(
+    "rollback-ready refuses branch and worktree ref drift",
+    lambda: (
+        rollback_ref.rollback().returncode == 64
+        and rollback_ref.state.exists()
+        and rollback_ref.worktree.exists()
+        and git(
+            rollback_ref.repo, "rev-parse", "--verify",
+            f"refs/heads/{rollback_ref.branch}", check_result=False,
+        ).decode("ascii").strip() == next_commit
+    ),
+)
+clean_fixture(rollback_ref)
+
+
+rollback_dispatch = Fixture("rollback-dispatch")
+assert rollback_dispatch.init(facade_created=True).returncode == 0
+dispatch_artifact = rollback_dispatch.root / "dispatch-job"
+dispatch_artifact.mkdir(mode=0o700)
+directory_refusal = rollback_dispatch.rollback().returncode
+decoy_refusal = rollback_dispatch.rollback(
+    dispatch_job_dir=rollback_dispatch.root / "absent-decoy"
+).returncode
+dispatch_artifact.rmdir()
+dispatch_artifact.symlink_to(rollback_dispatch.root / "missing-dispatch", target_is_directory=True)
+symlink_refusal = rollback_dispatch.rollback().returncode
+check(
+    "rollback-ready binds the real dispatch path and refuses artifacts, symlinks, and absent decoys",
+    lambda: (
+        directory_refusal == 64
+        and decoy_refusal == 64
+        and symlink_refusal == 64
+        and rollback_dispatch.state.exists()
+        and rollback_dispatch.worktree.exists()
+    ),
+)
+dispatch_artifact.unlink()
+clean_fixture(rollback_dispatch)
+
+
+def rollback_checkpoint_result(checkpoint_name: str) -> bool:
+    subject = Fixture(checkpoint_name.removeprefix("before-rollback-"))
+    assert subject.init(facade_created=True).returncode == 0
+    raw = subject.state.read_bytes()
+    original_checkpoint = MODULE._cleanup_checkpoint
+
+    def stop(name: str) -> None:
+        if name == checkpoint_name:
+            raise MODULE.JobError("synthetic rollback checkpoint failure")
+
+    try:
+        MODULE._cleanup_checkpoint = stop
+        prior_stdout, prior_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        try:
+            result = MODULE.main(subject.rollback_argv())
+        finally:
+            sys.stdout, sys.stderr = prior_stdout, prior_stderr
+    finally:
+        MODULE._cleanup_checkpoint = original_checkpoint
+    branch = git(
+        subject.repo, "rev-parse", "--verify", f"refs/heads/{subject.branch}",
+        check_result=False,
+    )
+    if checkpoint_name == "before-rollback-worktree-remove":
+        expected = subject.worktree.exists() and branch != b""
+    elif checkpoint_name == "before-rollback-ref-delete":
+        expected = not subject.worktree.exists() and branch != b""
+    else:
+        expected = not subject.worktree.exists() and branch == b""
+    preserved = subject.state.exists() and subject.state.read_bytes() == raw
+    clean_fixture(subject)
+    return result == 64 and expected and preserved
+
+
+for rollback_checkpoint in (
+    "before-rollback-worktree-remove",
+    "before-rollback-ref-delete",
+    "before-rollback-state-delete",
+):
+    check(
+        f"{rollback_checkpoint} preserves unchanged recovery state",
+        lambda rollback_checkpoint=rollback_checkpoint: rollback_checkpoint_result(
+            rollback_checkpoint
+        ),
+    )
+
+
+def rollback_changed_state_before_delete() -> bool:
+    subject = Fixture("rollback-state-cas")
+    assert subject.init(facade_created=True).returncode == 0
+    original_checkpoint = MODULE._cleanup_checkpoint
+    changed = subject.state.read_bytes() + b" "
+
+    def mutate(name: str) -> None:
+        if name == "before-rollback-state-delete":
+            subject.state.write_bytes(changed)
+            subject.state.chmod(0o600)
+
+    try:
+        MODULE._cleanup_checkpoint = mutate
+        prior_stdout, prior_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        try:
+            result = MODULE.main(subject.rollback_argv())
+        finally:
+            sys.stdout, sys.stderr = prior_stdout, prior_stderr
+    finally:
+        MODULE._cleanup_checkpoint = original_checkpoint
+    preserved = (
+        subject.state.exists()
+        and subject.state.read_bytes() == changed
+        and not subject.worktree.exists()
+        and git(
+            subject.repo, "rev-parse", "--verify", f"refs/heads/{subject.branch}",
+            check_result=False,
+        ) == b""
+    )
+    clean_fixture(subject)
+    return result == 64 and preserved
+
+
+check(
+    "rollback-ready compare-and-delete protects exact state bytes",
+    rollback_changed_state_before_delete,
+)
+
+
+def rollback_dispatch_evidence_at_checkpoint() -> bool:
+    subject = Fixture("rollback-dispatch-race")
+    assert subject.init(facade_created=True).returncode == 0
+    original_checkpoint = MODULE._cleanup_checkpoint
+    dispatch_job = subject.root / "dispatch-job"
+
+    def create_dispatch_evidence(name: str) -> None:
+        if name == "before-rollback-worktree-remove":
+            dispatch_job.mkdir(mode=0o700)
+
+    try:
+        MODULE._cleanup_checkpoint = create_dispatch_evidence
+        prior_stdout, prior_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        try:
+            result = MODULE.main(subject.rollback_argv())
+        finally:
+            sys.stdout, sys.stderr = prior_stdout, prior_stderr
+    finally:
+        MODULE._cleanup_checkpoint = original_checkpoint
+    preserved = (
+        subject.state.exists()
+        and subject.worktree.exists()
+        and git(
+            subject.repo, "rev-parse", "--verify", f"refs/heads/{subject.branch}",
+            check_result=False,
+        ) != b""
+    )
+    dispatch_job.rmdir()
+    clean_fixture(subject)
+    return result == 64 and preserved
+
+
+check(
+    "dispatch evidence appearing at rollback checkpoint preserves all resources",
+    rollback_dispatch_evidence_at_checkpoint,
+)
+
+
+def rollback_candidate_drift_at_checkpoint() -> bool:
+    subject = Fixture("rollback-candidate-race")
+    assert subject.init(facade_created=True).returncode == 0
+    original_checkpoint = MODULE._cleanup_checkpoint
+
+    def create_candidate_drift(name: str) -> None:
+        if name == "before-rollback-worktree-remove":
+            subject.worktree.joinpath("fixture.txt").write_text(
+                "checkpoint drift\n", encoding="utf-8"
+            )
+
+    try:
+        MODULE._cleanup_checkpoint = create_candidate_drift
+        prior_stdout, prior_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        try:
+            result = MODULE.main(subject.rollback_argv())
+        finally:
+            sys.stdout, sys.stderr = prior_stdout, prior_stderr
+    finally:
+        MODULE._cleanup_checkpoint = original_checkpoint
+    preserved = (
+        subject.state.exists()
+        and subject.worktree.exists()
+        and git(
+            subject.repo, "rev-parse", "--verify", f"refs/heads/{subject.branch}",
+            check_result=False,
+        ) != b""
+    )
+    clean_fixture(subject)
+    return result == 64 and preserved
+
+
+check(
+    "candidate drift appearing at rollback checkpoint preserves all resources",
+    rollback_candidate_drift_at_checkpoint,
+)
+
+
+rollback_success = Fixture("rollback-success")
+assert rollback_success.init(facade_created=True).returncode == 0
+state_sibling = rollback_success.state_dir / "preserve.txt"
+state_sibling.write_bytes(b"preserve\n"); state_sibling.chmod(0o600)
+rollback_result = rollback_success.rollback()
+rollback_output = json.loads(rollback_result.stdout)
+check(
+    "rollback-ready removes exact empty facade resources and only its state file",
+    lambda: (
+        rollback_result.returncode == 0
+        and rollback_output == {
+            "job_id": rollback_success.job_id,
+            "rollback_complete": True,
+        }
+        and not rollback_success.state.exists()
+        and state_sibling.read_bytes() == b"preserve\n"
+        and not rollback_success.worktree.exists()
+        and git(
+            rollback_success.repo, "rev-parse", "--verify",
+            f"refs/heads/{rollback_success.branch}", check_result=False,
+        ) == b""
+    ),
+)
+
+
 fixture.worktree.joinpath("fixture.txt").write_text("worker edit\n", encoding="utf-8")
 outside_target = fixture.root / "outside-sentinel.txt"
 outside_target.write_text("preserve\n", encoding="utf-8")
@@ -681,7 +1038,7 @@ passed_fixture = Fixture("passed")
 assert passed_fixture.init().returncode == 0
 passed_fixture.worktree.joinpath("fixture.txt").write_text("worker edit\n", encoding="utf-8")
 passed_fixture.write_envelope()
-passed_verify = run_cli("verify", "--state", str(passed_fixture.state), "--receipt", str(passed_fixture.receipt), "--envelope", str(passed_fixture.envelope), "--only", "fixture.txt", "--expect-edits", "--verify", "true")
+passed_verify = run_cli("verify", "--state", str(passed_fixture.state), "--receipt", str(passed_fixture.receipt), "--envelope", str(passed_fixture.envelope), "--only", "fixture.txt", "--expect-edits", "--verify-argv", '["true"]')
 check("gate-passed state is retained and never cleanup-eligible", lambda: passed_verify.returncode == 0 and passed_fixture.value()["phase"] == "verified-gate-passed" and passed_fixture.cleanup().returncode == 64)
 preserve = run_cli("preserve-instructions", "--state", str(passed_fixture.state))
 check("passed state returns instructions without executing them", lambda: preserve.returncode == 0 and b"git -C" in preserve.stdout and passed_fixture.worktree.exists())
@@ -1170,7 +1527,7 @@ for old, new, label in (
     check(f"mutation removing {label} is killed", lambda mutated=mutated: not checkout_preflight_contract(mutated))
 
 def candidate_policy_contract(data: bytes) -> bool:
-    return data.count(b"git_reader=git") == 8
+    return data.count(b"git_reader=git") == 10
 
 
 check("lifecycle candidate digest uses the fixed Git policy reader", lambda: candidate_policy_contract(source))

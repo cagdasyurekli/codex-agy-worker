@@ -1285,7 +1285,7 @@ checks remain mandatory; age alone never authorizes deletion.
   parent directories, dirty worktrees, malformed HEAD/inventory digests, missing or
   reordered/dropped stages, duplicate shard/stage evidence, and unexpected fields.
   Aggregate `test` check with `if: always()` succeeds only when all four unique shard receipts
-  exist, all producers succeeded, all match expected head/inventory, and all 47 canonical stages
+  exist, all producers succeeded, all match expected head/inventory, and all 49 canonical stages
   appear exactly once. Local gate default fail-fast execution remains unchanged, and lower CI wall
   time does not reduce total compute, provider usage, token usage, cost, or verification rigor.
 

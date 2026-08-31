@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One separately-authorized, capture-only ``agy models`` observation for 1.1.12.
+"""One separately-authorized, manifest-bound ``agy models`` observation.
 
 The runner never interprets the captured stream.  A successful observation is
 ``captured`` evidence, not an accepted inventory, metadata update, route, or model
@@ -27,21 +27,26 @@ sys.dont_write_bytecode = True
 
 RUNTIME_MAJOR = 3
 RUNTIME_MINOR = 9
+ACTIVE_VERSION = "1.1.22"
 PROFILE_LIMIT = 16_384
 STREAM_LIMIT = 64 * 1024
 WALL_SECONDS = 25.0
-EXPECTED_SOURCE_SHA256 = "c8fd3c0016e101689f923f82da1c068b0e6dce3abcb0089e282742693ad4d344"
-EXPECTED_RECOVERY_BINDING_SHA256 = "b469298550a9d16921dc4f47ae72a5a00dfae414c11286097d2652e498f89da6"
-EXPECTED_RECOVERY_STDOUT = b"1.1.12\n"
-EXPECTED_RECOVERY_RUNNER_SHA256 = "f51dd9f9359b7bc2f46756b7b89838798f3837dfdcf9866414b269d2daf0bab4"
-EXPECTED_RECOVERY_RUNNER_BYTES = 96_663
-EXPECTED_RECOVERY_SUMMARY_BYTES = 263
-OUTPUT_PROFILE_NAME = "models.capture.1.1.12.profile.json"
+EXPECTED_SOURCE_SHA256 = "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906"
+EXPECTED_RECOVERY_BINDING_SHA256 = "d9d830e65d3a5c76df6d9e07e6ea7e14e14f290ab4036bdbae8cb33502e29f2a"
+EXPECTED_RECOVERY_STDOUT = b"1.1.22\n"
+EXPECTED_RECOVERY_RUNNER_SHA256 = "e2f6a50cad78ebf572719d81a5d1d5fee40b31808d960a0ac3f800db2bf9b9b7"
+EXPECTED_RECOVERY_RUNNER_BYTES = 46_027
+EXPECTED_RECOVERY_SUMMARY_BYTES = 260
+EXPECTED_RELEASE_COMMIT = "556846a4bb94117222f53846896c7eb0d645307e"
+EXPECTED_DISTRIBUTION_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.22-5711547746615296/darwin-arm/cli_mac_arm64.tar.gz"
+EXPECTED_DISTRIBUTION_SHA512 = "a8121185bd1c3455410ad41e88e2030ea237d496b8e40ccde313bf611c0551840fddf450b45c8e1a2575d9863c990b3324f19eef0f479936df8bfc6e4e80d30b"
+OUTPUT_PROFILE_NAME = "models.capture.1.1.22.profile.json"
+RUNNER_ARTIFACT_NAME = "models_capture_1_1_22_runner.py"
 SCRATCH_NAMES = ("cwd", "tmp", "xdg-cache", "xdg-config", "xdg-state")
 TMP_CACHE_LEAF = "unleash-repo-schema-v1-codeium-language-server.json"
 TMP_CACHE_LIMIT = 1024 * 1024
 RECOVERY_SCRATCH = ("cwd", "home", "tmp", "xdg-cache", "xdg-config", "xdg-state")
-RECOVERY_FILES = frozenset(set(RECOVERY_SCRATCH) | {"runner.py", "runner.py.sha256", "version.binding.json", "version.binding.sha256", "version.stderr", "version.stdout", "version.summary.json"})
+RECOVERY_FILES = frozenset(set(RECOVERY_SCRATCH) | {"agy.snapshot", "runner.py", "runner.py.sha256", "snapshot.post.json", "snapshot.pre.json", "source.post.json", "source.pre.json", "version.binding.json", "version.binding.sha256", "version.stderr", "version.stdout", "version.summary.json"})
 PROFILE_KEYS = frozenset({"account_home", "account_home_identity", "capture_parent", "capture_parent_identity", "snapshot_identity", "snapshot_path", "source_identity", "source_path", "source_sha256", "version_binding_sha256", "version_root", "version_root_identity"})
 FILE_KEYS = frozenset({"ctime_ns", "dev", "gid", "ino", "mode", "mtime_ns", "nlink", "size", "uid"})
 DIR_KEYS = frozenset({"dev", "gid", "ino", "mode", "nlink", "uid"})
@@ -49,7 +54,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "58ce44a6ff785cf42d9dcf0a1d499819c9703682430c6eb61290c6108535c5b6"
+MODULE_AST_SHA256 = "e5d1d0805c53e71f3f92ccbd188da3fa3b30edf76129d9b2b003068910b9f0ef"
 ACTIVE_MARKER_ROOT: Optional[str] = None
 ACTIVE_MARKER_ROOT_IDENTITY: Optional[tuple[int, int]] = None
 ACTIVE_MARKER_DIGEST: Optional[str] = None
@@ -245,23 +250,34 @@ def _validate_recovery(profile: Profile) -> None:
             finally: os.close(scratch)
         runner = _read_at(fd, "runner.py", EXPECTED_RECOVERY_RUNNER_BYTES + 1)
         if len(runner) != EXPECTED_RECOVERY_RUNNER_BYTES or hashlib.sha256(runner).hexdigest() != EXPECTED_RECOVERY_RUNNER_SHA256 or _read_at(fd, "runner.py.sha256", 128) != (EXPECTED_RECOVERY_RUNNER_SHA256 + "\n").encode("ascii"): raise CaptureError("recovery runner changed")
-        binding = _read_at(fd, "version.binding.json", 2_060)
+        binding = _read_at(fd, "version.binding.json", 3_205)
         if (profile.version_binding_sha256 != EXPECTED_RECOVERY_BINDING_SHA256 or hashlib.sha256(binding).hexdigest() != EXPECTED_RECOVERY_BINDING_SHA256 or _read_at(fd, "version.binding.sha256", 128) != (EXPECTED_RECOVERY_BINDING_SHA256 + "\n").encode("ascii")): raise CaptureError("recovery binding changed")
-        if len(binding) != 2_060: raise CaptureError("recovery binding changed")
+        if len(binding) != 3_205: raise CaptureError("recovery binding changed")
         value = _json(binding)
         if not isinstance(value, dict): raise CaptureError("recovery binding invalid")
         source, snapshot, version = value.get("source"), value.get("snapshot"), value.get("version")
-        if (value.get("claim") != "snapshot-version-recovery" or not isinstance(source, dict) or not isinstance(snapshot, dict) or not isinstance(version, dict)
+        official = value.get("official_observation")
+        limitations = value.get("limitations")
+        if (value.get("claim") != "snapshot-version-only" or not isinstance(source, dict) or not isinstance(snapshot, dict) or not isinstance(version, dict)
                 or source.get("pre") != dataclasses.asdict(profile.source_identity) or source.get("post") != dataclasses.asdict(profile.source_identity) or source.get("sha256") != EXPECTED_SOURCE_SHA256
                 or snapshot.get("pre") != dataclasses.asdict(profile.snapshot_identity) or snapshot.get("post") != dataclasses.asdict(profile.snapshot_identity) or snapshot.get("sha256") != EXPECTED_SOURCE_SHA256
-                or version.get("logical_argv") != [profile.source_path, "--version"] or version.get("observed") != "1.1.12" or version.get("exit") != 0 or version.get("popen_count") != 1
+                or version.get("logical_argv") != [profile.source_path, "--version"] or version.get("expected") != ACTIVE_VERSION or version.get("observed") != ACTIVE_VERSION or version.get("exit") != 0 or version.get("popen_count") != 1
+                or official != {"distribution_sha512": EXPECTED_DISTRIBUTION_SHA512, "distribution_url": EXPECTED_DISTRIBUTION_URL, "release_commit": EXPECTED_RELEASE_COMMIT, "version": ACTIVE_VERSION}
+                or limitations != {"account_read": False, "metadata_advance_authorized": False, "models_called": False, "network_absence_os_enforced": False, "provider_backend_proven": False, "routing_authority": False}
+                or value.get("inventory") != {"executable_version_bound": False}
                 or _read_at(fd, "version.stdout", 7) != EXPECTED_RECOVERY_STDOUT or _read_at(fd, "version.stderr", 0) != b""):
             raise CaptureError("recovery binding claim changed")
+        if (_read_at(fd, "source.pre.json", 1_024) != _canonical(dataclasses.asdict(profile.source_identity))
+                or _read_at(fd, "source.post.json", 1_024) != _canonical(dataclasses.asdict(profile.source_identity))
+                or _read_at(fd, "snapshot.pre.json", 1_024) != _canonical(dataclasses.asdict(profile.snapshot_identity))
+                or _read_at(fd, "snapshot.post.json", 1_024) != _canonical(dataclasses.asdict(profile.snapshot_identity))):
+            raise CaptureError("recovery identity evidence changed")
         summary = _read_at(fd, "version.summary.json", EXPECTED_RECOVERY_SUMMARY_BYTES)
         summary_value = _json(summary)
         artifacts = value.get("artifacts")
         if (len(summary) != EXPECTED_RECOVERY_SUMMARY_BYTES or not isinstance(summary_value, dict)
                 or not isinstance(artifacts, dict)
+                or artifacts.get("runner.py") != EXPECTED_RECOVERY_RUNNER_SHA256
                 or artifacts.get("version.summary.json") != hashlib.sha256(summary).hexdigest()
                 or artifacts.get("version.stdout") != hashlib.sha256(EXPECTED_RECOVERY_STDOUT).hexdigest()
                 or artifacts.get("version.stderr") != hashlib.sha256(b"").hexdigest()): raise CaptureError("recovery summary changed")
@@ -283,7 +299,7 @@ def _same_capture_parent(observed: DirectoryIdentity, expected: DirectoryIdentit
 def _validate_profile(profile: Profile, signals: Signals) -> tuple[int, int, int, int]:
     if (profile.source_sha256 != EXPECTED_SOURCE_SHA256 or profile.version_binding_sha256 != EXPECTED_RECOVERY_BINDING_SHA256
             or os.path.basename(profile.source_path) != "agy.source" or os.path.dirname(profile.source_path) != profile.capture_parent
-            or os.path.commonpath((profile.snapshot_path, profile.capture_parent)) != profile.capture_parent
+            or os.path.basename(profile.snapshot_path) != "agy.snapshot" or os.path.dirname(profile.snapshot_path) != profile.version_root
             or os.path.commonpath((profile.version_root, profile.capture_parent)) != profile.capture_parent
             or not _disjoint(profile.account_home, profile.capture_parent)):
         raise CaptureError("profile topology changed")
@@ -323,7 +339,7 @@ def _new_root(parent: str, parent_fd: int, expected_parent: DirectoryIdentity) -
     if not _same_capture_parent(DirectoryIdentity.from_stat(os.fstat(parent_fd)), expected_parent):
         raise CaptureError("capture parent changed")
     for _ in range(32):
-        name = "agy-models-capture-1-1-12." + os.urandom(12).hex()
+        name = "agy-models-capture-1-1-22." + os.urandom(12).hex()
         try:
             os.mkdir(name, 0o700, dir_fd=parent_fd)
             fd = os.open(name, os.O_RDONLY | DIRECTORY | CLOEXEC | NOFOLLOW, dir_fd=parent_fd)
@@ -454,54 +470,53 @@ def _capture(process: subprocess.Popen[bytes], signals: Signals) -> tuple[bytes,
     return bytes(buffers[stdout_fd][1]), bytes(buffers[stderr_fd][1])
 
 
-def _close_group(process: subprocess.Popen[bytes]) -> int:
-    if process.returncode is not None or process.pid <= 1:
+def _close_group(process: subprocess.Popen[bytes], reserved_pgid: int) -> int:
+    """Close the same-UID registered group before the sole leader reap.
+
+    macOS reports ``EPERM`` when a reserved group contains only its zombie
+    leader.  A live same-UID descendant remains signalable, so only a successful
+    zero probe can keep the group alive through the KILL deadline.
+    """
+    if (process.returncode is not None or process.pid <= 1
+            or type(reserved_pgid) is not int or reserved_pgid != process.pid):
         raise CaptureError("capture group is not active")
+    group_error: Optional[BaseException] = None
+    group_gone = False
     try:
-        if os.getpgid(process.pid) != process.pid: raise CaptureError("capture group changed")
-        os.killpg(process.pid, signal.SIGTERM)
+        os.killpg(reserved_pgid, signal.SIGTERM)
     except ProcessLookupError:
-        try:
-            return process.wait(timeout=1.0)
-        except subprocess.TimeoutExpired as exc:
-            raise CaptureError("capture child could not be reaped") from exc
-    except PermissionError as exc:
-        raise CaptureError("capture group cannot be closed") from exc
-    deadline = time.monotonic() + 0.25
-    while time.monotonic() < deadline:
-        result = process.poll()
-        if result is not None:
-            try:
-                process.wait(timeout=0)
-                os.killpg(process.pid, 0)
-            except ProcessLookupError:
-                return result
-            except PermissionError as exc:
-                raise CaptureError("capture group cannot be inspected") from exc
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
-            break
-        except PermissionError as exc:
-            raise CaptureError("capture group cannot be inspected") from exc
-        time.sleep(0.01)
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
+        group_gone = True
+    except PermissionError:
         pass
-    except PermissionError as exc:
-        raise CaptureError("capture group cannot be closed") from exc
+    if not group_gone:
+        time.sleep(0.25)
+        try:
+            os.killpg(reserved_pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            group_gone = True
+        except PermissionError:
+            group_gone = True
+    if not group_gone and group_error is None:
+        deadline = time.monotonic() + 0.75
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(reserved_pgid, 0)
+            except ProcessLookupError:
+                group_gone = True
+                break
+            except PermissionError:
+                group_gone = True
+                break
+            time.sleep(0.01)
+        if not group_gone and group_error is None:
+            group_error = CaptureError("capture group survives kill deadline")
     try:
         result = process.wait(timeout=1.0)
     except subprocess.TimeoutExpired as exc:
         raise CaptureError("capture group could not be reaped") from exc
-    try:
-        os.killpg(process.pid, 0)
-    except ProcessLookupError:
-        return result
-    except PermissionError as exc:
-        raise CaptureError("capture group cannot be inspected") from exc
-    raise CaptureError("capture group survives leader reap")
+    if group_error is not None:
+        raise CaptureError("capture group cannot be closed") from group_error
+    return result
 
 
 def _close_unvalidated_child(process: subprocess.Popen[bytes]) -> None:
@@ -539,32 +554,18 @@ def _close_fast_exit_group(process: subprocess.Popen[bytes]) -> None:
     except PermissionError as exc:
         _close_unvalidated_child(process)
         raise CaptureError("capture group cannot be closed") from exc
-    _close_unvalidated_child(process)
-    try:
-        os.killpg(process.pid, 0)
-    except ProcessLookupError:
-        raise CaptureError("capture process group registration changed")
-    except PermissionError as exc:
-        raise CaptureError("capture group cannot be inspected") from exc
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
-        raise CaptureError("capture process group registration changed")
+        pass
     except PermissionError as exc:
+        _close_unvalidated_child(process)
         raise CaptureError("capture group cannot be closed") from exc
-    deadline = time.monotonic() + 1.0
-    while time.monotonic() < deadline:
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
-            raise CaptureError("capture process group registration changed")
-        except PermissionError as exc:
-            raise CaptureError("capture group cannot be inspected") from exc
-        time.sleep(0.01)
-    raise CaptureError("capture process group survives leader exit")
+    _close_unvalidated_child(process)
+    raise CaptureError("capture process group registration changed")
 
 
-def _start_capture(profile: Profile, root_path: str) -> subprocess.Popen[bytes]:
+def _start_capture(profile: Profile, root_path: str) -> tuple[subprocess.Popen[bytes], int]:
     """Launch and register the sole child before any unmasked lifecycle window."""
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
     try:
@@ -578,7 +579,7 @@ def _start_capture(profile: Profile, root_path: str) -> subprocess.Popen[bytes]:
         if process.pid <= 1 or pgid != process.pid:
             _close_unvalidated_child(process)
             raise CaptureError("capture process group registration changed")
-        return process
+        return process, pgid
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
@@ -650,9 +651,12 @@ def _verify_pre_child_root(root_path: str, root_name: str, root_fd: int, root_id
         os.close(reopened_parent_fd)
 
 
-def _verify_final_root(root_path: str, root_name: str, root_fd: int, root_identity: DirectoryIdentity, profile: Profile, capture_fd: int, artifacts: dict[str, tuple[str, FileIdentity]], scratch_ledger: dict[str, FileIdentity], marker: bool = False) -> None:
-    expected = set(SCRATCH_NAMES) | {"models_capture_1_1_12_runner.py", "models_capture_1_1_12_runner.py.sha256", OUTPUT_PROFILE_NAME, "models.stdout", "models.stderr", "models.capture.summary.json", "models.capture.json"}
-    if marker: expected.add("models.capture.sha256")
+def _verify_final_root(root_path: str, root_name: str, root_fd: int, root_identity: DirectoryIdentity, profile: Profile, capture_fd: int, artifacts: dict[str, tuple[str, FileIdentity]], scratch_ledger: dict[str, FileIdentity], marker: bool = False, failure: bool = False) -> None:
+    if failure:
+        expected = set(SCRATCH_NAMES) | {RUNNER_ARTIFACT_NAME, RUNNER_ARTIFACT_NAME + ".sha256", OUTPUT_PROFILE_NAME, "models.stdout", "models.stderr", "models.capture.failure.json"}
+    else:
+        expected = set(SCRATCH_NAMES) | {RUNNER_ARTIFACT_NAME, RUNNER_ARTIFACT_NAME + ".sha256", OUTPUT_PROFILE_NAME, "models.stdout", "models.stderr", "models.capture.summary.json", "models.capture.json"}
+        if marker: expected.add("models.capture.sha256")
     item = os.fstat(root_fd)
     path_item = os.stat(root_path, follow_symlinks=False)
     current_root = DirectoryIdentity.from_stat(item)
@@ -698,16 +702,42 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
             scratch_ledger[name] = FileIdentity.from_stat(os.stat(name, dir_fd=root_fd, follow_symlinks=False))
         _empty_scratch(root_fd)
         _verify_pre_child_root(root_path, root_name, root_fd, root_identity, profile, capture_fd)
-        process = _start_capture(profile, root_path)
+        process, reserved_pgid = _start_capture(profile, root_path)
         closed = False
         try:
             stdout, stderr = _capture(process, signals)
-            rc = _close_group(process)
+            rc = _close_group(process, reserved_pgid)
             closed = True
         except BaseException:
-            if not closed: _close_group(process)
+            if not closed and process.returncode is None:
+                try: _close_group(process, reserved_pgid)
+                except BaseException: pass
             raise
-        if rc != 0: raise CaptureError("capture child failed")
+        if rc != 0:
+            _revalidate_authority(profile, source_fd, snapshot_fd, account_fd, capture_fd, signals)
+            _empty_scratch(root_fd, allow_tmp_cache=True)
+            scratch_ledger["tmp"] = FileIdentity.from_stat(os.stat("tmp", dir_fd=root_fd, follow_symlinks=False))
+            runner_sha = hashlib.sha256(runner_source).hexdigest()
+            _write(root_fd, RUNNER_ARTIFACT_NAME, runner_source, ledger=ledger)
+            _write(root_fd, RUNNER_ARTIFACT_NAME + ".sha256", (runner_sha + "\n").encode("ascii"), ledger=ledger)
+            _write(root_fd, OUTPUT_PROFILE_NAME, profile_bytes, ledger=ledger)
+            stdout_sha = _write(root_fd, "models.stdout", stdout, ledger=ledger)
+            stderr_sha = _write(root_fd, "models.stderr", stderr, ledger=ledger)
+            failure_record = {
+                "artifacts": {"models.stderr": stderr_sha, "models.stdout": stdout_sha},
+                "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS},
+                "claim": "models-capture-failure",
+                "input_profile_sha256": hashlib.sha256(profile_bytes).hexdigest(),
+                "limitations": {"accepted_inventory": False, "failure_classified": False, "inventory_interpreted": False, "metadata_advance_authorized": False, "metadata_updated": False, "provider_backend_proven": False, "routing_authority": False, "routing_authorized": False},
+                "observation": {"exit": rc, "popen_count": 1},
+                "runner_sha256": runner_sha,
+                "source_sha256": EXPECTED_SOURCE_SHA256,
+                "status": "child-failed",
+                "version_binding_sha256": profile.version_binding_sha256,
+            }
+            _write(root_fd, "models.capture.failure.json", _canonical(failure_record), ledger=ledger)
+            _verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger, failure=True)
+            raise CaptureError("capture child failed")
         _revalidate_authority(profile, source_fd, snapshot_fd, account_fd, capture_fd, signals)
         _empty_scratch(root_fd, allow_tmp_cache=True)
         scratch_ledger["tmp"] = FileIdentity.from_stat(os.stat("tmp", dir_fd=root_fd, follow_symlinks=False))
@@ -720,14 +750,14 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
             try: scratch[name] = dataclasses.asdict(DirectoryIdentity.from_stat(os.fstat(child)))
             finally: os.close(child)
         profile_sha = hashlib.sha256(profile_bytes).hexdigest()
-        _write(root_fd, "models_capture_1_1_12_runner.py", runner_source, ledger=ledger)
-        _write(root_fd, "models_capture_1_1_12_runner.py.sha256", (hashlib.sha256(runner_source).hexdigest() + "\n").encode("ascii"), ledger=ledger)
+        _write(root_fd, RUNNER_ARTIFACT_NAME, runner_source, ledger=ledger)
+        _write(root_fd, RUNNER_ARTIFACT_NAME + ".sha256", (hashlib.sha256(runner_source).hexdigest() + "\n").encode("ascii"), ledger=ledger)
         _write(root_fd, OUTPUT_PROFILE_NAME, profile_bytes, ledger=ledger)
         stdout_sha, stderr_sha = _write(root_fd, "models.stdout", stdout, ledger=ledger), _write(root_fd, "models.stderr", stderr, ledger=ledger)
-        summary = {"artifacts": {"models.stderr": stderr_sha, "models.stdout": stdout_sha}, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": {"accepted_inventory": False, "account_home_may_mutate": True, "metadata_updated": False, "provider_backend_proven": False, "routing_authority": False}, "observation": {"argv": [profile.source_path, "--output-format", "json", "models"], "exit": rc, "popen_count": 1}, "snapshot_sha256": EXPECTED_SOURCE_SHA256, "source_sha256": EXPECTED_SOURCE_SHA256, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
+        summary = {"artifacts": {"models.stderr": stderr_sha, "models.stdout": stdout_sha}, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": {"accepted_inventory": False, "account_home_may_mutate": True, "inventory_interpreted": False, "metadata_advance_authorized": False, "metadata_updated": False, "provider_backend_proven": False, "routing_authority": False, "routing_authorized": False}, "observation": {"argv": [profile.source_path, "--output-format", "json", "models"], "exit": rc, "popen_count": 1}, "snapshot_sha256": EXPECTED_SOURCE_SHA256, "source_sha256": EXPECTED_SOURCE_SHA256, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
         summary_sha = _write(root_fd, "models.capture.summary.json", _canonical(summary), ledger=ledger)
         runner_sha = hashlib.sha256(runner_source).hexdigest()
-        artifacts = {OUTPUT_PROFILE_NAME: profile_sha, "models.capture.summary.json": summary_sha, "models.stderr": stderr_sha, "models.stdout": stdout_sha, "models_capture_1_1_12_runner.py": runner_sha, "models_capture_1_1_12_runner.py.sha256": hashlib.sha256((runner_sha + "\n").encode("ascii")).hexdigest()}
+        artifacts = {OUTPUT_PROFILE_NAME: profile_sha, "models.capture.summary.json": summary_sha, "models.stderr": stderr_sha, "models.stdout": stdout_sha, RUNNER_ARTIFACT_NAME: runner_sha, RUNNER_ARTIFACT_NAME + ".sha256": hashlib.sha256((runner_sha + "\n").encode("ascii")).hexdigest()}
         record = {"account": {"post": dataclasses.asdict(account_post), "pre": dataclasses.asdict(profile.account_home_identity)}, "artifacts": artifacts, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": summary["limitations"], "observation": {"argv": [profile.source_path, "--output-format", "json", "models"], "executable_sha256": EXPECTED_SOURCE_SHA256, "exit": rc, "popen_count": 1}, "runner_sha256": hashlib.sha256(runner_source).hexdigest(), "scratch": scratch, "snapshot": {"post": dataclasses.asdict(snapshot_post), "pre": dataclasses.asdict(profile.snapshot_identity), "sha256": EXPECTED_SOURCE_SHA256}, "source": {"post": dataclasses.asdict(source_post), "pre": dataclasses.asdict(profile.source_identity), "sha256": EXPECTED_SOURCE_SHA256}, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
         record_sha = _write(root_fd, "models.capture.json", _canonical(record), ledger=ledger)
         _verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger)
@@ -762,7 +792,7 @@ def validate_source_contract(data: bytes) -> dict[str, str]:
     for required in ("[profile.source_path, \"--output-format\", \"json\", \"models\"]", "executable=profile.snapshot_path", "env=environment", "cwd=os.path.join(root_path, \"cwd\")", "start_new_session=True", "close_fds=True", "umask=0o077"):
         if required not in popen_text: raise CaptureError("runner Popen contract changed")
     source = data.decode("utf-8", "strict")
-    for required in ("_close_group(process)", "_marker(root_fd, record_sha, signals)", "_consume_optional_tmp_cache", "TMP_CACHE_LEAF", "allow_tmp_cache=True", "\"routing_authority\": False", "\"metadata_updated\": False", "_finish_success(state, result)"):
+    for required in ("_close_group(process, reserved_pgid)", "_marker(root_fd, record_sha, signals)", "_consume_optional_tmp_cache", "TMP_CACHE_LEAF", "allow_tmp_cache=True", "\"inventory_interpreted\": False", "\"metadata_advance_authorized\": False", "\"routing_authority\": False", "\"routing_authorized\": False", "\"metadata_updated\": False", "_finish_success(state, result)"):
         if required not in source: raise CaptureError("runner semantic contract changed")
     return {"status": "valid-source"}
 
@@ -855,6 +885,47 @@ def main(argv: Sequence[str]) -> int:
     except (CaptureError, OSError, ValueError): return 1
 
 
+def _bind_version_manifest(version_name: str, manifest_path: Optional[str] = None) -> None:
+    global ACTIVE_VERSION, RUNNER_ARTIFACT_NAME
+    global EXPECTED_SOURCE_SHA256, EXPECTED_RECOVERY_BINDING_SHA256
+    global EXPECTED_RECOVERY_STDOUT, EXPECTED_RECOVERY_RUNNER_SHA256
+    global EXPECTED_RECOVERY_RUNNER_BYTES, EXPECTED_RECOVERY_SUMMARY_BYTES
+    global EXPECTED_RELEASE_COMMIT, EXPECTED_DISTRIBUTION_URL
+    global EXPECTED_DISTRIBUTION_SHA512, OUTPUT_PROFILE_NAME
+    script_directory = str(pathlib.Path(__file__).resolve().parent)
+    if script_directory not in sys.path:
+        sys.path.insert(0, script_directory)
+    import version_manifest_engine
+
+    spec = version_manifest_engine.get_version_spec(version_name, manifest_path)
+    values = version_manifest_engine.operation_constants(spec, "capture")
+    ACTIVE_VERSION = spec.version
+    RUNNER_ARTIFACT_NAME = "models_capture_" + spec.version.replace(".", "_") + "_runner.py"
+    EXPECTED_SOURCE_SHA256 = values["EXPECTED_SOURCE_SHA256"]
+    EXPECTED_RECOVERY_BINDING_SHA256 = values["EXPECTED_RECOVERY_BINDING_SHA256"]
+    EXPECTED_RECOVERY_STDOUT = values["EXPECTED_RECOVERY_STDOUT"]
+    EXPECTED_RECOVERY_RUNNER_SHA256 = values["EXPECTED_RECOVERY_RUNNER_SHA256"]
+    EXPECTED_RECOVERY_RUNNER_BYTES = values["EXPECTED_RECOVERY_RUNNER_BYTES"]
+    EXPECTED_RECOVERY_SUMMARY_BYTES = values["EXPECTED_RECOVERY_SUMMARY_BYTES"]
+    EXPECTED_RELEASE_COMMIT = values["EXPECTED_RELEASE_COMMIT"]
+    EXPECTED_DISTRIBUTION_URL = values["EXPECTED_DISTRIBUTION_URL"]
+    EXPECTED_DISTRIBUTION_SHA512 = values["EXPECTED_DISTRIBUTION_SHA512"]
+    OUTPUT_PROFILE_NAME = values["OUTPUT_PROFILE_NAME"]
+
+
+def main_for_version(
+    version_name: str, argv: Sequence[str], manifest_path: Optional[str] = None
+) -> int:
+    _bind_version_manifest(version_name, manifest_path)
+    return main(argv)
+
+
+_bind_version_manifest(ACTIVE_VERSION)
+
+
 if __name__ == "__main__":
     if not _runtime_supported(): os._exit(64)
-    os._exit(main(sys.argv[1:]))
+    if len(sys.argv) < 3 or sys.argv[1] != "--manifest-version": os._exit(64)
+    if len(sys.argv) >= 5 and sys.argv[3] == "--manifest":
+        os._exit(main_for_version(sys.argv[2], sys.argv[5:], sys.argv[4]))
+    os._exit(main_for_version(sys.argv[2], sys.argv[3:]))

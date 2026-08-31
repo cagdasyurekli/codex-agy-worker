@@ -108,13 +108,18 @@ influences `qa-gate` acceptance.
 
 ## Model Intelligence v1
 
-`model-intelligence.sh` provides offline evidence validation, Issue #78 SWE-bench study import, and deterministic Pareto
+`model-intelligence.sh` provides offline evidence validation, Issue #78 SWE-bench study import, benchmark review tracking across supported model inventory changes and dataset expiry, and deterministic Pareto
 frontier analysis across model candidates for bounded task taxonomies:
 
 ```bash
 ./model-intelligence.sh validate --dataset path/to/dataset.json
 ./model-intelligence.sh advise --dataset path/to/dataset.json --taxonomy swe-bench-lite --reference-date 2026-08-25
 ./model-intelligence.sh import-study --report path/to/report.json --plan path/to/plan.json --results path/to/imported_results.json --out path/to/dataset.json
+./model-intelligence.sh benchmark-review --reference-date 2026-08-30
+./model-intelligence.sh benchmark-review --reference-date 2026-08-30 \
+  --baseline-inventory path/to/reviewed-baseline-inventory.json \
+  --candidate-inventory path/to/reviewed-candidate-inventory.json \
+  --out /absolute/private/path/benchmark-review.json
 ```
 
 Evidence records require valid HTTPS or local provenances, distinct provenance types (`vendor`,
@@ -122,8 +127,26 @@ Evidence records require valid HTTPS or local provenances, distinct provenance t
 (harness, harness version, agy version, task taxonomy, provenance, confidence, accounting, tokenizer, cost basis, currency). Expired, calibration-only, substituted,
 incomplete, or incomparable telemetry fails closed to `no_recommendation`. Comparable candidates
 yield Pareto trade-off options with zero execution, dispatch, model-change, or git authority.
+When supported model inventory bindings change or dataset evidence expires, `benchmark-review` emits bounded
+`benchmark-review-due` facts naming affected public model identifiers and their evidence states without execution authority;
+maintainer disposition (`collect`, `defer`, `not-applicable`) is recorded only when explicitly provided and is never chosen automatically.
 The Issue #78 importer validates the canonical plan/import/report hash chain and emits
 only a calibration provenance record. Because that chain does not attest an observed
 model, agy version, substitution result, model-level quality, latency percentiles,
 token means, cost, or confidence, those fields remain `null` and cannot participate
 in ranking.
+
+## Model Evidence Campaign
+
+`model-evidence-campaign.sh` provides an offline incremental new-model evidence campaign workflow triggered after #106 benchmark-review:
+
+```bash
+./model-evidence-campaign.sh validate-plan --plan path/to/plan.json --review path/to/review.json --inventory path/to/inventory.json --matrix path/to/matrix.json --dataset path/to/dataset.json
+./model-evidence-campaign.sh evaluate --plan path/to/plan.json --record path/to/record.json --review path/to/review.json --inventory path/to/inventory.json --matrix path/to/matrix.json --dataset path/to/dataset.json [--out path/to/eval.json]
+./model-evidence-campaign.sh materialize-measured --plan path/to/plan.json --record path/to/record.json --evaluation path/to/eval.json --review path/to/review.json --inventory path/to/inventory.json --matrix path/to/matrix.json --dataset path/to/dataset.json --out /private/owner-state/new_dataset.json
+./model-evidence-campaign.sh aggregate-status --local-opt-in --records-dir path/to/records/ --evaluations-dir path/to/evaluations/
+./model-evidence-campaign.sh aggregate-preview --local-opt-in --records-dir path/to/records/ --evaluations-dir path/to/evaluations/
+./model-evidence-campaign.sh aggregate-export --local-opt-in --approve-preview-sha <SHA256> --records-dir path/to/records/ --evaluations-dir path/to/evaluations/ --out /private/owner-state/export.json
+```
+
+Campaigns separate four immutable artifact roles (plan, caller-owned record, deterministic evaluation, and optional local aggregate) across three mutually exclusive evidence lanes (`vendor_declared`, `measured`, `observational`). Plan validation and evaluation require the exact current #106 review, inventory binding, model matrix, and dataset artifacts. Records bind the frozen measurement window, expose bounded error and drift fractions, and use closed limitation codes rather than free text. Evaluation is pure and deterministic, failing closed on structural errors and yielding bounded `no_recommendation` reasons on drift, mismatch, incompatibility, insufficiency, verification failure, or uncertainty. Materialization revalidates that full chain, recomputes the evaluation exactly, accepts only a measured plan/record/evaluation, and copies only explicit measured metadata into a new no-overwrite 0600 dataset artifact. Aggregate commands require explicit local opt-in and evaluation artifacts bound to record digests. A missing evaluation or a structurally valid evaluation that does not bind the record leaves that record `unreviewed`; any invalid or duplicate evaluation input makes the aggregate command fail closed. Aggregates expose coarse integer counts only with zero network, provider, dispatch, or git authority. Output parents must be existing owner-owned mode-0700 directories reached through an entirely real, canonical, no-symlink ancestor chain; publication never creates or overwrites a target.
