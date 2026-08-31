@@ -534,11 +534,17 @@ to make installation look uniform.
 
 Skill installation is not consent to transmit a repository. Before dispatch, treat
 the entire disposable worktree as worker-readable and potentially transmissible
-through agy to Google/Gemini. Narrow approval is valid only when the worktree contains
-only approved content. Prompt denylist and gate path policies govern task writes and
-candidate acceptance, not read isolation. Keep secrets, denied paths, unrelated
-private files, and local logs out of every provider attempt, and make privacy, support,
-and usage terms public alongside the GitHub distribution.
+through agy to Google/Gemini when whole-worktree mode is selected. Scoped approval is
+valid only for the exact reviewed read/write policy and selected-content digest.
+Prompt denylist and gate path policies govern task writes and candidate acceptance,
+not read isolation. Keep secrets, denied paths, unrelated private files, and local
+logs out of every provider attempt, and make privacy, support, and usage terms public
+alongside the GitHub distribution.
+
+Disclosure alone is weaker than admission control. The ordinary facade should require
+the caller to bind either the current whole-worktree manifest or the selected-content
+scope and transmission digest; a deprecated broad-mode spelling may remain readable
+only behind an explicit migration acknowledgement, never as a silent default.
 
 Catalog metadata is a public product claim. Keep the skill frontmatter explicit about
 the supported host, runtime prerequisites, license, and release version; a provider

@@ -23,8 +23,9 @@ lifecycle, or verifier step fails.
 8. Continue the same conversation for a bounded repair or finalize an honest
    disposition. Preserve useful partial work when the budget ends.
 
-In default whole-worktree mode, requested paths and gate policies constrain writes or
-candidate acceptance; they do not narrow provider reads. Optional provider-scope mode
+Whole-worktree mode requires its current manifest SHA acknowledgement; requested paths
+and gate policies constrain writes or candidate acceptance, not provider reads.
+Provider-scope mode
 narrows staged content as described below, but it is not a security sandbox.
 
 ## Primary `run`, `status`, `verify-finalize` path
@@ -74,17 +75,22 @@ test ! -e "$ENVELOPE" || { echo "envelope path already exists" >&2; exit 64; }
   "$PIPELINE/workflow.sh" run \
     --state "$STATE_DIR/workflow.json" --repo "$TARGET" --worktree "$WT" \
     --branch "$JOB_BRANCH" --base "$BASE" --job-id "$JOB_ID" \
-    --approve-preview-sha "$PREVIEW_SHA" --workflow task --task "$TASK" \
+    --approve-whole-worktree "$PREVIEW_SHA" --workflow task --task "$TASK" \
     > "$ENVELOPE"
 ) || exit $?
 test -s "$ENVELOPE" || { echo "approved run produced no envelope" >&2; exit 1; }
 ```
 
-This facade invocation uses default whole-worktree dispatch; `--add-dir` does not
-narrow provider reads. For selected-content dispatch, use the lower-level
-`agy-worker.sh --provider-scope FILE --approve-transmission-sha SHA256` surface after
-reviewing its scoped preview. It stages only selected entries, but remains subject to
+This facade invocation explicitly approves whole-worktree dispatch; `--add-dir` does
+not narrow provider reads. For selected-content dispatch, pass `--provider-scope FILE`
+to both facade calls and approve the scoped preview with
+`--approve-transmission-sha SHA256`. It stages only selected entries, but remains subject to
 the boundaries in [Security and compatibility](SECURITY_AND_COMPATIBILITY.md).
+
+Omitting both modes fails before provider launch. The old `--approve-preview-sha`
+spelling remains available through at least v0.15.x only when paired with
+`--legacy-preview-approval`; it emits a deprecation warning and never restores an
+implicit whole-worktree default.
 
 The facade does not choose a model, assurance label, repair, retry, Git action, or
 external write. `status --state "$STATE_DIR/workflow.json"` is read-only. For a bound

@@ -137,11 +137,27 @@ behavior into broader agy `1.1.22` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
-### v0.13.0 safer verification and lower-friction lifecycle
+### v0.14.0 explicit provider-transmission choice
 
 **Status:** Release candidate. Publication requires the exact candidate to pass the
 canonical offline suite, protected `test`, squash merge, annotated tag, GitHub Release
 readback, and the separately governed SkillStore reassessment.
+
+This release removes the ordinary facade's implicit provider-read mode. Callers must
+approve either the current whole-worktree manifest or an exact provider-scope policy
+and selected-content transmission digest. Scoped facade dispatch delegates to the
+existing canonical staging boundary without the conflicting whole-worktree `--add-dir`
+grant. Stale digests and conflicting modes fail before provider launch.
+
+The old `--approve-preview-sha` spelling remains available through at least v0.15.x
+only behind an explicit migration acknowledgement and warning. The release does not
+expand Claude or Claude Code support, turn selected-content staging into a sandbox, or
+grant provider execution, Git, acceptance, or publication authority.
+
+### v0.13.0 safer verification and lower-friction lifecycle
+
+**Status:** Published. Publication is established by the annotated `v0.13.0` tag at
+`48ab30fda2ee78bb30c551723514a590cbde97eb` and GitHub Release readback.
 
 This release adds the ordinary `run`, `status`, and structured-argv
 `verify-finalize` lifecycle facade while retaining low-level recovery commands. It

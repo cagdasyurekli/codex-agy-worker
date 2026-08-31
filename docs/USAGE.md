@@ -95,7 +95,9 @@ state directory, the ordinary controller path is the portable `workflow.sh` faca
 
 1. Run `workflow.sh run ... --preview` and review its exact canonical transmission
    preview.
-2. Repeat the same binding with `--approve-preview-sha MANIFEST_SHA256` to dispatch.
+2. Repeat the same binding with exactly one explicit mode:
+   `--approve-whole-worktree MANIFEST_SHA256`, or `--provider-scope FILE` plus
+   `--approve-transmission-sha TRANSMISSION_SHA256`.
 3. Use `workflow.sh status ...` for read-only, sanitized progress facts.
 4. Use `workflow.sh verify-finalize ...` with repeatable structured
    `--verify-argv JSON_ARRAY` checks, `--approve-dispatch-sha` set to the exact
@@ -107,6 +109,11 @@ verification receipt, and lifecycle finalizer. It does not create a second provi
 state machine, infer assurance, choose retry or Git actions, or conceal a finalizer
 failure. See [Operate and verify a local project](PROJECT_WORKFLOW.md) for the binding
 details and advanced recovery surfaces.
+
+The former `--approve-preview-sha` spelling is deprecated and cannot preserve an
+implicit broad default: through at least v0.15.x it works only when paired with
+`--legacy-preview-approval`, and it emits a migration warning. New callers must use
+one of the two canonical modes above.
 
 The deprecated `--approve-state-sha` facade spelling remains a strict alias for
 `--approve-dispatch-sha` during the compatibility window; neither may be omitted for
@@ -125,7 +132,8 @@ dispatch artifact path never appeared, so a corrected invocation can retry safel
    and pass the same root with `--workdir` and `--add-dir`; `--add-dir` helps agy file
    tools reach the target but does not narrow provider reads. When the approved task
    needs selected content only, use the mutually exclusive `--provider-scope` mode and
-   bind its exact preview digest.
+   bind its exact preview digest. The primary facade accepts this pair directly and
+   omits the conflicting `--add-dir` grant.
 
 ## Optional selected-content dispatch
 
@@ -141,6 +149,13 @@ Preview and review the exact policy, complete path/kind enumeration, selected-co
 digest, and unified transmission digest without starting a provider:
 
 ```bash
+"$PIPELINE/workflow.sh" run --preview --repo "$TARGET" --job-id "$JOB_ID" \
+  --provider-scope "$SCOPE"
+"$PIPELINE/workflow.sh" run --repo "$TARGET" --job-id "$JOB_ID" \
+  --provider-scope "$SCOPE" --approve-transmission-sha "$TRANSMISSION_SHA" \
+  --workflow task --task "$TASK"
+
+# Advanced direct-dispatch compatibility surface:
 "$PIPELINE/agy-worker.sh" transmission-preview --workdir "$WT" \
   --provider-scope "$SCOPE" --format json > "$STATE_DIR/scoped-preview.json"
 

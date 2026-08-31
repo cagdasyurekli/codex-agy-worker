@@ -12,10 +12,10 @@ For the public synthetic gate contract, read [QA gate conformance v1](CONFORMANC
 ## Lifecycle at a glance
 
 1. Capture an immutable base commit and create an isolated worktree.
-2. Choose the transmission mode. The primary facade uses default whole-worktree
-   visibility, so its entire content must be approved as potentially provider-readable
-   and transmissible. Optional direct
-   `agy-worker.sh --provider-scope FILE --approve-transmission-sha SHA256` binds exact
+2. Choose the transmission mode explicitly. The primary facade requires either
+   `--approve-whole-worktree MANIFEST_SHA256`, acknowledging that every worktree entry
+   may be provider-readable and transmissible, or
+   `--provider-scope FILE --approve-transmission-sha SHA256`, which binds exact
    reviewed read/write entries and a selected-content digest, then stages only selected
    entries in a fresh owner-private mode-`0700` Gitless provider cwd.
 3. Dispatch only the approved task. In default mode, requested paths constrain writes
@@ -55,8 +55,14 @@ assurance or duplicate the provider lifecycle state machine.
 ```bash
 ./workflow.sh run --preview --repo "$TARGET" --job-id "$JOB_ID"
 ./workflow.sh run --repo "$TARGET" --job-id "$JOB_ID" \
-  --approve-preview-sha "$PREVIEW_SHA" --workflow task --task "$TASK"
+  --approve-whole-worktree "$PREVIEW_SHA" --workflow task --task "$TASK"
 ```
+
+For selected-content mode, include `--provider-scope "$SCOPE"` on both calls and
+use the preview's `transmission_sha256` as `--approve-transmission-sha` on the second.
+Omitting both modes fails before provider launch. The old `--approve-preview-sha`
+spelling cannot launch alone; through at least v0.15.x it requires the explicit
+`--legacy-preview-approval` migration acknowledgement and emits a deprecation warning.
 
 The explicit `--state`, `--worktree`, `--branch`, and full `--base` tuple remains an
 advanced compatibility mode. Partial mixing is rejected. A local pre-dispatch failure

@@ -119,8 +119,9 @@ job lifecycle. It still creates no second state machine and never infers assuran
 ./workflow.sh run --preview --repo "$TARGET" --job-id "$JOB_ID"
 
 # The preview call retains its exact private lifecycle bindings. After approval,
-# repeat the repo/job ID with --approve-preview-sha SHA256, --workflow task,
-# and --task "$TASK". An optional full --base can be supplied on the first call.
+# repeat the repo/job ID with --approve-whole-worktree SHA256, --workflow task,
+# and --task "$TASK". For selected content, put --provider-scope on both calls
+# and approve the scoped transmission SHA. An optional full --base can be supplied.
 # Then use status, copy dispatch.state_sha256, and call verify-finalize with
 # --approve-dispatch-sha plus driver-authored --verify-argv and, for controller
 # finalization, --verification-json.
@@ -144,8 +145,9 @@ the lifecycle finalizer.
 The worker envelope is input, not acceptance evidence:
 
 1. Codex freezes an immutable Git base in a disposable worktree.
-2. In default facade mode, `agy` may read the whole disposable worktree; requested
-   paths constrain the task, not provider read access. Optional direct
+2. The facade requires an explicit choice. `--approve-whole-worktree` binds the
+   current path/kind manifest and acknowledges that `agy` may read the whole disposable
+   worktree; requested paths constrain the task, not provider read access. Facade
    `--provider-scope` dispatch instead binds exact reviewed read/write entries and a
    selected-content digest, then stages only selected entries in a fresh owner-private
    mode-`0700` Gitless provider cwd. See
