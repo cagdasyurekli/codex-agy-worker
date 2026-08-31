@@ -139,9 +139,10 @@ an earlier implementation because it shares a schema or helper.
 
 ### v0.14.0 explicit provider-transmission choice
 
-**Status:** Release candidate. Publication requires the exact candidate to pass the
-canonical offline suite, protected `test`, squash merge, annotated tag, GitHub Release
-readback, and the separately governed SkillStore reassessment.
+**Status:** Published. Publication is established by the protected exact-head `test`,
+squash merge commit `02886961c7a0d6357808316b15abedd279a778a9`, the annotated
+`v0.14.0` tag, and GitHub Release readback. The separately governed SkillStore
+reassessment was submitted from that tag and remains under marketplace review.
 
 This release removes the ordinary facade's implicit provider-read mode. Callers must
 approve either the current whole-worktree manifest or an exact provider-scope policy
