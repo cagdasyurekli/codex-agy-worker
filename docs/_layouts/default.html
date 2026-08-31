@@ -6,11 +6,16 @@
     <title>{{ page.title | default: site.title | escape }}</title>
     <meta name="description" content="{{ page.description | default: site.description | escape }}">
     <meta name="google-site-verification" content="EwC8gQMZuIrAWw4ZLoyE_FjHZIHZGXNX7IeXOcvZHvs">
-    <link rel="canonical" href="{{ page.canonical_url | default: site.canonical_url }}">
+    {% if page.canonical_url %}
+      {% assign resolved_canonical_url = page.canonical_url %}
+    {% else %}
+      {% assign resolved_canonical_url = page.url | absolute_url %}
+    {% endif %}
+    <link rel="canonical" href="{{ resolved_canonical_url | escape }}">
     <meta property="og:type" content="website">
     <meta property="og:title" content="{{ page.title | default: site.title | escape }}">
     <meta property="og:description" content="{{ page.description | default: site.description | escape }}">
-    <meta property="og:url" content="{{ page.canonical_url | default: site.canonical_url }}">
+    <meta property="og:url" content="{{ resolved_canonical_url | escape }}">
     <meta property="og:image" content="{{ site.social_image_url | escape }}">
     <meta property="og:image:width" content="1280">
     <meta property="og:image:height" content="640">
@@ -18,41 +23,139 @@
     <meta name="twitter:title" content="{{ page.title | default: site.title | escape }}">
     <meta name="twitter:description" content="{{ page.description | default: site.description | escape }}">
     <meta name="twitter:image" content="{{ site.social_image_url | escape }}">
+    {% if page.url == "/" %}
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareSourceCode",
+        "name": "codex-agy-worker",
+        "description": "Bounded delegation from Codex to Antigravity CLI, with independent Git-scope checks and driver-owned verification before acceptance.",
+        "url": "https://cagdasyurekli.github.io/codex-agy-worker/",
+        "codeRepository": "https://github.com/cagdasyurekli/codex-agy-worker",
+        "codeSampleType": "full",
+        "programmingLanguage": ["Python", "Shell"],
+        "runtimePlatform": "POSIX-compatible shell, Python 3, Git, Codex CLI, and Antigravity CLI (agy)",
+        "license": "https://github.com/cagdasyurekli/codex-agy-worker/blob/main/LICENSE"
+      }
+    </script>
+    {% endif %}
     <link rel="icon" type="image/png" sizes="16x16" media="(prefers-color-scheme: light)" href="{{ '/assets/brand/logo-micro-light-16.png' | relative_url }}">
     <link rel="icon" type="image/png" sizes="16x16" media="(prefers-color-scheme: dark)" href="{{ '/assets/brand/logo-micro-dark-16.png' | relative_url }}">
     <link rel="icon" type="image/png" sizes="32x32" media="(prefers-color-scheme: light)" href="{{ '/assets/brand/logo-micro-light-32.png' | relative_url }}">
     <link rel="icon" type="image/png" sizes="32x32" media="(prefers-color-scheme: dark)" href="{{ '/assets/brand/logo-micro-dark-32.png' | relative_url }}">
     <style>
-      body { font: 18px/1.6 system-ui, sans-serif; margin: 0 auto; max-width: 820px; padding: 2rem 1.25rem 4rem; color: #17202a; }
-      h1, h2 { line-height: 1.2; }
-      code, pre { font-family: ui-monospace, monospace; }
+      :root { color-scheme: light dark; --bg: #f6f8fb; --surface: #fff; --surface-2: #eef3f8; --text: #172033; --muted: #526077; --line: #d8e0ea; --brand: #075cc8; --brand-strong: #064a9d; --accent: #0b7a75; --amber: #d58a18; --shadow: 0 18px 50px rgba(23,32,51,.10); }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body { background: radial-gradient(circle at 85% 0, rgba(11,122,117,.09), transparent 30rem), var(--bg); color: var(--text); font: 17px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; }
+      a { color: var(--brand); text-underline-offset: .2em; }
+      a:hover { color: var(--brand-strong); }
+      a:focus-visible, button:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+      h1, h2, h3 { letter-spacing: -.025em; line-height: 1.12; }
+      h1 { font-size: clamp(2.65rem, 7vw, 5.2rem); margin: 0; }
+      h2 { font-size: clamp(1.8rem, 4vw, 2.8rem); }
+      code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
       code { overflow-wrap: anywhere; }
       pre code { overflow-wrap: normal; }
-      pre { overflow-x: auto; padding: 1rem; background: #f4f6f7; border-radius: .5rem; }
+      pre { background: #111827; border: 1px solid #263247; border-radius: 14px; color: #e8edf5; overflow-x: auto; padding: 1.1rem 1.2rem; }
       table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
-      a { color: #075cc8; }
-      .callout { border-left: 4px solid #075cc8; padding: .2rem 1rem; background: #f5f9ff; }
-      .site-brand { margin-bottom: 2rem; }
-      .site-brand a { align-items: center; color: inherit; display: inline-flex; font-size: 1.1rem; font-weight: 700; gap: .75rem; text-decoration: none; }
-      .site-brand img { display: block; height: 56px; width: 56px; }
-      @media (prefers-color-scheme: dark) {
-        body { background: #0d1117; color: #e6edf3; }
-        a { color: #58a6ff; }
-        pre { background: #161b22; }
-        .callout { background: #111d2e; border-left-color: #58a6ff; }
-      }
+      .shell { margin: 0 auto; max-width: 1120px; padding-left: 1.25rem; padding-right: 1.25rem; }
+      .skip-link { background: var(--surface); left: 1rem; padding: .7rem 1rem; position: fixed; top: -5rem; z-index: 20; }
+      .skip-link:focus { top: 1rem; }
+      .site-header { backdrop-filter: blur(16px); background: color-mix(in srgb, var(--bg) 86%, transparent); border-bottom: 1px solid var(--line); }
+      .site-header-inner { align-items: center; display: flex; justify-content: space-between; min-height: 78px; }
+      .site-brand { align-items: center; color: inherit; display: inline-flex; font-weight: 780; gap: .65rem; min-height: 44px; text-decoration: none; }
+      .site-brand img { display: block; height: 42px; width: 42px; }
+      .site-nav { align-items: center; display: flex; gap: .25rem; }
+      .site-nav a { border-radius: 9px; color: var(--muted); min-height: 44px; padding: .6rem .75rem; text-decoration: none; }
+      .site-nav a:hover { background: var(--surface-2); color: var(--text); }
+      .button { align-items: center; border: 1px solid var(--line); border-radius: 10px; display: inline-flex; font-weight: 720; justify-content: center; min-height: 46px; padding: .7rem 1rem; text-decoration: none; }
+      .button-primary, .site-nav .button-primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+      .button-primary:hover, .site-nav .button-primary:hover { background: var(--brand-strong); color: #fff; }
+      .site-main { min-height: 70vh; }
+      .landing-content { margin: 0 auto; max-width: 1120px; padding: 5.5rem 1.25rem 6rem; }
+      .doc-content { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); margin: 3rem auto 5rem; max-width: 850px; padding: clamp(1.4rem, 4vw, 3.5rem); }
+      .doc-content h1 { font-size: clamp(2.2rem, 5vw, 3.8rem); }
+      .doc-content p, .doc-content li { max-width: 74ch; }
+      .hero { align-items: center; display: grid; gap: clamp(2rem, 6vw, 5rem); grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); }
+      .eyebrow { color: var(--accent); font-size: .82rem; font-weight: 800; letter-spacing: .11em; margin: 0 0 1rem; text-transform: uppercase; }
+      .hero-lead { color: var(--muted); font-size: clamp(1.1rem, 2vw, 1.32rem); max-width: 64ch; }
+      .hero-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 2rem 0 1.5rem; }
+      .trust-list { display: flex; flex-wrap: wrap; gap: .55rem; list-style: none; margin: 0; padding: 0; }
+      .trust-list li { background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .86rem; padding: .38rem .7rem; }
+      .proof-card { background: #0d1525; border: 1px solid #2b3951; border-radius: 18px; box-shadow: var(--shadow); color: #e8edf5; overflow: hidden; }
+      .proof-card-head { align-items: center; border-bottom: 1px solid #2b3951; color: #aab6c8; display: flex; font-size: .82rem; gap: .55rem; padding: .8rem 1rem; }
+      .status-dot { background: #5ad0c7; border-radius: 50%; box-shadow: 0 0 0 4px rgba(90,208,199,.12); height: .55rem; width: .55rem; }
+      .proof-card pre { border: 0; border-radius: 0; margin: 0; min-height: 175px; }
+      .proof-card p { color: #aab6c8; font-size: .88rem; margin: 0; padding: 0 1rem 1rem; }
+      .section { padding-top: 6rem; }
+      .section-heading { max-width: 720px; }
+      .section-heading p { color: var(--muted); font-size: 1.08rem; }
+      .card-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin-top: 2rem; }
+      .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 1.45rem; }
+      .card-number { color: var(--accent); font-size: .82rem; font-weight: 850; letter-spacing: .08em; }
+      .card h3 { font-size: 1.25rem; margin: .7rem 0; }
+      .card p { color: var(--muted); margin-bottom: 0; }
+      .evidence-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 2rem; }
+      .evidence-item { border-left: 3px solid var(--accent); padding: .2rem 0 .2rem 1rem; }
+      .evidence-item h3 { margin: 0 0 .45rem; }
+      .evidence-item p { color: var(--muted); margin: 0; }
+      .get-started { background: linear-gradient(135deg, #0d2038, #102a45); border-radius: 20px; color: #edf5ff; display: grid; gap: 2rem; grid-template-columns: .8fr 1.2fr; margin-top: 2rem; padding: clamp(1.4rem, 4vw, 2.5rem); }
+      .get-started h2 { font-size: clamp(1.7rem, 4vw, 2.4rem); margin-top: 0; }
+      .get-started p { color: #b9c8da; }
+      .get-started pre { margin: 0; }
+      .callout { align-items: start; background: #fff7e8; border: 1px solid #f0d39a; border-left: 4px solid var(--amber); border-radius: 12px; color: #473516; display: grid; gap: 1rem 2rem; grid-template-columns: .75fr 1.25fr; margin-top: 2rem; padding: 1.25rem 1.4rem; }
+      .callout h2 { font-size: 1.45rem; margin: 0; }
+      .callout p { margin: 0; }
+      .callout a { font-weight: 720; grid-column: 2; }
+      .docs-grid { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 2rem; }
+      .doc-link { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; color: inherit; min-height: 110px; padding: 1.2rem; text-decoration: none; }
+      .doc-link:hover { border-color: var(--brand); box-shadow: var(--shadow); color: inherit; }
+      .doc-link span { display: block; font-weight: 760; margin-bottom: .35rem; }
+      .doc-link small { color: var(--muted); display: block; font-size: .92rem; }
+      .site-footer { border-top: 1px solid var(--line); color: var(--muted); padding: 2rem 0; }
+      .site-footer-inner { align-items: center; display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; }
+      .footer-links { display: flex; flex-wrap: wrap; gap: 1rem; }
+      .footer-links a { color: var(--muted); }
+      @media (max-width: 820px) { .hero, .get-started, .callout { grid-template-columns: 1fr; } .callout a { grid-column: 1; } .site-nav a:not(.button-primary) { display: none; } }
+      @media (max-width: 560px) { .landing-content { padding-top: 3.5rem; } .hero-actions { align-items: stretch; flex-direction: column; } .hero-actions .button { width: 100%; } .evidence-grid, .docs-grid { grid-template-columns: 1fr; } .site-brand span { font-size: .94rem; } }
+      @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+      @media (prefers-color-scheme: dark) { :root { --bg: #0b1018; --surface: #111925; --surface-2: #172233; --text: #e8edf5; --muted: #aab6c8; --line: #29364a; --brand: #67a9ff; --brand-strong: #9bc6ff; --accent: #5ad0c7; --amber: #f5b94d; --shadow: 0 20px 55px rgba(0,0,0,.3); } .button-primary, .site-nav .button-primary { color: #07111f; } .button-primary:hover, .site-nav .button-primary:hover { color: #07111f; } .callout { background: #2a2111; border-color: #634b20; color: #f7dfad; } }
     </style>
   </head>
   <body>
-    <header class="site-brand">
-      <a href="{{ '/' | relative_url }}" aria-label="{{ site.title | escape }} home">
-        <picture aria-hidden="true">
-          <source media="(prefers-color-scheme: dark)" srcset="{{ '/assets/brand/logo-dark.svg' | relative_url }}">
-          <img src="{{ '/assets/brand/logo-light.svg' | relative_url }}" alt="" width="56" height="56">
-        </picture>
-        <span>{{ site.title }}</span>
-      </a>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="site-header">
+      <div class="site-header-inner shell">
+        <a class="site-brand" href="{{ '/' | relative_url }}" aria-label="{{ site.title | escape }} home">
+          <picture aria-hidden="true">
+            <source media="(prefers-color-scheme: dark)" srcset="{{ '/assets/brand/logo-dark.svg' | relative_url }}">
+            <img src="{{ '/assets/brand/logo-light.svg' | relative_url }}" alt="" width="42" height="42">
+          </picture>
+          <span>{{ site.title }}</span>
+        </a>
+        <nav class="site-nav" aria-label="Primary navigation">
+          <a href="{{ '/#overview' | relative_url }}">Overview</a>
+          <a href="{{ '/#how-it-works' | relative_url }}">How it works</a>
+          <a href="{{ '/#get-started' | relative_url }}">Get started</a>
+          <a href="{{ '/#docs' | relative_url }}">Docs</a>
+          <a class="button button-primary" href="https://github.com/cagdasyurekli/codex-agy-worker">GitHub ↗</a>
+        </nav>
+      </div>
     </header>
-    <main>{{ content }}</main>
+    <main class="site-main" id="main-content">
+      <div class="{% if page.url == '/' %}landing-content{% else %}doc-content{% endif %}">{{ content }}</div>
+    </main>
+    <footer class="site-footer">
+      <div class="site-footer-inner shell">
+        <span>codex-agy-worker · MIT licensed</span>
+        <nav class="footer-links" aria-label="Footer navigation">
+          <a href="https://github.com/cagdasyurekli/codex-agy-worker">Repository</a>
+          <a href="https://github.com/cagdasyurekli/codex-agy-worker/releases">Releases</a>
+          <a href="https://github.com/cagdasyurekli/codex-agy-worker/blob/main/PRIVACY.md">Privacy</a>
+          <a href="https://github.com/cagdasyurekli/codex-agy-worker/blob/main/SECURITY.md">Security</a>
+        </nav>
+      </div>
+    </footer>
   </body>
 </html>

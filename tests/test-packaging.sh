@@ -324,6 +324,7 @@ source_required = {
     '"--full-index",': 1,
     '"--no-renames",': 1,
     '[GIT, "cat-file", "--batch"]': 1,
+    'EXACT_BINARY_BLOBS.get(path)': 1,
     '_check_head_blob(blob)': 1,
     'deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS': 1,
     'if output_seen > stdout_limit:': 1,
@@ -1103,6 +1104,121 @@ if ! run_ci_check "$TMP/ci-binary-repo" pull_request \
     ok "binary committed additions fail closed"
 else
     bad "binary committed additions fail closed"
+fi
+
+init_ci_repo "$TMP/ci-exact-brand-binary-repo"
+printf 'base\n' > "$TMP/ci-exact-brand-binary-repo/fixture.txt"
+git -C "$TMP/ci-exact-brand-binary-repo" add fixture.txt
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm base
+ci_exact_brand_base="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+mkdir -p "$TMP/ci-exact-brand-binary-repo/docs/assets/brand"
+for asset in \
+        logo-micro-dark-16.png \
+        logo-micro-dark-32.png \
+        logo-micro-dark-64.png \
+        logo-micro-light-16.png \
+        logo-micro-light-32.png \
+        logo-micro-light-64.png \
+        social-preview-1280x640.png; do
+    cp "$ROOT/docs/assets/brand/$asset" \
+        "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/$asset"
+done
+git -C "$TMP/ci-exact-brand-binary-repo" add docs/assets/brand
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm exact-brand-assets
+ci_exact_brand_head="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+if run_ci_check "$TMP/ci-exact-brand-binary-repo" pull_request \
+        "$ci_exact_brand_base" "$ci_exact_brand_head"; then
+    ok "exact path and blob-bound brand PNG set is accepted"
+else
+    bad "exact path and blob-bound brand PNG set is accepted"
+fi
+
+git -C "$TMP/ci-exact-brand-binary-repo" checkout -q -b wrong-brand-bytes \
+    "$ci_exact_brand_base"
+mkdir -p "$TMP/ci-exact-brand-binary-repo/docs/assets/brand"
+python3 - "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/logo-micro-dark-16.png" <<'PY'
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(b"different\x00brand\n")
+PY
+git -C "$TMP/ci-exact-brand-binary-repo" add docs/assets/brand
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm wrong-brand-bytes
+ci_wrong_brand_bytes="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-exact-brand-binary-repo" pull_request \
+        "$ci_exact_brand_base" "$ci_wrong_brand_bytes"; then
+    ok "allowlisted brand path rejects different binary bytes"
+else
+    bad "allowlisted brand path rejects different binary bytes"
+fi
+
+git -C "$TMP/ci-exact-brand-binary-repo" checkout -q -b wrong-brand-path \
+    "$ci_exact_brand_base"
+mkdir -p "$TMP/ci-exact-brand-binary-repo/docs/assets/brand"
+cp "$ROOT/docs/assets/brand/logo-micro-dark-16.png" \
+    "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/copied.png"
+git -C "$TMP/ci-exact-brand-binary-repo" add docs/assets/brand
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm wrong-brand-path
+ci_wrong_brand_path="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-exact-brand-binary-repo" pull_request \
+        "$ci_exact_brand_base" "$ci_wrong_brand_path"; then
+    ok "allowlisted brand blob rejects a different path"
+else
+    bad "allowlisted brand blob rejects a different path"
+fi
+
+git -C "$TMP/ci-exact-brand-binary-repo" checkout -q -b duplicate-brand-blob \
+    "$ci_exact_brand_base"
+mkdir -p "$TMP/ci-exact-brand-binary-repo/docs/assets/brand"
+cp "$ROOT/docs/assets/brand/logo-micro-dark-16.png" \
+    "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/logo-micro-dark-16.png"
+cp "$ROOT/docs/assets/brand/logo-micro-dark-16.png" \
+    "$TMP/ci-exact-brand-binary-repo/docs/assets/brand/copied.png"
+git -C "$TMP/ci-exact-brand-binary-repo" add docs/assets/brand
+git -C "$TMP/ci-exact-brand-binary-repo" commit -qm duplicate-brand-blob
+ci_duplicate_brand_blob="$(git -C "$TMP/ci-exact-brand-binary-repo" rev-parse HEAD)"
+if ! run_ci_check "$TMP/ci-exact-brand-binary-repo" pull_request \
+        "$ci_exact_brand_base" "$ci_duplicate_brand_blob"; then
+    ok "allowed and disallowed copies of one brand blob fail closed"
+else
+    bad "allowed and disallowed copies of one brand blob fail closed"
+fi
+
+mkdir "$TMP/ci-broad-brand-mutation"
+cp "$ROOT/scripts/ci-diff-check.sh" \
+    "$TMP/ci-broad-brand-mutation/ci-diff-check.sh"
+cp "$ROOT/scripts/ci_diff_check.py" \
+    "$TMP/ci-broad-brand-mutation/ci_diff_check.py"
+python3 - "$TMP/ci-broad-brand-mutation/ci_diff_check.py" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = """        if exact_binary_blob is not None:\n            if new_sha != exact_binary_blob:\n                raise CheckRejected\n            continue\n"""
+new = """        if exact_binary_blob is not None:\n            continue\n"""
+assert text.count(old) == 1
+text = text.replace(old, new)
+old_batch = "object_ids, deadline, frozenset(EXACT_BINARY_BLOBS.values())"
+assert text.count(old_batch) == 1
+path.write_text(
+    text.replace(old_batch, "object_ids, deadline, frozenset(object_ids)"),
+    encoding="utf-8",
+)
+PY
+chmod +x "$TMP/ci-broad-brand-mutation/ci-diff-check.sh"
+(
+    cd "$TMP/ci-exact-brand-binary-repo" || exit 1
+    AGY_WORKER_CI_EVENT_NAME=pull_request \
+        AGY_WORKER_CI_BASE_SHA="$ci_exact_brand_base" \
+        AGY_WORKER_CI_HEAD_SHA="$ci_wrong_brand_bytes" \
+        "$TMP/ci-broad-brand-mutation/ci-diff-check.sh" >/dev/null 2>&1
+)
+ci_broad_brand_mutation_rc=$?
+if [[ "$ci_broad_brand_mutation_rc" == 0 ]]; then
+    ok "different-byte regression kills exact brand blob binding removal"
+else
+    bad "different-byte regression kills exact brand blob binding removal"
 fi
 
 init_ci_repo "$TMP/ci-oversize-repo"
@@ -3676,7 +3792,10 @@ if [[ "$brand_valid_rc" == "0" ]] \
         && grep -Fq '4 SVG, 7 PNG' "$TMP/brand-valid.out" \
         && grep -Fq 'https://cagdasyurekli.github.io/codex-agy-worker/' "$ROOT/docs/_config.yml" \
         && grep -Fq 'https://cagdasyurekli.github.io/codex-agy-worker/assets/brand/social-preview-1280x640.png' "$ROOT/docs/_config.yml" \
-        && grep -Fq 'canonical' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq '{% assign resolved_canonical_url = page.canonical_url %}' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq '{% assign resolved_canonical_url = page.url | absolute_url %}' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq '<link rel="canonical" href="{{ resolved_canonical_url | escape }}">' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq '<meta property="og:url" content="{{ resolved_canonical_url | escape }}">' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'property="og:image"' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'name="google-site-verification" content="EwC8gQMZuIrAWw4ZLoyE_FjHZIHZGXNX7IeXOcvZHvs"' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'name="twitter:card" content="summary_large_image"' "$ROOT/docs/_layouts/default.html" \
@@ -3686,11 +3805,21 @@ if [[ "$brand_valid_rc" == "0" ]] \
         && grep -Fq 'code { overflow-wrap: anywhere; }' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'pre code { overflow-wrap: normal; }' "$ROOT/docs/_layouts/default.html" \
         && grep -Fq 'table { border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq '{% if page.url == "/" %}' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq 'type="application/ld+json"' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq '"@type": "SoftwareSourceCode"' "$ROOT/docs/_layouts/default.html" \
+        && grep -Fq '"codeRepository": "https://github.com/cagdasyurekli/codex-agy-worker"' "$ROOT/docs/_layouts/default.html" \
+        && [[ "$(grep -Fc '<h1>' "$ROOT/docs/index.md")" == "1" ]] \
+        && grep -Fq 'Delegate coding work. Verify before you trust it.' "$ROOT/docs/index.md" \
+        && grep -Fq 'href="https://github.com/cagdasyurekli/codex-agy-worker">View on GitHub</a>' "$ROOT/docs/index.md" \
         && grep -Fq 'must not create body-level horizontal overflow at a 390-pixel mobile' "$ROOT/docs/DOCUMENTATION_POLICY.md" \
         && grep -Fq '<loc>https://cagdasyurekli.github.io/codex-agy-worker/</loc>' "$ROOT/docs/sitemap.xml" \
         && grep -Fq '<loc>https://cagdasyurekli.github.io/codex-agy-worker/VERIFYING_AGENT_OUTPUT.html</loc>' "$ROOT/docs/sitemap.xml" \
+        && [[ "$(grep -Fc '<url>' "$ROOT/docs/sitemap.xml")" == "2" ]] \
         && grep -Fq 'GitHub repository as the source of truth' "$ROOT/docs/index.md" \
-        && grep -Fq 'VERIFYING_AGENT_OUTPUT.md' "$ROOT/docs/index.md" \
+        && grep -Fq 'VERIFYING_AGENT_OUTPUT.html' "$ROOT/docs/index.md" \
+        && grep -Fq 'blob/main/docs/INSTALLATION.md' "$ROOT/docs/index.md" \
+        && grep -Fq 'blob/main/docs/USAGE.md' "$ROOT/docs/index.md" \
         && grep -Fq 'canonical_url: "https://cagdasyurekli.github.io/codex-agy-worker/VERIFYING_AGENT_OUTPUT.html"' "$ROOT/docs/VERIFYING_AGENT_OUTPUT.md" \
         && grep -Fq 'A Codex Agent Skill for bounded Antigravity CLI delegation' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq '## Quick start' < <(sed -n '1,120p' "$ROOT/README.md") \
@@ -3707,6 +3836,33 @@ if [[ "$brand_valid_rc" == "0" ]] \
     ok "approved brand assets and GitHub Pages wiring pass the production contract"
 else
     bad "approved brand assets and GitHub Pages wiring pass the production contract"
+fi
+
+if python3 - "$ROOT/docs/_layouts/default.html" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+layout = Path(sys.argv[1]).read_text(encoding="utf-8")
+matches = re.findall(
+    r'<script type="application/ld\+json">\s*(\{.*?\})\s*</script>',
+    layout,
+    flags=re.S,
+)
+assert len(matches) == 1
+payload = json.loads(matches[0])
+assert payload["@context"] == "https://schema.org"
+assert payload["@type"] == "SoftwareSourceCode"
+assert payload["codeRepository"] == "https://github.com/cagdasyurekli/codex-agy-worker"
+assert payload["programmingLanguage"] == ["Python", "Shell"]
+assert payload["license"].endswith("/blob/main/LICENSE")
+assert '{% if page.url == "/" %}' in layout
+PY
+then
+    ok "homepage SoftwareSourceCode structured data is valid JSON with truthful core fields"
+else
+    bad "homepage SoftwareSourceCode structured data is valid JSON with truthful core fields"
 fi
 
 python3 "$ROOT/scripts/validate-docs.py" "$ROOT" --readme-max-lines 450 \
@@ -4031,7 +4187,7 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
-path.write_text(text.replace("M160 224", "M161 224", 1), encoding="utf-8")
+path.write_text(text.replace("M800 160", "M801 160", 1), encoding="utf-8")
 PY
 python3 "$ROOT/scripts/validate-brand-assets.py" "$TMP/reject-brand-geometry" \
     > "$TMP/brand-geometry.out" 2> "$TMP/brand-geometry.err"

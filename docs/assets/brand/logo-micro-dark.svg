@@ -1,8 +1,7 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges" role="img" aria-labelledby="title desc">
-  <title id="title">codex-agy-worker supervisor spine v2.1 micro dark</title>
-  <desc id="desc">Pixel-hinted inverse supervisor, worker, and evidence mark for 16 to 32 pixel use.</desc>
-  <path fill="#E6EDF3" d="M2 3 7 2v7l-1 1 1 1v3l-5-1Z"/>
-  <path fill="#008C95" d="M9 3h4q1 0 1 1v5q0 1-1 1H8V4q0-1 1-1Z"/>
-  <path fill="#F59E0B" d="M8 11h3q1 0 1 1v1q0 1-1 1H8Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" role="img" aria-labelledby="title desc" shape-rendering="crispEdges">
+  <title id="title">AGY Worker Mosaic micro logo, dark</title>
+  <desc id="desc">A compact pale canopy, cyan worker prism, and golden verification baseline.</desc>
+  <path fill="#F1F5F9" d="M13 1H5L1 5v5l2-2V6l3-3h6Z"/>
+  <path fill="#38BDF8" d="m9 5 5 2.5V9l-2 2H7L5 9V7Z"/>
+  <path fill="#FBBF24" d="M5 13h9l-2 2H3Z"/>
 </svg>

@@ -27,6 +27,15 @@ TIMEOUT_SECONDS = 10
 TOTAL_TIMEOUT_SECONDS = 30
 REGULAR_MODES = {"100644", "100755"}
 CONFLICT_MARKERS = (b"<<<<<<<", b"=======", b">>>>>>>")
+EXACT_BINARY_BLOBS = {
+    "docs/assets/brand/logo-micro-dark-16.png": "b9cfaa4ce9f780dd8b48fcec1d6138b3afbaabd4",
+    "docs/assets/brand/logo-micro-dark-32.png": "ca884d56886ef0dcde04468ca16d4d5c98c29a14",
+    "docs/assets/brand/logo-micro-dark-64.png": "51e262b4e8c0b3f4c5a7cb50bebbf73bd01eddb6",
+    "docs/assets/brand/logo-micro-light-16.png": "6fd0aad26df0d9aa7de43091eda25ecc3760df0f",
+    "docs/assets/brand/logo-micro-light-32.png": "ee9c259b841816371a10c387bbbf00a8290a7260",
+    "docs/assets/brand/logo-micro-light-64.png": "9e77d04cfd381acbca620d7e898e2b2299a16b03",
+    "docs/assets/brand/social-preview-1280x640.png": "1bc7a7fe46b24c2d5345409fa9ea5d8c8edb6b30",
+}
 
 
 class CheckRejected(Exception):
@@ -180,7 +189,7 @@ def _comparison(
 
 def _raw_changes(
     base: str, head: str, deadline: float
-) -> list[tuple[str, str, str, str, str]]:
+) -> list[tuple[str, str, str, str, str, str]]:
     data = _git(
         "diff-tree",
         "--no-commit-id",
@@ -200,7 +209,7 @@ def _raw_changes(
     fields.pop()
     if len(fields) % 2 or len(fields) // 2 > MAX_PATHS:
         raise CheckRejected
-    changes: list[tuple[str, str, str, str, str]] = []
+    changes: list[tuple[str, str, str, str, str, str]] = []
     for offset in range(0, len(fields), 2):
         header, path_bytes = fields[offset : offset + 2]
         try:
@@ -225,7 +234,7 @@ def _raw_changes(
             raise CheckRejected
         if status != "D" and new_mode not in REGULAR_MODES:
             raise CheckRejected
-        changes.append((status, old_sha, new_sha, old_mode, new_mode))
+        changes.append((path, status, old_sha, new_sha, old_mode, new_mode))
     return changes
 
 
@@ -240,7 +249,11 @@ def _validate_blob(data: bytes) -> None:
         raise CheckRejected
 
 
-def _batch_blobs(values: list[str], overall_deadline: float) -> dict[str, bytes]:
+def _batch_blobs(
+    values: list[str],
+    overall_deadline: float,
+    exact_binary_ids: frozenset[str] = frozenset(),
+) -> dict[str, bytes]:
     requested = list(dict.fromkeys(values))
     if (
         not requested
@@ -335,7 +348,8 @@ def _batch_blobs(values: list[str], overall_deadline: float) -> dict[str, bytes]
                     raise CheckRejected
                 body = bytes(stdout_buffer[:body_size])
                 del stdout_buffer[: body_size + 1]
-                _validate_blob(body)
+                if requested[index] not in exact_binary_ids:
+                    _validate_blob(body)
                 result[requested[index]] = body
                 index += 1
                 body_size = None
@@ -449,14 +463,28 @@ def check_committed_range(event: str, base: str, head: str) -> None:
     changes = _raw_changes(
         comparison_base, comparison_head, deadline
     )
-    object_ids = [new_sha for status, _old_sha, new_sha, _old_mode, _new_mode in changes if status != "D"]
+    object_ids = [
+        new_sha
+        for _path, status, _old_sha, new_sha, _old_mode, _new_mode in changes
+        if status != "D"
+    ]
     if not object_ids:
         return
-    blobs = _batch_blobs(object_ids, deadline)
+    blobs = _batch_blobs(
+        object_ids, deadline, frozenset(EXACT_BINARY_BLOBS.values())
+    )
     total = sum(len(blob) for blob in blobs.values())
     if total > MAX_TOTAL_BLOB_BYTES:
         raise CheckRejected
-    for blob in blobs.values():
+    for path, status, _old_sha, new_sha, _old_mode, _new_mode in changes:
+        if status == "D":
+            continue
+        blob = blobs[new_sha]
+        exact_binary_blob = EXACT_BINARY_BLOBS.get(path)
+        if exact_binary_blob is not None:
+            if new_sha != exact_binary_blob:
+                raise CheckRejected
+            continue
         _check_head_blob(blob)
 
 
