@@ -17,10 +17,11 @@ configuration.
 
 When a user explicitly dispatches a job, `agy-worker.sh` passes the task prompt to the
 locally installed Antigravity CLI (`agy`), an external tool backed by Google/Gemini
-services. Without `--provider-scope`, treat the entire disposable `--workdir` as
-worker-readable and potentially transmissible to that service, even when the task
-names only a few paths. Prompt denylist instructions, `qa-gate --only`, `--allow`, and
-`--add-dir` do not narrow that default read boundary.
+services. Prefer `--provider-scope` for bounded jobs. Whole-worktree dispatch remains
+an explicit `--approve-whole-worktree MANIFEST_SHA256` exception; when selected, treat
+the entire disposable `--workdir` as worker-readable and potentially transmissible to
+that service, even when the task names only a few paths. Prompt denylist instructions,
+`qa-gate --only`, `--allow`, and `--add-dir` do not narrow that read boundary.
 
 Optional `--provider-scope FILE --approve-transmission-sha SHA256` binds exact reviewed
 read entries, their selected-content digest, and a write subset, then copies only
@@ -31,8 +32,10 @@ but is not filesystem, network, `PATH`, `HOME`, or same-UID isolation and retain
 documented local-owner and mutation-race residuals. Its approval grants no provider
 execution, Git action, driver acceptance, or publication.
 
-Before each initial, resumed, continued, or restarted provider attempt, approve the
-exact mode and transmission digest. Credentials, secrets, private keys, regulated or
+Before the initial provider attempt, approve the exact scope transmission digest or
+whole-worktree manifest. Later resume, continue, and restart actions preserve that
+mode and require the exact current controller-state approval. Credentials, secrets,
+private keys, regulated or
 user-denied data, and unrelated private files must be absent from the entire default
 worktree transmission or every entry selected for scoped staging. Telling the worker
 not to read approved content is not a privacy control.

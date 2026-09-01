@@ -121,6 +121,7 @@ usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
                      [--max-runtime 12h]
                      [--provider-env NAME]...
                      [--provider-scope FILE --approve-transmission-sha SHA256]
+                     [--approve-whole-worktree MANIFEST_SHA256]
                      [--add-dir DIR]... [--allow-slash-commands]
        ... task prompt on stdin ...
 
@@ -269,6 +270,7 @@ idle_cli_seen=0; hard_cli_seen=0; max_cli_seen=0
 job_cli_seen=0
 provider_scope_seen=0; provider_scope=""
 approve_transmission_sha_seen=0; approve_transmission_sha=""
+approve_whole_worktree_seen=0; approve_whole_worktree=""
 provider_env=()
 # Injection control (rec #8): worker prompts routinely embed repo content, and a
 # "/skill ..." string inside that content would otherwise expand as a real command.
@@ -343,6 +345,10 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || usage
             (( approve_transmission_sha_seen == 0 )) || { echo "agy-worker.sh: repeated --approve-transmission-sha" >&2; exit 64; }
             approve_transmission_sha_seen=1; approve_transmission_sha="$2"; shift 2 ;;
+        --approve-whole-worktree)
+            [[ $# -ge 2 ]] || usage
+            (( approve_whole_worktree_seen == 0 )) || { echo "agy-worker.sh: repeated --approve-whole-worktree" >&2; exit 64; }
+            approve_whole_worktree_seen=1; approve_whole_worktree="$2"; shift 2 ;;
         --add-dir) [[ $# -ge 2 ]] || usage; extra_dirs+=("$2"); shift 2 ;;
         --allow-slash-commands) disable_slash=0; shift ;;
         -h|--help) usage 0 ;;
@@ -352,6 +358,10 @@ done
 
 if (( provider_scope_seen && ${#extra_dirs[@]} > 0 )); then
     echo "agy-worker.sh: --provider-scope conflicts with --add-dir" >&2
+    exit 64
+fi
+if (( provider_scope_seen && approve_whole_worktree_seen )); then
+    echo "agy-worker.sh: --provider-scope conflicts with --approve-whole-worktree" >&2
     exit 64
 fi
 if (( provider_scope_seen && approve_transmission_sha_seen == 0 )); then
@@ -365,6 +375,12 @@ fi
 if (( approve_transmission_sha_seen )); then
     if [[ ! "$approve_transmission_sha" =~ ^[0-9a-f]{64}$ ]]; then
         echo "agy-worker.sh: --approve-transmission-sha must be 64 lowercase hex characters" >&2
+        exit 64
+    fi
+fi
+if (( approve_whole_worktree_seen )); then
+    if [[ ! "$approve_whole_worktree" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "agy-worker.sh: --approve-whole-worktree must be 64 lowercase hex characters" >&2
         exit 64
     fi
 fi
@@ -592,6 +608,38 @@ if (( ${#normalized_dirs[@]} > 0 )); then
     extra_dirs=("${normalized_dirs[@]}")
 fi
 cd "$workdir"
+
+# The advanced raw entry point keeps whole-worktree dispatch available, but never
+# chooses it implicitly.  Bind the caller's explicit exception to the same
+# provider-free, drift-checked manifest used by the primary workflow facade.  The
+# supervisor repeats this proof immediately before the initial provider launch.
+if (( provider_scope_seen == 0 )); then
+    current_manifest_sha="$(
+        /usr/bin/python3 -I -S -B "$SCRIPT_DIR/scripts/agy_dispatch_worktree.py" \
+            transmission-preview --workdir "$workdir" \
+        | /usr/bin/python3 -I -S -B -c '
+import json, re, sys
+value = json.load(sys.stdin)
+digest = value.get("manifest_sha256") if isinstance(value, dict) else None
+if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+    raise SystemExit(64)
+print(digest)
+'
+    )" || {
+        echo "agy-worker.sh: whole-worktree transmission preview is unavailable" >&2
+        exit 64
+    }
+    if (( approve_whole_worktree_seen == 0 )); then
+        echo "agy-worker.sh: choose provider scope, or explicitly approve whole-worktree transmission" >&2
+        echo "agy-worker.sh: rerun with --approve-whole-worktree $current_manifest_sha" >&2
+        exit 64
+    fi
+    if [[ "$approve_whole_worktree" != "$current_manifest_sha" ]]; then
+        echo "agy-worker.sh: approved whole-worktree manifest does not match the current worktree" >&2
+        echo "agy-worker.sh: rerun with --approve-whole-worktree $current_manifest_sha" >&2
+        exit 64
+    fi
+fi
 
 if [[ "$workflow" == "project" ]]; then
     # Repeat the physical containment decision after creation and canonical
@@ -1002,7 +1050,7 @@ python3 -I -S -B - "$command_file" "$job_id" "$workdir" "$agy_version" "$agy_ver
     "$idle_seconds" "$hard_seconds" "$max_seconds" "$notice_seconds" \
     "$stage_dir_arg" "$stage_file_arg" "$CALLER_UMASK" "$command_workflow" "$max_cycles" \
     "${#provider_env[@]}" ${provider_env+"${provider_env[@]}"} "$selection_file" \
-    "$provider_scope" "$approve_transmission_sha" "${cmd[@]}" <<'PY'
+    "$provider_scope" "$approve_transmission_sha" "$approve_whole_worktree" "${cmd[@]}" <<'PY'
 import json
 import os
 from pathlib import Path
@@ -1014,11 +1062,11 @@ import sys
 ) = sys.argv[1:]
 provider_env_count = int(provider_env_count)
 provider_env = sorted(remainder[:provider_env_count])
-selection_path, provider_scope_arg, approved_transmission_sha_arg, *argv = remainder[provider_env_count:]
+selection_path, provider_scope_arg, approved_transmission_sha_arg, approved_whole_worktree_sha_arg, *argv = remainder[provider_env_count:]
 if not isinstance(child_umask, str) or len(child_umask) not in (3, 4) or any(ch not in "01234567" for ch in child_umask):
     raise SystemExit(64)
 value = {
-    "schema_version": 6,
+    "schema_version": 7,
     "kind": "agy-worker-dispatch-command",
     "job_id": job_id,
     "workdir": workdir,
@@ -1049,6 +1097,7 @@ value = {
     "provider_scope_sha256": None,
     "provider_scope_identity": None,
     "approved_transmission_sha256": None,
+    "approved_whole_worktree_sha256": approved_whole_worktree_sha_arg or None,
 }
 descriptor = os.open(selection_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
 try:

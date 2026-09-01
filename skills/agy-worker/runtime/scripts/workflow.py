@@ -918,6 +918,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _dispatch_run(
     args: argparse.Namespace, *, worktree: Path, dispatch_job_dir: Path,
+    approved_whole_worktree: str | None,
 ) -> int:
     runtime = SCRIPTS.parent
     cmd = [
@@ -932,7 +933,12 @@ def _dispatch_run(
             "--approve-transmission-sha", args.approve_transmission_sha,
         ]
     else:
-        cmd += ["--add-dir", str(worktree)]
+        if approved_whole_worktree is None:
+            raise WorkflowError("whole-worktree dispatch approval is unavailable")
+        cmd += [
+            "--add-dir", str(worktree),
+            "--approve-whole-worktree", approved_whole_worktree,
+        ]
     if args.tier:
         cmd += ["--tier", args.tier]
     if args.model:
@@ -991,7 +997,7 @@ def _explicit_run(args: argparse.Namespace, repo: Path) -> int:
             worktree, provider_scope=args.provider_scope,
         )
         manifest_sha = preview_data["manifest_sha256"]
-        _mode, approved_sha, expected_sha, approval_hint, legacy = (
+        mode, approved_sha, expected_sha, approval_hint, legacy = (
             transmission_choice(args, preview_data)
         )
         if args.preview:
@@ -1049,7 +1055,10 @@ def _explicit_run(args: argparse.Namespace, repo: Path) -> int:
     finally:
         store.close()
 
-    result = _dispatch_run(args, worktree=worktree, dispatch_job_dir=dispatch_job_dir)
+    result = _dispatch_run(
+        args, worktree=worktree, dispatch_job_dir=dispatch_job_dir,
+        approved_whole_worktree=approved_sha if mode == "whole-worktree" else None,
+    )
     if (
         result != 0 and created_state_sha is not None
         and created_state_identity is not None
@@ -1139,7 +1148,7 @@ def _ordinary_run(args: argparse.Namespace, repo: Path) -> int:
                 )
             raise
         manifest_sha = preview_data["manifest_sha256"]
-        _mode, approved_sha, expected_sha, approval_hint, legacy = (
+        mode, approved_sha, expected_sha, approval_hint, legacy = (
             transmission_choice(args, preview_data)
         )
         if store.value is None:
@@ -1206,7 +1215,10 @@ def _ordinary_run(args: argparse.Namespace, repo: Path) -> int:
     finally:
         store.close()
 
-    result = _dispatch_run(args, worktree=worktree, dispatch_job_dir=dispatch_job_dir)
+    result = _dispatch_run(
+        args, worktree=worktree, dispatch_job_dir=dispatch_job_dir,
+        approved_whole_worktree=approved_sha if mode == "whole-worktree" else None,
+    )
     if (
         result != 0 and initialized_here
         and not dispatch_job_dir.exists() and not dispatch_job_dir.is_symlink()

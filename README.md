@@ -58,12 +58,14 @@ correctness.
 
 ### First real task
 
-Before an agy-backed request, choose and approve one transmission mode. Default
-dispatch may expose every file in the disposable worktree through `agy` to
-Google/Gemini; `--add-dir`, prompt restrictions, and later `qa-gate --only` checks do
-not narrow that read boundary. Optional `--provider-scope` instead binds exact reviewed
+Before an agy-backed request, choose and approve one transmission mode. Prefer
+`--provider-scope` for bounded jobs: it binds exact reviewed
 read entries, their selected-content digest, and a write subset, then stages only those
-entries in a fresh owner-private mode-`0700` Gitless provider cwd. Scoped staging is
+entries in a fresh owner-private mode-`0700` Gitless provider cwd. Whole-worktree
+dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception and
+may expose every file in the disposable worktree through `agy` to Google/Gemini;
+`--add-dir`, prompt restrictions, and later `qa-gate --only` checks do not narrow that
+read boundary. Scoped staging is
 not a sandbox, and its approval grants no provider execution, Git action, acceptance,
 or publication. Read [PRIVACY.md](PRIVACY.md) before use.
 
@@ -85,7 +87,9 @@ but excludes the root `.git` control marker. In default mode, it does not read f
 contents and the digest binds path names and kinds only. Scoped preview reads selected
 content to compute its digest and binds that digest plus the scope policy into
 `transmission_sha256`. Both previews are review evidence, not approval or
-provider-launch authority. The controller still locally enumerates and validates
+provider-launch authority. Every initial raw or facade dispatch requires the exact
+whole-worktree manifest approval or the scoped policy/transmission pair. The controller
+still locally enumerates and validates
 worktree paths; a fixed bounded Git worktree-list check proves registration, and no
 `agy`, provider, credential probe, or network process is started.
 
@@ -342,9 +346,10 @@ and the verification command for each maintained surface.
 - Unresolved merge resolve-undo metadata (REUC) rejects dispatch with resolve_undo_present; the controller never clears index metadata.
 - Each job audits one worktree. Mutation across additional repositories is rejected.
 - Provider transmission requires explicit approval for the selected mode and content;
-  installation is never that approval. Default mode covers the whole disposable
-  worktree. Optional provider-scope mode binds exact reviewed entries and their
-  selected-content digest without turning scoped staging into a sandbox.
+  installation is never that approval. Provider scope is recommended for bounded jobs
+  and binds exact reviewed entries plus their selected-content digest without turning
+  scoped staging into a sandbox. Whole-worktree mode is an explicit manifest-bound
+  exception.
 - Direct model/effort selection has strong offline mechanism coverage but does not
   prove backend identity, availability, quality, cost, or quota efficiency.
 - A green gate proves only the exact candidate, immutable base, path policy, and

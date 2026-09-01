@@ -207,17 +207,26 @@ wait_probe_cleanup() {
     process_group_is_gone "$probe_pgid"
 }
 
-mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/logs"
-git -C "$TMP/repo" init -q
-git -C "$TMP/repo" -c user.name='agy-worker test' -c user.email='test@example.invalid' \
+mkdir -p "$TMP/bin" "$TMP/source-repo" "$TMP/logs"
+git -C "$TMP/source-repo" init -q
+git -C "$TMP/source-repo" -c user.name='agy-worker test' -c user.email='test@example.invalid' \
     commit --allow-empty -q -m initial
-git -C "$TMP/repo" worktree add --detach -q "$TMP/project-worktree" HEAD
-git -C "$TMP/repo" worktree add -q -b preview-boundary "$TMP/preview-worktree" HEAD
+git -C "$TMP/source-repo" worktree add -q -b dispatch-tests "$TMP/repo" HEAD
+git -C "$TMP/source-repo" worktree add -q -b project-tests "$TMP/project-worktree" HEAD
+git -C "$TMP/source-repo" worktree add --detach -q "$TMP/detached-worktree" HEAD
+git -C "$TMP/source-repo" worktree add -q -b preview-boundary "$TMP/preview-worktree" HEAD
 PREVIEW_WORKTREE="$(cd "$TMP/preview-worktree" && pwd -P)"
-PRIMARY_WORKTREE="$(cd "$TMP/repo" && pwd -P)"
-DETACHED_WORKTREE="$(cd "$TMP/project-worktree" && pwd -P)"
+PRIMARY_WORKTREE="$(cd "$TMP/source-repo" && pwd -P)"
+DETACHED_WORKTREE="$(cd "$TMP/detached-worktree" && pwd -P)"
 chmod 0755 "$TMP/logs"
 LOGS_REAL="$(cd "$TMP/logs" && pwd -P)"
+
+whole_worktree_manifest_sha() {
+    local worker_path="$1" worktree_path="$2" canonical_worktree
+    canonical_worktree="$(cd "$worktree_path" && pwd -P)" || return 64
+    "$worker_path" transmission-preview --workdir "$canonical_worktree" \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin)["manifest_sha256"])'
+}
 
 echo "transmission preview boundary:"
 if python3 -I -S -B - "$WORKER" "$ROOT" "$PRIMARY_WORKTREE" \
@@ -798,6 +807,9 @@ PY
     if [[ -n "${FAKE_MUTATE_EXECUTABLE_PARENT:-}" ]]; then
         chmod 0775 "$FAKE_MUTATE_EXECUTABLE_PARENT"
     fi
+    if [[ -n "${FAKE_MUTATE_WORKTREE_PATH:-}" ]]; then
+        : > "$FAKE_MUTATE_WORKTREE_PATH"
+    fi
     exit 0
 fi
 printf 'worker\n' >> "$FAKE_CALLS_FILE"
@@ -854,6 +866,9 @@ if [[ -n "${FAKE_DISPATCH_COUNT_FILE:-}" ]]; then
         dispatch_count=$((dispatch_count+1))
     fi
     printf '%s\n' "$dispatch_count" > "$FAKE_DISPATCH_COUNT_FILE"
+fi
+if [[ -n "${FAKE_PROVIDER_CREATE_PATH:-}" ]]; then
+    : > "$FAKE_PROVIDER_CREATE_PATH"
 fi
 if [[ "${FAKE_FAIL_FIRST:-0}" == "1" && "$dispatch_count" == "1" ]]; then
     exit 23
@@ -991,14 +1006,26 @@ run_worker() {
         FAKE_MUTATE_PROJECT_MARKER FAKE_MUTATION_MARKER FAKE_PROBE_PARENT_PID_FILE \
         FAKE_PROBE_PGID_FILE FAKE_PROBE_READY_FILE FAKE_PROBE_RELEASE_FILE \
         FAKE_PROMPT_FILE FAKE_QUOTA_ERROR FAKE_REPLACE_EXECUTABLE_SYMLINK \
+        FAKE_PROVIDER_CREATE_PATH \
         FAKE_SIDE_EFFECT_FILE FAKE_SIGNAL_PARENT FAKE_SPARSE_PROJECT_MARKER \
         FAKE_STAGE_RESULT_FILE FAKE_TRY_STAGE_WRITE FAKE_UTF8_SUMMARY \
+        FAKE_MUTATE_WORKTREE_PATH \
         FAKE_VERSION_MODE FAKE_WARNING_LINE FAKE_WORKER_CALLS_FILE \
         FAKE_WORKER_VERIFIED; do
         fake_provider_env_args+=(--provider-env "$fake_provider_env_name")
     done
-    local job="$1" workdir; shift
+    local job="$1" workdir worker_path provider_scope_arg=0 option manifest_sha
+    local transmission_approval_args=()
+    shift
     workdir="${AGY_TEST_WORKDIR:-$TMP/repo}"
+    worker_path="${AGY_TEST_WORKER:-$WORKER}"
+    for option in "$@"; do
+        [[ "$option" != "--provider-scope" ]] || provider_scope_arg=1
+    done
+    if (( provider_scope_arg == 0 )) && [[ "${AGY_TEST_SKIP_WHOLE_APPROVAL:-0}" != "1" ]]; then
+        manifest_sha="$(whole_worktree_manifest_sha "$worker_path" "$workdir")" || return 64
+        transmission_approval_args=(--approve-whole-worktree "$manifest_sha")
+    fi
     PATH="$TMP/bin:$PATH" \
     AGY_WORKER_MODE="${AGY_WORKER_MODE:-accept-edits}" \
     AGY_WORKER_LOG_DIR="${AGY_TEST_LOG_DIR:-$TMP/logs}" \
@@ -1025,6 +1052,7 @@ run_worker() {
     FAKE_PROBE_READY_FILE="${FAKE_PROBE_READY_FILE:-}" \
     FAKE_PROBE_RELEASE_FILE="${FAKE_PROBE_RELEASE_FILE:-}" \
     FAKE_MUTATE_MATRIX="${FAKE_MUTATE_MATRIX:-}" \
+    FAKE_MUTATE_WORKTREE_PATH="${FAKE_MUTATE_WORKTREE_PATH:-}" \
     FAKE_MUTATE_PROJECT_MARKER="${FAKE_MUTATE_PROJECT_MARKER:-}" \
     FAKE_SPARSE_PROJECT_MARKER="${FAKE_SPARSE_PROJECT_MARKER:-}" \
     FAKE_DISPATCH_COUNT_FILE="${FAKE_DISPATCH_COUNT_FILE:-}" \
@@ -1043,8 +1071,9 @@ run_worker() {
     FAKE_CALLED_FILE="$TMP/$job.called" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
-    "${AGY_TEST_WORKER:-$WORKER}" --workdir "$workdir" \
-        "${fake_provider_env_args[@]}" "$@"
+    "$worker_path" --workdir "$workdir" \
+        "${fake_provider_env_args[@]}" \
+        ${transmission_approval_args+"${transmission_approval_args[@]}"} "$@"
 }
 
 echo "agy-worker.sh offline test suite"
@@ -1062,6 +1091,39 @@ else
     bad "help workflow-specific cycle limits"
 fi
 
+printf 'must not dispatch without a transmission mode\n' | \
+    AGY_TEST_SKIP_WHOLE_APPROVAL=1 run_worker missing-transmission-mode \
+    > "$TMP/missing-transmission-mode.out" 2> "$TMP/missing-transmission-mode.err"
+missing_transmission_rc=$?
+if [[ "$missing_transmission_rc" == 64 \
+        && ! -s "$TMP/missing-transmission-mode.out" \
+        && ! -e "$TMP/missing-transmission-mode.called" \
+        && ! -e "$TMP/logs/missing-transmission-mode" ]] \
+        && grep -Fq 'choose provider scope, or explicitly approve whole-worktree transmission' \
+            "$TMP/missing-transmission-mode.err" \
+        && grep -Eq -- '--approve-whole-worktree [0-9a-f]{64}$' \
+            "$TMP/missing-transmission-mode.err"; then
+    ok "raw dispatch requires an explicit transmission mode before provider or job artifacts"
+else
+    bad "raw dispatch missing transmission mode boundary"
+fi
+
+printf 'must reject stale whole-worktree approval\n' | \
+    AGY_TEST_SKIP_WHOLE_APPROVAL=1 run_worker stale-whole-worktree \
+    --approve-whole-worktree "$(printf '0%.0s' {1..64})" \
+    > "$TMP/stale-whole-worktree.out" 2> "$TMP/stale-whole-worktree.err"
+stale_whole_rc=$?
+if [[ "$stale_whole_rc" == 64 \
+        && ! -s "$TMP/stale-whole-worktree.out" \
+        && ! -e "$TMP/stale-whole-worktree.called" \
+        && ! -e "$TMP/logs/stale-whole-worktree" ]] \
+        && grep -Fq 'approved whole-worktree manifest does not match the current worktree' \
+            "$TMP/stale-whole-worktree.err"; then
+    ok "raw whole-worktree approval is exact and stale-safe before provider launch"
+else
+    bad "raw whole-worktree stale approval boundary"
+fi
+
 printf 'small task\n' | run_worker tier --tier cheap > "$TMP/tier.out" 2> "$TMP/tier.err"
 rc=$?
 if [[ "$rc" != "0" ]]; then
@@ -1077,6 +1139,150 @@ else
     bad "--tier is resolved after CLI parsing"
 fi
 expect_print_last "small prompt keeps --print and its value last" "$TMP/tier.argv"
+
+LEGACY_UNAPPROVED_JOB="$TMP/logs/legacy-unapproved-initial"
+mkdir "$LEGACY_UNAPPROVED_JOB"
+chmod 0700 "$LEGACY_UNAPPROVED_JOB"
+LEGACY_UNAPPROVED_JOB="$(cd "$LEGACY_UNAPPROVED_JOB" && pwd -P)"
+PYTHONDONTWRITEBYTECODE=1 python3 - \
+        "$TMP/logs/tier/dispatch-command.json" \
+        "$LEGACY_UNAPPROVED_JOB/dispatch-command.json" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+value = json.loads(source.read_text(encoding="utf-8"))
+value["schema_version"] = 6
+value.pop("approved_whole_worktree_sha256")
+target.write_text(
+    json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+os.chmod(target, 0o600)
+PY
+PATH="$TMP/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 \
+    python3 "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        run --job-dir "$LEGACY_UNAPPROVED_JOB" \
+        > "$TMP/legacy-unapproved-initial.out" \
+        2> "$TMP/legacy-unapproved-initial.err"
+legacy_unapproved_initial_rc=$?
+if [[ "$legacy_unapproved_initial_rc" == 64 \
+        && ! -s "$TMP/legacy-unapproved-initial.out" \
+        && ! -e "$LEGACY_UNAPPROVED_JOB/dispatch-state.json" ]] \
+        && grep -Fq 'initial whole-worktree dispatch lacks explicit approval' \
+            "$TMP/legacy-unapproved-initial.err"; then
+    ok "direct dispatcher rejects a fresh legacy broad command before provider launch"
+else
+    bad "direct dispatcher legacy broad initial boundary"
+fi
+
+PYTHONDONTWRITEBYTECODE=1 python3 -B - \
+        "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$TMP/logs/tier/dispatch-command.json" \
+        "$TMP/legacy-queued-v6-job" "$TMP/repo" "$TMP/bin" "$TMP" <<'PY'
+import fcntl
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+source_text, template_text, job_text, workdir_text, bin_text, temp_text = sys.argv[1:]
+source = Path(source_text).resolve()
+workdir = str(Path(workdir_text).resolve())
+job = Path(job_text).resolve()
+job.mkdir(mode=0o700)
+spec = importlib.util.spec_from_file_location("agy_dispatch_legacy_queued_v6", source)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+command = json.loads(Path(template_text).read_text(encoding="utf-8"))
+command.update({
+    "schema_version": 6,
+    "job_id": "legacy-queued-v6",
+    "workdir": workdir,
+    "idle_seconds": 1,
+    "hard_seconds": 3,
+    "max_seconds": 5,
+    "notice_seconds": 2,
+})
+command.pop("approved_whole_worktree_sha256")
+module.write_atomic(job, module.COMMAND_NAME, command)
+loaded, command_raw, command_identity = module.load_command(job)
+state = module.initial_state(
+    loaded,
+    "initial",
+    1,
+    command_sha=module.digest(command_raw),
+    command_identity=command_identity,
+    stage_sha=None,
+    stage_identity=None,
+    schema_bindings=module._schema_bindings(loaded),
+)
+module.write_atomic(job, module.STATE_NAME, state)
+
+lock_fd = os.open(job / module.LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
+os.fchmod(lock_fd, 0o600)
+fcntl.flock(lock_fd, fcntl.LOCK_EX)
+temp = Path(temp_text)
+environment = dict(os.environ)
+environment.update({
+    "PATH": f"{Path(bin_text).resolve()}{os.pathsep}{environment.get('PATH', '')}",
+    "FAKE_VERSION_MODE": "ready",
+    "FAKE_HELP_MODE": "ready",
+    "FAKE_DISPATCH_MODE": "result",
+    "FAKE_MODEL_FILE": str(temp / "legacy-queued-v6.model"),
+    "FAKE_PROMPT_FILE": str(temp / "legacy-queued-v6.prompt"),
+    "FAKE_DIRS_FILE": str(temp / "legacy-queued-v6.dirs"),
+    "FAKE_ARGV_FILE": str(temp / "legacy-queued-v6.argv"),
+    "FAKE_STAGE_RESULT_FILE": str(temp / "legacy-queued-v6.stage-result"),
+    "FAKE_CALLS_FILE": str(temp / "legacy-queued-v6.calls"),
+    "FAKE_WORKER_CALLS_FILE": str(temp / "legacy-queued-v6.worker-calls"),
+})
+child = subprocess.Popen(
+    [sys.executable, "-I", "-S", "-B", str(source), "controller", "--job-dir", str(job),
+     "--ownership-fd", str(lock_fd)],
+    pass_fds=(lock_fd,),
+    env=environment,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+os.close(lock_fd)
+assert child.wait(timeout=10) == 0
+terminal, _, _ = module.load_state(job)
+assert terminal["status"] == "succeeded"
+assert terminal["attempt_origin"] == "initial"
+assert terminal["candidate_recognized"] is True
+assert (temp / "legacy-queued-v6.worker-calls").read_text(encoding="utf-8").splitlines() == ["worker"]
+PY
+legacy_queued_v6_rc=$?
+if [[ "$legacy_queued_v6_rc" == 0 ]]; then
+    ok "already-queued legacy V6 broad state remains provider-runnable"
+else
+    bad "already-queued legacy V6 compatibility"
+fi
+
+WHOLE_DRIFT_PATH="$TMP/repo/whole-worktree-drift"
+printf 'manifest must remain bound through launch\n' | \
+    FAKE_MUTATE_WORKTREE_PATH="$WHOLE_DRIFT_PATH" \
+    run_worker whole-worktree-drift --model gemini-3.6-flash --effort high \
+    > "$TMP/whole-worktree-drift.out" 2> "$TMP/whole-worktree-drift.err"
+whole_drift_rc=$?
+if [[ "$whole_drift_rc" == 64 \
+        && ! -s "$TMP/whole-worktree-drift.out" \
+        && ! -s "$TMP/whole-worktree-drift.worker-calls" ]] \
+        && grep -Fq 'approved whole-worktree manifest does not match current worktree' \
+            "$TMP/whole-worktree-drift.err"; then
+    ok "whole-worktree drift is rejected by the supervisor before provider launch"
+else
+    bad "whole-worktree pre-provider drift boundary"
+fi
+rm -f "$WHOLE_DRIFT_PATH"
 
 ambient_env_observed="$TMP/ambient-env-observed.txt"
 printf 'ambient environment filter\n' | \
@@ -2397,13 +2603,14 @@ done
 
 NO_AGY_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 run_without_fake_agy() {
-    local job="$1" path_value="$2"; shift 2
+    local job="$1" path_value="$2" approval_sha; shift 2
+    approval_sha="$(whole_worktree_manifest_sha "$WORKER" "$TMP/repo")" || return 64
     PATH="$path_value" \
     AGY_WORKER_MODE=accept-edits \
     AGY_WORKER_LOG_DIR="$TMP/no-agy-logs" \
     AGY_WORKER_JOB_ID="$job" \
     AGY_WORKER_MAX_ATTEMPTS=1 \
-    "$WORKER" --workdir "$TMP/repo" "$@"
+    "$WORKER" --workdir "$TMP/repo" --approve-whole-worktree "$approval_sha" "$@"
 }
 mkdir -p "$TMP/no-agy-logs"
 chmod 0755 "$TMP/no-agy-logs"
@@ -2658,6 +2865,7 @@ cp -R "$ROOT/skills/agy-worker" "$WRAPPER_FIXTURE/skills/agy-worker"
 chmod +x "$WRAPPER_FIXTURE/agy-worker.sh"
 WRAPPER_REAL="$(cd "$WRAPPER_FIXTURE" && pwd -P)"
 EXPECTED_CHECKOUT_SHA="$(python3 -I -S -B -c 'import hashlib, sys; print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest())' "$WRAPPER_REAL")"
+WRAPPER_APPROVAL_SHA="$(whole_worktree_manifest_sha "$WRAPPER_FIXTURE/agy-worker.sh" "$TMP/repo")"
 
 TEST_XDG="$TMP/isolated-xdg-state"
 TEST_HOME="$TMP/isolated-home"
@@ -2677,6 +2885,7 @@ wrapper_pass=1
         FAKE_ARGV_FILE="$TMP/unset-log.argv" \
         FAKE_STAGE_RESULT_FILE="$TMP/unset-log.stage-result" \
         "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        --approve-whole-worktree "$WRAPPER_APPROVAL_SHA" \
         --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         > "$TMP/unset-log.out" 2> "$TMP/unset-log.err"
 )
@@ -2700,6 +2909,7 @@ fi
         FAKE_ARGV_FILE="$TMP/empty-log.argv" \
         FAKE_STAGE_RESULT_FILE="$TMP/empty-log.stage-result" \
         "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        --approve-whole-worktree "$WRAPPER_APPROVAL_SHA" \
         --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         > "$TMP/empty-log.out" 2> "$TMP/empty-log.err"
 )
@@ -2728,6 +2938,7 @@ fi
         XDG_STATE_HOME="relative/path" HOME="" \
         AGY_WORKER_JOB_ID=unsafe-root AGY_WORKER_MODE=accept-edits \
         "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        --approve-whole-worktree "$WRAPPER_APPROVAL_SHA" \
         --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         > "$TMP/unsafe-root.out" 2> "$TMP/unsafe-root.err"
 )
@@ -2750,6 +2961,7 @@ mkdir -p "$EXPLICIT_EXTERNAL"
         FAKE_ARGV_FILE="$TMP/explicit-log.argv" \
         FAKE_STAGE_RESULT_FILE="$TMP/explicit-log.stage-result" \
         "$WRAPPER_FIXTURE/agy-worker.sh" --workdir "$TMP/repo" \
+        --approve-whole-worktree "$WRAPPER_APPROVAL_SHA" \
         --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         > "$TMP/explicit-log.out" 2> "$TMP/explicit-log.err"
 )
@@ -3055,6 +3267,7 @@ printf 'broad audit is a usable default plan\n' | (
         FAKE_STAGE_RESULT_FILE="$TMP/plan-without-persona.stage-result" \
         FAKE_CALLED_FILE="$TMP/plan-without-persona.called" \
         "$WORKER" --workdir "$TMP/repo" \
+            --approve-whole-worktree "$(whole_worktree_manifest_sha "$WORKER" "$TMP/repo")" \
             --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE --provider-env FAKE_CALLED_FILE
 ) > "$TMP/plan-without-persona.out" 2> "$TMP/plan-without-persona.err"
 rc=$?
@@ -3192,7 +3405,7 @@ printf 'terminal failure\n' | PATH="$TMP/bin:$PATH" \
     FAKE_MODEL_FILE="$TMP/terminal.model" FAKE_PROMPT_FILE="$TMP/terminal.prompt" \
     FAKE_DIRS_FILE="$TMP/terminal.dirs" \
     FAKE_ARGV_FILE="$TMP/terminal.argv" FAKE_STAGE_RESULT_FILE="$TMP/terminal.stage-result" \
-    "$WORKER" --workdir "$TMP/repo" --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
+    "$WORKER" --workdir "$TMP/repo" --approve-whole-worktree "$(whole_worktree_manifest_sha "$WORKER" "$TMP/repo")" --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         --provider-env FAKE_AGY_STATUS > "$TMP/terminal.out" 2>/dev/null
 rc=$?
 expect_exit "non-success terminal status fails closed" 4 "$rc"
@@ -3203,7 +3416,7 @@ printf 'bad envelope\n' | PATH="$TMP/bin:$PATH" \
     FAKE_MODEL_FILE="$TMP/bad.model" FAKE_PROMPT_FILE="$TMP/bad.prompt" \
     FAKE_DIRS_FILE="$TMP/bad.dirs" \
     FAKE_ARGV_FILE="$TMP/bad.argv" FAKE_STAGE_RESULT_FILE="$TMP/bad.stage-result" \
-    "$WORKER" --workdir "$TMP/repo" --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
+    "$WORKER" --workdir "$TMP/repo" --approve-whole-worktree "$(whole_worktree_manifest_sha "$WORKER" "$TMP/repo")" --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE \
         --provider-env FAKE_BAD_ENVELOPE > "$TMP/bad.out" 2>/dev/null
 rc=$?
 expect_exit "dispatcher independently rejects schema-invalid output" 4 "$rc"
@@ -3268,16 +3481,28 @@ start_worker() {
         FAKE_MUTATE_EXECUTABLE FAKE_MUTATE_EXECUTABLE_MODE \
         FAKE_MUTATE_EXECUTABLE_PARENT FAKE_MUTATE_EXECUTABLE_SAME_LENGTH \
         FAKE_MUTATE_MATRIX FAKE_MUTATE_PROJECT_MARKER FAKE_MUTATION_MARKER \
+        FAKE_MUTATE_WORKTREE_PATH \
         FAKE_PROBE_PARENT_PID_FILE FAKE_PROBE_PGID_FILE FAKE_PROBE_READY_FILE \
         FAKE_PROBE_RELEASE_FILE FAKE_PROMPT_FILE FAKE_QUOTA_ERROR \
+        FAKE_PROVIDER_CREATE_PATH \
         FAKE_REPLACE_EXECUTABLE_SYMLINK FAKE_SIDE_EFFECT_FILE FAKE_SIGNAL_PARENT \
         FAKE_SPARSE_PROJECT_MARKER FAKE_STAGE_RESULT_FILE FAKE_TRY_STAGE_WRITE \
         FAKE_UTF8_SUMMARY FAKE_VERSION_MODE FAKE_WARNING_LINE \
         FAKE_WORKER_CALLS_FILE FAKE_WORKER_VERIFIED; do
         fake_provider_env_args+=(--provider-env "$fake_provider_env_name")
     done
-    local job="$1" workdir; shift
+    local job="$1" workdir worker_path provider_scope_arg=0 option manifest_sha
+    local transmission_approval_args=()
+    shift
     workdir="${AGY_TEST_WORKDIR:-$TMP/repo}"
+    worker_path="${AGY_TEST_WORKER:-$WORKER}"
+    for option in "$@"; do
+        [[ "$option" != "--provider-scope" ]] || provider_scope_arg=1
+    done
+    if (( provider_scope_arg == 0 )) && [[ "${AGY_TEST_SKIP_WHOLE_APPROVAL:-0}" != "1" ]]; then
+        manifest_sha="$(whole_worktree_manifest_sha "$worker_path" "$workdir")" || return 64
+        transmission_approval_args=(--approve-whole-worktree "$manifest_sha")
+    fi
     PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID="$job" \
         AGY_WORKER_MODE="${AGY_WORKER_MODE:-accept-edits}" \
         FAKE_MODEL_FILE="$TMP/$job.model" FAKE_PROMPT_FILE="$TMP/$job.prompt" \
@@ -3292,14 +3517,35 @@ start_worker() {
         FAKE_HEARTBEAT_AFTER_FIRST_READY="${FAKE_HEARTBEAT_AFTER_FIRST_READY:-}" \
         FAKE_HEARTBEAT_AFTER_FIRST_RELEASE="${FAKE_HEARTBEAT_AFTER_FIRST_RELEASE:-}" \
         FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
-        "${AGY_TEST_WORKER:-$WORKER}" start --workdir "$workdir" \
-        "${fake_provider_env_args[@]}" "$@"
+        "$worker_path" start --workdir "$workdir" \
+        "${fake_provider_env_args[@]}" \
+        ${transmission_approval_args+"${transmission_approval_args[@]}"} "$@"
 }
 
+printf 'start must not dispatch without a transmission mode\n' | \
+    AGY_TEST_SKIP_WHOLE_APPROVAL=1 start_worker missing-transmission-start \
+        --workflow task > "$TMP/missing-transmission-start.out" \
+        2> "$TMP/missing-transmission-start.err"
+missing_transmission_start_rc=$?
+if [[ "$missing_transmission_start_rc" == 64 \
+        && ! -s "$TMP/missing-transmission-start.out" \
+        && ! -e "$TMP/missing-transmission-start.called" \
+        && ! -e "$TMP/logs/missing-transmission-start" ]] \
+        && grep -Fq 'choose provider scope, or explicitly approve whole-worktree transmission' \
+            "$TMP/missing-transmission-start.err"; then
+    ok "raw start requires an explicit transmission mode before queueing or provider launch"
+else
+    bad "raw start missing transmission mode boundary"
+fi
+
+partial_clone_source="$TMP/partial-clone-source"
 partial_clone_repo="$TMP/partial-clone-repo"
-git init -q "$partial_clone_repo"
-git -C "$partial_clone_repo" config extensions.partialclone origin
-git -C "$partial_clone_repo" config remote.origin.promisor true
+git init -q "$partial_clone_source"
+git -C "$partial_clone_source" -c user.name='agy-worker test' -c user.email='test@example.invalid' \
+    commit --allow-empty -q -m initial
+git -C "$partial_clone_source" worktree add -q -b partial-clone-test "$partial_clone_repo" HEAD
+git -C "$partial_clone_source" config extensions.partialclone origin
+git -C "$partial_clone_source" config remote.origin.promisor true
 printf 'partial clone must fail before queueing\n' | \
     AGY_TEST_WORKDIR="$partial_clone_repo" start_worker partial-clone-preflight \
         --workflow task > "$TMP/partial-clone-preflight.out" \
@@ -3704,7 +3950,9 @@ PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID=foregroun
     FAKE_WORKER_CALLS_FILE="$TMP/foreground-signal.worker-calls" \
     FAKE_VERSION_MODE=ready FAKE_DISPATCH_MODE=heartbeat-forever \
     FAKE_SIDE_EFFECT_FILE="$FOREGROUND_SIGNAL_SIDE_EFFECT" \
-    "$WORKER" --workdir "$TMP/repo" --idle-timeout 2s --hard-timeout 4s --max-runtime 4s \
+    "$WORKER" --workdir "$TMP/repo" \
+    --approve-whole-worktree "$(whole_worktree_manifest_sha "$WORKER" "$TMP/repo")" \
+    --idle-timeout 2s --hard-timeout 4s --max-runtime 4s \
     --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE \
     --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE \
     --provider-env FAKE_STAGE_RESULT_FILE --provider-env FAKE_CALLS_FILE \
@@ -4026,31 +4274,30 @@ else
 fi
 
 PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
-        "$TMP/queued-cancel-job" "$TMP/repo" <<'PY'
+        "$TMP/queued-cancel-job" "$TMP/repo" \
+        "$TMP/logs/tier/dispatch-command.json" <<'PY'
 import fcntl
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 
-source, job_text, workdir = sys.argv[1:]
+source, job_text, workdir, command_template = sys.argv[1:]
+workdir = str(Path(workdir).resolve())
 spec = importlib.util.spec_from_file_location("agy_dispatch_queued_cancel", source)
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
 job = Path(job_text).resolve()
 job.mkdir(mode=0o700)
-command = {
-    "schema_version": 1, "kind": "agy-worker-dispatch-command",
+command = json.loads(Path(command_template).read_text(encoding="utf-8"))
+command.update({
     "job_id": "queued-cancel", "workdir": workdir,
-    "argv": ["agy", "--sandbox", "--mode", "plan", "--print-timeout", "4s",
-             "--output-format", "stream-json", "--json-schema", str(Path(source).parent.parent / "schemas/worker-result.schema.json"),
-             "--print", "must not dispatch"],
-    "agy_version": "1.1.16", "idle_seconds": 1, "hard_seconds": 2,
-    "max_seconds": 4, "notice_seconds": 3, "stage_dir": None,
-    "stage_file": None, "child_umask": "022", "resume_prompt": "continue",
-}
+    "idle_seconds": 1, "hard_seconds": 2, "max_seconds": 4,
+    "notice_seconds": 3,
+})
 module.write_atomic(job, module.COMMAND_NAME, command)
 lock_path = job / module.LOCK_NAME
 lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
@@ -4430,7 +4677,14 @@ command = {
     "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
 }
 module.write_atomic(job, module.COMMAND_NAME, command)
-state, _initial_sha = module.create_state(job, "initial", resume=False)
+command_raw, command_info = module.read_regular(
+    job / module.COMMAND_NAME, module.MAX_COMMAND_BYTES, "fixture command",
+)
+state = module.initial_state(
+    command, "initial", 1, command_sha=module.digest(command_raw),
+    command_identity=module._identity(command_info), stage_sha=None,
+    stage_identity=None, schema_bindings=module._schema_bindings(command),
+)
 candidate = {
     "status": "completed", "summary": "historical-v2-direct-candidate",
     "files_changed": [], "commands_run": [], "tests_run": [], "risks": [],
@@ -4584,6 +4838,50 @@ else
     bad "project continuation format and privacy contract"
 fi
 
+project_provider_path="$TMP/project-worktree/provider-created-during-initial"
+printf 'project provider creates a new path\n' | \
+    FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    FAKE_PROVIDER_CREATE_PATH="$project_provider_path" \
+    AGY_TEST_WORKDIR="$TMP/project-worktree" \
+    start_worker project-provider-path --workflow project \
+    --idle-timeout 1s --hard-timeout 2s --max-runtime 8s \
+    > "$TMP/project-provider-path.start" 2> "$TMP/project-provider-path.err"
+project_provider_start_rc=$?
+wait_terminal project-provider-path "$TMP/project-provider-path.start"
+project_provider_wait_rc=$?
+control_worker status project-provider-path > "$TMP/project-provider-path.status"
+project_provider_sha="$(status_sha "$TMP/project-provider-path.status")"
+project_feedback project-provider-path | \
+    FAKE_DISPATCH_MODE=heartbeat-success FAKE_HEARTBEAT_COUNT=2 \
+    control_worker continue project-provider-path \
+    --approve-state-sha "$project_provider_sha" \
+    > "$TMP/project-provider-path.continue" 2> "$TMP/project-provider-path.continue.err"
+project_provider_continue_rc=$?
+wait_terminal project-provider-path "$TMP/project-provider-path.continue"
+project_provider_continue_wait_rc=$?
+control_worker status project-provider-path > "$TMP/project-provider-path.status"
+project_provider_calls="$(wc -l < "$TMP/project-provider-path.worker-calls" | tr -d ' ')"
+if [[ "$project_provider_start_rc" == 0 && "$project_provider_wait_rc" == 0 \
+        && "$project_provider_continue_rc" == 0 \
+        && "$project_provider_continue_wait_rc" == 0 \
+        && "$project_provider_calls" == 2 && -f "$project_provider_path" ]] \
+        && python3 - "$TMP/project-provider-path.status" <<'PY'
+import json
+import sys
+
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["status"] == "succeeded"
+assert state["cycle"] == 2
+assert state["attempt_origin"] == "conversation-continue"
+assert state["candidate_recognized"] is True
+PY
+then
+    ok "project continuation preserves initial-only whole-worktree approval after provider-created paths"
+else
+    bad "project continuation provider-created path boundary"
+fi
+rm -f "$project_provider_path"
+
 project_missing_sha="$(status_sha "$TMP/project-missing-check.status")"
 project_missing_calls_before_finalize="$(wc -l < "$TMP/project-missing-check.worker-calls" | tr -d ' ')"
 project_missing_feedback project-missing-check | control_worker finalize project-missing-check \
@@ -4708,7 +5006,9 @@ else
     bad "project worktree symlink boundary"
 fi
 
-printf 'main checkout is not an eligible project worktree\n' | run_worker project-main-reject --workflow project \
+printf 'main checkout is not an eligible project worktree\n' | \
+    AGY_TEST_SKIP_WHOLE_APPROVAL=1 AGY_TEST_WORKDIR="$PRIMARY_WORKTREE" \
+    run_worker project-main-reject --workflow project \
     > "$TMP/project-main-reject.out" 2> "$TMP/project-main-reject.err"
 project_main_rc=$?
 if [[ "$project_main_rc" == 64 && ! -e "$TMP/logs/project-main-reject/task.txt" ]]; then
