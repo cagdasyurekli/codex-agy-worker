@@ -618,7 +618,7 @@ else
     bad "doctor accepts bundle-owned real runtime parent directories"
 fi
 
-for parent in scripts agents schemas compat benchmarks profiles; do
+for parent in scripts agents schemas compat benchmarks; do
     for link_kind in absolute relative in-root; do
         label="doctor-parent-$parent-$link_kind"
         fixture="$TMP/$label-fixture"
@@ -662,19 +662,11 @@ for specification in \
     'verify-job.sh:executable' \
     'scripts/validate-envelope.py:executable' \
     'scripts/evidence_receipt.py:executable' \
-    'scripts/persona_registry.py:executable' \
-    'scripts/workload_profiles.py:executable' \
     'scripts/model_selection.py:executable' \
     'scripts/agy_dispatch_worktree.py:data' \
     'schemas/worker-result.schema.json:data' \
     'schemas/worker-result.provider.schema.json:data' \
     'schemas/evidence-receipt.schema.json:data' \
-    'schemas/persona-run-manifest.schema.json:data' \
-    'schemas/persona-transition-approval.schema.json:data' \
-    'schemas/workload-profile.schema.json:data' \
-    'compat/persona-registry.schema.json:data' \
-    'compat/personas/manifest.json:data' \
-    'profiles/v1/manifest.json:data' \
     'agents/repo-inventory.md:data' \
     'compat/agy-verified-version.txt:data' \
     'compat/agy-model-effort-matrix.json:data' \
@@ -788,23 +780,16 @@ for dependency in \
     'job.sh:lifecycle-entry' \
     'scripts/validate-envelope.py:python-helper' \
     'scripts/evidence_receipt.py:receipt-helper' \
-    'scripts/persona_registry.py:persona-registry-helper' \
-    'scripts/workload_profiles.py:profile-helper' \
     'scripts/candidate_state.py:candidate-state-helper' \
     'scripts/agy_dispatch_worktree.py:worktree-snapshot-helper' \
+    'scripts/legacy_dispatch_state.py:legacy-state-helper' \
     'scripts/job_lifecycle.py:lifecycle-helper' \
     'scripts/model_selection.py:model-resolver' \
     'schemas/worker-result.schema.json:schema' \
     'schemas/evidence-receipt.schema.json:receipt-schema' \
-    'schemas/persona-run-manifest.schema.json:persona-run-manifest-schema' \
-    'schemas/persona-transition-approval.schema.json:persona-transition-schema' \
-    'schemas/workload-profile.schema.json:profile-schema' \
-    'compat/persona-evidence.schema.json:persona-evidence-schema' \
-    'compat/personas/manifest.json:persona-registry-manifest' \
     'schemas/job-state.schema.json:lifecycle-schema' \
     'schemas/model-selection.schema.json:selection-schema' \
     'benchmarks/v1/portable-source.json:benchmark-source-manifest' \
-    'profiles/v1/manifest.json:profile-manifest' \
     'agents/repo-inventory.md:persona' \
     'compat/agy-upstream-head.txt:source-record' \
     'compat/agy-verified-version.txt:compat-record' \

@@ -947,7 +947,7 @@ Observation: Parallelizing a long-running offline CI gate across shard jobs redu
 but sharded workflows must not silently drop stages, reuse cross-run artifacts, weaken checkout
 immutability, or conflate lower wall time with lower total compute or weaker acceptance.
 Change: Four frozen shard IDs and stage memberships (`dispatcher`, `dispatcher-remediation`, `other-a`,
-`other-b`) partition the canonical 42-stage inventory. In CI, each shard checks out the exact immutable
+`other-b`) partition the canonical 40-stage inventory. In CI, each shard checks out the exact immutable
 head SHA (`github.event.pull_request.head.sha` for pull requests or validated `head_sha` for manual dispatch),
 enforces committed diff hygiene, executes its stage subset, and emits a local mode-0600 shard receipt
 binding the schema, exact head SHA, inventory digest, shard ID, expected and observed stage lists, and outcome.
@@ -973,7 +973,7 @@ fail-closed cleanup and workspace mutation assertions remain fully enforced with
 Observation: Duplicating the offline CI stage inventory across shell scripts, timing observers, and
 sharding verifiers creates inventory drift hazards and maintenance overhead. In addition, exhaustive
 combinatorial matrix testing in full subprocess wrappers consumes excessive process execution time.
-Change: `scripts/ci_stages.py` defines the single declarative canonical 42-stage manifest (stage ID,
+Change: `scripts/ci_stages.py` defines the single declarative canonical 40-stage manifest (stage ID,
 announcement, shard, exact argv, and receipt metadata) from which execution, timing, sharding, inventory digest,
 and gate validation are derived without `eval` or unsafe shell reconstruction. Shard receipts include
 per-stage monotonic durations (`stage_durations`) under schema v2 with strict fail-closed validation;
@@ -1001,6 +1001,18 @@ administration, and normalization collisions. After the child is reaped, source 
 revalidated and only authorized mutations are reconciled transactionally with durable backups,
 fsync, an atomic recovery ledger, equality checks, and exact rollback. The stage narrows provider
 scope but is not an OS sandbox and grants no execution, Git, acceptance, or publication authority.
+
+### Retire unused optional registries without weakening direct selection (2026-09-01)
+
+Observation: A profile skeleton or persona-evidence registry that cannot choose a
+repository, command, verification result, or acceptance decision adds maintenance
+surface without replacing any required driver judgment. After the announced window,
+no reproducible external use established value for either surface.
+Change: Remove the commands, registries, schemas, package entries, CI stages, and
+documentation together. Keep the shipped `--persona` prompt templates and their
+explicit mode restrictions. Read and approved recovery for V1–V10 dispatch state now
+lives behind a compatibility adapter, so the active controller remains V11-focused
+while old records stay readable and migrate only through their existing approvals.
 
 ### Raw dispatch must preserve the facade's transmission choice (2026-09-01)
 

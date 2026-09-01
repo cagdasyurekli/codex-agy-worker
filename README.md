@@ -229,7 +229,6 @@ Choose a guide by what you need to do:
 | Inspect the Codex marketplace package contract | [Marketplace](docs/MARKETPLACE.md) |
 | Verify a candidate without trusting its report | [Verification tutorial](docs/VERIFYING_AGENT_OUTPUT.md) |
 | Integrate against the bounded public gate fixtures | [Conformance](docs/CONFORMANCE.md) |
-| Maintain deprecated-onboarding persona evidence or data-only profiles | [Personas](docs/PERSONAS.md) · [Profiles](docs/PROFILES.md) |
 | Review offline benchmark and adoption evidence | [Benchmarking](docs/BENCHMARKING.md) · [Measurement](docs/MEASUREMENT.md) |
 | Understand source ownership or product direction | [Repository map](docs/REPO_MAP.md) · [Roadmap](docs/ROADMAP.md) |
 
@@ -266,11 +265,9 @@ Use normal language and state the repository, allowed scope, desired result, and
 driver-owned checks. For broader work, Codex can discover ordinary structure and test
 commands instead of requiring a predeclared file list.
 
-Personas remain optional prompt templates and workload profiles remain data only, but
-their registry/profile commands are deprecated from ordinary onboarding and retained
-for at least two minor releases. They cannot select a repository, command, model,
-authorization, or Git action. Model and effort selection remain caller-owned, while
-recommendations remain advisory.
+Personas remain optional prompt templates. They cannot select a repository, command,
+model, authorization, verification result, or Git action. Model and effort selection
+remain caller-owned, while recommendations remain advisory.
 
 See [Usage](docs/USAGE.md) for workflow examples, manual invocation, read-only
 inventory, common options, and explicit model-selection behavior.

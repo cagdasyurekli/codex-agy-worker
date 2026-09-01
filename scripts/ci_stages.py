@@ -95,25 +95,11 @@ STAGES: tuple[Stage, ...] = (
         {"receipt_id": "swebench-workflow-study"},
     ),
     Stage(
-        "persona-evidence",
-        "persona evidence registry suite",
-        "other-b",
-        ("/usr/bin/python3", "-I", "-S", "-B", "tests/test-persona-evidence.py"),
-        {"receipt_id": "persona-evidence"},
-    ),
-    Stage(
         "job-lifecycle",
         "local job lifecycle suite",
         "other-a",
         ("/usr/bin/python3", "-I", "-S", "-B", "tests/test-job-lifecycle.py"),
         {"receipt_id": "job-lifecycle"},
-    ),
-    Stage(
-        "workload-profiles",
-        "data-only workload profiles suite",
-        "other-b",
-        ("/usr/bin/python3", "-I", "-S", "-B", "tests/test-workload-profiles.py"),
-        {"receipt_id": "workload-profiles"},
     ),
     Stage(
         "dispatcher",
