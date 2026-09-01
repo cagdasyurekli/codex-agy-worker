@@ -313,20 +313,12 @@ entire prompt because it permits embedded `/skill` and slash-command text. The p
 dispatcher is the narrow built-in exception: it privately stages content and enables
 expansion only for its fixed driver prompt.
 
-## Deprecated onboarding: personas and workload profiles
+## Optional personas
 
-Personas are optional prompt specializations, not capability, approval, routing, or
-quality gates. Their evidence status and generated registry are owned by
-[Persona Evidence Registry v1](PERSONAS.md); do not copy its current table here.
-
-Workload profiles are fixed data-only skeletons. They cannot contain a repository,
-path, command, selection, authorization, dispatch, acceptance decision, or Git
-action. See [data-only workload profiles](PROFILES.md) for their exact contract and
-commands.
-
-Persona and profile selection is deprecated for ordinary onboarding. The compatible
-commands and data remain available for at least two minor releases; this change does
-not physically remove them or make either one a prerequisite for the primary facade.
+`--persona NAME` selects one shipped prompt template. Persona text is guidance only:
+it never grants capability or approval, chooses routing, verifies a result, or changes
+the driver’s acceptance decision. The direct selection and its read-only/edit-mode
+restrictions remain part of the dispatcher contract.
 
 ## Model and effort selection
 

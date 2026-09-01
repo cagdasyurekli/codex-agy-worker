@@ -170,11 +170,7 @@ implementation. The planning expert and final reviewer must be different agents 
 fresh contexts; neither may accept its own plan or implementation. The independent
 reviewer remains the final acceptor. Purely mechanical changes are exempt.
 
-Each profile is data, not a driver: it cannot name a repository, path, command,
-selection, authorization, dispatch, or Git action. Offline coverage is not a
-live-provider claim. Do not pin exact suite counts in this instruction file;
-`docs/REPO_MAP.md` owns focused-suite inventory and `scripts/ci_stages.py` owns the
-canonical CI stage registry.
+Offline coverage is not a live-provider claim. Do not pin exact suite counts in this instruction file; `docs/REPO_MAP.md` owns focused-suite inventory and `scripts/ci_stages.py` owns the canonical CI stage registry.
 
 Some conformance cleanup controls trust loaded code, the local owner, same-UID
 processes, and OS administrators. They do not establish same-user tamper-resistance or guaranteed hostile-gate cleanup; preserve a residual on identity drift instead of chasing it.

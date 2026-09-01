@@ -137,9 +137,20 @@ behavior into broader agy `1.1.22` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
+### v0.15.0 product simplification
+
+**Status:** Local candidate; not published.
+
+This candidate retires the unused workload-profile and persona-evidence registries
+after their announced window. The direct `--persona` templates and their mode
+restrictions remain. Current controller state remains current-only; V1–V10 records
+stay readable and retain their existing approval-gated recovery/migration behavior.
+This local candidate makes no publication, marketplace, or SkillStore claim.
+
 ### v0.14.1 direct-dispatch transmission parity
 
-**Status:** Release candidate; not published.
+**Status:** Published. Publication is established by the annotated `v0.14.1` tag at
+`9bdfb520cf34d9ab3a233bb6287114a4f614948c` and GitHub Release readback.
 
 The advanced `agy-worker.sh` initial run/start path now requires the same explicit
 transmission choice as the ordinary facade. Provider scope is the recommended bounded
@@ -150,8 +161,7 @@ whole-worktree capability. Same-job continuation and repair remain bound to exac
 controller state and candidate evidence so legitimate provider-created files do not
 deadlock the lifecycle. Legacy command records and already-queued states remain readable,
 but an unapproved broad record cannot launch through dispatcher `run`/`start`. This
-candidate makes no SkillStore assessment or publication claim until the exact tag is
-published and read back.
+release made no SkillStore assessment claim.
 
 ### v0.14.0 explicit provider-transmission choice
 
@@ -1119,13 +1129,15 @@ remains intentionally outside the Doctor contract.
   unimplemented, separately reviewed and approved future slice requiring accepted agy
   executable/version evidence plus explicit Google/Gemini data scope and cost.
 
-#### P1-D — Persona evidence registry (implemented)
+#### P1-D — Persona evidence registry (retired in the v0.15.0 local candidate)
 
 - **User job:** Distinguish offline persona contract coverage from honest escalation
   and accepted real-candidate evidence.
-- **Implemented surface:** Validated `compat/personas/<name>.json` records and a generated
-  documentation table. Runtime persona selection remains an explicit hardcoded
-  allowlist; target repositories cannot register executable personas dynamically.
+- **Historical surface:** Validated `compat/personas/<name>.json` records and a generated
+  documentation table. The registry was retired after its announced window because no
+  reproducible external use established product value. Direct runtime persona selection
+  remains an explicit hardcoded allowlist; target repositories cannot register
+  executable personas dynamically.
 - **Dependencies:** Receipt v1 and public benchmark fixtures.
 - **Trust boundary:** Persona text remains prompt guidance, never enforcement. One
   accepted real candidate does not make a persona generally reliable. Use evidence
@@ -1189,11 +1201,11 @@ semantically honest mapping; “job rejected” is not automatically a test-case
 
 ### P2 — optional local ergonomics and telemetry
 
-#### P2-A — Data-only workload profiles
+#### P2-A — Data-only workload profiles (retired in the v0.15.0 local candidate)
 
-**Status:** Implemented provider-independently as a fixed v1 data bundle and pure
-list/show renderer. It performs no dispatch, repository discovery, routing, or
-acceptance operation.
+**Status:** Retired after the announced compatibility window. It was implemented
+provider-independently as a fixed v1 data bundle and pure list/show command, but no
+reproducible external use established product value.
 
 - **User job:** Start common bounded jobs from a maintained skeleton without hiding
   policy choices.

@@ -30,6 +30,22 @@ from typing import Any, Iterator
 
 sys.dont_write_bytecode = True
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import legacy_dispatch_state as LEGACY
+
+
+class _DispatchAPI:
+    """Expose this module's private helpers to the legacy compatibility adapter."""
+
+    def __getattr__(self, name: str) -> Any:
+        return globals()[name]
+
+
+LEGACY_API = _DispatchAPI()
+
 STATE_NAME = "dispatch-state.json"
 COMMAND_NAME = "dispatch-command.json"
 LOCK_NAME = ".dispatch.lock"
@@ -644,100 +660,10 @@ def validate_state(value: Any) -> dict[str, Any]:
         "provider_terminal_status",
     }
     fields |= STATE_V11_FIELDS
-    retry_fields = {"provider_retry_after_seconds", "provider_retry_observed_epoch"}
-    legacy_fields = fields - STATE_PROJECT_FIELDS - retry_fields - STATE_V5_FIELDS - STATE_V6_FIELDS - STATE_V8_FIELDS - STATE_V9_FIELDS - STATE_V10_FIELDS - STATE_V11_FIELDS
-    version_three_fields = fields - retry_fields - STATE_V5_FIELDS - STATE_V6_FIELDS - STATE_V8_FIELDS - STATE_V9_FIELDS - STATE_V10_FIELDS - STATE_V11_FIELDS
-    version_four_fields = fields - STATE_V5_FIELDS - STATE_V6_FIELDS - STATE_V8_FIELDS - STATE_V9_FIELDS - STATE_V10_FIELDS - STATE_V11_FIELDS
-    version_five_fields = fields - STATE_V6_FIELDS - STATE_V8_FIELDS - STATE_V9_FIELDS - STATE_V10_FIELDS - STATE_V11_FIELDS
-    version_six_fields = fields - STATE_V8_FIELDS - STATE_V9_FIELDS - STATE_V10_FIELDS - STATE_V11_FIELDS
-    version_seven_fields = fields - STATE_V8_FIELDS - STATE_V9_FIELDS - STATE_V10_FIELDS - STATE_V11_FIELDS
-    version_eight_fields = fields - STATE_V9_FIELDS - STATE_V10_FIELDS - STATE_V11_FIELDS
-    version_nine_fields = fields - STATE_V10_FIELDS - STATE_V11_FIELDS
-    version_ten_fields = fields - STATE_V11_FIELDS
-    if not isinstance(value, dict):
-        raise DispatchError("dispatch state fields are invalid")
-    if set(value) == legacy_fields and value.get("schema_version") == 1:
-        value = dict(value)
-        recognized = value["result_path"] is not None
-        value.update({
-            "workflow": "legacy", "max_cycles": 1, "cycle": value["attempt"],
-            "phase": None, "assurance": None, "check_summary": None,
-            "check_counts": {"passed": 0, "failed": 0, "advisory": 0, "missing": 0},
-            "verification_path": None, "verification_sha256": None,
-            "verification_identity": None, "continue_available": False,
-            "last_success_path": None, "last_success_sha256": None,
-            "last_success_identity": None, "project_boundary": None,
-            "provider_retry_after_seconds": None,
-            "provider_retry_observed_epoch": None,
-            "candidate_recognized": recognized,
-            "candidate_source": "provider_success" if recognized else "none",
-            "result_available": recognized, "worktree_reconciliation": "not_applicable",
-            "worktree_changes_present": None, "worktree_changed_since_dispatch": None,
-            "driver_disposition": "unreviewed" if recognized else "not_applicable",
-            "failure_stage": None, "last_activity": None,
-            "next_action": "driver_review" if recognized else "none",
-            "next_action_command": None,
-            "worktree_baseline": None,
-            "provider_schema_sha256": None, "provider_schema_identity": None,
-            "canonical_schema_sha256": None, "canonical_schema_identity": None,
-            "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
-            "selection_sha256": None, "selection_identity": None,
-        })
-    elif set(value) == version_three_fields and value.get("schema_version") == 3:
-        value = dict(value)
-        value.update({
-            "provider_retry_after_seconds": None,
-            "provider_retry_observed_epoch": None,
-            # ``last_success_*`` was a historical compatibility pointer, not
-            # proof of the outer provider outcome or a driver-reviewed
-            # candidate.  Keep it distinct from the current result binding.
-            "candidate_recognized": bool(value["result_path"]),
-            "candidate_source": "provider_success" if value["result_path"] else "none",
-            "result_available": bool(value["result_path"]),
-            "worktree_reconciliation": "not_applicable",
-            "worktree_changes_present": None, "worktree_changed_since_dispatch": None,
-            "driver_disposition": "unreviewed" if value["result_path"] else "not_applicable",
-            "failure_stage": None, "last_activity": None,
-            "next_action": "driver_review" if value["result_path"] else "none",
-            "next_action_command": None, "worktree_baseline": None,
-            "provider_schema_sha256": None, "provider_schema_identity": None,
-            "canonical_schema_sha256": None, "canonical_schema_identity": None,
-            "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
-            "selection_sha256": None, "selection_identity": None,
-        })
-    elif set(value) == version_four_fields and value.get("schema_version") == 4:
-        value = dict(value)
-        value.update({
-            "candidate_recognized": bool(value["result_path"]),
-            "candidate_source": "provider_success" if value["result_path"] else "none",
-            "result_available": bool(value["result_path"]),
-            "worktree_reconciliation": "not_applicable",
-            "worktree_changes_present": None, "worktree_changed_since_dispatch": None,
-            "driver_disposition": "unreviewed" if value["result_path"] else "not_applicable",
-            "failure_stage": None, "last_activity": None,
-            "next_action": "driver_review" if value["result_path"] else "none",
-            "next_action_command": None, "worktree_baseline": None,
-            "provider_schema_sha256": None, "provider_schema_identity": None,
-            "canonical_schema_sha256": None, "canonical_schema_identity": None,
-            "candidate_worktree_sha256": None, "candidate_worktree_entries": None,
-            "selection_sha256": None, "selection_identity": None,
-        })
-    elif set(value) == version_five_fields and value.get("schema_version") == 5:
-        value = dict(value)
-        value.update({
-            "selection_sha256": None, "selection_identity": None,
-        })
-    elif set(value) == version_six_fields and value.get("schema_version") == 6:
-        pass
-    elif set(value) == version_seven_fields and value.get("schema_version") == 7:
-        pass
-    elif set(value) == version_eight_fields and value.get("schema_version") == 8:
-        pass
-    elif set(value) == version_nine_fields and value.get("schema_version") == 9:
-        pass
-    elif set(value) == version_ten_fields and value.get("schema_version") == 10:
-        pass
-    elif set(value) != fields or value.get("schema_version") != CURRENT_STATE_SCHEMA:
+    projected = LEGACY.project_for_read(LEGACY_API, value, fields)
+    if projected is not None:
+        value = projected
+    elif not isinstance(value, dict) or set(value) != fields:
         raise DispatchError("dispatch state fields are invalid")
     if value["kind"] != "agy-worker-dispatch-state":
         raise DispatchError("dispatch state version is invalid")
@@ -1280,239 +1206,29 @@ def _upgrade_legacy_state(
     state: dict[str, Any], command: dict[str, Any], *,
     migration_facts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Prepare an eligible pre-V11 state for one atomic approved current write."""
-    if state["schema_version"] >= CURRENT_STATE_SCHEMA:
-        return state
-    if state["schema_version"] == 1:
-        # V1 has neither a lifecycle nor a bounded current-candidate contract.
-        # It remains readable evidence only; do not invent task/project authority.
-        raise DispatchError("legacy dispatch state has no migration authority")
-    if state["schema_version"] in {3, 4} and migration_facts is None:
-        # V3/V4 may be migrated only by the separate, state-SHA-approved
-        # no-write proof below.  Never promote a path observation implicitly.
-        raise DispatchError("legacy migration approval is required")
-    value = dict(state)
-    if value["phase"] == "provider-failed":
-        value["phase"] = "attempt-failed"
-    if value["workflow"] == "legacy":
-        if value["candidate_recognized"]:
-            value["phase"] = "awaiting-verification"
-        elif value["status"] in TERMINAL:
-            value["phase"] = "attempt-failed"
-        else:
-            value["phase"] = "dispatching"
-        value["assurance"] = "pending"
-    else:
-        if value["attempt_origin"] == "conversation-continue" and value["status"] == "failed":
-            value["phase"] = "repair-failed"
-        elif value["candidate_recognized"]:
-            value["phase"] = "awaiting-verification"
-        elif value["status"] == "failed":
-            value["phase"] = "attempt-failed"
-        elif value["phase"] is None:
-            value["phase"] = "dispatching"
-        if value["assurance"] is None:
-            value["assurance"] = "pending"
-    # Pre-V9 state has no separate root identity.  Its persisted snapshot can
-    # prove the old state once; it cannot become the new V9 baseline.  V5/V6
-    # use their frozen legacy digest only for that proof, then capture a fresh
-    # semantic-v1 observation in this same pending transition.  V7/V8 already
-    # use semantic-v1, so their exact proved observation is safe to reuse.
-    if value["schema_version"] in {3, 4}:
-        assert migration_facts is not None
-        snapshot = migration_facts["semantic_snapshot"]
-        root_identity = migration_facts["root_identity"]
-    elif value["schema_version"] == 9:
-        persisted_root = value.get("worktree_root_identity")
-        current_root = _dispatch_root_identity(command["workdir"])
-        boundary = _git_boundary_identity(command["workdir"])
-        if (
-            persisted_root is None
-            or current_root is None
-            or persisted_root != current_root
-            or persisted_root != boundary
-        ):
-            raise DispatchError("legacy dispatch root identity cannot be proved")
-        expected_schemas = _schema_bindings(command)
-        for key, val in expected_schemas.items():
-            if value.get(key) != val:
-                raise DispatchError("dispatch schema binding changed")
-        if (
-            value.get("selection_sha256") != command.get("selection_sha256")
-            or value.get("selection_identity") != command.get("selection_identity")
-        ):
-            raise DispatchError("dispatch selection binding changed")
-        expected = value.get("candidate_worktree_sha256") if value["candidate_recognized"] else None
-        expected_entries = value.get("candidate_worktree_entries") if value["candidate_recognized"] else None
-        if expected is None:
-            baseline = value.get("worktree_baseline")
-            if isinstance(baseline, dict):
-                expected, expected_entries = baseline.get("sha256"), baseline.get("entries")
-        observed = _state_worktree_snapshot(value, command["workdir"])
-        if (
-            observed is None or not isinstance(expected, str) or type(expected_entries) is not int
-            or observed["sha256"] != expected or observed["entries"] != expected_entries
-        ):
-            raise DispatchError("legacy dispatch root identity cannot be proved")
-        root_identity = persisted_root
-        snapshot = observed
-    else:
-        expected = value.get("candidate_worktree_sha256") if value["candidate_recognized"] else None
-        expected_entries = value.get("candidate_worktree_entries") if value["candidate_recognized"] else None
-        if expected is None:
-            baseline = value.get("worktree_baseline")
-            if isinstance(baseline, dict):
-                expected, expected_entries = baseline.get("sha256"), baseline.get("entries")
-        observed = _state_worktree_snapshot(value, command["workdir"])
-        if (
-            observed is None or not isinstance(expected, str) or type(expected_entries) is not int
-            or observed["sha256"] != expected or observed["entries"] != expected_entries
-        ):
-            raise DispatchError("legacy dispatch root identity cannot be proved")
-        root_identity = _dispatch_root_identity(command["workdir"])
-        if root_identity is None:
-            raise DispatchError("legacy dispatch root identity cannot be proved")
-        snapshot = _worktree_snapshot(command["workdir"]) if value["schema_version"] in {5, 6} else observed
-    if snapshot is None:
-        raise DispatchError("legacy worktree cannot be bound")
-    value.update(_schema_bindings(command))
-    value.update({
-        "schema_version": CURRENT_STATE_SCHEMA,
-        "worktree_snapshot_algorithm": CURRENT_WORKTREE_SNAPSHOT_ALGORITHM,
-        "worktree_baseline": snapshot,
-        "worktree_reconciliation": "available",
-        "worktree_changes_present": snapshot["entries"] > 0,
-        "worktree_changed_since_dispatch": False,
-        "resume_available": bool(
-            value["conversation_id"] and not value["candidate_recognized"]
-            and value["status"] == "failed"
-        ),
-        "selection_sha256": command.get("selection_sha256"),
-        "selection_identity": command.get("selection_identity"),
-        "worktree_root_identity": root_identity,
-        "provider_terminal_status": "unknown",
-        "provider_scope_path": None,
-        "provider_scope_sha256": None,
-        "provider_scope_identity": None,
-        "approved_transmission_sha256": None,
-        "transmission_sha256": None,
-        "selected_content_sha256": None,
-        "selected_file_count": None,
-        "selected_tree_count": None,
-        "provider_stage_path": None,
-        "provider_stage_identity": None,
-        "provider_stage_manifest_sha256": None,
-        "reconciliation_manifest_sha256": None,
-    })
-    if value["candidate_recognized"]:
-        value["candidate_worktree_sha256"] = snapshot["sha256"]
-        value["candidate_worktree_entries"] = snapshot["entries"]
-        value["driver_disposition"] = "unreviewed"
-    value["continue_available"] = bool(
-        value["workflow"] != "legacy"
-        and value["candidate_recognized"]
-        and value["candidate_source"] != "provider_cancelled"
-        and value["conversation_id"]
-        and value["status"] in {"succeeded", "failed"}
-        and value["phase"] in {"awaiting-verification", "repair-failed"}
-        and value["attempt"] < value["max_cycles"]
-        and float(value["elapsed_seconds"]) < float(value["max_seconds"])
-    )
-    # V3/V4's raw lifecycle fields were private compatibility data, never
-    # evidence of a current controller phase or completed driver decision.
-    value["assurance"] = "pending"
-    value["next_action"] = "none"
-    value["next_action_command"] = None
-    value["phase"] = _controller_phase(value) or "attempt-failed"
-    validate_state(value)
-    return value
+    """Delegate retired state upgrades to the compatibility adapter."""
+    return LEGACY.upgrade(LEGACY_API, state, command, migration_facts=migration_facts)
 
 
 def _legacy_migration_facts(
     job: Path, state: dict[str, Any], state_sha: str,
 ) -> dict[str, Any]:
-    """Prove a V3/V4 transition without giving a pathname lasting authority.
-
-    The returned private facts are deliberately recomputed for status and again
-    while holding the transition lock.  Their digest is an approval capability,
-    not a claim that a legacy result was provider-successful or driver-verified.
-    """
-    if state["schema_version"] not in {3, 4}:
-        raise DispatchError("legacy migration is unavailable")
-    if _legacy_prior_result_is_unknown(state):
-        raise DispatchError("unknown legacy result has no migration authority")
-    command = _load_bound_command(job, state, stage_readonly=False)
-    if _job_is_inside_worktree(job, command["workdir"]):
-        raise DispatchError("legacy migration is unavailable for jobs inside the worktree")
-    command, checked = _bound_lifecycle_inputs(job, state, command, read_legacy=True)
-    selection = _load_bound_selection(command, checked, legacy_command_binding=True)
-    schema_bindings = _schema_bindings(command)
-    root_identity = _dispatch_root_identity(command["workdir"])
-    snapshot = _worktree_snapshot(command["workdir"])
-    if root_identity is None or snapshot is None:
-        raise DispatchError("legacy dispatch root identity cannot be proved")
-    artifact: dict[str, Any] | None = None
-    if checked["candidate_recognized"]:
-        _bound_current_candidate(job, checked)
-        artifact = {
-            "sha256": checked["result_sha256"],
-            "identity": checked["result_identity"],
-            "source": checked["candidate_source"],
-        }
-    facts = {
-        "kind": "agy-worker-legacy-migration-v1",
-        "state_sha256": state_sha,
-        "legacy_schema_version": checked["schema_version"],
-        "command_sha256": checked["command_sha256"],
-        "command_identity": checked["command_identity"],
-        "stage_sha256": checked["stage_sha256"],
-        "stage_identity": checked["stage_identity"],
-        "selection": {
-            "sha256": command.get("selection_sha256"),
-            "identity": command.get("selection_identity"),
-            "schema_version": None if selection is None else selection.get("schema_version"),
-        },
-        "schemas": schema_bindings,
-        "root_identity": root_identity,
-        "semantic_snapshot": snapshot,
-        "project_boundary": checked["project_boundary"],
-        "workflow": checked["workflow"],
-        "attempt_origin": checked["attempt_origin"],
-        "status": checked["status"],
-        "candidate": artifact,
-        "provider_launch_authorized": _selection_launch_is_authorized(selection),
-        "historical_result_provenance": (
-            "unknown_bound_legacy" if _legacy_prior_result_is_unknown(checked) else None
-        ),
-    }
-    return facts
+    """Delegate retired V3/V4 migration proof to the compatibility adapter."""
+    return LEGACY.migration_facts(LEGACY_API, job, state, state_sha)
 
 
 def _legacy_migration_sha(job: Path | None, state: dict[str, Any], state_sha: str) -> str | None:
-    """Return an exact, public-safe V3/V4 transition approval digest."""
-    if job is None or state["schema_version"] not in {3, 4}:
-        return None
-    try:
-        return digest(canonical(_legacy_migration_facts(job, state, state_sha)))
-    except (OSError, DispatchError):
-        return None
+    """Delegate retired V3/V4 migration-digest calculation."""
+    return LEGACY.migration_sha(LEGACY_API, job, state, state_sha)
 
 
 def _approved_legacy_migration(
     job: Path, state: dict[str, Any], raw: bytes, approve_migration_sha: str | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Recompute an approved V3/V4 proof immediately before its first write."""
-    if state["schema_version"] not in {3, 4}:
-        command = _load_bound_command(job, state, stage_readonly=False)
-        return command, state
-    if not isinstance(approve_migration_sha, str) or SHA_RE.fullmatch(approve_migration_sha) is None:
-        raise DispatchError("legacy migration approval is missing or invalid")
-    state_sha = digest(raw)
-    facts = _legacy_migration_facts(job, state, state_sha)
-    if digest(canonical(facts)) != approve_migration_sha:
-        raise DispatchError("legacy migration approval is stale")
-    command = _load_bound_command(job, state, stage_readonly=False)
-    return command, _upgrade_legacy_state(state, command, migration_facts=facts)
+    """Delegate approved V3/V4 recovery to the compatibility adapter."""
+    return LEGACY.approved_migration(
+        LEGACY_API, job, state, raw, approve_migration_sha,
+    )
 
 
 def _transition_locked(

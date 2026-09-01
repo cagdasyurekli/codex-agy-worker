@@ -81,7 +81,7 @@ def rejected(report: dict[str, Any]) -> bool:
     return False
 
 
-check("inventory has 42 ordered unique stage IDs", len(MODULE.STAGES) == 42 and len({s.id for s in MODULE.STAGES}) == 42)
+check("inventory has 40 ordered unique stage IDs", len(MODULE.STAGES) == 40 and len({s.id for s in MODULE.STAGES}) == 40)
 check("inventory digest is lowercase SHA-256", MODULE.SHA256_RE.fullmatch(MODULE.inventory_digest()) is not None)
 check("canonical stage announcement inventory matches observer", lambda: (MODULE.validate_stage_inventory(ROOT / "scripts" / "ci_stages.py") or True))
 

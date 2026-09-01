@@ -364,14 +364,14 @@ assert not any(token in offline_text for token in ("curl ", "wget ", "git fetch"
 sys.path.insert(0, str(stages_file.parent))
 import ci_stages
 
-assert len(ci_stages.STAGES) == 42
-assert len({s.id for s in ci_stages.STAGES}) == 42
+assert len(ci_stages.STAGES) == 40
+assert len({s.id for s in ci_stages.STAGES}) == 40
 assert set(ci_stages.SHARDS) == {"dispatcher", "dispatcher-remediation", "other-a", "other-b"}
 
 required_stage_ids = (
     "diff-hygiene", "shell-syntax", "python-syntax", "qa-gate", "evidence-receipt",
-    "evidence-report", "offline-benchmark", "swebench-workflow-study", "persona-evidence",
-    "job-lifecycle", "workload-profiles", "dispatcher", "dispatcher-remediation",
+    "evidence-report", "offline-benchmark", "swebench-workflow-study", "job-lifecycle",
+    "dispatcher", "dispatcher-remediation",
     "updater", "adoption-measurement", "update-notifier", "version-attestation-runner",
     "version-bootstrap-preflight", "version-bootstrap-runner",
     "version-initial-bootstrap-runner",
@@ -1373,7 +1373,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.14.1"
+assert manifest["version"] == "0.15.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -1744,7 +1744,6 @@ if [[ -x "$ROOT/workflow.sh" ]] \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && grep -Fq '## Primary run, status, verify-finalize path' "$ROOT/docs/USAGE.md" \
         && grep -Fq '## Primary facade and advanced recovery' "$ROOT/docs/PROJECT_WORKFLOW.md" \
-        && grep -Fq 'at least two minor releases' "$ROOT/docs/USAGE.md" \
         && ! grep -Fq 'os.chmod(' "$ROOT/skills/agy-worker/runtime/scripts/workflow.py"; then
     ok "root and portable packages include the canonical workflow facade"
 else
@@ -1754,6 +1753,7 @@ fi
 if [[ -x "$ROOT/agy-worker.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/agy-worker.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/legacy_dispatch_state.py" ]] \
         && [[ -f "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
         && [[ ! -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]]; then
     ok "root and portable packages include the progress-aware local dispatcher"
@@ -1911,23 +1911,6 @@ else
     bad "portable source manifest binds every exact runtime file and rejects bounded drift"
 fi
 
-if [[ -x "$ROOT/profile.sh" ]] \
-        && [[ -x "$ROOT/skills/agy-worker/runtime/profile.sh" ]] \
-        && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/workload_profiles.py" ]] \
-        && [[ -f "$ROOT/skills/agy-worker/runtime/schemas/workload-profile.schema.json" ]] \
-        && cmp -s "$ROOT/profiles/v1/manifest.json" \
-            "$ROOT/skills/agy-worker/runtime/profiles/v1/manifest.json" \
-        && cmp -s "$ROOT/profiles/v1/bounded-test-backfill.json" \
-            "$ROOT/skills/agy-worker/runtime/profiles/v1/bounded-test-backfill.json" \
-        && cmp -s "$ROOT/profiles/v1/diff-review.json" \
-            "$ROOT/skills/agy-worker/runtime/profiles/v1/diff-review.json" \
-        && cmp -s "$ROOT/profiles/v1/repository-inventory.json" \
-            "$ROOT/skills/agy-worker/runtime/profiles/v1/repository-inventory.json"; then
-    ok "root and portable packages include data-only Workload Profiles v1"
-else
-    bad "root and portable packages include data-only Workload Profiles v1"
-fi
-
 if grep -Fq 'is process-owning: it keeps signal rollback authority' \
         "$ROOT/skills/agy-worker/runtime/scripts/evidence_report.py" \
         && grep -Fq 'The `--output` CLI path is deliberately process-owning' \
@@ -1974,8 +1957,6 @@ required_runtime_dependencies=(
     evidence-report.sh
     benchmark.sh
     swebench-workflow-study.sh
-    persona-evidence.sh
-    profile.sh
     model-recommendation.sh
     model-selection.sh
     doctor.sh
@@ -1989,14 +1970,13 @@ required_runtime_dependencies=(
     scripts/evidence_report.py
     scripts/benchmark.py
     scripts/swebench_workflow_study.py
-    scripts/persona_registry.py
-    scripts/workload_profiles.py
     scripts/recommendation_record.py
     scripts/model-recommendation.py
     scripts/model_selection.py
     scripts/compatibility.py
     scripts/candidate_state.py
     scripts/agy_dispatch.py
+    scripts/legacy_dispatch_state.py
     scripts/agy_dispatch_worktree.py
     scripts/version_manifest_engine.py
     scripts/job_lifecycle.py
@@ -2027,21 +2007,6 @@ required_runtime_dependencies=(
     schemas/model-evidence-campaign-advisory-summary.schema.json
     schemas/model-evidence-campaign-advisory-preview.schema.json
     schemas/delegation-policy.schema.json
-    schemas/persona-dispatch.schema.json
-    schemas/persona-human-review.schema.json
-    schemas/persona-run-evidence.schema.json
-    schemas/persona-run-manifest.schema.json
-    schemas/persona-tool-attestation.schema.json
-    schemas/persona-transition-approval.schema.json
-    schemas/persona-verifier.schema.json
-    schemas/persona-version-attestation.schema.json
-    schemas/workload-profile.schema.json
-    compat/persona-evidence.schema.json
-    compat/persona-registry.schema.json
-    compat/personas/manifest.json
-    compat/personas/bulk-test-writer.json
-    compat/personas/diff-reviewer.json
-    compat/personas/repo-inventory.json
     compat/model-intelligence/dataset.v1.json
     benchmarks/v1/manifest.json
     benchmarks/v1/portable-source.json
@@ -2049,10 +2014,6 @@ required_runtime_dependencies=(
     benchmarks/v1/tasks/exact-edit/candidate.txt
     benchmarks/v1/tasks/exact-edit/envelope.json
     benchmarks/v1/variants/bulk.json
-    profiles/v1/manifest.json
-    profiles/v1/bounded-test-backfill.json
-    profiles/v1/diff-review.json
-    profiles/v1/repository-inventory.json
     agents/bulk-test-writer.md
     agents/repo-inventory.md
     agents/diff-reviewer.md
@@ -2117,7 +2078,7 @@ else
     bad "resolver accepts bundle-owned real runtime parent directories"
 fi
 
-for parent in scripts agents schemas compat benchmarks profiles; do
+for parent in scripts agents schemas compat benchmarks; do
     for link_kind in absolute relative in-root; do
         parent_copy="$TMP/parent-$parent-$link_kind"
         foreign_parent="$TMP/foreign-$parent-$link_kind"
@@ -2158,8 +2119,6 @@ for specification in \
     'evidence-report.sh:executable' \
     'benchmark.sh:executable' \
     'swebench-workflow-study.sh:executable' \
-    'persona-evidence.sh:executable' \
-    'profile.sh:executable' \
     'model-intelligence.sh:executable' \
     'model-evidence-campaign.sh:executable' \
     'delegation-policy.sh:executable' \
@@ -2169,11 +2128,10 @@ for specification in \
     'scripts/evidence_report.py:executable' \
     'scripts/benchmark.py:executable' \
     'scripts/swebench_workflow_study.py:executable' \
-    'scripts/persona_registry.py:executable' \
-    'scripts/workload_profiles.py:executable' \
     'scripts/recommendation_record.py:executable' \
     'scripts/candidate_state.py:executable' \
     'scripts/agy_dispatch.py:executable' \
+    'scripts/legacy_dispatch_state.py:executable' \
     'scripts/agy_dispatch_worktree.py:data' \
     'scripts/job_lifecycle.py:executable' \
     'scripts/model_selection.py:executable' \
@@ -2199,16 +2157,9 @@ for specification in \
     'schemas/model-evidence-campaign-advisory-summary.schema.json:data' \
     'schemas/model-evidence-campaign-advisory-preview.schema.json:data' \
     'schemas/delegation-policy.schema.json:data' \
-    'schemas/persona-run-manifest.schema.json:data' \
-    'schemas/persona-transition-approval.schema.json:data' \
-    'schemas/workload-profile.schema.json:data' \
-    'compat/persona-evidence.schema.json:data' \
-    'compat/persona-registry.schema.json:data' \
-    'compat/personas/manifest.json:data' \
     'compat/model-intelligence/dataset.v1.json:data' \
     'benchmarks/v1/manifest.json:data' \
     'benchmarks/v1/portable-source.json:data' \
-    'profiles/v1/manifest.json:data' \
     'agents/repo-inventory.md:data' \
     'compat/agy-verified-version.txt:data' \
     'compat/agy-model-effort-matrix.json:data'; do
@@ -2323,35 +2274,6 @@ if ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-swebench-workflow-s
     ok "CI and public docs expose SWE-bench Workflow Study v1"
 else
     bad "CI and public docs expose SWE-bench Workflow Study v1"
-fi
-
-if ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-persona-evidence.py' \
-        && [[ -x "$ROOT/persona-evidence.sh" \
-            && -x "$ROOT/skills/agy-worker/runtime/persona-evidence.sh" \
-            && -x "$ROOT/skills/agy-worker/runtime/scripts/persona_registry.py" ]] \
-        && grep -Fq 'Statuses are evidence levels, not trust labels' "$ROOT/docs/PERSONAS.md" \
-        && grep -Fq 'For the shipped `offline-only` records it is a local,' \
-            "$ROOT/docs/PERSONAS.md" \
-        && grep -Fq 'fixed sanitized read-only Git object commands' \
-            "$ROOT/docs/PERSONAS.md" \
-        && grep -Fq 'not publish or revalidate the private evidence' \
-            "$ROOT/docs/PERSONAS.md"; then
-    ok "CI and public docs expose the non-authoritative persona registry"
-else
-    bad "CI and public docs expose the non-authoritative persona registry"
-fi
-
-if ci_stage_registered '/usr/bin/python3 -I -S -B tests/test-workload-profiles.py' \
-        && [[ -x "$ROOT/profile.sh" \
-            && -x "$ROOT/skills/agy-worker/runtime/profile.sh" \
-            && -x "$ROOT/skills/agy-worker/runtime/scripts/workload_profiles.py" ]] \
-        && grep -Fq '[Profiles](docs/PROFILES.md)' "$ROOT/README.md" \
-        && grep -Fq 'Profiles never contain a repository or filesystem path' \
-            "$ROOT/docs/PROFILES.md" \
-        && grep -Fq 'profile is data, not a driver' "$ROOT/AGENTS.md"; then
-    ok "CI and public docs expose only fixed data-only workload profiles"
-else
-    bad "CI and public docs expose only fixed data-only workload profiles"
 fi
 
 if ci_stage_registered './tests/test-evidence-report.sh' \
@@ -3489,7 +3411,7 @@ suite_commands = [
 ]
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 37
+    len(suite_commands) == len(set(suite_commands)) == 35
     and all(command in contributing for command in suite_commands)
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
@@ -3509,8 +3431,8 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The forty-two offline stages' "$ROOT/docs/OPERATIONS.md" \
-        && grep -Fq 'all forty-two offline stages' "$ROOT/CONTRIBUTING.md" \
+        && grep -Fq 'The forty offline stages' "$ROOT/docs/OPERATIONS.md" \
+        && grep -Fq 'all forty offline stages' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq '`tests/test-adoption-measurement.py` (41 offline cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-update-notifier.py` (89 offline fake-control cases)' "$ROOT/docs/REPO_MAP.md" \
         && [[ -f "$ROOT/docs/MEASUREMENT.md" ]] \
@@ -3567,7 +3489,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (284 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
         && grep -Fq 'EXPECTED_CHECKS = 103' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (103 focused cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq '`tests/test-doctor.sh` (207 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Do not pin exact suite counts in this instruction file' "$ROOT/AGENTS.md" \
         && grep -Fq '`docs/REPO_MAP.md` owns focused-suite inventory' "$ROOT/AGENTS.md" \
         && grep -Fq '`scripts/ci_stages.py` owns the' "$ROOT/AGENTS.md" \

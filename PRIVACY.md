@@ -72,23 +72,9 @@ hash-linked canonical artifacts to a user-selected external owner-0700 result ro
 Every stored string is a bounded privacy-safe identifier. Artifacts omit source code, prompts,
 diffs, logs, task bodies, absolute paths, timestamps, identities, and credentials.
 
-The persona evidence registry is also local and read-only. It validates only
-checked-in public persona, registry, schema, and P1-C contract hashes and renders a
-bounded deterministic table. It does not read target repositories, prompts, worker
-logs, private evidence, personal configuration, or environment-selected registries;
-it performs no dispatch, benchmark, gate, provider, or network operation. Checkout
-upper-state validation runs fixed read-only Git object queries with global/system
-configuration disabled; it never follows an evidence pathname into private storage.
-Future non-offline states require public canonical evidence, approval/review, and
-transition blobs in strict ancestry. Private evidence cannot be described as public.
-
-The workload-profile command is local, read-only, and data-only. It reads only the
-fixed bundled v1 manifest, schema, and three public profile records and writes one
-canonical JSON value to stdout. It never reads a target repository, caller path,
-home-directory profile, environment-selected source, personal configuration, prompt,
-log, or private evidence, and invokes no git, agy, provider, or network client. A
-shown profile is not authorization and contains no repository/path, selected model or
-tier, verifier command, dispatch, route, acceptance, or external action.
+Optional persona templates are checked-in prompt text. Selecting one does not read a
+registry, personal configuration, or target-repository persona source, and it never
+grants authorization, changes routing, verifies a result, or changes acceptance.
 
 ## Local artifacts and retention
 

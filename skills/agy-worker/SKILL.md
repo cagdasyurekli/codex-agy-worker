@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires OpenAI Codex CLI, Bash, Python 3, git, and agy with provider network access. Claude and Claude Code hosts are not supported.
 metadata:
   author: cagdasyurekli
-  version: "0.14.1"
+  version: "0.15.0"
 ---
 
 # Delegate repository work and verify the result
@@ -68,8 +68,8 @@ read [Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md).
 | Build a project or perform broad audit-and-fix work | `project` | 5 | Review repo-wide changes and run build/test/lint as applicable. |
 
 `explore` and `task` accept `1..2` cycles; `project` accepts `1..5`. Personas
-are optional prompt specializations, not capability, approval, or quality gates. Do
-not route ordinary work through compatibility evidence or data-only profile commands.
+are optional prompt specializations, not capability, approval, routing, verification,
+or quality gates.
 
 For material UX, lifecycle, trust-boundary, security, data-semantics, or other domain plans:
 A coordinator and suitable domain expert must co-plan.
