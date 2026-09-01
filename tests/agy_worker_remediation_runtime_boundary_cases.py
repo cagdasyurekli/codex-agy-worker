@@ -486,10 +486,14 @@ def run(context: dict[str, object]) -> None:
         assert claimed["controller_pid"] is None and claimed["status"] != "orphaned"
         assert not claim_calls.exists(), "cancel-at-claim reached a provider"
 
+        # The intentionally slow help probe remains outside the provider
+        # lease.  Keep the lease well above host scheduling jitter while making
+        # the probe itself longer than that lease, so this still fails if the
+        # controller starts charging provider time before the final reprobe.
         within_job, within_bin, within_calls, _within_fake, within_command = fixture(
-            "deadline-within", idle_seconds=0.01, hard_seconds=5, max_seconds=5,
+            "deadline-within", idle_seconds=0.25, hard_seconds=5, max_seconds=5,
         )
-        os.environ["FAKE_DIRECT_HELP_DELAY"] = "0.05"
+        os.environ["FAKE_DIRECT_HELP_DELAY"] = "0.75"
         try:
             within_code = run_controller(within_job, within_bin)
         finally:
