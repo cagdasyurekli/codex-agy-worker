@@ -27,13 +27,14 @@ control, and incident response in each target repository.
 
 `agy-worker` is a Codex Agent Skill, not a sandbox or an autonomous acceptance
 service. It delegates approved repository work to the external `agy` provider while
-Codex retains diff review and driver-owned verification. Default dispatch exposes the
-entire disposable worktree as potentially provider-readable; `--add-dir`, prompt
-instructions, and candidate-path gates do not narrow it. Optional `--provider-scope`
-binds exact reviewed read/write entries and a selected-content digest, then stages only selected
+Codex retains diff review and driver-owned verification. Prefer `--provider-scope` for
+bounded jobs: it binds exact reviewed read/write entries and a selected-content digest, then stages only selected
 entries in a fresh owner-private mode-`0700` Gitless cwd. The controller still locally
 enumerates and validates worktree/scope paths, and scoped staging is not filesystem,
-network, `PATH`, `HOME`, or same-UID isolation. Approve the exact transmission mode and
+network, `PATH`, `HOME`, or same-UID isolation. Whole-worktree dispatch remains an
+explicit manifest-bound exception and exposes the entire disposable worktree as
+potentially provider-readable; `--add-dir`, prompt instructions, and candidate-path
+gates do not narrow it. Approve the exact transmission mode and
 digest, and exclude credentials, private keys, denied paths, unrelated private files,
 raw logs, and controller state from all approved content. Installation alone is not
 provider-transmission consent; scope approval grants no execution, Git, acceptance, or

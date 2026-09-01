@@ -137,6 +137,22 @@ behavior into broader agy `1.1.22` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
+### v0.14.1 direct-dispatch transmission parity
+
+**Status:** Release candidate; not published.
+
+The advanced `agy-worker.sh` initial run/start path now requires the same explicit
+transmission choice as the ordinary facade. Provider scope is the recommended bounded
+path; whole-worktree dispatch remains available only with an exact current path/kind
+manifest approval that is rechecked immediately before the initial provider launch.
+This intentionally rejects previously unapproved raw invocations without removing the
+whole-worktree capability. Same-job continuation and repair remain bound to exact
+controller state and candidate evidence so legitimate provider-created files do not
+deadlock the lifecycle. Legacy command records and already-queued states remain readable,
+but an unapproved broad record cannot launch through dispatcher `run`/`start`. This
+candidate makes no SkillStore assessment or publication claim until the exact tag is
+published and read back.
+
 ### v0.14.0 explicit provider-transmission choice
 
 **Status:** Published. Publication is established by the protected exact-head `test`,

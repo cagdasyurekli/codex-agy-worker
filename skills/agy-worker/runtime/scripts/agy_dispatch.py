@@ -61,6 +61,7 @@ COMMAND_V5_FIELDS = COMMAND_V4_FIELDS | {"provider_env"}
 COMMAND_V6_FIELDS = COMMAND_V5_FIELDS | {
     "provider_scope_path", "provider_scope_sha256", "provider_scope_identity", "approved_transmission_sha256",
 }
+COMMAND_V7_FIELDS = COMMAND_V6_FIELDS | {"approved_whole_worktree_sha256"}
 STATE_PROJECT_FIELDS = {
     "workflow", "max_cycles", "cycle", "phase", "assurance",
     "check_summary", "check_counts", "verification_path", "verification_sha256",
@@ -501,8 +502,14 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             "provider_scope_sha256": None,
             "provider_scope_identity": None,
             "approved_transmission_sha256": None,
+            "approved_whole_worktree_sha256": None,
         })
-    elif set(value) != COMMAND_V6_FIELDS or value.get("schema_version") != 6:
+    elif set(value) == COMMAND_V6_FIELDS and value.get("schema_version") == 6:
+        if raw != canonical(value):
+            raise DispatchError("dispatch command is not canonical")
+        value = dict(value)
+        value["approved_whole_worktree_sha256"] = None
+    elif set(value) != COMMAND_V7_FIELDS or value.get("schema_version") != 7:
         raise DispatchError("dispatch command fields are invalid")
     elif raw != canonical(value):
         raise DispatchError("dispatch command is not canonical")
@@ -574,6 +581,7 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
     scope_sha = value.get("provider_scope_sha256")
     scope_identity = value.get("provider_scope_identity")
     approved_sha = value.get("approved_transmission_sha256")
+    approved_whole_sha = value.get("approved_whole_worktree_sha256")
     if (scope_path is None) != (scope_sha is None) or (scope_path is None) != (scope_identity is None) or (scope_path is None) != (approved_sha is None):
         raise DispatchError("dispatch provider scope binding is incomplete")
     if scope_path is not None and (
@@ -584,9 +592,27 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         or not isinstance(approved_sha, str) or SHA_RE.fullmatch(approved_sha) is None
     ):
         raise DispatchError("dispatch provider scope binding is invalid")
+    if value["schema_version"] == 7:
+        if scope_path is None:
+            if not isinstance(approved_whole_sha, str) or SHA_RE.fullmatch(approved_whole_sha) is None:
+                raise DispatchError("dispatch whole-worktree approval binding is invalid")
+        elif approved_whole_sha is not None:
+            raise DispatchError("dispatch transmission modes conflict")
+    elif approved_whole_sha is not None:
+        raise DispatchError("legacy dispatch command cannot carry whole-worktree approval")
     if scope_path is not None and "--add-dir" in value["argv"]:
         raise DispatchError("narrow provider scope cannot grant an additional directory")
     return value, raw, _identity(info)
+
+
+def _require_initial_transmission_choice(command: dict[str, Any], origin: str) -> None:
+    """Reject a fresh broad launch unless its exact manifest was approved."""
+    if (
+        origin == "initial"
+        and command.get("provider_scope_path") is None
+        and command.get("approved_whole_worktree_sha256") is None
+    ):
+        raise DispatchError("initial whole-worktree dispatch lacks explicit approval")
 
 
 def validate_state(value: Any) -> dict[str, Any]:
@@ -1226,6 +1252,13 @@ def initial_state(
                 "reconciliation_manifest_sha256": None,
             })
         else:
+            approved_whole_sha = command.get("approved_whole_worktree_sha256")
+            if approved_whole_sha is not None and origin == "initial":
+                readable_manifest = _scan_readable_worktree(command["workdir"])
+                if _manifest_digest(readable_manifest) != approved_whole_sha:
+                    raise DispatchError(
+                        "approved whole-worktree manifest does not match current worktree"
+                    )
             state.update({
                 "provider_scope_path": None,
                 "provider_scope_sha256": None,
@@ -3843,6 +3876,15 @@ def controller(job: Path, ownership_fd: int) -> int:
                     stage_dir = job / f"stage-{attempt:03d}"
                     stage_identity, stage_manifest_sha = _materialize_stage(command["workdir"], stage_dir, scope, selected_manifest)
                     launch_cwd = str(stage_dir)
+                else:
+                    approved_whole_sha = command.get("approved_whole_worktree_sha256")
+                    if (
+                        approved_whole_sha is not None
+                        and state["attempt_origin"] == "initial"
+                    ):
+                        readable_manifest = _scan_readable_worktree(command["workdir"])
+                        if _manifest_digest(readable_manifest) != approved_whole_sha:
+                            raise DispatchError("whole-worktree transmission binding changed")
                 # The prior attempt budget is still a hard stop, but bounded
                 # controller-local proofs do not become a provider timeout.
                 # Commit the running state/CAS boundary after slow preflight.
@@ -4609,8 +4651,11 @@ def controller(job: Path, ownership_fd: int) -> int:
 def create_state(
     job: Path, origin: str, *, resume: bool, approve_sha: str | None = None,
     approve_migration_sha: str | None = None, verification: dict[str, Any] | None = None,
+    require_initial_choice: bool = False,
 ) -> tuple[dict[str, Any], str]:
     command, command_raw, command_info = load_command(job)
+    if require_initial_choice:
+        _require_initial_transmission_choice(command, origin)
     stage_sha, stage_info = _bound_stage(command, readonly=False)
     schema_bindings = _schema_bindings(command)
     path = job / STATE_NAME
@@ -4764,6 +4809,7 @@ def spawn(
         state, _sha = create_state(
             job, origin, resume=resume, approve_sha=approve_sha,
             approve_migration_sha=approve_migration_sha, verification=verification,
+            require_initial_choice=True,
         )
         if parent_signal is not None:
             _terminalize_queued_signal(job, parent_signal)

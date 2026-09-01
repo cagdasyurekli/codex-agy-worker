@@ -12,11 +12,13 @@ does not authorize provider dispatch or repository transmission.
 
 agy is backed by Google/Gemini services. Before the first dispatch for a repository,
 Codex must obtain explicit approval for the exact task, transmission mode, and bound
-content unless that transmission was already approved. Default dispatch without
-`--provider-scope` may expose the entire disposable worktree; `--add-dir`, prompt
-instructions, and later gate paths do not narrow it. Optional scoped dispatch binds
+content unless that transmission was already approved. Prefer scoped dispatch for
+bounded jobs: it binds
 exact reviewed read entries, their selected-content digest, and a write subset, then
 stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.
+Whole-worktree dispatch remains an explicit manifest-bound exception and may expose
+the entire disposable worktree; `--add-dir`, prompt instructions, and later gate paths
+do not narrow it.
 Before every initial `run`/`start`, `resume`, `continue`, or `restart`, exclude
 credentials, secrets, private keys, unrelated private files, raw worker logs,
 controller state, and denied paths from the entire default transmission or all scoped
@@ -128,12 +130,12 @@ dispatch artifact path never appeared, so a corrected invocation can retry safel
    `~/.gemini/antigravity-cli/scratch`, not the target repository. Worker file tools
    can reach the approved target. Let the worker edit with file tools; Codex owns
    every repository command.
-2. **Bind the intended provider surface.** In default mode, name the absolute target
-   and pass the same root with `--workdir` and `--add-dir`; `--add-dir` helps agy file
-   tools reach the target but does not narrow provider reads. When the approved task
-   needs selected content only, use the mutually exclusive `--provider-scope` mode and
+2. **Bind the intended provider surface.** Prefer the mutually exclusive
+   `--provider-scope` mode for bounded jobs and
    bind its exact preview digest. The primary facade accepts this pair directly and
-   omits the conflicting `--add-dir` grant.
+   omits the conflicting `--add-dir` grant. Use whole-worktree mode only as an explicit
+   manifest-bound exception; `--add-dir` helps agy file tools reach that target but
+   does not narrow provider reads.
 
 ## Optional selected-content dispatch
 
@@ -176,7 +178,7 @@ staging is not a security sandbox.
 ## Advanced: manual bounded task example
 
 This lower-level example preserves accepted work on a branch. Before running it,
-emit the mandatory provider notice and obtain default whole-worktree transmission approval.
+emit the mandatory provider notice and obtain explicit whole-worktree transmission approval.
 Confirm that the worktree contains no secrets, user-denied paths, or unrelated private
 files. Keep the pipeline checkout and target explicit.
 
@@ -190,6 +192,10 @@ JOB_ID=parser-tests-12345
 BASE="$(git -C "$TARGET" rev-parse HEAD)"
 
 git -C "$TARGET" worktree add -b "$JOB_BRANCH" "$WT" "$BASE"
+WHOLE_WORKTREE_SHA="$(
+  "$PIPELINE/agy-worker.sh" transmission-preview --workdir "$WT" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])'
+)"
 
 if ! echo "Add error-path tests for $WT/src/parser.py.
 Edit ONLY files under $WT/tests/. Use file tools on absolute paths.
@@ -197,7 +203,8 @@ Do NOT run shell commands — they execute in a scratch directory, not this repo
 The driver runs every command. Return commands_run and tests_run as empty arrays." |
   AGY_WORKER_JOB_ID="$JOB_ID" "$PIPELINE/agy-worker.sh" \
     --workflow task --mode accept-edits --tier bulk \
-    --workdir "$WT" --add-dir "$WT" > "$ENVELOPE"; then
+    --workdir "$WT" --add-dir "$WT" \
+    --approve-whole-worktree "$WHOLE_WORKTREE_SHA" > "$ENVELOPE"; then
   echo "Dispatch failed; inspect the sanitized terminal state/result. Resume only a candidate-free failure; handle an ERROR candidate with Verification v2, and preserve/finalize or freshly restart a CANCELED candidate." >&2
   exit 1
 fi
@@ -284,9 +291,10 @@ prove the worker's architecture prose or completeness.
 | `--effort low|medium|high` | `AGY_WORKER_EFFORT` | Requires an adjustable base and resolves to one exact slug. |
 | `--literal-model EXACT_SLUG` | — | CLI-only unreconciled caller-owned pass-through. |
 | `--workdir DIR` | — | Source worktree. Without `--provider-scope`, treat all content as worker-readable and potentially transmissible. |
-| `--add-dir DIR` | — | Repeatable file-tool root for default dispatch; it does not narrow provider reads and conflicts with scoped mode. |
-| `--provider-scope FILE` | — | Optional closed read/write policy; stages selected content only and requires `--approve-transmission-sha`. |
+| `--add-dir DIR` | — | Repeatable file-tool root for explicit whole-worktree dispatch; it does not narrow provider reads and conflicts with scoped mode. |
+| `--provider-scope FILE` | — | Recommended closed read/write policy for bounded jobs; stages selected content only and requires `--approve-transmission-sha`. |
 | `--approve-transmission-sha SHA256` | — | Exact scoped policy/path/content approval binding; grants no execution or downstream authority. |
+| `--approve-whole-worktree SHA256` | — | Explicit broad-mode exception bound to the current path/kind manifest. |
 | `--provider-env NAME` | — | Repeatable exact-name opt-in for an additional caller variable passed to local `agy` probes and provider launches. |
 | `--persona NAME` | — | Optional bounded prompt specialization; never authorization or quality evidence. |
 | `--allow-slash-commands` | — | Expert-only opt-in for a fully caller-controlled prompt; disables the normal embedded slash-command protection. |

@@ -52,6 +52,10 @@ and invokes `job.sh init` as the Git lifecycle authority. The preview call retai
 those exact resources for the approved second call. The facade does not infer
 assurance or duplicate the provider lifecycle state machine.
 
+The advanced raw `agy-worker.sh` initial run/start path has the same explicit mode
+requirement. Prefer selected-content provider scope; use whole-worktree approval only
+as a manifest-bound exception.
+
 ```bash
 ./workflow.sh run --preview --repo "$TARGET" --job-id "$JOB_ID"
 ./workflow.sh run --repo "$TARGET" --job-id "$JOB_ID" \

@@ -2314,8 +2314,26 @@ def run(context: dict[str, object]) -> None:
 
     def regular_to_fifo_race_fails_before_task_or_dispatch_artifacts() -> None:
         """A pathname replacement must not block the pre-task selector."""
-        repo = root / "fifo-race-repo"; repo.mkdir()
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        source_repo = root / "fifo-race-source"; source_repo.mkdir()
+        repo = root / "fifo-race-repo"
+        subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+        subprocess.run(
+            [
+                "git", "-C", str(source_repo),
+                "-c", "user.name=agy-worker test",
+                "-c", "user.email=test@example.invalid",
+                "commit", "--allow-empty", "-qm", "initial",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git", "-C", str(source_repo), "worktree", "add", "-q",
+                "-b", "fifo-race", str(repo), "HEAD",
+            ],
+            check=True,
+        )
+        repo = repo.resolve()
         bin_dir = root / "fifo-race-bin"; bin_dir.mkdir()
         fake = bin_dir / "agy"
         provider_marker = root / "fifo-race-provider"
@@ -2350,6 +2368,14 @@ def run(context: dict[str, object]) -> None:
             encoding="utf-8",
         )
         log_dir = root / "fifo-race-logs"; log_dir.mkdir(mode=0o700)
+        worker = ROOT / "skills/agy-worker/runtime/agy-worker.sh"
+        preview = subprocess.run(
+            [str(worker), "transmission-preview", "--workdir", str(repo)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        manifest_sha = json.loads(preview.stdout)["manifest_sha256"]
         env = dict(os.environ)
         env.update({
             "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
@@ -2360,10 +2386,13 @@ def run(context: dict[str, object]) -> None:
             "AGY_WORKER_JOB_ID": "fifo-race",
             "AGY_WORKER_MAX_ATTEMPTS": "1",
         })
-        worker = ROOT / "skills/agy-worker/runtime/agy-worker.sh"
         started = time.monotonic()
         process = subprocess.Popen(
-            [str(worker), "--workdir", str(repo), "--model", "gemini-3.6-flash", "--effort", "high"],
+            [
+                str(worker), "--workdir", str(repo),
+                "--approve-whole-worktree", manifest_sha,
+                "--model", "gemini-3.6-flash", "--effort", "high",
+            ],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=env, start_new_session=True,
         )

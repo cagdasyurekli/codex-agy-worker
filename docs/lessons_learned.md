@@ -1002,6 +1002,19 @@ revalidated and only authorized mutations are reconciled transactionally with du
 fsync, an atomic recovery ledger, equality checks, and exact rollback. The stage narrows provider
 scope but is not an OS sandbox and grants no execution, Git, acceptance, or publication authority.
 
+### Raw dispatch must preserve the facade's transmission choice (2026-09-01)
+
+Observation: Requiring an explicit transmission mode only in the ordinary facade left the
+advanced raw initial dispatch as an implicit whole-worktree bypass.
+Change: Both initial launch paths now recommend selected-content scope and require exactly
+one explicit mode. The broad exception is bound to the current path/kind manifest and
+rechecked immediately before the initial provider process. Later same-job actions preserve
+the frozen mode but bind exact controller state and candidate evidence rather than the
+original manifest, because legitimate provider output changes the worktree during project
+repair cycles. This closes the approval gap without removing whole-worktree capability or
+deadlocking continuation. Legacy records and already-queued states remain readable, but an
+unapproved broad record cannot launch through dispatcher `run`/`start`.
+
 ## Transparent provider dispatch notice and truthful boundaries
 
 When Codex delegates to an external worker CLI backed by provider services, transparency

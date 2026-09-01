@@ -27,21 +27,17 @@ def run(context: dict[str, object]) -> None:
             max_cycles: int = 2,
         ) -> tuple[Path, Path, Path, Path, dict]:
             repo = (root / f"direct-reprobe-repo-{label}").resolve()
-            if workflow == "project":
-                source_repo = (root / f"direct-reprobe-source-{label}").resolve()
-                subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
-                subprocess.run([
-                    "git", "-C", str(source_repo), "-c", "user.name=Fixture",
-                    "-c", "user.email=fixture@example.invalid", "commit",
-                    "--allow-empty", "-qm", "fixture",
-                ], check=True)
-                subprocess.run([
-                    "git", "-C", str(source_repo), "worktree", "add", "-q",
-                    "--detach", str(repo), "HEAD",
-                ], check=True)
-            else:
-                repo.mkdir()
-                subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            source_repo = (root / f"direct-reprobe-source-{label}").resolve()
+            subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+            subprocess.run([
+                "git", "-C", str(source_repo), "-c", "user.name=Fixture",
+                "-c", "user.email=fixture@example.invalid", "commit",
+                "--allow-empty", "-qm", "fixture",
+            ], check=True)
+            subprocess.run([
+                "git", "-C", str(source_repo), "worktree", "add", "-q", "-b",
+                f"fixture-{label}", str(repo), "HEAD",
+            ], check=True)
             job = root / f"direct-reprobe-job-{label}"; job.mkdir(mode=0o700); job = job.resolve()
             bin_dir = root / f"direct-reprobe-bin-{label}"; bin_dir.mkdir()
             calls = root / f"direct-reprobe-calls-{label}"
@@ -87,7 +83,7 @@ def run(context: dict[str, object]) -> None:
             MODULE.MODEL_SELECTION.publish_record(selection_path, selection)
             raw, info = MODULE.read_regular(selection_path, MODULE.MAX_COMMAND_BYTES, "fixture selection")
             command = {
-                "schema_version": 5, "kind": "agy-worker-dispatch-command", "job_id": f"direct-{label}",
+                "schema_version": 7, "kind": "agy-worker-dispatch-command", "job_id": f"direct-{label}",
                 "workdir": str(repo), "argv": ["agy", "--sandbox", "--mode", "accept-edits", "--add-dir", str(repo), "--json-schema", str(schema), "--model", "gemini-3.6-flash-high", "--print", "task"],
                 "agy_version": "1.1.22", "agy_version_observed": True,
                 "selection_path": str(selection_path), "selection_sha256": MODULE.digest(raw), "selection_identity": list(MODULE._identity(info)),
@@ -98,6 +94,11 @@ def run(context: dict[str, object]) -> None:
                     "FAKE_DIRECT_HEARTBEAT_COUNT", "FAKE_DIRECT_HEARTBEAT_DELAY",
                     "FAKE_DIRECT_HELP_DELAY",
                 ],
+                "provider_scope_path": None, "provider_scope_sha256": None,
+                "provider_scope_identity": None, "approved_transmission_sha256": None,
+                "approved_whole_worktree_sha256": MODULE._manifest_digest(
+                    MODULE._scan_readable_worktree(repo)
+                ),
             }
             MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
             MODULE.create_state(job, "initial", resume=False)

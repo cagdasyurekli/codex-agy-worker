@@ -1373,7 +1373,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.14.0"
+assert manifest["version"] == "0.14.1"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -1437,6 +1437,7 @@ workflow_source = (
 assert 'vf_parser.add_argument("--receipt", required=True' in workflow_source
 assert 'vf_parser.add_argument("--envelope", required=True' in workflow_source
 assert '"--approve-whole-worktree"' in workflow_source
+assert '"--approve-whole-worktree", approved_whole_worktree' in workflow_source
 assert '"--provider-scope"' in workflow_source
 assert '"--approve-transmission-sha"' in workflow_source
 assert '"--legacy-preview-approval"' in workflow_source
@@ -1445,6 +1446,12 @@ runtime_wrapper = (
 ).read_text(encoding="utf-8")
 assert '--provider-scope conflicts with --add-dir' in runtime_wrapper
 assert '--provider-scope requires --approve-transmission-sha' in runtime_wrapper
+assert '--approve-whole-worktree MANIFEST_SHA256' in runtime_wrapper
+assert 'choose provider scope, or explicitly approve whole-worktree transmission' in runtime_wrapper
+dispatcher_source = (
+    root / "skills/agy-worker/runtime/scripts/agy_dispatch.py"
+).read_text(encoding="utf-8")
+assert dispatcher_source.count("_require_initial_transmission_choice(") == 2
 scope_recovery_tests = (
     root / "tests/agy_worker_remediation_recovery_cases.py"
 ).read_text(encoding="utf-8")
@@ -3256,8 +3263,9 @@ else
 fi
 
 provider_read_scope_clauses=(
-    'Without `--provider-scope`, treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that default read boundary.'
-    'Optional `--provider-scope FILE --approve-transmission-sha SHA256` instead binds exact reviewed read entries, their selected-content digest, and a write subset, then stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.'
+    'Prefer `--provider-scope FILE --approve-transmission-sha SHA256` for bounded jobs. It binds exact reviewed read entries, their selected-content digest, and a write subset, then stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.'
+    'Whole-worktree dispatch remains an explicit exception. Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that read boundary.'
+    'Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch has an implicit transmission mode: launch requires either `--approve-whole-worktree MANIFEST_SHA256` or the scoped pair above. The deprecated facade-only `--approve-preview-sha` spelling cannot launch by itself and remains temporarily available only with `--legacy-preview-approval`.'
     'The controller still locally enumerates and validates worktree paths and the scope policy before staging; scoped mode is not a filesystem, network, `PATH`, `HOME`, or same-UID sandbox and retains the documented local-owner and mutation-race residuals.'
     'Provider-scope approval grants neither provider execution, Git action, driver acceptance, nor publication.'
     'Before each launch, ensure secrets, credentials, private keys, user-denied paths, and unrelated private files are absent from every entry approved for provider transmission; telling the worker not to read an approved entry is not a control.'
@@ -3312,7 +3320,8 @@ fi
 provider_read_scope_weakening_mutants_rejected=1
 provider_read_scope_weakening_mutant_index=0
 provider_read_scope_weakening_replacements=(
-    'do not narrow that default read boundary::narrow that default read boundary'
+    'do not narrow that read boundary::narrow that read boundary'
+    'Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch::Both `workflow.sh run` and the advanced `agy-worker.sh` initial dispatch'
     'a write subset::an unrelated write set'
     'stages only selected entries::may stage unselected entries'
     'is not a filesystem, network, `PATH`, `HOME`, or same-UID sandbox::is a complete security sandbox'
@@ -3360,45 +3369,45 @@ import sys
 root = Path(sys.argv[1])
 required = {
     "README.md": (
-        "Default dispatch may expose every file in the disposable worktree",
-        "Optional `--provider-scope` instead binds exact reviewed read entries",
+        "Prefer `--provider-scope` for bounded jobs",
+        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception",
         "The facade requires an explicit choice",
         "Facade `--provider-scope` dispatch instead binds exact reviewed read/write entries",
         "the stage is not a sandbox, and scope approval grants no provider execution, Git, acceptance, or publication authority",
     ),
     "PRIVACY.md": (
-        "Without `--provider-scope`, treat the entire disposable `--workdir`",
-        "Optional `--provider-scope FILE --approve-transmission-sha SHA256` binds exact reviewed read entries",
+        "Prefer `--provider-scope` for bounded jobs",
+        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception",
     ),
     "SECURITY.md": (
-        "Default dispatch exposes the entire disposable worktree",
-        "Optional `--provider-scope` binds exact reviewed read/write entries",
+        "Prefer `--provider-scope` for bounded jobs",
+        "Whole-worktree dispatch remains an explicit manifest-bound exception",
     ),
     "AGENTS.md": (
-        "Without `--provider-scope`, treat the entire disposable worktree as worker-readable",
-        "Optional scope mode binds exact reviewed read entries",
+        "Prefer `--provider-scope` for bounded jobs",
+        "Whole-worktree dispatch remains an explicit exception",
     ),
     "docs/USAGE.md": (
-        "Default dispatch without `--provider-scope` may expose the entire disposable worktree",
-        "Optional scoped dispatch binds exact reviewed read entries",
+        "Prefer scoped dispatch for bounded jobs",
+        "Whole-worktree dispatch remains an explicit manifest-bound exception",
     ),
     "docs/VERIFYING_AGENT_OUTPUT.md": (
-        "Without `--provider-scope`, the entire disposable worktree may be read",
-        "Optional provider-scope mode instead binds exact reviewed read entries",
+        "Whole-worktree dispatch remains an explicit manifest-bound exception",
+        "The recommended provider-scope mode instead binds exact reviewed read entries",
     ),
     "docs/MARKETPLACE.md": (
-        "Default mode may send the entire disposable worktree",
-        "Optional `--provider-scope` binds exact reviewed read/write entries",
+        "Prefer `--provider-scope` for bounded jobs",
+        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception",
     ),
     "docs/REPO_MAP.md": (
-        "Primary facade dispatch has no implicit provider-read mode",
+        "No initial facade or raw dispatch has an implicit provider-read mode",
         "Whole-worktree mode exposes the entire disposable `--workdir`",
-        "Optional provider-scope mode binds exact reviewed read entries",
+        "Recommended provider-scope mode binds exact reviewed read entries",
     ),
     "docs/index.md": (
-        "The facade has no implicit provider-read mode.",
+        "No initial launch path has an implicit provider-read mode.",
         "<code>--approve-whole-worktree</code> binds the current path/kind manifest",
-        "<code>--provider-scope</code> plus the exact transmission digest binds reviewed read/write entries",
+        "The recommended bounded-job path is <code>--provider-scope</code> plus the exact transmission digest",
         "scoped staging is not a sandbox, and its approval grants no provider execution, Git, acceptance, or publication authority",
     ),
     "docs/PROJECT_WORKFLOW.md": (
@@ -3407,7 +3416,8 @@ required = {
         "it is not a sandbox, and scope approval grants no provider execution, Git, acceptance, or publication authority",
     ),
     "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md": (
-        "Default dispatch without `--provider-scope` makes the entire disposable worktree worker-readable",
+        "Prefer scoped dispatch for bounded jobs",
+        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception",
         "Provider-scope approval binds reviewed content and policy; it grants neither provider execution, Git action, driver acceptance, nor publication.",
     ),
 }
@@ -3554,7 +3564,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (348 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (284 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
         && grep -Fq 'EXPECTED_CHECKS = 103' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (103 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (257 cases)' "$ROOT/docs/REPO_MAP.md" \
@@ -3565,7 +3575,7 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'PYTHONDONTWRITEBYTECODE=1 python3 -B - "$TMP/legacy-v1.status"' \
             "$ROOT/tests/test-agy-worker.sh" \
         && ! grep -Fq '&& python3 - "$TMP/legacy-v1.status"' "$ROOT/tests/test-agy-worker.sh" \
-        && ! grep -Fq '`tests/test-agy-worker.sh` (338 cases)' "$ROOT/docs/REPO_MAP.md" \
+        && ! grep -Eq '`tests/test-agy-worker.sh` \((338|348) cases\)' "$ROOT/docs/REPO_MAP.md" \
         && ! grep -Fq 'resolution remains blocked until installed agy exactly matches' \
             "$ROOT/docs/INSTALLATION.md"; then
     ok "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"

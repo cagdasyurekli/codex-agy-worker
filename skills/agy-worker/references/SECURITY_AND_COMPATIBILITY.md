@@ -16,13 +16,13 @@ acceptance to the worker. Codex reviews the resulting diff and runs driver-owned
 verification before reporting a result. A passing check is evidence for the command
 that ran, not a general security or correctness guarantee.
 
-`agy` is an external provider-backed CLI. Default dispatch without
-`--provider-scope` makes the entire disposable worktree worker-readable and
-potentially transmissible; `--add-dir`, prompt instructions, and candidate-path gates
-do not narrow that read boundary. Optional scoped dispatch binds exact reviewed read
+`agy` is an external provider-backed CLI. Prefer scoped dispatch for bounded jobs: it binds exact reviewed read
 entries, their selected-content digest, and a write subset into the approved
 transmission SHA, then copies only selected entries to a fresh owner-private
-mode-`0700` Gitless provider cwd. The operator must approve the exact mode and content
+mode-`0700` Gitless provider cwd. Whole-worktree dispatch remains an explicit
+`--approve-whole-worktree MANIFEST_SHA256` exception; it makes the entire disposable
+worktree worker-readable and potentially transmissible, and `--add-dir`, prompt
+instructions, and candidate-path gates do not narrow that read boundary. The operator must approve the exact mode and content
 boundary before launch. Credentials, private keys, user-denied paths, unrelated private files,
 raw worker logs, and controller state must be absent from every entry approved for
 transmission. Installation grants no such approval.

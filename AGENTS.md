@@ -34,11 +34,14 @@ Keep these hard boundaries regardless of workflow:
   symlink. User denylist paths constrain requested writes. Gate `--only` constrains
   candidate changed paths after dispatch; `--allow` only exempts matching undeclared
   artifacts from rejection. None of these isolate provider reads.
-- Without `--provider-scope`, treat the entire disposable worktree as worker-readable
-  and potentially transmissible to Google/Gemini; `--add-dir` does not narrow it.
-  Optional scope mode binds exact reviewed read entries, a selected-content digest, and a
+- Prefer `--provider-scope` for bounded jobs. It binds exact reviewed read entries, a
+  selected-content digest, and a
   write subset, then stages only those entries in a fresh owner-private mode-`0700`
-  Gitless provider cwd. The controller still locally enumerates and validates
+  Gitless provider cwd. Whole-worktree dispatch remains an explicit exception and
+  requires `--approve-whole-worktree` bound to the current path/kind manifest; without
+  provider scope, treat every worktree entry as worker-readable and potentially
+  transmissible to Google/Gemini, and remember that `--add-dir` does not narrow it.
+  The controller still locally enumerates and validates
   worktree/scope paths, and the stage is not a filesystem, network, `PATH`, `HOME`, or
   same-UID sandbox. Keep secrets, denied paths, and unrelated private content outside
   every entry approved for either transmission mode.
@@ -198,6 +201,12 @@ inventories: route with one relevant map row, then use a narrow current-graph qu
 only when relationships materially help. Check graph freshness and verify every
 material edge against source and tests. When relevant source changes make the graph
 stale and a current relationship or impact query would materially help, follow the
-Graphify skill's incremental update workflow before relying on it. Never add generated
-`graphify-out/` artifacts to Git or an agy prompt, and keep owner-private evidence or
-untracked campaign material outside the Graphify corpus.
+Graphify skill's incremental update workflow before relying on it. If
+`graphify-out/graph.json` already exists, an in-scope change to code structure,
+workflow or trust boundaries, or graph-indexed documentation requires an incremental
+Graphify refresh and graph-health readback before completion. Pure wording changes,
+test-expectation corrections, and release or publication actions alone do not trigger
+a refresh. Run it only over the reviewed repository corpus; if refresh fails, report
+the graph as stale and do not cite it. Never add generated `graphify-out/` artifacts
+to Git or an agy prompt, and keep owner-private evidence or untracked campaign
+material outside the Graphify corpus.

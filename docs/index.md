@@ -121,11 +121,11 @@ runs no provider</code></pre>
   <div class="evidence-grid">
     <article class="evidence-item">
       <h3>Whole-worktree approval</h3>
-      <p>The facade has no implicit provider-read mode. <code>--approve-whole-worktree</code> binds the current path/kind manifest and acknowledges that the disposable worktree is potentially readable and transmissible.</p>
+      <p>No initial launch path has an implicit provider-read mode. <code>--approve-whole-worktree</code> binds the current path/kind manifest and acknowledges that the disposable worktree is potentially readable and transmissible.</p>
     </article>
     <article class="evidence-item">
       <h3>Selected-content approval</h3>
-      <p><code>--provider-scope</code> plus the exact transmission digest binds reviewed read/write entries. It stages only the selected content in a private, Gitless provider directory.</p>
+      <p>The recommended bounded-job path is <code>--provider-scope</code> plus the exact transmission digest. It binds reviewed read/write entries and stages only the selected content in a private, Gitless provider directory.</p>
     </article>
     <article class="evidence-item">
       <h3>Authority remains separate</h3>

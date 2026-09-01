@@ -31,9 +31,10 @@ changed files cannot replace it.
 ## 2. Keep the worker report as untrusted input
 
 Dispatch only after approving one exact transmission mode. Without
-`--provider-scope`, the entire disposable worktree may be read and sent through `agy`
-to Google/Gemini; `--add-dir`, prompt denylists, and gate path policies do not narrow
-that default boundary. Optional provider-scope mode instead binds exact reviewed read
+Whole-worktree dispatch remains an explicit manifest-bound exception: when selected,
+the entire disposable worktree may be read and sent through `agy` to Google/Gemini;
+`--add-dir`, prompt denylists, and gate path policies do not narrow that broad boundary.
+The recommended provider-scope mode instead binds exact reviewed read
 entries, their selected-content digest, and a write subset, then stages only selected
 entries in a fresh owner-private mode-`0700` Gitless provider cwd. Exclude credentials,
 secrets, denied paths, and unrelated private content from every approved entry.
@@ -66,9 +67,9 @@ malformed envelopes, an unexpected no-op, mutable base evidence, and verifier-cr
 mutations. It also accounts for nontracked paths, including ignored files, within its
 documented trust boundary.
 
-This is a write-acceptance boundary applied after dispatch. In default mode,
+This is a write-acceptance boundary applied after dispatch. In whole-worktree mode,
 `--only`, `--allow`, prompt denylists, and `--add-dir` do not prevent reads elsewhere
-in `--workdir`. Optional provider-scope staging is a distinct pre-dispatch content
+in `--workdir`. Recommended provider-scope staging is a distinct pre-dispatch content
 boundary: it copies only selected entries, but the controller still locally enumerates
 and validates worktree/scope paths. It is not filesystem, network, `PATH`, `HOME`, or
 same-UID isolation, and scope approval grants no execution, Git, acceptance, or
