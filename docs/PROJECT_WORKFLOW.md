@@ -65,7 +65,7 @@ as a manifest-bound exception.
 For selected-content mode, include `--provider-scope "$SCOPE"` on both calls and
 use the preview's `transmission_sha256` as `--approve-transmission-sha` on the second.
 Omitting both modes fails before provider launch. The old `--approve-preview-sha`
-spelling cannot launch alone; through at least v0.15.x it requires the explicit
+spelling cannot launch alone; through at least v0.16.x it requires the explicit
 `--legacy-preview-approval` migration acknowledgement and emits a deprecation warning.
 
 The explicit `--state`, `--worktree`, `--branch`, and full `--base` tuple remains an

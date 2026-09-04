@@ -124,7 +124,7 @@ also needs network access. Do not use dangerous permission or approval bypass fl
 ## Version drift and direct model selection
 
 The accepted model/effort mapping, exact agy version, and evidence digests live in the
-current [activation record](../compat/reviews/agy-1.1.22-activation.md). Historical
+current [activation record](../compat/reviews/agy-1.1.24-activation.md). Historical
 observations remain history; they do not override the current source and checked-in
 matrix. Codex compatibility evidence is observational and grants neither dispatch nor
 model-selection authority.

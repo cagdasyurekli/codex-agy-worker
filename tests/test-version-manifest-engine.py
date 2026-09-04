@@ -51,7 +51,7 @@ class VersionManifestEngineTests(unittest.TestCase):
         raw = MANIFEST_PATH.read_bytes()
         expected = MANIFEST_PATH.with_suffix(".sha256").read_text(encoding="ascii").strip()
         self.assertEqual(hashlib.sha256(raw).hexdigest(), expected)
-        self.assertEqual(set(engine.load_manifest(MANIFEST_PATH)), {"1.1.12", "1.1.16", "1.1.22"})
+        self.assertEqual(set(engine.load_manifest(MANIFEST_PATH)), {"1.1.12", "1.1.16", "1.1.22", "1.1.24"})
 
     def test_02_portable_artifacts_are_byte_identical(self) -> None:
         for relative in (
@@ -61,17 +61,25 @@ class VersionManifestEngineTests(unittest.TestCase):
             self.assertEqual((ROOT / relative).read_bytes(), (PORTABLE / relative).read_bytes(), relative)
 
     def test_03_current_spec_is_exact(self) -> None:
-        spec = engine.get_version_spec("1.1.22", MANIFEST_PATH)
-        self.assertEqual(spec.version, "1.1.22")
+        spec = engine.get_version_spec("1.1.24", MANIFEST_PATH)
+        self.assertEqual(spec.version, "1.1.24")
         self.assertEqual(spec.support_tier, "current")
         self.assertEqual(
             spec.allowed_operations,
             ("activation", "capture", "classifier", "profile", "reprofile", "version-evidence"),
         )
-        self.assertEqual(spec.expected_stdout, b"1.1.22\n")
-        self.assertEqual(spec.source_sha256, "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906")
-        self.assertEqual(spec.release_commit, "556846a4bb94117222f53846896c7eb0d645307e")
+        self.assertEqual(spec.expected_stdout, b"1.1.24\n")
+        self.assertEqual(spec.source_sha256, "4d1138b2dbde56127969fd307281494d4a7dcc22759ce9adb44d36247df86151")
+        self.assertEqual(spec.release_commit, "bf27ce1134b4ead2f7bfa0a4fb3cb5fcbebcaa5a")
         self.assertEqual(spec.slug_count, 14)
+        self.assertEqual(spec.capture_snapshot_policy, "macos-readonly-mount")
+
+        legacy = engine.get_version_spec("1.1.22", MANIFEST_PATH)
+        self.assertEqual(legacy.support_tier, "legacy")
+        self.assertEqual(
+            legacy.allowed_operations,
+            ("capture", "classifier", "profile", "reprofile", "version-evidence"),
+        )
 
         previous = engine.get_version_spec("1.1.16", MANIFEST_PATH)
         self.assertEqual(previous.support_tier, "previous")
@@ -121,25 +129,29 @@ class VersionManifestEngineTests(unittest.TestCase):
 
     def test_09_data_only_new_version_self_heals_all_bindings(self) -> None:
         data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        new = copy.deepcopy(data["versions"]["1.1.22"])
+        new = copy.deepcopy(data["versions"]["1.1.24"])
         new.update({
-            "version": "1.1.24", "expected_stdout": "1.1.24\n",
+            "version": "1.1.25", "expected_stdout": "1.1.25\n",
             "source_sha256": "1" * 64, "source_size": 180_000_000,
             "release_commit": "2" * 40, "distribution_sha512": "3" * 128,
-            "recovery_binding_sha256": "4" * 64, "recovery_stdout": "1.1.24\n",
+            "recovery_binding_sha256": "4" * 64, "recovery_stdout": "1.1.25\n",
             "recovery_runner_sha256": "5" * 64,
-            "output_profile_name": "models.capture.1.1.24.profile.json",
-            "prior_name": "agy-models-capture-1.1.24.version",
-            "reprofile_output_name": "models.capture.1.1.24.reprofile.json",
-            "failure_ruleset_version": "agy-1.1.24-failure-rules-v1",
+            "output_profile_name": "models.capture.1.1.25.profile.json",
+            "prior_name": "agy-models-capture-1.1.25.version",
+            "reprofile_output_name": "models.capture.1.1.25.reprofile.json",
+            "failure_ruleset_version": "agy-1.1.25-failure-rules-v1",
+            "capture_snapshot_policy": "macos-readonly-mount",
+            "capture_runner_source_sha256": hashlib.sha256((ROOT / "scripts" / "version_manifest_capture_runner.py").read_bytes()).hexdigest(),
         })
-        data["versions"]["1.1.24"] = new
+        data["versions"]["1.1.25"] = new
         with tempfile.TemporaryDirectory() as directory:
             path = write_manifest(Path(directory), data)
-            spec = engine.get_version_spec("1.1.24", path)
-            self.assertEqual(engine.operation_constants(spec, "version-evidence")["EXPECTED_VERSION"], "1.1.24")
+            spec = engine.get_version_spec("1.1.25", path)
+            self.assertEqual(engine.operation_constants(spec, "version-evidence")["EXPECTED_VERSION"], "1.1.25")
             self.assertEqual(engine.operation_constants(spec, "profile")["OUTPUT_NAME"], new["output_profile_name"])
             self.assertEqual(engine.operation_constants(spec, "capture")["OUTPUT_PROFILE_NAME"], new["output_profile_name"])
+            self.assertEqual(engine.operation_constants(spec, "capture")["CAPTURE_SNAPSHOT_POLICY"], "macos-readonly-mount")
+            self.assertEqual(engine.operation_constants(spec, "capture")["EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256"], new["capture_runner_source_sha256"])
             self.assertEqual(engine.operation_constants(spec, "classifier")["RULESET_VERSION"], new["failure_ruleset_version"])
             self.assertEqual(engine.operation_constants(spec, "reprofile")["OUTPUT_NAME"], new["reprofile_output_name"])
 
@@ -155,7 +167,7 @@ class VersionManifestEngineTests(unittest.TestCase):
                 result = subprocess.run(
                     [
                         sys.executable, "-I", "-S", "-B", str(script),
-                        "--manifest-version", "1.1.24", "--manifest", str(path),
+                        "--manifest-version", "1.1.25", "--manifest", str(path),
                         *operation_args,
                     ],
                     input=script.read_bytes() if sends_source else None,
@@ -165,7 +177,7 @@ class VersionManifestEngineTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, (operation, result.stderr))
                 if operation == "classifier":
-                    self.assertIn(b"ruleset_version=agy-1.1.24-failure-rules-v1", result.stdout)
+                    self.assertIn(b"ruleset_version=agy-1.1.25-failure-rules-v1", result.stdout)
                 else:
                     self.assertIn(json.loads(result.stdout)["status"], {"accepted", "valid-source"})
 
@@ -260,6 +272,7 @@ class VersionManifestEngineTests(unittest.TestCase):
             ("1.1.16", "support_tier", "current"),
             ("1.1.16", "allowed_operations", ["capture", "profile"]),
             ("1.1.12", "allowed_operations", ["version-evidence"]),
+            ("1.1.24", "capture_snapshot_policy", "network-block"),
         )
         for version, field, value in cases:
             with self.subTest(version=version, field=field):
@@ -272,7 +285,7 @@ class VersionManifestEngineTests(unittest.TestCase):
 
     def test_10_exact_activation_binding_passes(self) -> None:
         binding = json.loads((ROOT / "compat/agy-models-inventory-binding.json").read_text(encoding="utf-8"))
-        engine.validate_activation_binding(binding, engine.get_version_spec("1.1.22"))
+        engine.validate_activation_binding(binding, engine.get_version_spec("1.1.24"))
 
     def test_11_activation_drift_fails_closed(self) -> None:
         binding = json.loads((ROOT / "compat/agy-models-inventory-binding.json").read_text(encoding="utf-8"))
@@ -280,7 +293,7 @@ class VersionManifestEngineTests(unittest.TestCase):
             changed = copy.deepcopy(binding)
             changed[key] = "0" * 64
             with self.assertRaises(engine.EngineError):
-                engine.validate_activation_binding(changed, engine.get_version_spec("1.1.22"))
+                engine.validate_activation_binding(changed, engine.get_version_spec("1.1.24"))
 
     def test_12_stale_digest_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -314,7 +327,7 @@ class VersionManifestEngineTests(unittest.TestCase):
         with self.assertRaises(engine.EngineError):
             engine.get_version_spec("9.9.9")
         with self.assertRaises(engine.EngineError):
-            engine.operation_constants(engine.get_version_spec("1.1.22"), "unknown")
+            engine.operation_constants(engine.get_version_spec("1.1.24"), "unknown")
 
     def test_16_reprofile_transition_accepts_only_nlink_drift(self) -> None:
         current = os.stat_result((stat.S_IFDIR | 0o700, 3, 2, 9, os.getuid(), 4, 0, 0, 0, 0))
@@ -374,12 +387,12 @@ class VersionManifestEngineTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, b"manifest valid: 3 versions loaded\n")
+        self.assertEqual(result.stdout, b"manifest valid: 4 versions loaded\n")
 
     def test_20_test_is_read_only_for_production_artifacts(self) -> None:
         paths = [MANIFEST_PATH, ENGINE_PATH, ROOT / "scripts/version_manifest_capture_runner.py"]
         before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-        engine.get_version_spec("1.1.22")
+        engine.get_version_spec("1.1.24")
         after = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
         self.assertEqual(before, after)
 

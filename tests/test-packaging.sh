@@ -1373,7 +1373,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.15.0"
+assert manifest["version"] == "0.16.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -2426,8 +2426,8 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.json" \
         && cmp -s "$ROOT/compat/agy-models-inventory-binding.sha256" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.sha256" \
-        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.22" ]] \
-        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-08-28" ]]; then
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.24" ]] \
+        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-09-03" ]]; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
@@ -2858,7 +2858,7 @@ fi
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     'case "$*" in' \
-    '  --version) printf "1.1.22\n" ;;' \
+    '  --version) printf "1.1.24\n" ;;' \
     '  --help) printf "%s\n" "Usage of agy:" "  --add-dir  Add a directory" "  --conversation  Resume a conversation" "  --disable-slash-commands  Disable slash commands" "  --json-schema  Schema path" "  --mode  Execution mode (accept-edits, plan)" "  --model  Select a model" "  --output-format  Format (text, json, stream-json)" "  --print  Run a prompt" "  --print-timeout  Print timeout" "  --sandbox  Sandboxed" >&2 ;;' \
     '  *) exit 97 ;;' \
     'esac' > "$TMP/selector-bin/agy"
@@ -2882,7 +2882,7 @@ fi
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "5a363dee8acb35e91b60405e705e8afaf155989dd755027cc5fa16741e42436c"' \
+        && grep -Fq '"matrix_sha256": "e3768004b4685754ba5bfd72e75724a2c78b0b9ed78391b0363b5f3d3ff191f1"' \
             "$TMP/copied-selection.json" \
         && [[ "$copied_selection_v2" == 1 ]] \
         && [[ ! -e "$TMP/network-called" ]]; then
@@ -3486,7 +3486,8 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (284 cases)' "$ROOT/docs/REPO_MAP.md")" == 2 ]] \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (292 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (284 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
         && grep -Fq 'EXPECTED_CHECKS = 103' "$ROOT/tests/test-agy-worker-remediation.py" \
         && grep -Fq '`tests/test-agy-worker-remediation.py` (103 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (207 cases)' "$ROOT/docs/REPO_MAP.md" \
@@ -3527,7 +3528,7 @@ if grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'historical 1.1.12 permits no executable operation' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'Fixed 1.1.22 suites: version evidence 45, profile 30, runner 58, classifier 24, reprofile 88 offline cases' \
+        && grep -Fq 'Fixed 1.1.22 suites: version evidence 45, profile 30, runner 63, classifier 24, reprofile 88 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-agy-1-1-22-activation.py` (25 active cases)' \
             "$ROOT/docs/REPO_MAP.md" \

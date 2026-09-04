@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Offline dispatcher and installer tests using a fake agy executable.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 # The suite owns every dispatcher input it exercises. Ambient caller values would
 # otherwise conflict with explicit selector cases or silently change default
@@ -123,7 +124,7 @@ assert value["user_model"] == model
 assert value.get("user_effort", "") == effort
 assert value["resolved_agy_model"] == resolved
 assert len(value["matrix_sha256"]) == 64
-assert value["matrix_agy_version"] == "1.1.22"
+assert value["matrix_agy_version"] == "1.1.24"
 assert len(value["matrix_source_revision"]) == 40
 assert value["recommendation_only"] is True
 assert value["applied"] is False
@@ -639,14 +640,14 @@ fi
 if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
     printf 'version\n' >> "$FAKE_CALLS_FILE"
     case "${FAKE_VERSION_MODE:-ready}" in
-        ready) printf '1.1.22\n' ;;
+        ready) printf '1.1.24\n' ;;
         quota113) printf '1.1.13\n' ;;
-        prefixed) printf 'agy 1.1.22\n' ;;
+        prefixed) printf 'agy 1.1.24\n' ;;
         drift) printf '1.1.11\n' ;;
         drift117) printf '1.1.17\n' ;;
         drift999) printf '9.9.9\n' ;;
         empty) : ;;
-        malformed) printf 'version 1.1.22\n' ;;
+        malformed) printf 'version 1.1.24\n' ;;
         oversize) i=0; while [[ $i -lt 140 ]]; do printf x; i=$((i+1)); done; printf '\n' ;;
         stream) while :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done ;;
         child-stream)
@@ -836,6 +837,40 @@ while [[ $# -gt 0 ]]; do
         *) shift ;;
     esac
 done
+if [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}" ]]; then
+    python3 -B - "$FAKE_PROMPT_FILE" "$FAKE_EDIT_FROM_BOUND_ROOT" \
+        "${FAKE_EDIT_CONTENT:-provider changed}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+prompt = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "The exact absolute workspace root for this attempt is the JSON string "
+if marker in prompt:
+    start = prompt.index(marker) + len(marker)
+    root, _end = json.JSONDecoder().raw_decode(prompt[start:])
+else:
+    root = str(Path.cwd())
+target = Path(root) / sys.argv[2]
+target.write_text(sys.argv[3] + "\n", encoding="utf-8")
+PY
+fi
+if [[ -n "${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
+    python3 -B - "$FAKE_PROMPT_FILE" "$FAKE_DELETE_FROM_BOUND_ROOT" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+prompt = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "The exact absolute workspace root for this attempt is the JSON string "
+if marker in prompt:
+    start = prompt.index(marker) + len(marker)
+    root, _end = json.JSONDecoder().raw_decode(prompt[start:])
+else:
+    root = str(Path.cwd())
+(Path(root) / sys.argv[2]).unlink()
+PY
+fi
 if [[ "${FAKE_TRY_STAGE_WRITE:-0}" == "1" && -n "$stage_dir" ]]; then
     if printf 'tampered' 2>/dev/null > "$stage_dir/full-prompt.txt"; then
         printf 'wrote' > "$FAKE_STAGE_RESULT_FILE"
@@ -974,10 +1009,33 @@ fi
 [[ -z "${FAKE_WARNING_LINE:-}" ]] || printf '%s\n' "$FAKE_WARNING_LINE" >&2
 status="${FAKE_AGY_STATUS:-SUCCESS}"
 if [[ "${FAKE_DISPATCH_MODE:-result}" == "result" ]]; then
-    printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+    if [[ "${FAKE_BOOST_INIT:-0}" == "1" ]]; then
+        printf '{"event":"init","conversation_id":"fake-conversation-01","init":{"agent":"%s","permission_mode":"%s"}}\n' \
+            "${FAKE_BOOST_AGENT:-Boost}" "${FAKE_BOOST_PERMISSION_MODE:-request-review}"
+    else
+        printf '{"event":"init","conversation_id":"fake-conversation-01","init":{}}\n'
+    fi
 fi
 if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
+elif [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
+    envelope="$(python3 -B - "${FAKE_EDIT_FROM_BOUND_ROOT:-$FAKE_DELETE_FROM_BOUND_ROOT}" \
+        "${FAKE_DELETE_FROM_BOUND_ROOT:+deleted}" <<'PY'
+import json
+import sys
+print(json.dumps({
+    "status": "completed",
+    "summary": "done",
+    "files_changed": [{"path": sys.argv[1], "change": sys.argv[2] or "modified"}],
+    "commands_run": [],
+    "tests_run": [],
+    "risks": [],
+    "open_questions": [],
+    "confidence": 1,
+    "requires_human": False,
+}, separators=(",", ":")))
+PY
+)"
 elif [[ "${FAKE_WORKER_VERIFIED:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"Verified private-worker-prose-sentinel","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 elif [[ "${FAKE_UTF8_SUMMARY:-0}" == "1" ]]; then
@@ -996,6 +1054,8 @@ run_worker() {
         FAKE_AGY_STATUS FAKE_ARGV_FILE FAKE_BAD_ENVELOPE FAKE_CALLED_FILE \
         FAKE_CALLS_FILE FAKE_CHILD_PID_FILE FAKE_DIRS_FILE FAKE_DISPATCH_COUNT_FILE \
         FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_ERROR_LINE \
+        FAKE_BOOST_INIT FAKE_BOOST_AGENT FAKE_BOOST_PERMISSION_MODE \
+        FAKE_DELETE_FROM_BOUND_ROOT FAKE_EDIT_CONTENT FAKE_EDIT_FROM_BOUND_ROOT \
         FAKE_EXECUTABLE_SYMLINK_TARGET \
         FAKE_EXIT_CODE FAKE_FAIL_FIRST FAKE_HEARTBEAT_AFTER_FIRST_READY \
         FAKE_HEARTBEAT_AFTER_FIRST_RELEASE FAKE_HEARTBEAT_BARRIER_READY \
@@ -1059,6 +1119,12 @@ run_worker() {
     FAKE_FAIL_FIRST="${FAKE_FAIL_FIRST:-0}" \
     FAKE_TRY_STAGE_WRITE="${FAKE_TRY_STAGE_WRITE:-0}" \
     FAKE_DISPATCH_MODE="${FAKE_DISPATCH_MODE:-result}" \
+    FAKE_BOOST_INIT="${FAKE_BOOST_INIT:-0}" \
+    FAKE_BOOST_AGENT="${FAKE_BOOST_AGENT:-Boost}" \
+    FAKE_BOOST_PERMISSION_MODE="${FAKE_BOOST_PERMISSION_MODE:-request-review}" \
+    FAKE_DELETE_FROM_BOUND_ROOT="${FAKE_DELETE_FROM_BOUND_ROOT:-}" \
+    FAKE_EDIT_FROM_BOUND_ROOT="${FAKE_EDIT_FROM_BOUND_ROOT:-}" \
+    FAKE_EDIT_CONTENT="${FAKE_EDIT_CONTENT:-}" \
     FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
     FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
     FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
@@ -1133,10 +1199,12 @@ if [[ "$rc" != "0" ]]; then
     tail -n 5 "$TMP/tier.err" >&2
 fi
 expect_exit "--tier cheap produces an envelope" 0 "$rc"
-if [[ "$(<"$TMP/tier.model")" == "gemini-3.6-flash-low" ]]; then
-    ok "--tier is resolved after CLI parsing"
+if [[ "$(<"$TMP/tier.model")" == "gemini-3.6-flash-low" ]] \
+        && grep -Fq 'Use file tools to inspect and edit the approved workspace.' "$TMP/tier.prompt" \
+        && ! grep -Fq 'BOOST WORKSPACE CONTRACT' "$TMP/tier.prompt"; then
+    ok "--tier is resolved after CLI parsing and keeps the ordinary writable preamble"
 else
-    bad "--tier is resolved after CLI parsing"
+    bad "--tier resolution or ordinary writable preamble"
 fi
 expect_print_last "small prompt keeps --print and its value last" "$TMP/tier.argv"
 
@@ -1157,6 +1225,9 @@ target = Path(sys.argv[2])
 value = json.loads(source.read_text(encoding="utf-8"))
 value["schema_version"] = 6
 value.pop("approved_whole_worktree_sha256")
+value.pop("boost")
+value.pop("boost_policy_sha256")
+value.pop("approved_boost_risk_sha256")
 target.write_text(
     json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n",
     encoding="utf-8",
@@ -1212,6 +1283,9 @@ command.update({
     "notice_seconds": 2,
 })
 command.pop("approved_whole_worktree_sha256")
+command.pop("boost")
+command.pop("boost_policy_sha256")
+command.pop("approved_boost_risk_sha256")
 module.write_atomic(job, module.COMMAND_NAME, command)
 loaded, command_raw, command_identity = module.load_command(job)
 state = module.initial_state(
@@ -1266,6 +1340,228 @@ if [[ "$legacy_queued_v6_rc" == 0 ]]; then
 else
     bad "already-queued legacy V6 compatibility"
 fi
+
+BOOST_DEFAULT_MANIFEST_SHA="$(whole_worktree_manifest_sha "$WORKER" "$TMP/repo")"
+printf 'Boost acknowledgement test\n' | env -u AGY_WORKER_MODE \
+    PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID=boost-needs-risk \
+    "$WORKER" --workdir "$TMP/repo" --workflow task --max-cycles 1 --boost \
+    --approve-whole-worktree "$BOOST_DEFAULT_MANIFEST_SHA" \
+    > "$TMP/boost-needs-risk.out" 2> "$TMP/boost-needs-risk.err"
+boost_needs_risk_rc=$?
+if [[ "$boost_needs_risk_rc" == 6 && ! -e "$TMP/boost-needs-risk.called" ]] \
+        && grep -Fq 'Boost may invoke subagents and protected tools' "$TMP/boost-needs-risk.err"; then
+    ok "Boost applies the task mode default and requires a job-bound risk acknowledgement before provider launch"
+else
+    bad "Boost risk acknowledgement preflight"
+fi
+
+printf 'orphan Boost approval\n' | run_worker boost-orphan-approval \
+    --approve-boost-risk-sha "$(printf '0%.0s' {1..64})" \
+    > "$TMP/boost-orphan-approval.out" 2> "$TMP/boost-orphan-approval.err"
+boost_orphan_rc=$?
+if [[ "$boost_orphan_rc" == 64 && ! -e "$TMP/boost-orphan-approval.called" ]] \
+        && grep -Fq -- '--approve-boost-risk-sha requires --boost' "$TMP/boost-orphan-approval.err"; then
+    ok "Boost approval cannot widen an ordinary dispatch"
+else
+    bad "orphan Boost approval preflight"
+fi
+
+printf 'stale Boost approval\n' | run_worker boost-stale-approval \
+    --workflow task --max-cycles 1 --boost --approve-boost-risk-sha "$(printf '0%.0s' {1..64})" \
+    > "$TMP/boost-stale-approval.out" 2> "$TMP/boost-stale-approval.err"
+boost_stale_rc=$?
+if [[ "$boost_stale_rc" == 6 && ! -e "$TMP/boost-stale-approval.called" ]] \
+        && grep -Fq 'invalid or stale' "$TMP/boost-stale-approval.err"; then
+    ok "Boost risk approval is job-bound and stale-safe"
+else
+    bad "stale Boost risk approval"
+fi
+
+boost_constraint_failures=0
+for boost_case in workflow cycles persona slash mode; do
+    boost_args=(--workflow task --max-cycles 1 --boost)
+    case "$boost_case" in
+        workflow) boost_args=(--workflow explore --max-cycles 1 --boost) ;;
+        cycles) boost_args=(--workflow task --max-cycles 2 --boost) ;;
+        persona) boost_args+=(--persona bulk-test-writer) ;;
+        slash) boost_args+=(--allow-slash-commands) ;;
+        mode) boost_args+=(--mode plan) ;;
+    esac
+    printf 'invalid Boost profile\n' | run_worker "boost-invalid-$boost_case" "${boost_args[@]}" \
+        > "$TMP/boost-invalid-$boost_case.out" 2> "$TMP/boost-invalid-$boost_case.err"
+    boost_case_rc=$?
+    if [[ "$boost_case_rc" != 64 || -e "$TMP/boost-invalid-$boost_case.called" ]]; then
+        boost_constraint_failures=$((boost_constraint_failures + 1))
+    fi
+done
+if (( boost_constraint_failures == 0 )); then
+    ok "Boost rejects broader workflows, cycles, personas, slash commands, and plan mode"
+else
+    bad "Boost closed profile constraints"
+fi
+
+BOOST_POLICY_SHA="$(printf '%s' \
+    'Boost may invoke subagents and protected tools; this acknowledgement does not grant runtime permissions.' \
+    | shasum -a 256 | awk '{print $1}')"
+BOOST_APPROVAL_SHA="$(printf '%s\n%s\n' "$BOOST_POLICY_SHA" 'boost-approved' | shasum -a 256 | awk '{print $1}')"
+printf 'scoped Boost target\n' > "$TMP/repo/boost-target.txt"
+BOOST_SCOPE="$TMP/boost-approved.scope.json"
+printf '%s\n' \
+    '{"schema_version":1,"kind":"agy-worker-provider-scope","read":[{"path":"boost-target.txt","kind":"file"}],"write":[{"path":"boost-target.txt","kind":"file"}]}' \
+    > "$BOOST_SCOPE"
+chmod 0600 "$BOOST_SCOPE"
+BOOST_WORKDIR="$(cd "$TMP/repo" && pwd -P)"
+BOOST_TRANSMISSION_SHA="$(
+    "$WORKER" transmission-preview --workdir "$BOOST_WORKDIR" \
+        --provider-scope "$BOOST_SCOPE" --format json \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin)["transmission_sha256"])'
+)"
+printf 'Boost profile test\n' | FAKE_BOOST_INIT=1 \
+    FAKE_EDIT_FROM_BOUND_ROOT=boost-target.txt FAKE_EDIT_CONTENT='scoped Boost changed' \
+    run_worker boost-approved \
+    --workflow task --max-cycles 1 --boost --approve-boost-risk-sha "$BOOST_APPROVAL_SHA" \
+    --provider-scope "$BOOST_SCOPE" --approve-transmission-sha "$BOOST_TRANSMISSION_SHA" \
+    > "$TMP/boost-approved.out" 2> "$TMP/boost-approved.err"
+boost_approved_rc=$?
+if [[ "$boost_approved_rc" == 0 ]] && python3 -B - "$TMP/boost-approved.argv" \
+        "$TMP/logs/boost-approved/dispatch-command.json" "$TMP/repo" \
+        "$LOGS_REAL/boost-approved/stage-001" \
+        "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" <<'PY'
+import importlib.util
+import json
+from pathlib import Path
+import sys
+argv = open(sys.argv[1], "rb").read().split(b"\0")
+command = json.load(open(sys.argv[2], encoding="utf-8"))
+prompt = argv[-2].decode("utf-8") if argv[-1] == b"" else argv[-1].decode("utf-8")
+normalized_prompt = " ".join(prompt.split())
+assert command["schema_version"] == 8 and command["boost"] is True
+assert command["provider_scope_path"] is not None
+assert command["approved_whole_worktree_sha256"] is None
+assert argv.count(b"--agent") == 1 and argv[argv.index(b"--agent") + 1] == b"Boost"
+assert argv.count(b"--disable-slash-commands") == 1
+assert prompt.startswith("BOOST FILE-TOOL ROOT — non-negotiable:\n")
+root_marker = "The exact absolute workspace root for this attempt is the JSON string "
+root_start = prompt.index(root_marker) + len(root_marker)
+decoded_root, root_end = json.JSONDecoder().raw_decode(prompt[root_start:])
+assert decoded_root == sys.argv[4]
+assert prompt[root_start + root_end:].startswith(".\n")
+assert Path(decoded_root).is_absolute()
+assert prompt.count("BOOST WORKSPACE CONTRACT — non-negotiable:") == 1
+assert "initial working directory exposed by file tools" in normalized_prompt
+assert "intentionally Gitless and may contain only selected files" in normalized_prompt
+assert 'Do not search for another repository or "active workspace"' in normalized_prompt
+assert "Do not inspect HOME, `~/.gemini`, parent directories" in normalized_prompt
+assert "including `pwd`, `ls`, `find`, or `git`" in normalized_prompt
+assert "include this entire contract in every subagent task" in normalized_prompt
+assert "Use file tools to inspect and edit the approved workspace." in prompt
+assert "use absolute child paths beneath that root" in normalized_prompt
+assert "shell tools run in a separate scratch directory" in normalized_prompt
+assert "complete approved Gitless selected-content stage" in prompt
+assert prompt.index("BOOST FILE-TOOL ROOT") < prompt.index("BOOST WORKSPACE CONTRACT")
+assert prompt.index("BOOST WORKSPACE CONTRACT") < prompt.index("OUTPUT CONTRACT")
+assert prompt.index("OUTPUT CONTRACT") < prompt.index("TASK FOLLOWS:") < prompt.index("Boost profile test")
+assert sys.argv[3] not in prompt
+assert (Path(sys.argv[3]) / "boost-target.txt").read_text(encoding="utf-8") == "scoped Boost changed\n"
+
+spec = importlib.util.spec_from_file_location("agy_dispatch_prompt_test", sys.argv[5])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+weird_root = Path('/private/tmp/space "quote" \\ slash\nline/stage-001')
+synthetic = ["agy", "--print", "ORIGINAL-PROMPT"]
+module._bind_boost_prompt(synthetic, weird_root, scoped=True)
+assert synthetic[-2] == "--print" and synthetic[-1].endswith("ORIGINAL-PROMPT")
+synthetic_start = synthetic[-1].index(root_marker) + len(root_marker)
+synthetic_root, synthetic_end = json.JSONDecoder().raw_decode(synthetic[-1][synthetic_start:])
+assert synthetic_root == str(weird_root)
+assert "\nline" not in synthetic[-1][synthetic_start:synthetic_start + synthetic_end]
+oversized = ["agy", "--print", "x" * module.MAX_INLINE_PROMPT_BYTES]
+try:
+    module._bind_boost_prompt(oversized, weird_root, scoped=True)
+except module.DispatchError:
+    pass
+else:
+    raise AssertionError("oversized scoped Boost prompt was accepted")
+assert oversized[-1] == "x" * module.MAX_INLINE_PROMPT_BYTES
+PY
+then
+    ok "approved Boost dispatch pins V8, one agent, slash protection, and the file-tool preamble"
+else
+    bad "approved Boost dispatch profile"
+fi
+
+WHOLE_BOOST_APPROVAL_SHA="$(printf '%s\n%s\n' "$BOOST_POLICY_SHA" 'boost-whole-approved' | shasum -a 256 | awk '{print $1}')"
+printf 'whole Boost target\n' > "$TMP/repo/whole-boost-target.txt"
+printf 'whole Boost profile test\n' | FAKE_BOOST_INIT=1 \
+    FAKE_EDIT_FROM_BOUND_ROOT=whole-boost-target.txt FAKE_EDIT_CONTENT='whole Boost changed' \
+    run_worker boost-whole-approved --workflow task --max-cycles 1 --boost \
+    --approve-boost-risk-sha "$WHOLE_BOOST_APPROVAL_SHA" \
+    > "$TMP/boost-whole-approved.out" 2> "$TMP/boost-whole-approved.err"
+boost_whole_rc=$?
+boost_whole_changed=0
+if [[ "$(< "$TMP/repo/whole-boost-target.txt")" == 'whole Boost changed' ]]; then
+    boost_whole_changed=1
+fi
+rm -f "$TMP/repo/whole-boost-target.txt"
+
+BOOST_MISMATCH_SHA="$(printf '%s\n%s\n' "$BOOST_POLICY_SHA" 'boost-init-mismatch' | shasum -a 256 | awk '{print $1}')"
+printf 'Boost mismatch test\n' | FAKE_BOOST_INIT=1 FAKE_BOOST_AGENT=Other run_worker boost-init-mismatch \
+    --workflow task --max-cycles 1 --boost --approve-boost-risk-sha "$BOOST_MISMATCH_SHA" \
+    > "$TMP/boost-init-mismatch.out" 2> "$TMP/boost-init-mismatch.err"
+boost_mismatch_rc=$?
+if [[ "$boost_whole_rc" == 0 && "$boost_whole_changed" == 1 \
+        && "$boost_mismatch_rc" == 4 ]] && python3 -B - \
+        "$TMP/boost-whole-approved.prompt" \
+        "$TMP/logs/boost-init-mismatch/dispatch-state.json" \
+        "$TMP/boost-init-mismatch.prompt" "$BOOST_WORKDIR" <<'PY'
+import json
+from pathlib import Path
+import sys
+whole_prompt = open(sys.argv[1], encoding="utf-8").read()
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+prompt = open(sys.argv[3], encoding="utf-8").read()
+workdir = sys.argv[4]
+root_marker = "The exact absolute workspace root for this attempt is the JSON string "
+root_start = whole_prompt.index(root_marker) + len(root_marker)
+decoded_root, root_end = json.JSONDecoder().raw_decode(whole_prompt[root_start:])
+assert decoded_root == workdir and Path(decoded_root).is_absolute()
+assert whole_prompt[root_start + root_end:].startswith(".\n")
+assert whole_prompt.startswith("BOOST FILE-TOOL ROOT — non-negotiable:\n")
+assert "complete explicitly approved whole worktree" in whole_prompt
+assert "complete approved Gitless selected-content stage" not in whole_prompt
+assert state["failure_stage"] == "boost_contract"
+assert state["resume_available"] is False and state["continue_available"] is False
+assert "It is the explicitly approved whole worktree." in prompt
+assert "intentionally Gitless and may contain only selected files" not in prompt
+assert prompt.startswith("BOOST FILE-TOOL ROOT — non-negotiable:\n")
+assert workdir in prompt
+PY
+then
+    ok "whole-worktree Boost binds its approved root and identity mismatch still fails closed"
+else
+    bad "whole-worktree Boost root or init identity binding"
+fi
+
+BOOST_PERMISSION_SHA="$(printf '%s\n%s\n' "$BOOST_POLICY_SHA" 'boost-permission-mismatch' | shasum -a 256 | awk '{print $1}')"
+printf 'Boost permission mismatch test\n' | FAKE_BOOST_INIT=1 FAKE_BOOST_PERMISSION_MODE=accept-edits \
+    run_worker boost-permission-mismatch --workflow task --max-cycles 1 --boost \
+    --approve-boost-risk-sha "$BOOST_PERMISSION_SHA" \
+    > "$TMP/boost-permission-mismatch.out" 2> "$TMP/boost-permission-mismatch.err"
+boost_permission_rc=$?
+if [[ "$boost_permission_rc" == 4 ]] && python3 -B - "$TMP/logs/boost-permission-mismatch/dispatch-state.json" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["failure_stage"] == "boost_contract"
+assert state["resume_available"] is False and state["continue_available"] is False
+PY
+then
+    ok "Boost permission-mode mismatch stops without resume or continuation"
+else
+    bad "Boost permission-mode binding"
+fi
+rm -f "$TMP/repo/boost-target.txt"
 
 WHOLE_DRIFT_PATH="$TMP/repo/whole-worktree-drift"
 printf 'manifest must remain bound through launch\n' | \
@@ -1463,8 +1759,8 @@ assert record.get("user_effort", "") == user_effort
 assert record["user_model_source"] == model_source
 assert record.get("user_effort_source", "") == effort_source
 assert record["resolved_agy_model"] == expected
-assert record["installed_agy_version"] == "1.1.22"
-assert record["matrix_agy_version"] == "1.1.22"
+assert record["installed_agy_version"] == "1.1.24"
+assert record["matrix_agy_version"] == "1.1.24"
 assert record["version_relation"] == "match"
 assert record["critical_interface_probe_version"] == 1
 assert record["critical_interface_status"] == "compatible"
@@ -1592,9 +1888,9 @@ direct_pairs = (
     ("gemini-3.6-flash", "low", "gemini-3.6-flash-low"),
     ("gemini-3.6-flash", "medium", "gemini-3.6-flash-medium"),
     ("gemini-3.6-flash", "high", "gemini-3.6-flash-high"),
-    ("gemini-3.5-flash", "low", "gemini-3.5-flash-low"),
-    ("gemini-3.5-flash", "medium", "gemini-3.5-flash-medium"),
-    ("gemini-3.5-flash", "high", "gemini-3.5-flash-high"),
+    ("gemini-3.8-flash", "low", "gemini-3.8-flash-low"),
+    ("gemini-3.8-flash", "medium", "gemini-3.8-flash-medium"),
+    ("gemini-3.8-flash", "high", "gemini-3.8-flash-high"),
     ("gemini-3.1-pro", "low", "gemini-3.1-pro-low"),
     ("gemini-3.1-pro", "high", "gemini-3.1-pro-high"),
 )
@@ -1602,7 +1898,7 @@ direct_pairs = (
 exact_models = (
     "gemini-3.7-flash-low", "gemini-3.7-flash-medium", "gemini-3.7-flash-high",
     "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-high",
-    "gemini-3.5-flash-low", "gemini-3.5-flash-medium", "gemini-3.5-flash-high",
+    "gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-3.8-flash-high",
     "gemini-3.1-pro-low", "gemini-3.1-pro-high",
     "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
 )
@@ -1628,7 +1924,7 @@ except model_selection.CallerError:
     pass
 
 # 2. Base models without effort
-for base_model in ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-pro"):
+for base_model in ("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.1-pro"):
     try:
         model_selection.resolve_model(matrix, base_model, None)
         raise AssertionError(f"Base model {base_model} without effort should be rejected")
@@ -1685,14 +1981,14 @@ else
 fi
 
 printf 'representative direct pair env-cli\n' | \
-    AGY_WORKER_MODEL="gemini-3.5-flash" run_worker direct-pair-rep-env-cli --effort low \
+    AGY_WORKER_MODEL="gemini-3.8-flash" run_worker direct-pair-rep-env-cli --effort low \
     > "$TMP/direct-pair-rep-env-cli.out" 2> "$TMP/direct-pair-rep-env-cli.err"
 if [[ $? == 0 ]]; then
-    assert_direct_result "representative pair gemini-3.5-flash/low accepts env-cli" \
-        "direct-pair-rep-env-cli" "gemini-3.5-flash-low" "gemini-3.5-flash" "low" \
+    assert_direct_result "representative pair gemini-3.8-flash/low accepts env-cli" \
+        "direct-pair-rep-env-cli" "gemini-3.8-flash-low" "gemini-3.8-flash" "low" \
         "environment" "cli"
 else
-    bad "representative pair gemini-3.5-flash/low accepts env-cli"
+    bad "representative pair gemini-3.8-flash/low accepts env-cli"
 fi
 
 printf 'representative direct pair env-env\n' | \
@@ -2059,7 +2355,7 @@ assert value == {
     "schema_version": 1,
     "kind": "agy-worker-compatibility-review-evidence",
     "installed_agy_version": "1.1.17",
-    "matrix_agy_version": "1.1.22",
+    "matrix_agy_version": "1.1.24",
     "version_relation": "drift",
     "compatibility_status": "direct-selection-review-required",
     "critical_interface_status": "compatible",
@@ -3271,11 +3567,22 @@ printf 'broad audit is a usable default plan\n' | (
             --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE --provider-env FAKE_CALLED_FILE
 ) > "$TMP/plan-without-persona.out" 2> "$TMP/plan-without-persona.err"
 rc=$?
+plan_without_persona_prompt="$TMP/plan-without-persona.prompt"
+if [[ -f "$TMP/logs/plan-without-persona/staged/full-prompt.txt" ]]; then
+    plan_without_persona_prompt="$TMP/logs/plan-without-persona/staged/full-prompt.txt"
+fi
 if [[ "$rc" == "0" ]] \
         && [[ -s "$TMP/plan-without-persona.out" ]] \
         && [[ -e "$TMP/plan-without-persona.called" ]] \
-        && [[ -d "$TMP/logs/plan-without-persona" ]]; then
-    ok "generic plan dispatches without requiring a persona"
+        && [[ -d "$TMP/logs/plan-without-persona" ]] \
+        && grep -Fq 'Use file tools to inspect the approved workspace only; do not edit files.' \
+            "$plan_without_persona_prompt" \
+        && ! grep -Fq 'Use file tools to inspect and edit the approved workspace.' \
+            "$plan_without_persona_prompt" \
+        && grep -Fq 'a separate scratch' \
+            "$plan_without_persona_prompt" \
+        && ! grep -Fq "$TMP/repo" "$plan_without_persona_prompt"; then
+    ok "generic plan dispatches without a persona and receives the read-only file-tool preamble"
 else
     bad "generic plan should remain usable without a persona"
 fi
@@ -3474,6 +3781,7 @@ start_worker() {
         FAKE_AGY_STATUS FAKE_ARGV_FILE FAKE_BAD_ENVELOPE FAKE_CALLED_FILE \
         FAKE_CALLS_FILE FAKE_CHILD_PID_FILE FAKE_DIRS_FILE FAKE_DISPATCH_COUNT_FILE \
         FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_ERROR_LINE \
+        FAKE_DELETE_FROM_BOUND_ROOT FAKE_EDIT_CONTENT FAKE_EDIT_FROM_BOUND_ROOT \
         FAKE_EXECUTABLE_SYMLINK_TARGET FAKE_EXIT_CODE FAKE_FAIL_FIRST \
         FAKE_HEARTBEAT_AFTER_FIRST_READY FAKE_HEARTBEAT_AFTER_FIRST_RELEASE \
         FAKE_HEARTBEAT_BARRIER_READY FAKE_HEARTBEAT_BARRIER_RELEASE \
@@ -3516,6 +3824,9 @@ start_worker() {
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
         FAKE_HEARTBEAT_AFTER_FIRST_READY="${FAKE_HEARTBEAT_AFTER_FIRST_READY:-}" \
         FAKE_HEARTBEAT_AFTER_FIRST_RELEASE="${FAKE_HEARTBEAT_AFTER_FIRST_RELEASE:-}" \
+        FAKE_DELETE_FROM_BOUND_ROOT="${FAKE_DELETE_FROM_BOUND_ROOT:-}" \
+        FAKE_EDIT_FROM_BOUND_ROOT="${FAKE_EDIT_FROM_BOUND_ROOT:-}" \
+        FAKE_EDIT_CONTENT="${FAKE_EDIT_CONTENT:-}" \
         FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
         "$worker_path" start --workdir "$workdir" \
         "${fake_provider_env_args[@]}" \
@@ -4774,30 +5085,7 @@ else
     bad "resume or historical V2 drift recovery action parity"
 fi
 
-printf 'project workflow initial implementation\n' | FAKE_DISPATCH_MODE=heartbeat-success \
-    FAKE_HEARTBEAT_COUNT=2 AGY_TEST_WORKDIR="$TMP/project-worktree" start_worker project-cycles --workflow project \
-    --idle-timeout 1s --hard-timeout 2s --max-runtime 8s > "$TMP/project-cycles.start" 2> "$TMP/project-cycles.err"
-project_start_rc=$?
-wait_terminal project-cycles "$TMP/project-cycles.start"
-project_wait_rc=$?
-control_worker status project-cycles > "$TMP/project-cycles.status"
-project_sha="$(status_sha "$TMP/project-cycles.status")"
-if [[ "$project_start_rc" == 0 && "$project_wait_rc" == 0 ]] && python3 - "$TMP/project-cycles.status" <<'PY'
-import json, sys
-value = json.load(open(sys.argv[1], encoding="utf-8"))
-assert value["workflow"] == "project"
-assert value["status"] == "succeeded"
-assert value["phase"] == "awaiting-verification"
-assert value["cycle"] == 1 and value["max_cycles"] == 5
-assert value["assurance"] is None
-assert value["resume_available"] is False and value["continue_available"] is True
-assert value["check_counts"] == {"passed": 0, "failed": 0, "advisory": 0, "missing": 0}
-PY
-then
-    ok "project workflow exposes pending Codex-owned verification without changing resume semantics"
-else
-    bad "project workflow status contract"
-fi
+. "$ROOT/tests/agy_worker_project_lifecycle_cases.sh"
 
 printf 'project missing verification repair\n' | FAKE_DISPATCH_MODE=heartbeat-success \
     FAKE_HEARTBEAT_COUNT=2 AGY_TEST_WORKDIR="$TMP/project-worktree" \

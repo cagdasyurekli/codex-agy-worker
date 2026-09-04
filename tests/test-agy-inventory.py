@@ -20,7 +20,7 @@ inventory = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = inventory
 SPEC.loader.exec_module(inventory)
 
-EXPECTED_HASH = "db2a3529568b1ce4bb112d4cb9a0c31a4f3d1b32bd787728d224894ec6db133c"
+EXPECTED_HASH = "d5e58ab55e91ebd4a2cd23841c76cbe12b47d607c62cd8c834fc8f6b9f078ad7"
 
 
 def fixture_lines() -> list[str]:
@@ -74,20 +74,20 @@ def _() -> None:
     assert result.normalized_sha256 == EXPECTED_HASH
 
 
-@test("all three reviewed 3.7 Flash effort slugs are accepted exactly")
+@test("all three reviewed 3.8 Flash effort slugs are accepted exactly")
 def _() -> None:
     result = inventory.parse_inventory_bytes(encode(fixture_lines()))
     assert {
-        "gemini-3.7-flash-low",
-        "gemini-3.7-flash-medium",
-        "gemini-3.7-flash-high",
+        "gemini-3.8-flash-low",
+        "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high",
     }.issubset(result.slugs)
 
 
-@test("unreviewed 3.7 Flash base slug is rejected")
+@test("unreviewed 3.8 Flash base slug is rejected")
 def _() -> None:
     lines = replace_line(
-        fixture_lines(), "gemini-3.7-flash-low", "gemini-3.7-flash"
+        fixture_lines(), "gemini-3.8-flash-low", "gemini-3.8-flash"
     )
     expect_error(encode(lines))
 

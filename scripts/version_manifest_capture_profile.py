@@ -24,6 +24,7 @@ RUNTIME_MAJOR = 3
 RUNTIME_MINOR = 9
 ACTIVE_VERSION = "1.1.22"
 PROFILE_LIMIT = 16_384
+RECOVERY_BINDING_LIMIT = 16_384
 EXPECTED_SOURCE_SHA256 = "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906"
 EXPECTED_RECOVERY_BINDING_SHA256 = "d9d830e65d3a5c76df6d9e07e6ea7e14e14f290ab4036bdbae8cb33502e29f2a"
 EXPECTED_RECOVERY_STDOUT = b"1.1.22\n"
@@ -34,11 +35,12 @@ EXPECTED_RELEASE_COMMIT = "556846a4bb94117222f53846896c7eb0d645307e"
 EXPECTED_DISTRIBUTION_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.22-5711547746615296/darwin-arm/cli_mac_arm64.tar.gz"
 EXPECTED_DISTRIBUTION_SHA512 = "a8121185bd1c3455410ad41e88e2030ea237d496b8e40ccde313bf611c0551840fddf450b45c8e1a2575d9863c990b3324f19eef0f479936df8bfc6e4e80d30b"
 OUTPUT_NAME = "models.capture.1.1.22.profile.json"
+CAPTURE_SNAPSHOT_POLICY = "stable"
 LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "5ccefcb08072eebd91cf0467e9676642172c9a5a9ddd7b42d701d43187608900"
+MODULE_AST_SHA256 = "fc7c7416d57b9acf9dabbb992c2778b41fea75371ad4b70b8a2647cb961ad435"
 ACTIVE_PROFILE_PATH: Optional[str] = None
 ACTIVE_PROFILE_IDENTITY: Optional[FileIdentity] = None
 ACTIVE_PROFILE_DIGEST: Optional[str] = None
@@ -286,10 +288,10 @@ def _validate_recovery(root: str, source_path: str, source: FileIdentity, snapsh
                 or hashlib.sha256(runner).hexdigest() != EXPECTED_RECOVERY_RUNNER_SHA256
                 or _read_at(fd, "runner.py.sha256", 128) != (EXPECTED_RECOVERY_RUNNER_SHA256 + "\n").encode("ascii")):
             raise ProfileError("recovery runner changed")
-        binding_bytes = _read_at(fd, "version.binding.json", 3_205)
+        binding_bytes = _read_at(fd, "version.binding.json", RECOVERY_BINDING_LIMIT)
         if hashlib.sha256(binding_bytes).hexdigest() != EXPECTED_RECOVERY_BINDING_SHA256 or _read_at(fd, "version.binding.sha256", 128) != (EXPECTED_RECOVERY_BINDING_SHA256 + "\n").encode("ascii"):
             raise ProfileError("recovery binding changed")
-        if len(binding_bytes) != 3_205:
+        if not binding_bytes or len(binding_bytes) > RECOVERY_BINDING_LIMIT:
             raise ProfileError("recovery binding changed")
         binding = _json(binding_bytes)
         if not isinstance(binding, dict):
@@ -297,19 +299,36 @@ def _validate_recovery(root: str, source_path: str, source: FileIdentity, snapsh
         source_value, snapshot_value, version_value = binding.get("source"), binding.get("snapshot"), binding.get("version")
         official = binding.get("official_observation")
         limitations = binding.get("limitations")
+        snapshot_matches_binding = False
+        if isinstance(snapshot_value, dict):
+            snapshot_matches_binding = (
+                snapshot_value.get("pre") == dataclasses.asdict(snapshot)
+                and snapshot_value.get("post") == dataclasses.asdict(snapshot)
+            )
+            if CAPTURE_SNAPSHOT_POLICY == "macos-readonly-mount":
+                snapshot_matches_binding = (
+                    snapshot_value.get("pre") == snapshot_value.get("post")
+                    and isinstance(snapshot_value.get("pre"), dict)
+                )
         if (binding.get("claim") != "snapshot-version-only" or not isinstance(source_value, dict) or not isinstance(snapshot_value, dict) or not isinstance(version_value, dict)
                 or source_value.get("pre") != dataclasses.asdict(source) or source_value.get("post") != dataclasses.asdict(source) or source_value.get("sha256") != EXPECTED_SOURCE_SHA256
-                or snapshot_value.get("pre") != dataclasses.asdict(snapshot) or snapshot_value.get("post") != dataclasses.asdict(snapshot) or snapshot_value.get("sha256") != EXPECTED_SOURCE_SHA256
+                or not snapshot_matches_binding or snapshot_value.get("sha256") != EXPECTED_SOURCE_SHA256
                 or version_value.get("logical_argv") != [source_path, "--version"] or version_value.get("expected") != ACTIVE_VERSION or version_value.get("observed") != ACTIVE_VERSION or version_value.get("exit") != 0 or version_value.get("popen_count") != 1
                 or official != {"distribution_sha512": EXPECTED_DISTRIBUTION_SHA512, "distribution_url": EXPECTED_DISTRIBUTION_URL, "release_commit": EXPECTED_RELEASE_COMMIT, "version": ACTIVE_VERSION}
                 or limitations != {"account_read": False, "metadata_advance_authorized": False, "models_called": False, "network_absence_os_enforced": False, "provider_backend_proven": False, "routing_authority": False}
                 or binding.get("inventory") != {"executable_version_bound": False}
                 or _read_at(fd, "version.stdout", 7) != EXPECTED_RECOVERY_STDOUT or _read_at(fd, "version.stderr", 0) != b""):
             raise ProfileError("recovery binding claim changed")
-        if (_read_at(fd, "source.pre.json", 1_024) != _canonical(dataclasses.asdict(source))
+        snapshot_pre = _read_at(fd, "snapshot.pre.json", 1_024)
+        snapshot_post = _read_at(fd, "snapshot.post.json", 1_024)
+        if (snapshot_pre != _canonical(snapshot_value.get("pre"))
+                or snapshot_post != _canonical(snapshot_value.get("post"))
+                or _read_at(fd, "source.pre.json", 1_024) != _canonical(dataclasses.asdict(source))
                 or _read_at(fd, "source.post.json", 1_024) != _canonical(dataclasses.asdict(source))
-                or _read_at(fd, "snapshot.pre.json", 1_024) != _canonical(dataclasses.asdict(snapshot))
-                or _read_at(fd, "snapshot.post.json", 1_024) != _canonical(dataclasses.asdict(snapshot))):
+                or (CAPTURE_SNAPSHOT_POLICY != "macos-readonly-mount" and (
+                    snapshot_pre != _canonical(dataclasses.asdict(snapshot))
+                    or snapshot_post != _canonical(dataclasses.asdict(snapshot))
+                ))):
             raise ProfileError("recovery identity evidence changed")
         summary = _read_at(fd, "version.summary.json", EXPECTED_RECOVERY_SUMMARY_BYTES)
         artifacts = binding.get("artifacts")
@@ -525,15 +544,15 @@ def validate_source_contract(data: bytes) -> dict[str, str]:
         return None
     request_calls = {(symbol(node.func), node.lineno) for node in ast.walk(functions["_from_request"]) if isinstance(node, ast.Call)}
     allowed_request_calls = {
-        ("isinstance", 335), ("set", 335), ("ProfileError", 336), ("_absolute", 337),
-        ("os.path.basename", 338), ("os.path.dirname", 338), ("os.path.basename", 339), ("os.path.dirname", 339),
-        ("os.path.basename", 340), ("os.path.dirname", 340), ("os.path.commonpath", 341), ("_disjoint", 342),
-        ("ProfileError", 343), ("_open_directory", 344), ("os.close", 344),
-        ("_open_directory", 345), ("os.close", 345), ("_open_directory", 346), ("os.close", 346),
-        ("_open_file", 347), ("_open_file", 348), ("_hash", 350), ("_hash", 350),
-        ("ProfileError", 351), ("_validate_recovery", 352), ("FileIdentity.from_stat", 353),
-        ("os.fstat", 353), ("FileIdentity.from_stat", 353), ("os.fstat", 353),
-        ("ProfileError", 354), ("os.close", 356), ("os.close", 356), ("CaptureProfile", 357),
+        ("isinstance", 354), ("set", 354), ("ProfileError", 355), ("_absolute", 356),
+        ("os.path.basename", 357), ("os.path.dirname", 357), ("os.path.basename", 358), ("os.path.dirname", 358),
+        ("os.path.basename", 359), ("os.path.dirname", 359), ("os.path.commonpath", 360), ("_disjoint", 361),
+        ("ProfileError", 362), ("_open_directory", 363), ("os.close", 363),
+        ("_open_directory", 364), ("os.close", 364), ("_open_directory", 365), ("os.close", 365),
+        ("_open_file", 366), ("_open_file", 367), ("_hash", 369), ("_hash", 369),
+        ("ProfileError", 370), ("_validate_recovery", 371), ("FileIdentity.from_stat", 372),
+        ("os.fstat", 372), ("FileIdentity.from_stat", 372), ("os.fstat", 372),
+        ("ProfileError", 373), ("os.close", 375), ("os.close", 375), ("CaptureProfile", 376),
     }
     if request_calls != allowed_request_calls:
         raise ProfileError("profile account authority changed")
@@ -663,7 +682,7 @@ def main(argv: Sequence[str]) -> int:
 
 
 def _bind_version_manifest(version_name: str, manifest_path: Optional[str] = None) -> None:
-    global ACTIVE_VERSION
+    global ACTIVE_VERSION, CAPTURE_SNAPSHOT_POLICY
     global EXPECTED_SOURCE_SHA256, EXPECTED_RECOVERY_BINDING_SHA256
     global EXPECTED_RECOVERY_STDOUT, EXPECTED_RECOVERY_RUNNER_SHA256
     global EXPECTED_RECOVERY_RUNNER_BYTES, EXPECTED_RECOVERY_SUMMARY_BYTES
@@ -687,6 +706,7 @@ def _bind_version_manifest(version_name: str, manifest_path: Optional[str] = Non
     EXPECTED_DISTRIBUTION_URL = values["EXPECTED_DISTRIBUTION_URL"]
     EXPECTED_DISTRIBUTION_SHA512 = values["EXPECTED_DISTRIBUTION_SHA512"]
     OUTPUT_NAME = values["OUTPUT_NAME"]
+    CAPTURE_SNAPSHOT_POLICY = values["CAPTURE_SNAPSHOT_POLICY"]
 
 
 def main_for_version(

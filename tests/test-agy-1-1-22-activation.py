@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused offline tests for the active agy 1.1.22 compatibility binding."""
+"""Focused offline tests for the active agy 1.1.24 compatibility binding."""
 
 from __future__ import annotations
 
@@ -14,24 +14,22 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "skills" / "agy-worker" / "runtime"
 MODULE_PATH = RUNTIME / "scripts" / "compatibility.py"
-SPEC = importlib.util.spec_from_file_location("agy_1_1_22_compatibility", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location("agy_1_1_24_compatibility", MODULE_PATH)
 if SPEC is None or SPEC.loader is None:
     raise SystemExit("cannot load compatibility module")
 compatibility = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(compatibility)
 
-VERSION = "1.1.22"
-REVISION = "556846a4bb94117222f53846896c7eb0d645307e"
-SOURCE_SHA256 = "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906"
-VERSION_BINDING_SHA256 = "d9d830e65d3a5c76df6d9e07e6ea7e14e14f290ab4036bdbae8cb33502e29f2a"
-CAPTURE_SHA256 = "626623c2c7b3b126efc2161c36554ecfa7fad3ce46e9dfcee8419c685ccaf2e3"
-STDOUT_SHA256 = "b75bd15381574af9ff1d9891dee36cc88a811c2abc86ef202c86c6b79077251c"
-RESPONSE_SHA256 = "a7463eafad52e693c6d4890ed329f16aa60b1dfa9b058c051a13c0f0553efec1"
-NORMALIZED_SHA256 = "db2a3529568b1ce4bb112d4cb9a0c31a4f3d1b32bd787728d224894ec6db133c"
-MATRIX_SHA256 = "5a363dee8acb35e91b60405e705e8afaf155989dd755027cc5fa16741e42436c"
-BINDING_SHA256 = "e544ce0c8ac2fb11481b0590720ec3474122ec95238a02d6d3a13db833ed94e5"
-HELP_SHA256 = "c26943c81bf16cf55fb35e6152eda42de30f6e09cd671e29dcbc22bc5517fde6"
-CAPABILITIES_SHA256 = "a08e143034f0cef4bd06b5de372b5e6b4a53e2e13db89ad26b0ea2c790bec293"
+VERSION = "1.1.24"
+REVISION = "bf27ce1134b4ead2f7bfa0a4fb3cb5fcbebcaa5a"
+SOURCE_SHA256 = "4d1138b2dbde56127969fd307281494d4a7dcc22759ce9adb44d36247df86151"
+VERSION_BINDING_SHA256 = "8d67b9e301c7fa117c44d0cc35ecb23602dcd940814e4569a5a4eb5e54dadb74"
+CAPTURE_SHA256 = "03b97e0266acf0f162f06e9da3857f75078dc3e2506d5964d1a09e044ad3403a"
+STDOUT_SHA256 = "d02970e6b6b4e0910461999afca8fb99d757e9094ab2874b557dad18fc75464a"
+RESPONSE_SHA256 = "b1cc011310435afa07b1e132a5b7f3e22297aa21427177461c858bcbd6a58794"
+NORMALIZED_SHA256 = "d5e58ab55e91ebd4a2cd23841c76cbe12b47d607c62cd8c834fc8f6b9f078ad7"
+MATRIX_SHA256 = "e3768004b4685754ba5bfd72e75724a2c78b0b9ed78391b0363b5f3d3ff191f1"
+BINDING_SHA256 = "0173be39149bfceac7dbbafae6335f2e95d60b2e482bcd25a822f0b29d34f7a5"
 OLD_VERSION = "1.1.16"
 OLD_REVISION = "efa16f096dc02fb654b7e86958d268195284d014"
 
@@ -88,7 +86,7 @@ def rejects(mutator: Callable[[dict[str, object]], None], *, digest: str | None 
 def _() -> None:
     assert canonical("agy-verified-version.txt").read_text() == VERSION + "\n"
     assert canonical("agy-upstream-head.txt").read_text() == REVISION + "\n"
-    assert canonical("agy-last-reviewed.txt").read_text() == "2026-08-28\n"
+    assert canonical("agy-last-reviewed.txt").read_text() == "2026-09-03\n"
 
 
 @test("portable active records are byte synchronized")
@@ -109,27 +107,27 @@ def _() -> None:
 
 @test("active review is additive and prior observation remains historical")
 def _() -> None:
-    activation = canonical("reviews/agy-1.1.22-activation.md").read_text()
+    activation = canonical("reviews/agy-1.1.24-activation.md").read_text()
     observation = canonical("reviews/agy-1.1.22.md").read_text()
-    assert "activates the exact agy `1.1.22`" in activation
-    assert "object has `success: true`, `command.name: models`, and a `response` string" in activation
-    assert "`command.data.models` contains the model records" in activation
+    assert "activates the exact agy `1.1.24`" in activation
+    assert "`command.name: models` and a `response` string" in activation
+    assert "`command.data.models` contains" in activation
     assert "does **not** activate 1.1.22" in observation
 
 
-@test("activation binds exact reviewed help evidence")
+@test("activation preserves the sanitized structured-capture boundary")
 def _() -> None:
-    activation = canonical("reviews/agy-1.1.22-activation.md").read_text()
-    assert HELP_SHA256 in activation
-    assert CAPABILITIES_SHA256 in activation
-    assert "`--output-format` is a root" in activation
+    activation = canonical("reviews/agy-1.1.24-activation.md").read_text()
+    assert RESPONSE_SHA256 in activation
+    assert "contains no account identifier" in activation
+    assert "does not claim a `success` field" in activation
 
 
 @test("activation preserves controller retry and closed-binary residual")
 def _() -> None:
-    activation = canonical("reviews/agy-1.1.22-activation.md").read_text()
-    assert "does not automatically relaunch, restart, or begin a fresh provider" in activation
-    assert "retry count and backoff are unknown" in activation
+    activation = canonical("reviews/agy-1.1.24-activation.md").read_text()
+    assert "automatically relaunch, restart, or begin a fresh provider" in activation
+    assert "internal retry behavior remains outside" in activation
 
 
 @test("matrix byte digest is exact")
@@ -277,7 +275,7 @@ def main() -> None:
         else:
             passed += 1
             print(f"  ok   activation: {name}")
-    print(f"AGY_1_1_22_ACTIVATION_TEST_RESULT passed={passed} failed={failed}")
+    print(f"AGY_1_1_24_ACTIVATION_TEST_RESULT passed={passed} failed={failed}")
     raise SystemExit(1 if failed else 0)
 
 

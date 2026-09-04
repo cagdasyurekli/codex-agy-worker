@@ -59,7 +59,7 @@ def make_valid_plan(
     anchor_model_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     if anchor_model_ids is None:
-        anchor_model_ids = ["gemini-3.5-flash-high"]
+        anchor_model_ids = ["gemini-3.8-flash-high"]
     return {
         "schema_version": 1,
         "kind": "agy-model-evidence-campaign-plan",
@@ -160,7 +160,7 @@ def make_valid_record(
         "measured_metadata": ({
             "provenance_type": "local",
             "source_uri": "local://campaign/synthetic",
-            "agy_version": "1.1.22",
+            "agy_version": "1.1.24",
             "effort": "high",
             "accounting": "observed_actual",
             "tokenizer": "cl100k_base",
@@ -367,7 +367,7 @@ def test_plan_validation() -> bool:
 
     # Duplicate anchor_model_ids
     bad_plan = copy.deepcopy(plan)
-    bad_plan["anchor_model_ids"] = ["gemini-3.5-flash-high", "gemini-3.5-flash-high"]
+    bad_plan["anchor_model_ids"] = ["gemini-3.8-flash-high", "gemini-3.8-flash-high"]
     try:
         MODULE.validate_plan(bad_plan)
         return False
@@ -437,7 +437,7 @@ def test_record_privacy_boundaries() -> bool:
     rec = make_valid_record(plan_sha)
     MODULE.validate_record(rec)
 
-    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.5-flash-high")
+    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.8-flash-high")
     MODULE.validate_record(anc_rec)
 
     # Rejection of forbidden prompt/output/code/diff/command/log keys
@@ -483,7 +483,7 @@ def test_measured_evaluation_happy_path() -> bool:
     rec_bytes = MODULE.canonical_bytes(rec)
     rec_sha = hashlib.sha256(rec_bytes).hexdigest()
 
-    anc_rec = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor")
+    anc_rec = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor")
     anc_bytes = MODULE.canonical_bytes(anc_rec)
     anc_sha = hashlib.sha256(anc_bytes).hexdigest()
 
@@ -581,7 +581,7 @@ def test_deterministic_priority_order() -> bool:
     # Missing current artifact bindings
     bound_rec = make_valid_record(plan_sha)
     bound_rec_sha = hashlib.sha256(MODULE.canonical_bytes(bound_rec)).hexdigest()
-    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.5-flash-high")
+    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.8-flash-high")
     anc_rec_sha = hashlib.sha256(MODULE.canonical_bytes(anc_rec)).hexdigest()
     unbound = MODULE.evaluate_campaign(
         plan, plan_sha,
@@ -708,14 +708,14 @@ def test_identity_variations() -> bool:
     # Anchor missing observed model
     rec_ok = make_valid_record(plan_sha)
     rec_ok_sha = hashlib.sha256(MODULE.canonical_bytes(rec_ok)).hexdigest()
-    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.5-flash-high")
+    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.8-flash-high")
     anc_rec["model_identity"]["observed_model"] = None
     anc_sha = hashlib.sha256(MODULE.canonical_bytes(anc_rec)).hexdigest()
     eval_res = evaluate_bound(plan, plan_sha, rec_ok, rec_ok_sha, [(anc_rec, anc_sha)])
     assert eval_res["reason_code"] == "observed-model-missing"
 
     # Anchor substituted
-    anc_rec["model_identity"]["observed_model"] = "gemini-3.5-flash-high"
+    anc_rec["model_identity"]["observed_model"] = "gemini-3.8-flash-high"
     anc_rec["model_identity"]["substituted"] = True
     anc_sha = hashlib.sha256(MODULE.canonical_bytes(anc_rec)).hexdigest()
     eval_res = evaluate_bound(plan, plan_sha, rec_ok, rec_ok_sha, [(anc_rec, anc_sha)])
@@ -744,7 +744,7 @@ def test_drift_rejections() -> bool:
     # Evaluator version drift on anchor
     rec_ok = make_valid_record(plan_sha)
     rec_ok_sha = hashlib.sha256(MODULE.canonical_bytes(rec_ok)).hexdigest()
-    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.5-flash-high")
+    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.8-flash-high")
     anc_rec["evaluator"]["version"] = "2.0.0"
     anc_sha = hashlib.sha256(MODULE.canonical_bytes(anc_rec)).hexdigest()
     eval_res = evaluate_bound(plan, plan_sha, rec_ok, rec_ok_sha, [(anc_rec, anc_sha)])
@@ -797,7 +797,7 @@ def test_telemetry_budget_uncertainty() -> bool:
     # Insufficient coverage on anchor
     rec_ok = make_valid_record(plan_sha)
     rec_ok_sha = hashlib.sha256(MODULE.canonical_bytes(rec_ok)).hexdigest()
-    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.5-flash-high")
+    anc_rec = make_valid_record(plan_sha, role="anchor", model_id="gemini-3.8-flash-high")
     anc_rec["telemetry"]["coverage"] = 0.80
     anc_sha = hashlib.sha256(MODULE.canonical_bytes(anc_rec)).hexdigest()
     eval_res = evaluate_bound(plan, plan_sha, rec_ok, rec_ok_sha, [(anc_rec, anc_sha)])
@@ -846,7 +846,7 @@ def test_materialize_measured_happy_path() -> bool:
     rec_bytes = MODULE.canonical_bytes(rec)
     rec_sha = hashlib.sha256(rec_bytes).hexdigest()
 
-    anc_rec = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor")
+    anc_rec = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor")
     anc_bytes = MODULE.canonical_bytes(anc_rec)
     anc_sha = hashlib.sha256(anc_bytes).hexdigest()
 
@@ -1017,7 +1017,7 @@ def test_aggregate_preview_and_export() -> bool:
     plan_m = make_valid_plan(lane="measured")
     plan_m_sha = hashlib.sha256(MODULE.canonical_bytes(plan_m)).hexdigest()
     rec_m = make_valid_record(plan_m_sha, lane="measured")
-    anc_m = make_valid_record(plan_m_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor")
+    anc_m = make_valid_record(plan_m_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor")
 
     plan_vd = make_valid_plan(lane="vendor_declared")
     plan_vd_sha = hashlib.sha256(MODULE.canonical_bytes(plan_vd)).hexdigest()
@@ -1155,7 +1155,7 @@ def test_advisory_preview_export_and_privacy() -> bool:
     plan_sha = hashlib.sha256(MODULE.canonical_bytes(plan)).hexdigest()
     candidate = make_valid_record(plan_sha, lane="measured")
     anchor = make_valid_record(
-        plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor"
+        plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor"
     )
     candidate_sha = hashlib.sha256(MODULE.canonical_bytes(candidate)).hexdigest()
     anchor_sha = hashlib.sha256(MODULE.canonical_bytes(anchor)).hexdigest()
@@ -1212,7 +1212,7 @@ def test_advisory_preview_export_and_privacy() -> bool:
     vendor_sha = hashlib.sha256(MODULE.canonical_bytes(vendor_plan)).hexdigest()
     vendor_candidate = make_valid_record(vendor_sha, lane="vendor_declared")
     vendor_anchor = make_valid_record(
-        vendor_sha, lane="vendor_declared", model_id="gemini-3.5-flash-high", role="anchor"
+        vendor_sha, lane="vendor_declared", model_id="gemini-3.8-flash-high", role="anchor"
     )
     vendor_candidate_sha = hashlib.sha256(MODULE.canonical_bytes(vendor_candidate)).hexdigest()
     vendor_anchor_sha = hashlib.sha256(MODULE.canonical_bytes(vendor_anchor)).hexdigest()
@@ -1283,7 +1283,7 @@ def test_advisory_recomputes_caller_evaluation() -> bool:
     plan_sha = hashlib.sha256(MODULE.canonical_bytes(plan)).hexdigest()
     candidate = make_valid_record(plan_sha, lane="measured")
     anchor = make_valid_record(
-        plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor"
+        plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor"
     )
     candidate_sha = hashlib.sha256(MODULE.canonical_bytes(candidate)).hexdigest()
     anchor_sha = hashlib.sha256(MODULE.canonical_bytes(anchor)).hexdigest()
@@ -1348,7 +1348,7 @@ def test_advisory_role_ordinal_schema_runtime_parity() -> bool:
     plan_sha = hashlib.sha256(MODULE.canonical_bytes(plan)).hexdigest()
     candidate = make_valid_record(plan_sha, lane="measured")
     anchor = make_valid_record(
-        plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor"
+        plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor"
     )
     candidate_sha = hashlib.sha256(MODULE.canonical_bytes(candidate)).hexdigest()
     anchor_sha = hashlib.sha256(MODULE.canonical_bytes(anchor)).hexdigest()
@@ -1471,7 +1471,7 @@ check("shipped dataset.v1.json remains clean and untouched", test_shipped_datase
 def test_authoritative_artifact_chain() -> bool:
     artifacts = make_authoritative_artifacts()
     plan = bind_authoritative_plan(
-        make_valid_plan(model_id="gemini-3.7-flash-high", anchor_model_ids=["gemini-3.5-flash-high"]), artifacts
+        make_valid_plan(model_id="gemini-3.7-flash-high", anchor_model_ids=["gemini-3.8-flash-high"]), artifacts
     )
     MODULE.validate_campaign_artifacts(
         plan,
@@ -1486,7 +1486,7 @@ def test_authoritative_artifact_chain() -> bool:
         plan_sha, lane="measured", model_id="gemini-3.7-flash-high", role="candidate"
     )
     anc_rec = make_valid_record(
-        plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor"
+        plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor"
     )
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
@@ -1589,7 +1589,7 @@ def test_aggregate_requires_bound_evaluation() -> bool:
     plan_sha = hashlib.sha256(MODULE.canonical_bytes(plan)).hexdigest()
     record = make_valid_record(plan_sha, lane="measured")
     record_sha = hashlib.sha256(MODULE.canonical_bytes(record)).hexdigest()
-    anc_rec = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor")
+    anc_rec = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor")
     anc_sha = hashlib.sha256(MODULE.canonical_bytes(anc_rec)).hexdigest()
     evaluation = evaluate_bound(plan, plan_sha, record, record_sha, [(anc_rec, anc_sha)])
 
@@ -1649,7 +1649,7 @@ def test_materialization_recomputes_lane() -> bool:
     plan_sha = hashlib.sha256(MODULE.canonical_bytes(plan)).hexdigest()
     record = make_valid_record(plan_sha, lane="observational", model_id="gemini-3.7-flash-high")
     record_sha = hashlib.sha256(MODULE.canonical_bytes(record)).hexdigest()
-    anc_rec = make_valid_record(plan_sha, lane="observational", model_id="gemini-3.5-flash-high", role="anchor")
+    anc_rec = make_valid_record(plan_sha, lane="observational", model_id="gemini-3.8-flash-high", role="anchor")
     anc_sha = hashlib.sha256(MODULE.canonical_bytes(anc_rec)).hexdigest()
 
     forged = evaluate_bound(plan, plan_sha, record, record_sha, [(anc_rec, anc_sha)])
@@ -1764,14 +1764,14 @@ check("atomic publication accepts nested real 0700 parents and rejects intermedi
 
 # Test 24: Comprehensive Anchor & Cohort Verification Failures
 def test_anchor_cohort_failure_modes() -> bool:
-    plan = make_valid_plan(lane="measured", anchor_model_ids=["gemini-3.5-flash-high", "gemini-3.1-pro-high"])
+    plan = make_valid_plan(lane="measured", anchor_model_ids=["gemini-3.8-flash-high", "gemini-3.1-pro-high"])
     plan_bytes = MODULE.canonical_bytes(plan)
     plan_sha = hashlib.sha256(plan_bytes).hexdigest()
 
     cand_rec = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.7-flash-high", role="candidate")
     cand_sha = hashlib.sha256(MODULE.canonical_bytes(cand_rec)).hexdigest()
 
-    anc_1 = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor")
+    anc_1 = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor")
     anc_1_sha = hashlib.sha256(MODULE.canonical_bytes(anc_1)).hexdigest()
 
     anc_2 = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.1-pro-high", role="anchor")
@@ -1804,8 +1804,8 @@ def test_anchor_cohort_failure_modes() -> bool:
     assert eval_unexp["facts"]["cohort_complete"] is False
 
     # 4. Anchor with wrong requested model ID (declared anchor missing from cohort)
-    anc_bad_id = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.5-flash-high", role="anchor")
-    anc_bad_id["model_identity"]["requested_model"] = "gemini-3.5-flash-low"
+    anc_bad_id = make_valid_record(plan_sha, lane="measured", model_id="gemini-3.8-flash-high", role="anchor")
+    anc_bad_id["model_identity"]["requested_model"] = "gemini-3.8-flash-low"
     anc_bad_id_sha = hashlib.sha256(MODULE.canonical_bytes(anc_bad_id)).hexdigest()
     eval_bad_id = evaluate_bound(plan, plan_sha, cand_rec, cand_sha, [(anc_bad_id, anc_bad_id_sha), (anc_2, anc_2_sha)])
     assert eval_bad_id["recommendation"] == "no_recommendation"

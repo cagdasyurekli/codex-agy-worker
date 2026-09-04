@@ -87,6 +87,19 @@ Environment filtering is not filesystem, network, `PATH`, `HOME`, or same-user
 process isolation. Candidate code may still read accessible files or use available
 network paths; a green gate never replaces human diff review.
 
+### Boost authority boundary
+
+`--boost` is an explicit advanced raw-dispatch profile, not a performance-only switch.
+The provider may invoke subagents and protected tools. The wrapper therefore binds the
+reviewed warning to the exact job ID, requires `task`/`accept-edits`, one cycle, no
+persona, and slash-command protection, and records the approval in command V8. This
+acknowledgement does not grant a provider permission, expand selected-content or
+whole-worktree scope, or authorize acceptance, Git, or publication. The controller
+requires the first init frame to report `agent=Boost` and
+`permission_mode=request-review`; mismatch is a terminal `boost_contract` failure.
+Boost dispatches have no resume, restart, or continuation path, so a new attempt needs
+a new job ID, a new transmission decision, and a fresh risk acknowledgement.
+
 ## Model and interface compatibility
 
 Model and effort selection are caller-owned. Recommendations are advisory and cannot
@@ -104,6 +117,15 @@ acceptance alone is not semantic approval or a provider-availability claim.
 Run the repository `ground-truth.sh` and inspect `agy --help` before changing
 agy-facing flags or public claims. agy may exit zero while ordinary output is empty;
 the structured result is `result.structured_output`, never the echoed schema.
+
+For an exact version policy, manifest-bound model-inventory capture can require the
+disposable snapshot to execute from a macOS kernel-reported read-only mount (for example,
+an owner-prepared UDRO image). It binds the snapshot digest and descriptor/path evidence,
+checks the mount's read-only flag before and after the sole child, and fails closed on
+drift. This blocks the observed in-place self-update route; it does not prove that a
+self-updater cannot execute a different writable binary, nor establish resistance to the
+local owner, same-UID processes, or an OS administrator. The installed `agy` binary and
+user configuration are never modified.
 
 ## Supported distribution
 

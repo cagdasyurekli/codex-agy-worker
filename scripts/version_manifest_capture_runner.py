@@ -29,6 +29,7 @@ RUNTIME_MAJOR = 3
 RUNTIME_MINOR = 9
 ACTIVE_VERSION = "1.1.22"
 PROFILE_LIMIT = 16_384
+RECOVERY_BINDING_LIMIT = 16_384
 STREAM_LIMIT = 64 * 1024
 WALL_SECONDS = 25.0
 EXPECTED_SOURCE_SHA256 = "7b1317779085913d338bde0e9b39b72323d9083a879525f944fd469c8ecca906"
@@ -42,6 +43,8 @@ EXPECTED_DISTRIBUTION_URL = "https://storage.googleapis.com/antigravity-public/a
 EXPECTED_DISTRIBUTION_SHA512 = "a8121185bd1c3455410ad41e88e2030ea237d496b8e40ccde313bf611c0551840fddf450b45c8e1a2575d9863c990b3324f19eef0f479936df8bfc6e4e80d30b"
 OUTPUT_PROFILE_NAME = "models.capture.1.1.22.profile.json"
 RUNNER_ARTIFACT_NAME = "models_capture_1_1_22_runner.py"
+CAPTURE_SNAPSHOT_POLICY = "stable"
+EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256: Optional[str] = None
 SCRATCH_NAMES = ("cwd", "tmp", "xdg-cache", "xdg-config", "xdg-state")
 TMP_CACHE_LEAF = "unleash-repo-schema-v1-codeium-language-server.json"
 TMP_CACHE_LIMIT = 1024 * 1024
@@ -54,7 +57,7 @@ LIFECYCLE_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-MODULE_AST_SHA256 = "e5d1d0805c53e71f3f92ccbd188da3fa3b30edf76129d9b2b003068910b9f0ef"
+MODULE_AST_SHA256 = "9d4a40297e2763f2e16fb7bbda72f000dad4004f1b5e2b1cb078fee31acd10b6"
 ACTIVE_MARKER_ROOT: Optional[str] = None
 ACTIVE_MARKER_ROOT_IDENTITY: Optional[tuple[int, int]] = None
 ACTIVE_MARKER_DIGEST: Optional[str] = None
@@ -227,6 +230,34 @@ def _hash(fd: int, size: int, signals: Optional[Signals] = None) -> str:
     return digest.hexdigest()
 
 
+def _same_except_ctime(observed: FileIdentity, expected: FileIdentity) -> bool:
+    return dataclasses.replace(observed, ctime_ns=expected.ctime_ns) == expected
+
+
+def _verify_readonly_snapshot(profile: Profile, snapshot_fd: int, signals: Optional[Signals]) -> FileIdentity:
+    """Require a kernel-reported read-only mount for a self-updating capture CLI."""
+    if (CAPTURE_SNAPSHOT_POLICY != "macos-readonly-mount" or sys.platform != "darwin"
+            or not hasattr(os, "ST_RDONLY") or not hasattr(os, "fstatvfs")):
+        raise CaptureError("read-only snapshot protection is unavailable")
+    held_raw = os.fstat(snapshot_fd); held = FileIdentity.from_stat(held_raw)
+    named_raw = os.stat(profile.snapshot_path, follow_symlinks=False)
+    try:
+        flags = os.fstatvfs(snapshot_fd).f_flag
+    except OSError as exc:
+        raise CaptureError("read-only snapshot protection is unavailable") from exc
+    if (held != profile.snapshot_identity or FileIdentity.from_stat(named_raw) != held
+            or type(flags) is not int or not flags & os.ST_RDONLY
+            or _hash(snapshot_fd, held.size, signals) != EXPECTED_SOURCE_SHA256):
+        raise CaptureError("read-only snapshot changed")
+    return held
+
+
+def _protect_snapshot(profile: Profile, snapshot_fd: int, signals: Signals) -> tuple[FileIdentity, int, bool]:
+    if CAPTURE_SNAPSHOT_POLICY == "stable":
+        return profile.snapshot_identity, 0, False
+    return _verify_readonly_snapshot(profile, snapshot_fd, signals), 0, False
+
+
 def _read_at(parent: int, name: str, limit: int) -> bytes:
     fd = os.open(name, os.O_RDONLY | CLOEXEC | NOFOLLOW, dir_fd=parent)
     try:
@@ -250,27 +281,44 @@ def _validate_recovery(profile: Profile) -> None:
             finally: os.close(scratch)
         runner = _read_at(fd, "runner.py", EXPECTED_RECOVERY_RUNNER_BYTES + 1)
         if len(runner) != EXPECTED_RECOVERY_RUNNER_BYTES or hashlib.sha256(runner).hexdigest() != EXPECTED_RECOVERY_RUNNER_SHA256 or _read_at(fd, "runner.py.sha256", 128) != (EXPECTED_RECOVERY_RUNNER_SHA256 + "\n").encode("ascii"): raise CaptureError("recovery runner changed")
-        binding = _read_at(fd, "version.binding.json", 3_205)
+        binding = _read_at(fd, "version.binding.json", RECOVERY_BINDING_LIMIT)
         if (profile.version_binding_sha256 != EXPECTED_RECOVERY_BINDING_SHA256 or hashlib.sha256(binding).hexdigest() != EXPECTED_RECOVERY_BINDING_SHA256 or _read_at(fd, "version.binding.sha256", 128) != (EXPECTED_RECOVERY_BINDING_SHA256 + "\n").encode("ascii")): raise CaptureError("recovery binding changed")
-        if len(binding) != 3_205: raise CaptureError("recovery binding changed")
+        if not binding or len(binding) > RECOVERY_BINDING_LIMIT: raise CaptureError("recovery binding changed")
         value = _json(binding)
         if not isinstance(value, dict): raise CaptureError("recovery binding invalid")
         source, snapshot, version = value.get("source"), value.get("snapshot"), value.get("version")
         official = value.get("official_observation")
         limitations = value.get("limitations")
+        snapshot_matches_binding = False
+        if isinstance(snapshot, dict):
+            snapshot_matches_binding = (
+                snapshot.get("pre") == dataclasses.asdict(profile.snapshot_identity)
+                and snapshot.get("post") == dataclasses.asdict(profile.snapshot_identity)
+            )
+            if CAPTURE_SNAPSHOT_POLICY == "macos-readonly-mount":
+                snapshot_matches_binding = (
+                    snapshot.get("pre") == snapshot.get("post")
+                    and isinstance(snapshot.get("pre"), dict)
+                )
         if (value.get("claim") != "snapshot-version-only" or not isinstance(source, dict) or not isinstance(snapshot, dict) or not isinstance(version, dict)
                 or source.get("pre") != dataclasses.asdict(profile.source_identity) or source.get("post") != dataclasses.asdict(profile.source_identity) or source.get("sha256") != EXPECTED_SOURCE_SHA256
-                or snapshot.get("pre") != dataclasses.asdict(profile.snapshot_identity) or snapshot.get("post") != dataclasses.asdict(profile.snapshot_identity) or snapshot.get("sha256") != EXPECTED_SOURCE_SHA256
+                or not snapshot_matches_binding or snapshot.get("sha256") != EXPECTED_SOURCE_SHA256
                 or version.get("logical_argv") != [profile.source_path, "--version"] or version.get("expected") != ACTIVE_VERSION or version.get("observed") != ACTIVE_VERSION or version.get("exit") != 0 or version.get("popen_count") != 1
                 or official != {"distribution_sha512": EXPECTED_DISTRIBUTION_SHA512, "distribution_url": EXPECTED_DISTRIBUTION_URL, "release_commit": EXPECTED_RELEASE_COMMIT, "version": ACTIVE_VERSION}
                 or limitations != {"account_read": False, "metadata_advance_authorized": False, "models_called": False, "network_absence_os_enforced": False, "provider_backend_proven": False, "routing_authority": False}
                 or value.get("inventory") != {"executable_version_bound": False}
                 or _read_at(fd, "version.stdout", 7) != EXPECTED_RECOVERY_STDOUT or _read_at(fd, "version.stderr", 0) != b""):
             raise CaptureError("recovery binding claim changed")
+        snapshot_pre = _read_at(fd, "snapshot.pre.json", 1_024)
+        snapshot_post = _read_at(fd, "snapshot.post.json", 1_024)
         if (_read_at(fd, "source.pre.json", 1_024) != _canonical(dataclasses.asdict(profile.source_identity))
                 or _read_at(fd, "source.post.json", 1_024) != _canonical(dataclasses.asdict(profile.source_identity))
-                or _read_at(fd, "snapshot.pre.json", 1_024) != _canonical(dataclasses.asdict(profile.snapshot_identity))
-                or _read_at(fd, "snapshot.post.json", 1_024) != _canonical(dataclasses.asdict(profile.snapshot_identity))):
+                or snapshot_pre != _canonical(snapshot.get("pre"))
+                or snapshot_post != _canonical(snapshot.get("post"))
+                or (CAPTURE_SNAPSHOT_POLICY != "macos-readonly-mount" and (
+                    snapshot_pre != _canonical(dataclasses.asdict(profile.snapshot_identity))
+                    or snapshot_post != _canonical(dataclasses.asdict(profile.snapshot_identity))
+                ))):
             raise CaptureError("recovery identity evidence changed")
         summary = _read_at(fd, "version.summary.json", EXPECTED_RECOVERY_SUMMARY_BYTES)
         summary_value = _json(summary)
@@ -316,7 +364,7 @@ def _validate_profile(profile: Profile, signals: Signals) -> tuple[int, int, int
     return source_fd, snapshot_fd, account_fd, capture_fd
 
 
-def _revalidate_authority(profile: Profile, source_fd: int, snapshot_fd: int, account_fd: int, capture_fd: int, signals: Signals) -> None:
+def _revalidate_authority(profile: Profile, source_fd: int, snapshot_fd: int, account_fd: int, capture_fd: int, signals: Signals, snapshot_expected: Optional[FileIdentity] = None) -> None:
     account = DirectoryIdentity.from_stat(os.fstat(account_fd)); capture = DirectoryIdentity.from_stat(os.fstat(capture_fd))
     source = FileIdentity.from_stat(os.fstat(source_fd)); snapshot = FileIdentity.from_stat(os.fstat(snapshot_fd))
     account_path_fd, account_path = _open_dir(profile.account_home, True); capture_path_fd, capture_path = _open_dir(profile.capture_parent, True)
@@ -324,7 +372,7 @@ def _revalidate_authority(profile: Profile, source_fd: int, snapshot_fd: int, ac
     try:
         if (account.dev != profile.account_home_identity.dev or account.ino != profile.account_home_identity.ino or account.uid != profile.account_home_identity.uid or account.gid != profile.account_home_identity.gid or account.mode != profile.account_home_identity.mode
             or account_path.dev != account.dev or account_path.ino != account.ino or account_path.uid != account.uid or account_path.gid != account.gid or account_path.mode != account.mode
-            or source != profile.source_identity or snapshot != profile.snapshot_identity or source_path != source or snapshot_path != snapshot
+            or source != profile.source_identity or snapshot != (snapshot_expected or profile.snapshot_identity) or source_path != source or snapshot_path != snapshot
             or not _same_capture_parent(capture, profile.capture_parent_identity)
             or not _same_capture_parent(capture_path, capture)
             or _hash(source_fd, source.size, signals) != EXPECTED_SOURCE_SHA256 or _hash(snapshot_fd, snapshot.size, signals) != EXPECTED_SOURCE_SHA256):
@@ -339,7 +387,7 @@ def _new_root(parent: str, parent_fd: int, expected_parent: DirectoryIdentity) -
     if not _same_capture_parent(DirectoryIdentity.from_stat(os.fstat(parent_fd)), expected_parent):
         raise CaptureError("capture parent changed")
     for _ in range(32):
-        name = "agy-models-capture-1-1-22." + os.urandom(12).hex()
+        name = "agy-models-capture-" + ACTIVE_VERSION.replace(".", "-") + "." + os.urandom(12).hex()
         try:
             os.mkdir(name, 0o700, dir_fd=parent_fd)
             fd = os.open(name, os.O_RDONLY | DIRECTORY | CLOEXEC | NOFOLLOW, dir_fd=parent_fd)
@@ -570,7 +618,7 @@ def _start_capture(profile: Profile, root_path: str) -> tuple[subprocess.Popen[b
     previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, LIFECYCLE_SIGNALS)
     try:
         environment = {"HOME": profile.account_home, "TMPDIR": os.path.join(root_path, "tmp"), "XDG_CACHE_HOME": os.path.join(root_path, "xdg-cache"), "XDG_CONFIG_HOME": os.path.join(root_path, "xdg-config"), "XDG_STATE_HOME": os.path.join(root_path, "xdg-state"), "PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TERM": "dumb", "NO_COLOR": "1"}
-        process = subprocess.Popen([profile.source_path, "--output-format", "json", "models"], executable=profile.snapshot_path, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=os.path.join(root_path, "cwd"), env=environment, start_new_session=True, close_fds=True, umask=0o077)
+        process = subprocess.Popen([profile.snapshot_path, "--output-format", "json", "models"], executable=profile.snapshot_path, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=os.path.join(root_path, "cwd"), env=environment, start_new_session=True, close_fds=True, umask=0o077)
         try:
             pgid = os.getpgid(process.pid)
         except ProcessLookupError:
@@ -694,7 +742,7 @@ def _verify_final_root(root_path: str, root_name: str, root_fd: int, root_identi
 def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner_source: bytes) -> dict[str, object]:
     global ACTIVE_MARKER_ROOT, ACTIVE_MARKER_ROOT_IDENTITY, ACTIVE_MARKER_DIGEST, ACTIVE_MARKER_IDENTITY
     source_fd, snapshot_fd, account_fd, capture_fd = _validate_profile(profile, signals)
-    root_path = root_name = None; root_fd = None; root_identity = None; process = None; record_sha: Optional[str] = None; marker_identity: Optional[FileIdentity] = None; completed = False; ledger: dict[str, tuple[str, FileIdentity]] = {}; scratch_ledger: dict[str, FileIdentity] = {}
+    root_path = root_name = None; root_fd = None; root_identity = None; process = None; record_sha: Optional[str] = None; marker_identity: Optional[FileIdentity] = None; completed = False; snapshot_post = profile.snapshot_identity; ledger: dict[str, tuple[str, FileIdentity]] = {}; scratch_ledger: dict[str, FileIdentity] = {}
     try:
         root_path, root_name, root_fd, root_identity = _new_root(profile.capture_parent, capture_fd, profile.capture_parent_identity)
         for name in SCRATCH_NAMES:
@@ -702,6 +750,7 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
             scratch_ledger[name] = FileIdentity.from_stat(os.stat(name, dir_fd=root_fd, follow_symlinks=False))
         _empty_scratch(root_fd)
         _verify_pre_child_root(root_path, root_name, root_fd, root_identity, profile, capture_fd)
+        _protect_snapshot(profile, snapshot_fd, signals)
         process, reserved_pgid = _start_capture(profile, root_path)
         closed = False
         try:
@@ -713,8 +762,10 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
                 try: _close_group(process, reserved_pgid)
                 except BaseException: pass
             raise
+        if CAPTURE_SNAPSHOT_POLICY == "macos-readonly-mount":
+            snapshot_post = _verify_readonly_snapshot(profile, snapshot_fd, signals)
         if rc != 0:
-            _revalidate_authority(profile, source_fd, snapshot_fd, account_fd, capture_fd, signals)
+            _revalidate_authority(profile, source_fd, snapshot_fd, account_fd, capture_fd, signals, snapshot_post)
             _empty_scratch(root_fd, allow_tmp_cache=True)
             scratch_ledger["tmp"] = FileIdentity.from_stat(os.stat("tmp", dir_fd=root_fd, follow_symlinks=False))
             runner_sha = hashlib.sha256(runner_source).hexdigest()
@@ -730,6 +781,7 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
                 "input_profile_sha256": hashlib.sha256(profile_bytes).hexdigest(),
                 "limitations": {"accepted_inventory": False, "failure_classified": False, "inventory_interpreted": False, "metadata_advance_authorized": False, "metadata_updated": False, "provider_backend_proven": False, "routing_authority": False, "routing_authorized": False},
                 "observation": {"exit": rc, "popen_count": 1},
+                "snapshot_policy": CAPTURE_SNAPSHOT_POLICY,
                 "runner_sha256": runner_sha,
                 "source_sha256": EXPECTED_SOURCE_SHA256,
                 "status": "child-failed",
@@ -738,7 +790,7 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
             _write(root_fd, "models.capture.failure.json", _canonical(failure_record), ledger=ledger)
             _verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger, failure=True)
             raise CaptureError("capture child failed")
-        _revalidate_authority(profile, source_fd, snapshot_fd, account_fd, capture_fd, signals)
+        _revalidate_authority(profile, source_fd, snapshot_fd, account_fd, capture_fd, signals, snapshot_post)
         _empty_scratch(root_fd, allow_tmp_cache=True)
         scratch_ledger["tmp"] = FileIdentity.from_stat(os.stat("tmp", dir_fd=root_fd, follow_symlinks=False))
         account_post = DirectoryIdentity.from_stat(os.fstat(account_fd))
@@ -754,11 +806,14 @@ def run_capture(profile: Profile, profile_bytes: bytes, signals: Signals, runner
         _write(root_fd, RUNNER_ARTIFACT_NAME + ".sha256", (hashlib.sha256(runner_source).hexdigest() + "\n").encode("ascii"), ledger=ledger)
         _write(root_fd, OUTPUT_PROFILE_NAME, profile_bytes, ledger=ledger)
         stdout_sha, stderr_sha = _write(root_fd, "models.stdout", stdout, ledger=ledger), _write(root_fd, "models.stderr", stderr, ledger=ledger)
-        summary = {"artifacts": {"models.stderr": stderr_sha, "models.stdout": stdout_sha}, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": {"accepted_inventory": False, "account_home_may_mutate": True, "inventory_interpreted": False, "metadata_advance_authorized": False, "metadata_updated": False, "provider_backend_proven": False, "routing_authority": False, "routing_authorized": False}, "observation": {"argv": [profile.source_path, "--output-format", "json", "models"], "exit": rc, "popen_count": 1}, "snapshot_sha256": EXPECTED_SOURCE_SHA256, "source_sha256": EXPECTED_SOURCE_SHA256, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
+        summary = {"artifacts": {"models.stderr": stderr_sha, "models.stdout": stdout_sha}, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": {"accepted_inventory": False, "account_home_may_mutate": True, "inventory_interpreted": False, "metadata_advance_authorized": False, "metadata_updated": False, "provider_backend_proven": False, "routing_authority": False, "routing_authorized": False}, "observation": {"argv": [profile.snapshot_path, "--output-format", "json", "models"], "exit": rc, "popen_count": 1}, "snapshot_sha256": EXPECTED_SOURCE_SHA256, "source_sha256": EXPECTED_SOURCE_SHA256, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
         summary_sha = _write(root_fd, "models.capture.summary.json", _canonical(summary), ledger=ledger)
         runner_sha = hashlib.sha256(runner_source).hexdigest()
         artifacts = {OUTPUT_PROFILE_NAME: profile_sha, "models.capture.summary.json": summary_sha, "models.stderr": stderr_sha, "models.stdout": stdout_sha, RUNNER_ARTIFACT_NAME: runner_sha, RUNNER_ARTIFACT_NAME + ".sha256": hashlib.sha256((runner_sha + "\n").encode("ascii")).hexdigest()}
-        record = {"account": {"post": dataclasses.asdict(account_post), "pre": dataclasses.asdict(profile.account_home_identity)}, "artifacts": artifacts, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": summary["limitations"], "observation": {"argv": [profile.source_path, "--output-format", "json", "models"], "executable_sha256": EXPECTED_SOURCE_SHA256, "exit": rc, "popen_count": 1}, "runner_sha256": hashlib.sha256(runner_source).hexdigest(), "scratch": scratch, "snapshot": {"post": dataclasses.asdict(snapshot_post), "pre": dataclasses.asdict(profile.snapshot_identity), "sha256": EXPECTED_SOURCE_SHA256}, "source": {"post": dataclasses.asdict(source_post), "pre": dataclasses.asdict(profile.source_identity), "sha256": EXPECTED_SOURCE_SHA256}, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
+        snapshot_record = {"post": dataclasses.asdict(snapshot_post), "pre": dataclasses.asdict(profile.snapshot_identity), "sha256": EXPECTED_SOURCE_SHA256}
+        if CAPTURE_SNAPSHOT_POLICY != "stable":
+            snapshot_record.update({"policy": CAPTURE_SNAPSHOT_POLICY, "mount_readonly": True})
+        record = {"account": {"post": dataclasses.asdict(account_post), "pre": dataclasses.asdict(profile.account_home_identity)}, "artifacts": artifacts, "bounds": {"stream_bytes": STREAM_LIMIT, "wall_seconds": WALL_SECONDS}, "claim": "models-capture", "input_profile_sha256": profile_sha, "limitations": summary["limitations"], "observation": {"argv": [profile.snapshot_path, "--output-format", "json", "models"], "executable_sha256": EXPECTED_SOURCE_SHA256, "exit": rc, "popen_count": 1}, "runner_sha256": hashlib.sha256(runner_source).hexdigest(), "scratch": scratch, "snapshot": snapshot_record, "source": {"post": dataclasses.asdict(source_post), "pre": dataclasses.asdict(profile.source_identity), "sha256": EXPECTED_SOURCE_SHA256}, "status": "captured", "version_binding_sha256": profile.version_binding_sha256}
         record_sha = _write(root_fd, "models.capture.json", _canonical(record), ledger=ledger)
         _verify_final_root(root_path, root_name, root_fd, root_identity, profile, capture_fd, ledger, scratch_ledger)
         marker_identity = _marker(root_fd, record_sha, signals, ledger)
@@ -789,7 +844,7 @@ def validate_source_contract(data: bytes) -> dict[str, str]:
     if len(popens) != 1: raise CaptureError("runner must own exactly one Popen")
     if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"system", "popen", "run", "call", "check_call", "check_output"} for node in ast.walk(tree)): raise CaptureError("runner source gained execution authority")
     popen_text = ast.get_source_segment(data.decode("utf-8", "strict"), popens[0]) or ""
-    for required in ("[profile.source_path, \"--output-format\", \"json\", \"models\"]", "executable=profile.snapshot_path", "env=environment", "cwd=os.path.join(root_path, \"cwd\")", "start_new_session=True", "close_fds=True", "umask=0o077"):
+    for required in ("[profile.snapshot_path, \"--output-format\", \"json\", \"models\"]", "executable=profile.snapshot_path", "env=environment", "cwd=os.path.join(root_path, \"cwd\")", "start_new_session=True", "close_fds=True", "umask=0o077"):
         if required not in popen_text: raise CaptureError("runner Popen contract changed")
     source = data.decode("utf-8", "strict")
     for required in ("_close_group(process, reserved_pgid)", "_marker(root_fd, record_sha, signals)", "_consume_optional_tmp_cache", "TMP_CACHE_LEAF", "allow_tmp_cache=True", "\"inventory_interpreted\": False", "\"metadata_advance_authorized\": False", "\"routing_authority\": False", "\"routing_authorized\": False", "\"metadata_updated\": False", "_finish_success(state, result)"):
@@ -878,6 +933,10 @@ def main(argv: Sequence[str]) -> int:
     state = _acquire()
     try:
         held = _held_source()
+        if (CAPTURE_SNAPSHOT_POLICY != "stable"
+                and (EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256 is None
+                     or hashlib.sha256(held).hexdigest() != EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256)):
+            raise CaptureError("capture runner source changed")
         raw = _read_stdin(128 * 1024 if argv[0] == "--validate-source-contract" else PROFILE_LIMIT, state.signals)
         result = validate_source_contract(raw) if argv[0] == "--validate-source-contract" else run_capture(Profile.from_bytes(raw), raw, state.signals, held)
         _finish_success(state, result)
@@ -886,7 +945,7 @@ def main(argv: Sequence[str]) -> int:
 
 
 def _bind_version_manifest(version_name: str, manifest_path: Optional[str] = None) -> None:
-    global ACTIVE_VERSION, RUNNER_ARTIFACT_NAME
+    global ACTIVE_VERSION, RUNNER_ARTIFACT_NAME, CAPTURE_SNAPSHOT_POLICY, EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256
     global EXPECTED_SOURCE_SHA256, EXPECTED_RECOVERY_BINDING_SHA256
     global EXPECTED_RECOVERY_STDOUT, EXPECTED_RECOVERY_RUNNER_SHA256
     global EXPECTED_RECOVERY_RUNNER_BYTES, EXPECTED_RECOVERY_SUMMARY_BYTES
@@ -911,6 +970,8 @@ def _bind_version_manifest(version_name: str, manifest_path: Optional[str] = Non
     EXPECTED_DISTRIBUTION_URL = values["EXPECTED_DISTRIBUTION_URL"]
     EXPECTED_DISTRIBUTION_SHA512 = values["EXPECTED_DISTRIBUTION_SHA512"]
     OUTPUT_PROFILE_NAME = values["OUTPUT_PROFILE_NAME"]
+    CAPTURE_SNAPSHOT_POLICY = values["CAPTURE_SNAPSHOT_POLICY"]
+    EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256 = values.get("EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256")
 
 
 def main_for_version(

@@ -100,11 +100,11 @@ Every roadmap slice must preserve all of these rules:
 
 ## Current agy inventory correction
 
-The accepted agy `1.1.22` reconciliation combines documented `--effort` and
+The accepted agy `1.1.24` reconciliation combines documented `--effort` and
 machine-readable `models` surfaces with one separately authorized, version-bound JSON
 model capture. The exact unchanged 14-slug list, its SHA-256, reviewed release
 revision, inventory binding, and bounded behavior limits live in
-[`../compat/reviews/agy-1.1.22-activation.md`](../compat/reviews/agy-1.1.22-activation.md).
+[`../compat/reviews/agy-1.1.24-activation.md`](../compat/reviews/agy-1.1.24-activation.md).
 The earlier [`1.1.22` observation](../compat/reviews/agy-1.1.22.md) remains a
 non-activating historical failed-capture record, and the
 [`1.1.12` reconciliation](../compat/reviews/agy-1.1.12.md) remains historical evidence.
@@ -112,7 +112,7 @@ Agent and plugin
 catalogs were not part of that bounded review and remain outside this contract.
 
 This advances the binding without turning advertised flags or historical failure
-behavior into broader agy `1.1.22` promises:
+behavior into broader agy `1.1.24` promises:
 
 - Do not expose `--effort` before G0 reconciles official releases/source/docs with a
   sandbox-correct inventory and bounded behavior tests. G1 may then expose the same
@@ -123,7 +123,7 @@ behavior into broader agy `1.1.22` promises:
   documented commands and validate their expected semantic output; neither an unknown
   subcommand's exit code nor generic usage text is compatibility evidence.
 - Do not assume agy's separate `--model` and `--effort` flags compose safely.
-  The current bounded `1.1.22` JSON inventory advertises the compound slugs.
+  The current bounded `1.1.24` JSON inventory advertises the compound slugs.
   The official release and documentation were human-reconciled, but
   this repository has not yet completed evidence that establishes dual-selector
   composition or precedence. G1 therefore resolves a verified base/effort pair to
@@ -137,15 +137,33 @@ behavior into broader agy `1.1.22` promises:
 Each slice below is independently reviewable. A later slice must not be smuggled into
 an earlier implementation because it shares a schema or helper.
 
+### v0.16.0 agy 1.1.24 and bounded Boost compatibility
+
+**Status:** Local candidate; not published. One explicitly approved scoped live check
+completed against a sealed agy `1.1.24` executable with exact
+`gemini-3.8-flash-low` selection. The provider reported `Boost` with
+`request-review`, used only file tools under the staged root, changed only the
+approved file, and completed one cycle; Codex independently verified and finalized
+that candidate. This bounded check does not establish broader model quality,
+provider isolation, or general Boost behavior.
+
+This candidate activates the independently reconciled agy `1.1.24` fourteen-model
+inventory, including Gemini 3.8 Flash low, medium, and high compound slugs. It also
+adds a one-cycle `task`-only Boost profile with a job-bound risk acknowledgement,
+selected-content provider scope, provider-observed identity checks, and no
+resume/restart/continue path. Provider execution, Git actions, publication, and
+marketplace updates remain separate authority gates.
+
 ### v0.15.0 product simplification
 
-**Status:** Local candidate; not published.
+**Status:** Published. Publication is established by the annotated `v0.15.0` tag at
+`0878bd6019d31bf2659e7c95da560c3b9adf6ac9` and GitHub Release readback.
 
-This candidate retires the unused workload-profile and persona-evidence registries
+This release retires the unused workload-profile and persona-evidence registries
 after their announced window. The direct `--persona` templates and their mode
 restrictions remain. Current controller state remains current-only; V1–V10 records
 stay readable and retain their existing approval-gated recovery/migration behavior.
-This local candidate makes no publication, marketplace, or SkillStore claim.
+The release made no marketplace or SkillStore assessment claim.
 
 ### v0.14.1 direct-dispatch transmission parity
 
@@ -176,7 +194,7 @@ and selected-content transmission digest. Scoped facade dispatch delegates to th
 existing canonical staging boundary without the conflicting whole-worktree `--add-dir`
 grant. Stale digests and conflicting modes fail before provider launch.
 
-The old `--approve-preview-sha` spelling remains available through at least v0.15.x
+The old `--approve-preview-sha` spelling remains available through at least v0.16.x
 only behind an explicit migration acknowledgement and warning. The release does not
 expand Claude or Claude Code support, turn selected-content staging into a sandbox, or
 grant provider execution, Git, acceptance, or publication authority.
@@ -287,10 +305,11 @@ exact fixed GitHub REST paths with no ambient proxy or redirect path, and a boun
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
 ambient-Git transport path and is not claimed hardened by this slice. The later agy
-`1.1.22` reconciliation is the exact active version/release/inventory/matrix binding.
-Its first authorized JSON capture remains historical failed evidence; the later
-accepted single-call capture and separate human reconciliation advanced the unchanged
-fourteen-slug inventory. P2-B/P2-C remain deferred. Ordinary agy-owned default
+`1.1.24` reconciliation is the exact active version/release/inventory/matrix binding.
+The first authorized 1.1.22 JSON capture remains historical failed evidence; its later
+accepted capture established the prior baseline, and the separately accepted 1.1.24
+capture advanced the fourteen-slug inventory from Gemini 3.5 Flash to Gemini 3.8 Flash.
+P2-B/P2-C remain deferred. Ordinary agy-owned default
 dispatch and explicitly approved literal pass-through remain operational during
 future version drift; reviewed model/effort resolution stays fail-closed.
 
@@ -335,7 +354,9 @@ agy 1.1.16 interface observation remains a historical non-activating record; the
 exact capture, inventory binding, and human reconciliation activated the historical
 1.1.16 baseline and unchanged 14-slug matrix. The first 1.1.22 failed capture remains
 non-activating historical evidence; a later accepted single-call capture and separate
-human reconciliation now activate the 1.1.22 baseline with the same mappings. Codex
+human reconciliation activated that historical baseline. The accepted 1.1.24 capture
+and reconciliation now supply the active version, release, inventory, and matrix
+binding. Codex
 0.150.1 is an observational baseline
 with no agy authority. For Issue #59, only the exact
 reviewed agy 1.1.13
@@ -596,9 +617,9 @@ provenance, code-signing verification, or OS attestation.
   version/archive URL/SHA-512 tuple, and never requests the archive. Its checked-in
   tuple is an observational same-version change detector, not a verified release,
   source revision, signature, or baseline. Official release, source, documentation,
-  and distribution evidence expose `1.1.22`. They are non-activating review inputs;
-  the later accepted capture and separate human reconciliation, not the canary or
-  failed first capture, advanced the 1.1.22 baseline and G1 matrix.
+  and distribution evidence are non-activating review inputs; the separately accepted
+  1.1.24 capture and human reconciliation, not the canary, advanced the active baseline
+  and G1 matrix.
 - **Baseline advancement:** A maintainer may advance either verified baseline only
   after reconciling official docs, release notes, and available release evidence;
   regenerating the local
@@ -606,8 +627,8 @@ provenance, code-signing verification, or OS attestation.
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. agy `1.1.22` is active because its
-  later capture and strict inventory were separately reconciled. Any later version
+  The watch never performs this reconciliation. agy `1.1.24` is active because its
+  capture and strict inventory were separately reconciled. Any later version
   or release movement returns the result to
   drift-review until another reconciliation is accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
@@ -615,8 +636,8 @@ provenance, code-signing verification, or OS attestation.
   bounded CLI behavior—not from a provider API table or a model-name guess. The
   matrix records its agy version and release revision. Any agy version/release drift
   makes it stale and keeps effort resolution disabled until human reconciliation.
-  The verified `1.1.22` inventory exposes compound slugs: Gemini 3.7 Flash, Gemini 3.6
-  Flash, and Gemini 3.5 Flash have low/medium/high. Gemini 3.7 `minimal` is outside the
+  The verified `1.1.24` inventory exposes compound slugs: Gemini 3.8 Flash, Gemini 3.7
+  Flash, and Gemini 3.6 Flash have low/medium/high. Gemini 3.7 `minimal` is outside the
   reviewed inventory. Official Gemini 3.1 Pro supports medium effort, but the accepted
   account inventory has no reviewed `gemini-3.1-pro-medium` compound slug, so the
   wrapper's single-compound-slug route does not expose that pair.
@@ -656,7 +677,7 @@ provenance, code-signing verification, or OS attestation.
 - **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
   versus verified differences and stale review dates are reported separately and
   return `3`; unavailable network returns `2` with an inconclusive label; absent
-  absent future-version evidence retains `1.1.22` and AMBER; version-bound resolution
+  future-version evidence retains `1.1.24` and AMBER; version-bound resolution
   fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,

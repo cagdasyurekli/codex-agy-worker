@@ -45,6 +45,28 @@
             "if": {
               "properties": {
                 "support_tier": {
+                  "const": "legacy"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "allowed_operations": {
+                  "const": [
+                    "capture",
+                    "classifier",
+                    "profile",
+                    "reprofile",
+                    "version-evidence"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "support_tier": {
                   "const": "current"
                 }
               }
@@ -110,6 +132,7 @@
             "type": "string",
             "enum": [
               "current",
+              "legacy",
               "previous",
               "historical"
             ]
@@ -152,6 +175,13 @@
           "distribution_sha512": {
             "type": "string",
             "pattern": "^[0-9a-f]{128}$"
+          },
+          "capture_snapshot_policy": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "macos-readonly-mount"
+            ]
           },
           "historical_recovery_binding_sha256": {
             "type": "string",

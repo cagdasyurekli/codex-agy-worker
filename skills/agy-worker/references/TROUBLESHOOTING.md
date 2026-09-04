@@ -76,6 +76,16 @@ For a candidate-free failure, consult `available_actions`. A mechanically eligib
 `resume` keeps the exact stored conversation; a fresh `restart` requires explicit user
 direction. Both require the current state SHA and a new provider notice.
 
+## Boost preflight or contract failed
+
+The first `--boost` invocation without approval exits before provider launch and prints
+the exact job-bound `--approve-boost-risk-sha`. Review the warning and rerun only for
+that same intended job and transmission. An invalid or stale digest, broader workflow,
+more than one cycle, persona, plan mode, or enabled slash commands is rejected before
+launch. After launch, a missing or mismatched Boost agent or `request-review`
+permission mode produces `failure_stage=boost_contract`. Do not resume, restart, or
+continue that job; a further attempt requires a new job and fresh approvals.
+
 ## A provider error or cancellation still has a candidate
 
 A structurally valid `ERROR` candidate is reviewable. Retrieve `result`, inspect the

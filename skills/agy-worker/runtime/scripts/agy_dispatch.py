@@ -57,6 +57,7 @@ MAX_CHECK_ITEMS = 32
 MAX_CHECK_LABEL = 160
 MAX_CHECK_SUMMARY = 512
 MAX_BOUNDARY_ENTRIES = 100000
+MAX_INLINE_PROMPT_BYTES = 100000
 MAX_STREAM_BYTES = 32 * 1024 * 1024
 MAX_EVENT_BYTES = 1024 * 1024
 MAX_STATUS_WAIT = 60.0
@@ -78,6 +79,13 @@ COMMAND_V6_FIELDS = COMMAND_V5_FIELDS | {
     "provider_scope_path", "provider_scope_sha256", "provider_scope_identity", "approved_transmission_sha256",
 }
 COMMAND_V7_FIELDS = COMMAND_V6_FIELDS | {"approved_whole_worktree_sha256"}
+COMMAND_V8_FIELDS = COMMAND_V7_FIELDS | {
+    "boost", "boost_policy_sha256", "approved_boost_risk_sha256",
+}
+BOOST_RISK_POLICY_TEXT = (
+    "Boost may invoke subagents and protected tools; this acknowledgement does not grant runtime permissions."
+)
+BOOST_RISK_POLICY_SHA256 = hashlib.sha256(BOOST_RISK_POLICY_TEXT.encode("utf-8")).hexdigest()
 STATE_PROJECT_FIELDS = {
     "workflow", "max_cycles", "cycle", "phase", "assurance",
     "check_summary", "check_counts", "verification_path", "verification_sha256",
@@ -112,7 +120,7 @@ WORKTREE_SNAPSHOT_SEMANTIC_V1 = "semantic-v1"
 CURRENT_WORKTREE_SNAPSHOT_ALGORITHM = WORKTREE_SNAPSHOT_SEMANTIC_V1
 FAILURE_STAGES = {
     "framing", "outer_status", "missing_structured_output", "schema_rejection",
-    "binding_failure", "selection_preflight",
+    "binding_failure", "selection_preflight", "boost_contract",
 }
 LIFECYCLE_PHASES = {
     "dispatching", "awaiting-verification", "repairing", "completed",
@@ -525,10 +533,24 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             raise DispatchError("dispatch command is not canonical")
         value = dict(value)
         value["approved_whole_worktree_sha256"] = None
-    elif set(value) != COMMAND_V7_FIELDS or value.get("schema_version") != 7:
+    elif set(value) == COMMAND_V7_FIELDS and value.get("schema_version") == 7:
+        if raw != canonical(value):
+            raise DispatchError("dispatch command is not canonical")
+        value = dict(value)
+        value.update({
+            "boost": False, "boost_policy_sha256": None,
+            "approved_boost_risk_sha256": None,
+        })
+    elif set(value) != COMMAND_V8_FIELDS or value.get("schema_version") != 8:
         raise DispatchError("dispatch command fields are invalid")
     elif raw != canonical(value):
         raise DispatchError("dispatch command is not canonical")
+    if "boost" not in value:
+        value = dict(value)
+        value.update({
+            "boost": False, "boost_policy_sha256": None,
+            "approved_boost_risk_sha256": None,
+        })
     if value["kind"] != "agy-worker-dispatch-command":
         raise DispatchError("dispatch command version is invalid")
     if (
@@ -608,7 +630,7 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         or not isinstance(approved_sha, str) or SHA_RE.fullmatch(approved_sha) is None
     ):
         raise DispatchError("dispatch provider scope binding is invalid")
-    if value["schema_version"] == 7:
+    if value["schema_version"] in {7, 8}:
         if scope_path is None:
             if not isinstance(approved_whole_sha, str) or SHA_RE.fullmatch(approved_whole_sha) is None:
                 raise DispatchError("dispatch whole-worktree approval binding is invalid")
@@ -616,6 +638,25 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             raise DispatchError("dispatch transmission modes conflict")
     elif approved_whole_sha is not None:
         raise DispatchError("legacy dispatch command cannot carry whole-worktree approval")
+    boost = value["boost"]
+    boost_policy = value["boost_policy_sha256"]
+    boost_approval = value["approved_boost_risk_sha256"]
+    if type(boost) is not bool or (not boost and (boost_policy is not None or boost_approval is not None)):
+        raise DispatchError("dispatch Boost binding is invalid")
+    if boost:
+        expected_approval = hashlib.sha256(
+            f"{BOOST_RISK_POLICY_SHA256}\n{value['job_id']}\n".encode("ascii")
+        ).hexdigest()
+        argv = value["argv"]
+        valid_mode = argv.count("--mode") == 1 and argv[argv.index("--mode") + 1:argv.index("--mode") + 2] == ["accept-edits"]
+        if (
+            boost_policy != BOOST_RISK_POLICY_SHA256 or boost_approval != expected_approval
+            or value["workflow"] != "task" or value["max_cycles"] != 1
+            or argv.count("--agent") != 1 or argv[argv.index("--agent") + 1:argv.index("--agent") + 2] != ["Boost"]
+            or argv.count("--disable-slash-commands") != 1 or not valid_mode
+            or any(flag in argv for flag in ("--conversation", "--continue", "-c"))
+        ):
+            raise DispatchError("dispatch Boost contract is invalid")
     if scope_path is not None and "--add-dir" in value["argv"]:
         raise DispatchError("narrow provider scope cannot grant an additional directory")
     return value, raw, _identity(info)
@@ -1498,6 +1539,9 @@ def _lifecycle_mutation_bindings(
     try:
         bound_job = canonical_job(Path(job).resolve(strict=True))
         command = _load_bound_command(bound_job, value, stage_readonly=False)
+    except (OSError, DispatchError):
+        return False, False
+    try:
         _bound_lifecycle_inputs(bound_job, value, command)
         provider_launch_bound = (
             not _job_is_inside_worktree(bound_job, command["workdir"])
@@ -1506,7 +1550,22 @@ def _lifecycle_mutation_bindings(
             )
         )
     except (OSError, DispatchError):
-        return False, False
+        # A changed current scoped candidate is valid driver evidence, but
+        # transmitting those new bytes again requires a fresh exact approval
+        # that the continuation interface cannot collect. Keep result/finalize
+        # available while declining to advertise provider continuation. Legacy
+        # mutation authority retains its original strict migration binder.
+        if not (
+            value["schema_version"] >= 9
+            and value["candidate_recognized"]
+            and value["status"] in TERMINAL
+        ):
+            return False, False
+        try:
+            _bound_current_candidate(bound_job, value)
+        except (OSError, DispatchError):
+            return False, False
+        return True, False
     return True, provider_launch_bound
 
 
@@ -2001,6 +2060,37 @@ def _attempt_paths(job: Path, attempt: int) -> tuple[Path, Path, Path]:
         return job / "stream.ndjson", job / "stderr.txt", job / "envelope.json"
     prefix = f"attempt-{attempt:03d}"
     return job / f"{prefix}.stream.ndjson", job / f"{prefix}.stderr.txt", job / f"{prefix}.envelope.json"
+
+
+def _bind_boost_prompt(argv: list[str], workspace_root: Path, *, scoped: bool) -> None:
+    """Bind Boost file tools to the exact already-approved provider cwd."""
+    if argv.count("--print") != 1:
+        raise DispatchError("dispatch argv contract is invalid")
+    print_index = argv.index("--print")
+    if print_index + 1 >= len(argv):
+        raise DispatchError("dispatch argv contract is invalid")
+    prompt = argv[print_index + 1]
+    encoded_root = json.dumps(str(workspace_root), ensure_ascii=True)
+    workspace_shape = (
+        "the complete approved Gitless selected-content stage"
+        if scoped else "the complete explicitly approved whole worktree"
+    )
+    prefix = (
+        "BOOST FILE-TOOL ROOT — non-negotiable:\n"
+        f"- The exact absolute workspace root for this attempt is the JSON string {encoded_root}.\n"
+        "- File tools require absolute paths. Begin by listing that exact root. For each "
+        "task-relative path, use an absolute child path beneath that root; never pass the "
+        "relative path alone and never guess or search for another root.\n"
+        f"- This is {workspace_shape}. Do not inspect its parent, HOME, `~/.gemini`, "
+        "or any other directory. Do not call shell or terminal tools.\n"
+        "- If you delegate, include this exact root and all these restrictions in every "
+        "subagent task. If file-tool access fails, return the schema-valid blocked envelope "
+        "without searching elsewhere.\n\n"
+    )
+    bound_prompt = prefix + prompt
+    if len(bound_prompt.encode("utf-8")) > MAX_INLINE_PROMPT_BYTES:
+        raise DispatchError("Boost prompt exceeds inline byte limit")
+    argv[print_index + 1] = bound_prompt
 
 
 def _ensure_new_private(path: Path) -> int:
@@ -2616,6 +2706,7 @@ def _bound_current_candidate(job: Path, state: dict[str, Any]) -> tuple[dict[str
     command = _load_bound_command(bound_job, state, stage_readonly=False)
     command, state = _bound_lifecycle_inputs(
         bound_job, state, command, read_legacy=legacy_read,
+        bind_terminal_candidate=True,
     )
     schema_paths = _schema_paths(command)
     if schema_paths is None:
@@ -2639,7 +2730,10 @@ def _bound_current_candidate(job: Path, state: dict[str, Any]) -> tuple[dict[str
         raise DispatchError("dispatch result binding changed")
     # The validator opened both schema pathnames; bind them and the project
     # marker again before accepting its answer.
-    _bound_lifecycle_inputs(bound_job, state, command, read_legacy=legacy_read)
+    _bound_lifecycle_inputs(
+        bound_job, state, command, read_legacy=legacy_read,
+        bind_terminal_candidate=True,
+    )
     # Project jobs created before the external-log-root boundary can place their
     # own controller state inside the candidate worktree. Every state write then
     # changes the semantic snapshot, so that stored snapshot is self-invalidating.
@@ -2839,7 +2933,9 @@ def command_verification_copy(job: Path, destination: Path, output_format: str) 
         if not _verification_copy_is_eligible(state):
             raise DispatchError("verification copy is unavailable")
         command = _load_bound_command(job, state, stage_readonly=False)
-        command, state = _bound_lifecycle_inputs(job, state, command)
+        command, state = _bound_lifecycle_inputs(
+            job, state, command, bind_terminal_candidate=True,
+        )
         if _job_is_inside_worktree(job, command["workdir"]):
             raise DispatchError("verification copy is unavailable for jobs inside the worktree")
         command, _candidate_raw = _bound_current_candidate(job, state)
@@ -3009,7 +3105,7 @@ def _load_bound_selection(
 
 def _bound_lifecycle_inputs(
     job: Path, state: dict[str, Any], command: dict[str, Any] | None = None,
-    *, read_legacy: bool = False,
+    *, read_legacy: bool = False, bind_terminal_candidate: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Bind non-provider recovery/finalization inputs before any state write.
 
@@ -3087,15 +3183,21 @@ def _bound_lifecycle_inputs(
             scope = _parse_provider_scope(raw_scope)
         except ValueError as exc:
             raise DispatchError(f"invalid provider scope: {exc}") from exc
-        readable_manifest = _scan_readable_worktree(command["workdir"])
-        manifest_sha = _manifest_digest(readable_manifest)
-        _validate_scope_against_worktree(scope, command["workdir"], readable_manifest)
-        selected_manifest = _build_selected_content_manifest(command["workdir"], scope)
-        selected_sha = _selected_content_digest(selected_manifest)
-        policy_sha = _canonical_digest(scope)
-        transmission_sha = _compute_transmission_sha256(policy_sha, manifest_sha, selected_sha)
-        if transmission_sha != checked["transmission_sha256"]:
-            raise DispatchError("worktree scope transmission binding changed")
+        if bind_terminal_candidate:
+            if not (
+                checked["candidate_recognized"] and checked["status"] in TERMINAL
+            ):
+                raise DispatchError("terminal candidate binding is unavailable")
+        else:
+            readable_manifest = _scan_readable_worktree(command["workdir"])
+            manifest_sha = _manifest_digest(readable_manifest)
+            _validate_scope_against_worktree(scope, command["workdir"], readable_manifest)
+            selected_manifest = _build_selected_content_manifest(command["workdir"], scope)
+            selected_sha = _selected_content_digest(selected_manifest)
+            policy_sha = _canonical_digest(scope)
+            transmission_sha = _compute_transmission_sha256(policy_sha, manifest_sha, selected_sha)
+            if transmission_sha != checked["transmission_sha256"]:
+                raise DispatchError("worktree scope transmission binding changed")
     return command, checked
 
 
@@ -3312,10 +3414,23 @@ def _quota_terminal_failure(stream: Path, version: str) -> tuple[str, int | None
     return "provider_quota_exhausted", retry
 
 
+def _boost_stream_is_bound(stream: Path) -> bool:
+    """Require provider-observed Boost identity before accepting a result."""
+    try:
+        first = stream.read_bytes().splitlines()[0]
+        frame = json.loads(first.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
+    except (IndexError, OSError, UnicodeError, json.JSONDecodeError, DispatchError):
+        return False
+    init = frame.get("init") if isinstance(frame, dict) and frame.get("event") == "init" else None
+    return bool(isinstance(init, dict) and init.get("agent") == "Boost" and init.get("permission_mode") == "request-review")
+
+
 def _validate_terminal_envelope(
-    stream: Path, envelope: Path, provider_schema: Path, canonical_schema: Path,
+    stream: Path, envelope: Path, provider_schema: Path, canonical_schema: Path, *, boost: bool = False,
 ) -> tuple[tuple[str, tuple[int, int, int, int, int]] | None, str | None, str | None]:
     """Keep framing, provider status, extraction, and canonical validation distinct."""
+    if boost and not _boost_stream_is_bound(stream):
+        return None, None, "boost_contract"
     result = _terminal_result(stream, strict=True)
     if result is None:
         return None, None, "framing"
@@ -3601,6 +3716,10 @@ def controller(job: Path, ownership_fd: int) -> int:
                         readable_manifest = _scan_readable_worktree(command["workdir"])
                         if _manifest_digest(readable_manifest) != approved_whole_sha:
                             raise DispatchError("whole-worktree transmission binding changed")
+                if command["boost"]:
+                    _bind_boost_prompt(
+                        argv, Path(launch_cwd), scoped=scope is not None,
+                    )
                 # The prior attempt budget is still a hard stop, but bounded
                 # controller-local proofs do not become a provider timeout.
                 # Commit the running state/CAS boundary after slow preflight.
@@ -3840,6 +3959,16 @@ def controller(job: Path, ownership_fd: int) -> int:
                                     failure_stage = "framing"
                                     break
                                 if event_kind == "init":
+                                    if command.get("boost"):
+                                        try:
+                                            init_frame = json.loads(line.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
+                                        except (UnicodeError, json.JSONDecodeError, DispatchError):
+                                            init_frame = None
+                                        init_value = init_frame.get("init") if isinstance(init_frame, dict) else None
+                                        if not isinstance(init_value, dict) or init_value.get("agent") != "Boost" or init_value.get("permission_mode") != "request-review":
+                                            reason = "invalid_envelope"
+                                            failure_stage = "boost_contract"
+                                            break
                                     saw_init = True
                                 elif event_kind == "result":
                                     saw_terminal = True
@@ -3953,6 +4082,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                         schema_paths = _bound_schemas(command, state)
                         result_binding, outer_status, failure_stage = _validate_terminal_envelope(
                             stream_path, envelope_path, schema_paths[0], schema_paths[1],
+                            boost=bool(command.get("boost")),
                         )
                         if result_binding is None and reason is None:
                             reason = "invalid_envelope"
@@ -4200,6 +4330,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 preserved_path = current["result_path"] if preserve_candidate_forensics else None
                 preserved_sha = current["result_sha256"] if preserve_candidate_forensics else None
                 preserved_identity = current["result_identity"] if preserve_candidate_forensics else None
+                is_boost = bool(command.get("boost"))
                 updates = {
                     "status": final_status,
                     "reason": reason,
@@ -4232,7 +4363,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                         "blocked" if candidate_unavailable else "driver_review"
                     ) if candidate_recognized else (
                         "none" if reason == "selection_preflight_failed" else
-                        "resume" if current["conversation_id"] else "blocked"
+                        "resume" if current["conversation_id"] and not is_boost else "blocked"
                     ),
                     "next_action_command": None,
                     **(
@@ -4246,7 +4377,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "resume_available": bool(
                         current["conversation_id"] and not candidate_recognized
                         and final_status == "failed"
-                        and reason != "selection_preflight_failed"
+                        and reason != "selection_preflight_failed" and not is_boost
                     ),
                     "continue_available": False,
                     "remote_cancel_unverified": reason in {"cancelled", "interrupted"},
@@ -4282,7 +4413,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                                 final_status in {"succeeded", "failed"}
                                 and reason != "selection_preflight_failed"
                                 and candidate_source != "provider_cancelled"
-                                and current["conversation_id"]
+                                and current["conversation_id"] and not is_boost
                                 and current["attempt"] < current["max_cycles"]
                                 and elapsed < current["max_seconds"]
                             ),
@@ -4402,6 +4533,8 @@ def create_state(
                 )
             else:
                 command = _load_bound_command(job, state, stage_readonly=False)
+            if command.get("boost") and origin in {"conversation-resume", "fresh-restart", "conversation-continue"}:
+                raise DispatchError("Boost dispatches do not resume, restart, or continue")
             if _job_is_inside_worktree(job, command["workdir"]):
                 raise DispatchError("dispatch job directory cannot be inside the target workdir")
             command, state = _bound_lifecycle_inputs(job, state, command)
@@ -4937,7 +5070,9 @@ def command_finalize(
             )
         else:
             command = _load_bound_command(job, state, stage_readonly=False)
-        command, state = _bound_lifecycle_inputs(job, state, command)
+        command, state = _bound_lifecycle_inputs(
+            job, state, command, bind_terminal_candidate=True,
+        )
         if not _finalize_is_eligible(state):
             raise DispatchError("dispatch finalization is stale or unavailable")
         if assurance == "verified" and _job_is_inside_worktree(job, command["workdir"]):
