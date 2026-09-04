@@ -139,8 +139,13 @@ an earlier implementation because it shares a schema or helper.
 
 ### v0.16.0 agy 1.1.24 and bounded Boost compatibility
 
-**Status:** Local candidate; not published. The exact scoped live Boost check remains
-separately approval-gated and is not claimed by offline verification.
+**Status:** Local candidate; not published. One explicitly approved scoped live check
+completed against a sealed agy `1.1.24` executable with exact
+`gemini-3.8-flash-low` selection. The provider reported `Boost` with
+`request-review`, used only file tools under the staged root, changed only the
+approved file, and completed one cycle; Codex independently verified and finalized
+that candidate. This bounded check does not establish broader model quality,
+provider isolation, or general Boost behavior.
 
 This candidate activates the independently reconciled agy `1.1.24` fourteen-model
 inventory, including Gemini 3.8 Flash low, medium, and high compound slugs. It also
