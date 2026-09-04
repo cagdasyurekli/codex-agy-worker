@@ -95,6 +95,9 @@ commands for progress, `continue` only with driver-owned strict verification JSO
 `finalize` only after Codex has established the assurance result. Preserve the candidate
 when the cycle or time budget ends; report what passed, what did not, and the next safe
 action. Fresh `restart` remains an explicit user decision.
+Because the current `continue` surface cannot collect a fresh transmission approval, a
+scoped candidate whose approved content changed is result/finalize-only; never treat its
+original transmission SHA as authority to send the changed bytes again.
 
 Do not describe agy's interface from memory. Run `./ground-truth.sh` and inspect
 `agy --help` before changing agy-facing flags or claims. agy can return exit 0 with

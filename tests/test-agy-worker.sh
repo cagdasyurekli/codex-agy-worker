@@ -837,6 +837,40 @@ while [[ $# -gt 0 ]]; do
         *) shift ;;
     esac
 done
+if [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}" ]]; then
+    python3 -B - "$FAKE_PROMPT_FILE" "$FAKE_EDIT_FROM_BOUND_ROOT" \
+        "${FAKE_EDIT_CONTENT:-provider changed}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+prompt = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "The exact absolute workspace root for this attempt is the JSON string "
+if marker in prompt:
+    start = prompt.index(marker) + len(marker)
+    root, _end = json.JSONDecoder().raw_decode(prompt[start:])
+else:
+    root = str(Path.cwd())
+target = Path(root) / sys.argv[2]
+target.write_text(sys.argv[3] + "\n", encoding="utf-8")
+PY
+fi
+if [[ -n "${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
+    python3 -B - "$FAKE_PROMPT_FILE" "$FAKE_DELETE_FROM_BOUND_ROOT" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+prompt = Path(sys.argv[1]).read_text(encoding="utf-8")
+marker = "The exact absolute workspace root for this attempt is the JSON string "
+if marker in prompt:
+    start = prompt.index(marker) + len(marker)
+    root, _end = json.JSONDecoder().raw_decode(prompt[start:])
+else:
+    root = str(Path.cwd())
+(Path(root) / sys.argv[2]).unlink()
+PY
+fi
 if [[ "${FAKE_TRY_STAGE_WRITE:-0}" == "1" && -n "$stage_dir" ]]; then
     if printf 'tampered' 2>/dev/null > "$stage_dir/full-prompt.txt"; then
         printf 'wrote' > "$FAKE_STAGE_RESULT_FILE"
@@ -984,6 +1018,24 @@ if [[ "${FAKE_DISPATCH_MODE:-result}" == "result" ]]; then
 fi
 if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
+elif [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
+    envelope="$(python3 -B - "${FAKE_EDIT_FROM_BOUND_ROOT:-$FAKE_DELETE_FROM_BOUND_ROOT}" \
+        "${FAKE_DELETE_FROM_BOUND_ROOT:+deleted}" <<'PY'
+import json
+import sys
+print(json.dumps({
+    "status": "completed",
+    "summary": "done",
+    "files_changed": [{"path": sys.argv[1], "change": sys.argv[2] or "modified"}],
+    "commands_run": [],
+    "tests_run": [],
+    "risks": [],
+    "open_questions": [],
+    "confidence": 1,
+    "requires_human": False,
+}, separators=(",", ":")))
+PY
+)"
 elif [[ "${FAKE_WORKER_VERIFIED:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"Verified private-worker-prose-sentinel","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 elif [[ "${FAKE_UTF8_SUMMARY:-0}" == "1" ]]; then
@@ -1003,6 +1055,7 @@ run_worker() {
         FAKE_CALLS_FILE FAKE_CHILD_PID_FILE FAKE_DIRS_FILE FAKE_DISPATCH_COUNT_FILE \
         FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_ERROR_LINE \
         FAKE_BOOST_INIT FAKE_BOOST_AGENT FAKE_BOOST_PERMISSION_MODE \
+        FAKE_DELETE_FROM_BOUND_ROOT FAKE_EDIT_CONTENT FAKE_EDIT_FROM_BOUND_ROOT \
         FAKE_EXECUTABLE_SYMLINK_TARGET \
         FAKE_EXIT_CODE FAKE_FAIL_FIRST FAKE_HEARTBEAT_AFTER_FIRST_READY \
         FAKE_HEARTBEAT_AFTER_FIRST_RELEASE FAKE_HEARTBEAT_BARRIER_READY \
@@ -1069,6 +1122,9 @@ run_worker() {
     FAKE_BOOST_INIT="${FAKE_BOOST_INIT:-0}" \
     FAKE_BOOST_AGENT="${FAKE_BOOST_AGENT:-Boost}" \
     FAKE_BOOST_PERMISSION_MODE="${FAKE_BOOST_PERMISSION_MODE:-request-review}" \
+    FAKE_DELETE_FROM_BOUND_ROOT="${FAKE_DELETE_FROM_BOUND_ROOT:-}" \
+    FAKE_EDIT_FROM_BOUND_ROOT="${FAKE_EDIT_FROM_BOUND_ROOT:-}" \
+    FAKE_EDIT_CONTENT="${FAKE_EDIT_CONTENT:-}" \
     FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
     FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
     FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
@@ -1360,14 +1416,20 @@ BOOST_TRANSMISSION_SHA="$(
         --provider-scope "$BOOST_SCOPE" --format json \
         | python3 -c 'import json, sys; print(json.load(sys.stdin)["transmission_sha256"])'
 )"
-printf 'Boost profile test\n' | FAKE_BOOST_INIT=1 run_worker boost-approved \
+printf 'Boost profile test\n' | FAKE_BOOST_INIT=1 \
+    FAKE_EDIT_FROM_BOUND_ROOT=boost-target.txt FAKE_EDIT_CONTENT='scoped Boost changed' \
+    run_worker boost-approved \
     --workflow task --max-cycles 1 --boost --approve-boost-risk-sha "$BOOST_APPROVAL_SHA" \
     --provider-scope "$BOOST_SCOPE" --approve-transmission-sha "$BOOST_TRANSMISSION_SHA" \
     > "$TMP/boost-approved.out" 2> "$TMP/boost-approved.err"
 boost_approved_rc=$?
 if [[ "$boost_approved_rc" == 0 ]] && python3 -B - "$TMP/boost-approved.argv" \
-        "$TMP/logs/boost-approved/dispatch-command.json" "$TMP/repo" <<'PY'
+        "$TMP/logs/boost-approved/dispatch-command.json" "$TMP/repo" \
+        "$LOGS_REAL/boost-approved/stage-001" \
+        "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" <<'PY'
+import importlib.util
 import json
+from pathlib import Path
 import sys
 argv = open(sys.argv[1], "rb").read().split(b"\0")
 command = json.load(open(sys.argv[2], encoding="utf-8"))
@@ -1378,6 +1440,13 @@ assert command["provider_scope_path"] is not None
 assert command["approved_whole_worktree_sha256"] is None
 assert argv.count(b"--agent") == 1 and argv[argv.index(b"--agent") + 1] == b"Boost"
 assert argv.count(b"--disable-slash-commands") == 1
+assert prompt.startswith("BOOST FILE-TOOL ROOT — non-negotiable:\n")
+root_marker = "The exact absolute workspace root for this attempt is the JSON string "
+root_start = prompt.index(root_marker) + len(root_marker)
+decoded_root, root_end = json.JSONDecoder().raw_decode(prompt[root_start:])
+assert decoded_root == sys.argv[4]
+assert prompt[root_start + root_end:].startswith(".\n")
+assert Path(decoded_root).is_absolute()
 assert prompt.count("BOOST WORKSPACE CONTRACT — non-negotiable:") == 1
 assert "initial working directory exposed by file tools" in normalized_prompt
 assert "intentionally Gitless and may contain only selected files" in normalized_prompt
@@ -1386,10 +1455,35 @@ assert "Do not inspect HOME, `~/.gemini`, parent directories" in normalized_prom
 assert "including `pwd`, `ls`, `find`, or `git`" in normalized_prompt
 assert "include this entire contract in every subagent task" in normalized_prompt
 assert "Use file tools to inspect and edit the approved workspace." in prompt
+assert "use absolute child paths beneath that root" in normalized_prompt
 assert "shell tools run in a separate scratch directory" in normalized_prompt
+assert "complete approved Gitless selected-content stage" in prompt
+assert prompt.index("BOOST FILE-TOOL ROOT") < prompt.index("BOOST WORKSPACE CONTRACT")
 assert prompt.index("BOOST WORKSPACE CONTRACT") < prompt.index("OUTPUT CONTRACT")
 assert prompt.index("OUTPUT CONTRACT") < prompt.index("TASK FOLLOWS:") < prompt.index("Boost profile test")
 assert sys.argv[3] not in prompt
+assert (Path(sys.argv[3]) / "boost-target.txt").read_text(encoding="utf-8") == "scoped Boost changed\n"
+
+spec = importlib.util.spec_from_file_location("agy_dispatch_prompt_test", sys.argv[5])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+weird_root = Path('/private/tmp/space "quote" \\ slash\nline/stage-001')
+synthetic = ["agy", "--print", "ORIGINAL-PROMPT"]
+module._bind_boost_prompt(synthetic, weird_root, scoped=True)
+assert synthetic[-2] == "--print" and synthetic[-1].endswith("ORIGINAL-PROMPT")
+synthetic_start = synthetic[-1].index(root_marker) + len(root_marker)
+synthetic_root, synthetic_end = json.JSONDecoder().raw_decode(synthetic[-1][synthetic_start:])
+assert synthetic_root == str(weird_root)
+assert "\nline" not in synthetic[-1][synthetic_start:synthetic_start + synthetic_end]
+oversized = ["agy", "--print", "x" * module.MAX_INLINE_PROMPT_BYTES]
+try:
+    module._bind_boost_prompt(oversized, weird_root, scoped=True)
+except module.DispatchError:
+    pass
+else:
+    raise AssertionError("oversized scoped Boost prompt was accepted")
+assert oversized[-1] == "x" * module.MAX_INLINE_PROMPT_BYTES
 PY
 then
     ok "approved Boost dispatch pins V8, one agent, slash protection, and the file-tool preamble"
@@ -1397,27 +1491,56 @@ else
     bad "approved Boost dispatch profile"
 fi
 
+WHOLE_BOOST_APPROVAL_SHA="$(printf '%s\n%s\n' "$BOOST_POLICY_SHA" 'boost-whole-approved' | shasum -a 256 | awk '{print $1}')"
+printf 'whole Boost target\n' > "$TMP/repo/whole-boost-target.txt"
+printf 'whole Boost profile test\n' | FAKE_BOOST_INIT=1 \
+    FAKE_EDIT_FROM_BOUND_ROOT=whole-boost-target.txt FAKE_EDIT_CONTENT='whole Boost changed' \
+    run_worker boost-whole-approved --workflow task --max-cycles 1 --boost \
+    --approve-boost-risk-sha "$WHOLE_BOOST_APPROVAL_SHA" \
+    > "$TMP/boost-whole-approved.out" 2> "$TMP/boost-whole-approved.err"
+boost_whole_rc=$?
+boost_whole_changed=0
+if [[ "$(< "$TMP/repo/whole-boost-target.txt")" == 'whole Boost changed' ]]; then
+    boost_whole_changed=1
+fi
+rm -f "$TMP/repo/whole-boost-target.txt"
+
 BOOST_MISMATCH_SHA="$(printf '%s\n%s\n' "$BOOST_POLICY_SHA" 'boost-init-mismatch' | shasum -a 256 | awk '{print $1}')"
 printf 'Boost mismatch test\n' | FAKE_BOOST_INIT=1 FAKE_BOOST_AGENT=Other run_worker boost-init-mismatch \
     --workflow task --max-cycles 1 --boost --approve-boost-risk-sha "$BOOST_MISMATCH_SHA" \
     > "$TMP/boost-init-mismatch.out" 2> "$TMP/boost-init-mismatch.err"
 boost_mismatch_rc=$?
-if [[ "$boost_mismatch_rc" == 4 ]] && python3 -B - \
+if [[ "$boost_whole_rc" == 0 && "$boost_whole_changed" == 1 \
+        && "$boost_mismatch_rc" == 4 ]] && python3 -B - \
+        "$TMP/boost-whole-approved.prompt" \
         "$TMP/logs/boost-init-mismatch/dispatch-state.json" \
-        "$TMP/boost-init-mismatch.prompt" <<'PY'
+        "$TMP/boost-init-mismatch.prompt" "$BOOST_WORKDIR" <<'PY'
 import json
+from pathlib import Path
 import sys
-state = json.load(open(sys.argv[1], encoding="utf-8"))
-prompt = open(sys.argv[2], encoding="utf-8").read()
+whole_prompt = open(sys.argv[1], encoding="utf-8").read()
+state = json.load(open(sys.argv[2], encoding="utf-8"))
+prompt = open(sys.argv[3], encoding="utf-8").read()
+workdir = sys.argv[4]
+root_marker = "The exact absolute workspace root for this attempt is the JSON string "
+root_start = whole_prompt.index(root_marker) + len(root_marker)
+decoded_root, root_end = json.JSONDecoder().raw_decode(whole_prompt[root_start:])
+assert decoded_root == workdir and Path(decoded_root).is_absolute()
+assert whole_prompt[root_start + root_end:].startswith(".\n")
+assert whole_prompt.startswith("BOOST FILE-TOOL ROOT — non-negotiable:\n")
+assert "complete explicitly approved whole worktree" in whole_prompt
+assert "complete approved Gitless selected-content stage" not in whole_prompt
 assert state["failure_stage"] == "boost_contract"
 assert state["resume_available"] is False and state["continue_available"] is False
 assert "It is the explicitly approved whole worktree." in prompt
 assert "intentionally Gitless and may contain only selected files" not in prompt
+assert prompt.startswith("BOOST FILE-TOOL ROOT — non-negotiable:\n")
+assert workdir in prompt
 PY
 then
-    ok "Boost identity mismatch stops before accepting a provider result"
+    ok "whole-worktree Boost binds its approved root and identity mismatch still fails closed"
 else
-    bad "Boost init identity binding"
+    bad "whole-worktree Boost root or init identity binding"
 fi
 
 BOOST_PERMISSION_SHA="$(printf '%s\n%s\n' "$BOOST_POLICY_SHA" 'boost-permission-mismatch' | shasum -a 256 | awk '{print $1}')"
@@ -3658,6 +3781,7 @@ start_worker() {
         FAKE_AGY_STATUS FAKE_ARGV_FILE FAKE_BAD_ENVELOPE FAKE_CALLED_FILE \
         FAKE_CALLS_FILE FAKE_CHILD_PID_FILE FAKE_DIRS_FILE FAKE_DISPATCH_COUNT_FILE \
         FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_ERROR_LINE \
+        FAKE_DELETE_FROM_BOUND_ROOT FAKE_EDIT_CONTENT FAKE_EDIT_FROM_BOUND_ROOT \
         FAKE_EXECUTABLE_SYMLINK_TARGET FAKE_EXIT_CODE FAKE_FAIL_FIRST \
         FAKE_HEARTBEAT_AFTER_FIRST_READY FAKE_HEARTBEAT_AFTER_FIRST_RELEASE \
         FAKE_HEARTBEAT_BARRIER_READY FAKE_HEARTBEAT_BARRIER_RELEASE \
@@ -3700,6 +3824,9 @@ start_worker() {
         FAKE_HEARTBEAT_BARRIER_RELEASE="${FAKE_HEARTBEAT_BARRIER_RELEASE:-}" \
         FAKE_HEARTBEAT_AFTER_FIRST_READY="${FAKE_HEARTBEAT_AFTER_FIRST_READY:-}" \
         FAKE_HEARTBEAT_AFTER_FIRST_RELEASE="${FAKE_HEARTBEAT_AFTER_FIRST_RELEASE:-}" \
+        FAKE_DELETE_FROM_BOUND_ROOT="${FAKE_DELETE_FROM_BOUND_ROOT:-}" \
+        FAKE_EDIT_FROM_BOUND_ROOT="${FAKE_EDIT_FROM_BOUND_ROOT:-}" \
+        FAKE_EDIT_CONTENT="${FAKE_EDIT_CONTENT:-}" \
         FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
         "$worker_path" start --workdir "$workdir" \
         "${fake_provider_env_args[@]}" \
@@ -4981,6 +5108,78 @@ then
     ok "project workflow exposes pending Codex-owned verification without changing resume semantics"
 else
     bad "project workflow status contract"
+fi
+
+printf 'scoped project delete target\n' > "$TMP/project-worktree/scoped-delete.txt"
+project_scoped_delete_scope="$TMP/project-scoped-delete.scope.json"
+printf '%s\n' \
+    '{"schema_version":1,"kind":"agy-worker-provider-scope","read":[{"path":"scoped-delete.txt","kind":"file"}],"write":[{"path":"scoped-delete.txt","kind":"file"}]}' \
+    > "$project_scoped_delete_scope"
+chmod 0600 "$project_scoped_delete_scope"
+project_scoped_delete_workdir="$(cd "$TMP/project-worktree" && pwd -P)"
+project_scoped_delete_transmission="$(
+    "$WORKER" transmission-preview --workdir "$project_scoped_delete_workdir" \
+        --provider-scope "$project_scoped_delete_scope" --format json \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin)["transmission_sha256"])'
+)"
+printf 'delete the scoped file\n' | FAKE_DELETE_FROM_BOUND_ROOT=scoped-delete.txt \
+    AGY_TEST_WORKDIR="$project_scoped_delete_workdir" start_worker project-scoped-delete \
+    --workflow project --max-cycles 2 --provider-scope "$project_scoped_delete_scope" \
+    --approve-transmission-sha "$project_scoped_delete_transmission" \
+    > "$TMP/project-scoped-delete.start" 2> "$TMP/project-scoped-delete.err"
+project_scoped_delete_start_rc=$?
+wait_terminal project-scoped-delete "$TMP/project-scoped-delete.start"
+project_scoped_delete_wait_rc=$?
+control_worker status project-scoped-delete > "$TMP/project-scoped-delete.status"
+project_scoped_delete_sha="$(status_sha "$TMP/project-scoped-delete.status")"
+project_feedback project-scoped-delete | control_worker continue project-scoped-delete \
+    --approve-state-sha "$project_scoped_delete_sha" \
+    > "$TMP/project-scoped-delete.continue" 2> "$TMP/project-scoped-delete.continue.err"
+project_scoped_delete_continue_rc=$?
+control_worker result project-scoped-delete > "$TMP/project-scoped-delete.result"
+project_scoped_delete_result_rc=$?
+project_scoped_delete_copy="$(cd "$TMP" && pwd -P)/project-scoped-delete-copy"
+control_worker verification-copy project-scoped-delete \
+    --destination "$project_scoped_delete_copy" \
+    > "$TMP/project-scoped-delete.copy" 2> "$TMP/project-scoped-delete.copy.err"
+project_scoped_delete_copy_rc=$?
+project_verified_feedback project-scoped-delete | control_worker finalize project-scoped-delete \
+    --approve-state-sha "$project_scoped_delete_sha" --assurance verified \
+    > "$TMP/project-scoped-delete.finalize" 2> "$TMP/project-scoped-delete.finalize.err"
+project_scoped_delete_finalize_rc=$?
+project_scoped_delete_calls="$(wc -l < "$TMP/project-scoped-delete.worker-calls" | tr -d ' ')"
+if [[ "$project_scoped_delete_start_rc" == 0 && "$project_scoped_delete_wait_rc" == 0 \
+        && "$project_scoped_delete_continue_rc" == 64 \
+        && "$project_scoped_delete_result_rc" == 0 \
+        && "$project_scoped_delete_copy_rc" == 0 \
+        && "$project_scoped_delete_finalize_rc" == 0 \
+        && "$project_scoped_delete_calls" == 1 \
+        && ! -e "$TMP/project-worktree/scoped-delete.txt" \
+        && ! -e "$project_scoped_delete_copy/scoped-delete.txt" \
+        && ! -e "$project_scoped_delete_copy/.git" ]] \
+        && python3 -B - "$TMP/project-scoped-delete.status" \
+            "$TMP/project-scoped-delete.result" "$TMP/project-scoped-delete.finalize" \
+            "$TMP/project-scoped-delete.continue.err" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+result = json.load(open(sys.argv[2], encoding="utf-8"))
+finalized = json.load(open(sys.argv[3], encoding="utf-8"))
+actions = [item["action"] for item in status["available_actions"]]
+assert status["status"] == "succeeded" and status["result_available"] is True
+assert status["continue_available"] is False and "continue" not in actions
+assert "result" in actions and "finalize" in actions
+assert result["files_changed"] == [{"path": "scoped-delete.txt", "change": "deleted"}]
+assert finalized["driver_disposition"] == "verified"
+assert "read file does not exist in worktree: scoped-delete.txt" in open(
+    sys.argv[4], encoding="utf-8"
+).read()
+PY
+then
+    ok "scoped deletion remains result/finalize-bound and requires fresh approval before continuation"
+else
+    bad "scoped terminal deletion or continuation approval boundary"
 fi
 
 printf 'project missing verification repair\n' | FAKE_DISPATCH_MODE=heartbeat-success \

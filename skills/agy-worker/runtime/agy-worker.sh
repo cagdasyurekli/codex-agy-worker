@@ -1012,9 +1012,10 @@ BOOST WORKSPACE CONTRACT — non-negotiable:
 - The initial working directory exposed by file tools is the complete approved task
   workspace. __BOOST_WORKSPACE_SHAPE__ Do not search for another repository or
   "active workspace".
-- Use built-in file listing, reading, and editing tools with paths relative to that
-  workspace root. Do not inspect HOME, `~/.gemini`, parent directories, or other user
-  directories.
+- Use built-in file listing, reading, and editing tools. The controller supplies the
+  exact absolute workspace root immediately before launch; use absolute child paths
+  beneath that root and never pass a task-relative path alone. Do not inspect HOME,
+  `~/.gemini`, parent directories, or other user directories.
 - Never call shell or terminal tools, including `pwd`, `ls`, `find`, or `git`. Shell
   tools run in a separate scratch area; their output is not evidence about the
   approved workspace.
