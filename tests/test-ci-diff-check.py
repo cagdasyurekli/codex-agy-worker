@@ -111,6 +111,55 @@ def rejected(values: list[str], timeout: float = 1.0) -> bool:
     return False
 
 
+def _diagnostic_is_safe() -> bool:
+    content_error = module.CheckRejected("content-hygiene", "tests/example.py")
+    absolute_error = module.CheckRejected("content-hygiene", "/private/secret.txt")
+    control_error = module.CheckRejected("content-hygiene", "tests/unsafe\nname.py")
+    traversal_error = module.CheckRejected("content-hygiene", "tests/../private.txt")
+    oversized_error = module.CheckRejected(
+        "content-hygiene", "a" * (module.MAX_DIAGNOSTIC_PATH_CHARS + 1)
+    )
+    reason_error = module.CheckRejected("private detail", "tests/example.py")
+    return (
+        module.rejection_diagnostic(content_error)
+        == "ci diff check: rejected: content-hygiene: tests/example.py"
+        and module.rejection_diagnostic(absolute_error)
+        == "ci diff check: rejected: content-hygiene"
+        and module.rejection_diagnostic(control_error)
+        == "ci diff check: rejected: content-hygiene"
+        and module.rejection_diagnostic(traversal_error)
+        == "ci diff check: rejected: content-hygiene"
+        and module.rejection_diagnostic(oversized_error)
+        == "ci diff check: rejected: content-hygiene"
+        and module.rejection_diagnostic(reason_error)
+        == "ci diff check: rejected: validation: tests/example.py"
+    )
+
+
+def _content_rejection_names_only_the_safe_path() -> bool:
+    original_comparison = module._comparison
+    original_changes = module._raw_changes
+    original_blobs = module._batch_blobs
+    try:
+        module._comparison = lambda _event, _base, head, _deadline: ("a" * 40, head)
+        module._raw_changes = lambda _base, _head, _deadline: [
+            ("tests/dirty.py", "M", "a" * 40, "b" * 40, "100644", "100644")
+        ]
+        module._batch_blobs = lambda _values, _deadline, _binary_ids: {"b" * 40: b"bad \n"}
+        try:
+            module.check_committed_range("pull_request", "a" * 40, "b" * 40)
+        except module.CheckRejected as exc:
+            return (
+                module.rejection_diagnostic(exc)
+                == "ci diff check: rejected: content-hygiene: tests/dirty.py"
+            )
+        return False
+    finally:
+        module._comparison = original_comparison
+        module._raw_changes = original_changes
+        module._batch_blobs = original_blobs
+
+
 with tempfile.TemporaryDirectory(prefix="agy-ci-batch-test.") as directory:
     fake = Path(directory) / "fake-git"
     fake.write_text(FAKE_GIT, encoding="ascii")
@@ -131,6 +180,9 @@ with tempfile.TemporaryDirectory(prefix="agy-ci-batch-test.") as directory:
     check("malformed header", rejected([oid("6")]))
     check("oversized declaration", rejected([oid("7")]))
     check("bounded nonempty stderr", rejected([oid("8")]))
+
+    check("rejection diagnostics expose only a safe relative path", _diagnostic_is_safe())
+    check("content rejection identifies its safe offending path", _content_rejection_names_only_the_safe_path())
 
     at_line_bound = True
     try:

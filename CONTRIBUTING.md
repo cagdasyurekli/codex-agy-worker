@@ -36,7 +36,7 @@ requesting review:
 
 It is fail-fast, requires no network or provider call, does not intentionally inspect
 account-HOME contents, externalizes temporary bytecode, and runs the static checks plus
-all forty offline stages. Ambient local tools may still consult ordinary user
+all registered offline stages. Ambient local tools may still consult ordinary user
 configuration. In GitHub Actions, the suite is partitioned across four fail-closed shards
 (`dispatcher`, `dispatcher-remediation`, `other-a`, `other-b`) and validated by the required aggregate
 `test` check; lower CI wall time from parallelization does not mean lower total compute, provider usage,
@@ -46,58 +46,36 @@ observational monotonic wall time in an owner-private mode-0600 JSON report with
 recording commands, logs, environment variables, or timestamps. For a quota-unavailable
 private fork this is evidence to attach to review, not a replacement for the protected
 GitHub `test` check; manually dispatch the exact committed range after Actions becomes
-available and before publication. The expanded command inventory is retained below
-for targeted diagnosis. A focused pass accelerates iteration but does not replace the
-stable-candidate full gate:
+available and before publication. List the current commands directly from the
+canonical registry:
 
 ```bash
-./tests/test-qa-gate.sh
-./tests/test-evidence-receipt.sh
-./tests/test-evidence-report.sh
-/usr/bin/python3 -I -S -B tests/test-benchmark.py
-/usr/bin/python3 -I -S -B tests/test-swebench-workflow-study.py
-/usr/bin/python3 -I -S -B tests/test-job-lifecycle.py
-./tests/test-agy-worker.sh
-/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py
-./tests/test-update.sh
-/usr/bin/python3 -I -S -B tests/test-adoption-measurement.py
-/usr/bin/python3 -I -S -B tests/test-update-notifier.py
-/usr/bin/python3 -I -S -B tests/test-version-attestation-runner.py
-/usr/bin/python3 -I -S -B tests/test-version-bootstrap-runner.py
-/usr/bin/python3 -I -S -B tests/test-version-initial-bootstrap-runner.py
-/usr/bin/python3 -I -S -B tests/test-version-attestation-harness.py
-/usr/bin/python3 -I -S -B tests/test-models-attestation-runner.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-runner.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-profile.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-version-evidence.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-profile.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-runner.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-reprofile.py
-/usr/bin/python3 -I -S -B tests/test-models-capture-1-1-22-classifier.py
-/usr/bin/python3 -I -S -B tests/test-agy-1-1-22-activation.py
-./tests/test-reporting.sh
-/usr/bin/python3 -I -S -B tests/test-feedback-triage.py
-/usr/bin/python3 -I -S -B tests/test-model-intelligence.py
-/usr/bin/python3 -I -S -B tests/test-model-evidence-campaign.py
-/usr/bin/python3 -I -S -B tests/test-codex-usage-report.py
-/usr/bin/python3 -I -S -B tests/test-delegation-policy.py
-/usr/bin/python3 -I -S -B tests/test-workflow.py
-./tests/test-packaging.sh
-./tests/test-doctor.sh
-/usr/bin/python3 -I -S -B tests/test-conformance.py
-./tests/test-proof-demo.sh
-bash -n ./*.sh conformance/*.sh scripts/*.sh tests/*.sh skills/*/scripts/*.sh skills/*/runtime/*.sh
-(
-  AGY_WORKER_PYCACHE="$(mktemp -d -t agyworker-pycache.XXXXXX)" || exit 1
-  trap 'rm -rf -- "$AGY_WORKER_PYCACHE"' EXIT
-  PYTHONPYCACHEPREFIX="$AGY_WORKER_PYCACHE" \
-    python3 -m py_compile conformance/v1/*.py scripts/*.py skills/*/runtime/scripts/*.py
-)
-git diff --check
+/usr/bin/python3 -I -S -B scripts/ci_stages.py --list
 ```
+
+The listing shows stage ID, shard, and registered command without running tests.
+Suite commands can be run directly; syntax stages use runner-provided environment.
+Use the matching repository-map row to choose the owning suite. For remediation,
+select the natural group that owns the change:
+
+```bash
+/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py --group core
+/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py --group runtime
+/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py --group recovery
+```
+
+Omitting `--group` runs the full remediation inventory. A focused pass accelerates
+iteration but does not replace the stable-candidate full gate.
 
 Report exact summaries and any checks you could not run. Passing tests do not replace
 human diff review or justify unrelated cleanup.
+
+Classify a failed check before retrying: a reproducible code failure needs a fix,
+a timing-sensitive test needs a deterministic reproduction, and an environment or
+service failure needs its prerequisite restored. Do not increase timeouts or change
+models as a substitute for diagnosing the failure. Reuse passing evidence while the
+candidate bytes and relevant environment remain unchanged; after an edit, rerun the
+owning checks and apply the stable-candidate full-gate rule above.
 
 When a release is also claimed to be installed or collecting local measurements,
 verify those machine states separately after publication. A clean tagged checkout is
