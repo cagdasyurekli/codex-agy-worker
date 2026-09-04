@@ -99,13 +99,17 @@ class PollCounter:
 
 
 class ModelsCapture1122Tests(unittest.TestCase):
-    def _synthetic_runner_profile(self, base: str, exit_code: int, scratch_write: bool = False, tmp_cache: str = "", tmp_cache_mode: str = "", child_sets_private_umask: bool = True) -> tuple[object, bytes, dict[str, object], dict[str, object]]:
+    def _synthetic_runner_profile(self, base: str, exit_code: int, scratch_write: bool = False, tmp_cache: str = "", tmp_cache_mode: str = "", child_sets_private_umask: bool = True, snapshot_policy: str = "stable", updater_attempt: bool = False) -> tuple[object, bytes, dict[str, object], dict[str, object]]:
         """Build one private, data-only recovery chain for the real runner path."""
         account, parent = os.path.join(base, "account"), os.path.join(base, "capture")
         os.mkdir(account, 0o700); os.mkdir(parent, 0o700)
         source, recovery = os.path.join(parent, "agy.source"), os.path.join(parent, "recovery")
         os.mkdir(recovery, 0o700)
+        snapshot = os.path.join(recovery, "agy.snapshot")
         mutation = 'printf residual > "$TMPDIR/residual"\n' if scratch_write else ""
+        if updater_attempt:
+            replacement = snapshot + ".replacement"
+            mutation += f'chmod 700 "{snapshot}" 2>/dev/null || true\nprintf replaced > "{snapshot}" 2>/dev/null || true\nprintf replaced > "{replacement}"\nmv -f "{replacement}" "{snapshot}" 2>/dev/null || true\nrm -f "{replacement}"\n'
         if tmp_cache:
             if child_sets_private_umask:
                 mutation += "umask 077\n"
@@ -113,7 +117,6 @@ class ModelsCapture1122Tests(unittest.TestCase):
             if tmp_cache_mode:
                 mutation += f'chmod {tmp_cache_mode} "$TMPDIR/{tmp_cache}"\n'
         child = (f"#!/bin/sh\n{mutation}printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$0\" \"$1\" \"$HOME\" \"$TMPDIR\" \"$XDG_CACHE_HOME\" \"$PATH\" \"$LC_ALL\"\nexit {exit_code}\n").encode("ascii")
-        snapshot = os.path.join(recovery, "agy.snapshot")
         for path, mode in ((source, 0o755), (snapshot, 0o500)):
             with open(path, "wb") as handle: handle.write(child)
             os.chmod(path, mode)
@@ -135,8 +138,8 @@ class ModelsCapture1122Tests(unittest.TestCase):
             os.chmod(os.path.join(recovery, name), 0o600)
         value = Profile(account, DirectoryIdentity.from_stat(os.stat(account)), parent, DirectoryIdentity.from_stat(os.stat(parent)), snapshot_identity, snapshot, source_identity, source, source_sha, binding_sha, recovery, DirectoryIdentity.from_stat(os.stat(recovery)))
         globals_ = runner["run_capture"].__globals__
-        old = {name: globals_[name] for name in ("EXPECTED_SOURCE_SHA256", "EXPECTED_RECOVERY_BINDING_SHA256", "EXPECTED_RECOVERY_RUNNER_SHA256", "EXPECTED_RECOVERY_RUNNER_BYTES", "EXPECTED_RECOVERY_SUMMARY_BYTES")}
-        globals_.update({"EXPECTED_SOURCE_SHA256": source_sha, "EXPECTED_RECOVERY_BINDING_SHA256": binding_sha, "EXPECTED_RECOVERY_RUNNER_SHA256": runner_sha, "EXPECTED_RECOVERY_RUNNER_BYTES": len(recovery_runner), "EXPECTED_RECOVERY_SUMMARY_BYTES": len(summary)})
+        old = {name: globals_[name] for name in ("CAPTURE_SNAPSHOT_POLICY", "EXPECTED_SOURCE_SHA256", "EXPECTED_RECOVERY_BINDING_SHA256", "EXPECTED_RECOVERY_RUNNER_SHA256", "EXPECTED_RECOVERY_RUNNER_BYTES", "EXPECTED_RECOVERY_SUMMARY_BYTES")}
+        globals_.update({"CAPTURE_SNAPSHOT_POLICY": snapshot_policy, "EXPECTED_SOURCE_SHA256": source_sha, "EXPECTED_RECOVERY_BINDING_SHA256": binding_sha, "EXPECTED_RECOVERY_RUNNER_SHA256": runner_sha, "EXPECTED_RECOVERY_RUNNER_BYTES": len(recovery_runner), "EXPECTED_RECOVERY_SUMMARY_BYTES": len(summary)})
         return value, canonical(runner["dataclasses"].asdict(value)), old, {"account": account, "parent": parent, "source": source, "snapshot": snapshot}
 
     def test_01_profile_source_contract(self) -> None:
@@ -208,7 +211,8 @@ class ModelsCapture1122Tests(unittest.TestCase):
     def test_15_runner_uses_snapshot_executable(self) -> None:
         source = RUNNER_SOURCE.read_text()
         self.assertIn("executable=profile.snapshot_path", source)
-        self.assertIn("subprocess.Popen([profile.source_path, \"--output-format\", \"json\", \"models\"], executable=profile.snapshot_path", source)
+        self.assertIn("subprocess.Popen([profile.snapshot_path, \"--output-format\", \"json\", \"models\"], executable=profile.snapshot_path", source)
+        self.assertIn("hashlib.sha256(held).hexdigest() != EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256", source)
 
     def test_16_closed_environment_is_explicit(self) -> None:
         source = RUNNER_SOURCE.read_text()
@@ -421,7 +425,7 @@ class ModelsCapture1122Tests(unittest.TestCase):
         self.assertEqual(reserved_pgid, 8123)
         self.assertEqual(len(calls), 1)
         args, kwargs = calls[0]
-        self.assertEqual(args, ([value.source_path, "--output-format", "json", "models"],))
+        self.assertEqual(args, ([value.snapshot_path, "--output-format", "json", "models"],))
         self.assertEqual(kwargs["executable"], value.snapshot_path)
         self.assertEqual(kwargs["cwd"], "/private/capture/root/cwd")
         self.assertTrue(kwargs["start_new_session"])
@@ -535,7 +539,7 @@ class ModelsCapture1122Tests(unittest.TestCase):
                 record = json.loads(handle.read())
             self.assertEqual(result["status"], "captured")
             self.assertEqual(record["status"], "captured")
-            self.assertEqual(record["observation"]["argv"], [source, "--output-format", "json", "models"])
+            self.assertEqual(record["observation"]["argv"], [snapshot, "--output-format", "json", "models"])
             self.assertFalse(record["limitations"]["accepted_inventory"])
             with open(os.path.join(root, "models.capture.sha256"), "rb") as handle:
                 marker = handle.read()
@@ -1168,6 +1172,85 @@ class ModelsCapture1122Tests(unittest.TestCase):
         self.assertEqual(str(raised.exception), "capture group cannot be closed")
         self.assertEqual(events[-1], "wait")
         self.assertEqual(events.count("wait"), 1)
+
+    def test_89_readonly_mount_policy_accepts_an_unchanged_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            value, raw, old, paths = self._synthetic_runner_profile(
+                os.path.realpath(temporary), 0, snapshot_policy="macos-readonly-mount",
+            )
+            globals_ = runner["run_capture"].__globals__
+            original_fstatvfs = globals_["os"].fstatvfs
+            globals_["os"].fstatvfs = lambda _fd: types.SimpleNamespace(f_flag=os.ST_RDONLY)
+            try:
+                result = runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+            finally:
+                globals_["os"].fstatvfs = original_fstatvfs
+                globals_.update(old)
+            with open(os.path.join(result["artifact_root"], "models.capture.json"), encoding="ascii") as handle:
+                record = json.load(handle)
+            self.assertEqual(record["snapshot"]["policy"], "macos-readonly-mount")
+            self.assertTrue(record["snapshot"]["mount_readonly"])
+
+    def test_90_readonly_mount_policy_rejects_a_writable_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            value, _raw, old, _paths = self._synthetic_runner_profile(
+                os.path.realpath(temporary), 0, snapshot_policy="macos-readonly-mount",
+            )
+            globals_ = runner["_protect_snapshot"].__globals__
+            original_fstatvfs = globals_["os"].fstatvfs
+            globals_["os"].fstatvfs = lambda _fd: types.SimpleNamespace(f_flag=0)
+            fd = os.open(value.snapshot_path, os.O_RDONLY)
+            try:
+                with self.assertRaises(runner["CaptureError"]):
+                    runner["_protect_snapshot"](value, fd, PollCounter())
+            finally:
+                os.close(fd)
+                globals_["os"].fstatvfs = original_fstatvfs
+                globals_.update(old)
+
+    def test_91_readonly_mount_policy_rejects_post_child_snapshot_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            value, raw, old, _paths = self._synthetic_runner_profile(
+                os.path.realpath(temporary), 0, snapshot_policy="macos-readonly-mount", updater_attempt=True,
+            )
+            globals_ = runner["run_capture"].__globals__
+            original_fstatvfs = globals_["os"].fstatvfs
+            globals_["os"].fstatvfs = lambda _fd: types.SimpleNamespace(f_flag=os.ST_RDONLY)
+            try:
+                with self.assertRaises(runner["CaptureError"]):
+                    runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+            finally:
+                globals_["os"].fstatvfs = original_fstatvfs
+                globals_.update(old)
+
+    def test_92_readonly_mount_policy_fails_closed_off_macos(self) -> None:
+        globals_ = runner["_protect_snapshot"].__globals__
+        original_sys, original_policy = globals_["sys"], globals_["CAPTURE_SNAPSHOT_POLICY"]
+        try:
+            globals_["sys"] = types.SimpleNamespace(platform="linux")
+            globals_["CAPTURE_SNAPSHOT_POLICY"] = "macos-readonly-mount"
+            with self.assertRaises(runner["CaptureError"]):
+                runner["_protect_snapshot"](types.SimpleNamespace(), -1, PollCounter())
+        finally:
+            globals_["sys"], globals_["CAPTURE_SNAPSHOT_POLICY"] = original_sys, original_policy
+
+    def test_93_readonly_mount_failure_record_retains_the_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            value, raw, old, paths = self._synthetic_runner_profile(
+                os.path.realpath(temporary), 9, snapshot_policy="macos-readonly-mount",
+            )
+            globals_ = runner["run_capture"].__globals__
+            original_fstatvfs = globals_["os"].fstatvfs
+            globals_["os"].fstatvfs = lambda _fd: types.SimpleNamespace(f_flag=os.ST_RDONLY)
+            try:
+                with self.assertRaises(runner["CaptureError"]):
+                    runner["run_capture"](value, raw, PollCounter(), RUNNER_SOURCE.read_bytes())
+            finally:
+                globals_["os"].fstatvfs = original_fstatvfs
+                globals_.update(old)
+            roots = [entry for entry in os.listdir(paths["parent"]) if entry.startswith("agy-models-capture-1-1-22.")]
+            with open(os.path.join(paths["parent"], roots[0], "models.capture.failure.json"), encoding="ascii") as handle:
+                self.assertEqual(json.load(handle)["snapshot_policy"], "macos-readonly-mount")
 
 
 if __name__ == "__main__":

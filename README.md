@@ -269,6 +269,13 @@ Personas remain optional prompt templates. They cannot select a repository, comm
 model, authorization, verification result, or Git action. Model and effort selection
 remain caller-owned, while recommendations remain advisory.
 
+The advanced raw dispatcher has an opt-in, one-cycle `--boost` task profile for an
+explicitly approved higher-authority experiment. Its provider-free preflight prints a
+job-bound risk digest; the acknowledgement warns that Boost may invoke provider-side
+subagents and protected tools, but grants no permission and widens no transmission
+scope. Provider init identity is verified, and Boost failures cannot resume, restart,
+or continue.
+
 See [Usage](docs/USAGE.md) for workflow examples, manual invocation, read-only
 inventory, common options, and explicit model-selection behavior.
 

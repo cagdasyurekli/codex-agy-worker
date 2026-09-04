@@ -88,7 +88,7 @@ to both facade calls and approve the scoped preview with
 the boundaries in [Security and compatibility](SECURITY_AND_COMPATIBILITY.md).
 
 Omitting both modes fails before provider launch. The old `--approve-preview-sha`
-spelling remains available through at least v0.15.x only when paired with
+spelling remains available through at least v0.16.x only when paired with
 `--legacy-preview-approval`; it emits a deprecation warning and never restores an
 implicit whole-worktree default.
 

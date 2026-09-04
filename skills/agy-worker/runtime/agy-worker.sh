@@ -122,6 +122,7 @@ usage: agy-worker.sh [--workdir DIR] [--persona NAME] [--mode plan|accept-edits]
                      [--provider-env NAME]...
                      [--provider-scope FILE --approve-transmission-sha SHA256]
                      [--approve-whole-worktree MANIFEST_SHA256]
+                     [--boost --approve-boost-risk-sha SHA256]
                      [--add-dir DIR]... [--allow-slash-commands]
        ... task prompt on stdin ...
 
@@ -271,6 +272,7 @@ job_cli_seen=0
 provider_scope_seen=0; provider_scope=""
 approve_transmission_sha_seen=0; approve_transmission_sha=""
 approve_whole_worktree_seen=0; approve_whole_worktree=""
+boost_seen=0; approve_boost_risk_sha_seen=0; approve_boost_risk_sha=""; boost_policy_sha=""
 provider_env=()
 # Injection control (rec #8): worker prompts routinely embed repo content, and a
 # "/skill ..." string inside that content would otherwise expand as a real command.
@@ -349,6 +351,11 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || usage
             (( approve_whole_worktree_seen == 0 )) || { echo "agy-worker.sh: repeated --approve-whole-worktree" >&2; exit 64; }
             approve_whole_worktree_seen=1; approve_whole_worktree="$2"; shift 2 ;;
+        --boost) (( boost_seen == 0 )) || { echo "agy-worker.sh: repeated --boost" >&2; exit 64; }; boost_seen=1; shift ;;
+        --approve-boost-risk-sha)
+            [[ $# -ge 2 ]] || usage
+            (( approve_boost_risk_sha_seen == 0 )) || { echo "agy-worker.sh: repeated --approve-boost-risk-sha" >&2; exit 64; }
+            approve_boost_risk_sha_seen=1; approve_boost_risk_sha="$2"; shift 2 ;;
         --add-dir) [[ $# -ge 2 ]] || usage; extra_dirs+=("$2"); shift 2 ;;
         --allow-slash-commands) disable_slash=0; shift ;;
         -h|--help) usage 0 ;;
@@ -383,6 +390,10 @@ if (( approve_whole_worktree_seen )); then
         echo "agy-worker.sh: --approve-whole-worktree must be 64 lowercase hex characters" >&2
         exit 64
     fi
+fi
+if (( boost_seen == 0 && approve_boost_risk_sha_seen )); then
+    echo "agy-worker.sh: --approve-boost-risk-sha requires --boost" >&2
+    exit 64
 fi
 
 if (( ${#provider_env[@]} > 64 )); then
@@ -480,6 +491,7 @@ case "$workflow" in
     ''|explore|task|project) ;;
     *) echo "agy-worker.sh: invalid workflow: $workflow" >&2; exit 64 ;;
 esac
+
 case "$workflow" in
     explore)
         if (( mode_cli_seen )) && [[ "$mode" != "plan" ]]; then
@@ -532,6 +544,23 @@ esac
 if [[ "$mode" != "plan" && ( "$persona" == "repo-inventory" || "$persona" == "diff-reviewer" ) ]]; then
     echo "agy-worker.sh: persona '$persona' is read-only and requires --mode plan" >&2
     exit 64
+fi
+if (( boost_seen )); then
+    if [[ "$workflow" != "task" || "$mode" != "accept-edits" || "$max_cycles" != "1" || -n "$persona" || "$disable_slash" != 1 ]]; then
+        echo "agy-worker.sh: --boost requires task, accept-edits, one cycle, no persona, and slash protection" >&2
+        exit 64
+    fi
+    boost_policy_text="Boost may invoke subagents and protected tools; this acknowledgement does not grant runtime permissions."
+    boost_policy_sha="$(printf '%s' "$boost_policy_text" | shasum -a 256 | awk '{print $1}')"
+    expected_boost_risk_sha="$(printf '%s\n%s\n' "$boost_policy_sha" "$job_id" | shasum -a 256 | awk '{print $1}')"
+    if (( approve_boost_risk_sha_seen == 0 )); then
+        printf '%s\n' "agy-worker.sh: $boost_policy_text Review and rerun: --boost --approve-boost-risk-sha $expected_boost_risk_sha" >&2
+        exit 6
+    fi
+    if [[ "$approve_boost_risk_sha" != "$expected_boost_risk_sha" ]]; then
+        echo "agy-worker.sh: Boost risk acknowledgement is invalid or stale" >&2
+        exit 6
+    fi
 fi
 
 duration_seconds() {
@@ -966,24 +995,60 @@ fi
 # agy is agentic: given an analysis prompt it will happily write its answer to an
 # internal "brain" artifact and return a stub. The envelope requirement plus this
 # directive pin the answer to stdout where the driver can actually read it.
+if [[ "$mode" == "accept-edits" ]]; then
+    workspace_directive="Use file tools to inspect and edit the approved workspace."
+else
+    workspace_directive="Use file tools to inspect the approved workspace only; do not edit files."
+fi
+boost_workspace_contract=""
+if (( boost_seen )); then
+    if (( provider_scope_seen )); then
+        boost_workspace_shape="It is intentionally Gitless and may contain only selected files."
+    else
+        boost_workspace_shape="It is the explicitly approved whole worktree."
+    fi
+    read -r -d '' boost_workspace_contract <<'EOF' || true
+BOOST WORKSPACE CONTRACT — non-negotiable:
+- The initial working directory exposed by file tools is the complete approved task
+  workspace. __BOOST_WORKSPACE_SHAPE__ Do not search for another repository or
+  "active workspace".
+- Use built-in file listing, reading, and editing tools with paths relative to that
+  workspace root. Do not inspect HOME, `~/.gemini`, parent directories, or other user
+  directories.
+- Never call shell or terminal tools, including `pwd`, `ls`, `find`, or `git`. Shell
+  tools run in a separate scratch area; their output is not evidence about the
+  approved workspace.
+- If you delegate, include this entire contract in every subagent task. If a subagent
+  cannot comply, perform the task directly with file tools. If file-tool access is
+  denied or unavailable, return the schema-valid blocked envelope.
+
+EOF
+    boost_workspace_contract="${boost_workspace_contract/__BOOST_WORKSPACE_SHAPE__/$boost_workspace_shape}"
+fi
 read -r -d '' PREAMBLE <<'EOF' || true
 You are a bounded worker. Another agent (the driver) will independently verify
 everything you claim, so inaccurate self-reporting is worse than admitting failure.
 
+__BOOST_WORKSPACE_CONTRACT__
 OUTPUT CONTRACT — non-negotiable:
 - Your FINAL response must be a single JSON object matching the enforced schema.
 - Do NOT write your answer to a file, artifact, or brain document.
 - Do NOT reply "see the artifact" or reference an external document.
 - List EVERY file you touched in files_changed. The driver diffs the repo; an
   omission reads as a scope violation and fails the job.
-- Do NOT run shell commands or tests. The driver's environment is the only trusted
-  execution context. Leave commands_run and tests_run as empty arrays.
+- __WORKSPACE_DIRECTIVE__ Do NOT run shell or
+  terminal tools or tests: under agy's sandbox, shell tools run in a separate scratch
+  directory, so shell observations do not establish workspace availability. The
+  driver's environment is the only trusted execution context. Leave commands_run and
+  tests_run as empty arrays.
 - If a permission gate, missing tool, or ambiguity blocks you: set
   status="blocked", requires_human=true, and explain in open_questions.
   Do not silently work around it.
 
 TASK FOLLOWS:
 EOF
+PREAMBLE="${PREAMBLE/__BOOST_WORKSPACE_CONTRACT__/$boost_workspace_contract}"
+PREAMBLE="${PREAMBLE/__WORKSPACE_DIRECTIVE__/$workspace_directive}"
 
 # Persona is prepended as text (see --persona note above). Strip YAML frontmatter:
 # the `tools:` list is meaningless here — tool access is governed by agy's own
@@ -1006,6 +1071,7 @@ printf '%s' "$full_prompt" > "$full_prompt_file"
 build_cmd() {
     cmd=(agy --sandbox --mode "$mode" --print-timeout "${max_seconds}s")
     cmd+=(--output-format stream-json --json-schema "$SCHEMA")
+    (( boost_seen == 0 )) || cmd+=(--agent Boost)
     [[ -n "$model" ]] && cmd+=(--model "$model")
     if (( disable_slash )) && [[ "$mode" != "plan" ]]; then
         cmd+=(--disable-slash-commands)
@@ -1050,7 +1116,7 @@ python3 -I -S -B - "$command_file" "$job_id" "$workdir" "$agy_version" "$agy_ver
     "$idle_seconds" "$hard_seconds" "$max_seconds" "$notice_seconds" \
     "$stage_dir_arg" "$stage_file_arg" "$CALLER_UMASK" "$command_workflow" "$max_cycles" \
     "${#provider_env[@]}" ${provider_env+"${provider_env[@]}"} "$selection_file" \
-    "$provider_scope" "$approve_transmission_sha" "$approve_whole_worktree" "${cmd[@]}" <<'PY'
+    "$provider_scope" "$approve_transmission_sha" "$approve_whole_worktree" "$boost_seen" "$boost_policy_sha" "$approve_boost_risk_sha" "${cmd[@]}" <<'PY'
 import json
 import os
 from pathlib import Path
@@ -1062,11 +1128,11 @@ import sys
 ) = sys.argv[1:]
 provider_env_count = int(provider_env_count)
 provider_env = sorted(remainder[:provider_env_count])
-selection_path, provider_scope_arg, approved_transmission_sha_arg, approved_whole_worktree_sha_arg, *argv = remainder[provider_env_count:]
+selection_path, provider_scope_arg, approved_transmission_sha_arg, approved_whole_worktree_sha_arg, boost_arg, boost_policy_sha_arg, approved_boost_risk_sha_arg, *argv = remainder[provider_env_count:]
 if not isinstance(child_umask, str) or len(child_umask) not in (3, 4) or any(ch not in "01234567" for ch in child_umask):
     raise SystemExit(64)
 value = {
-    "schema_version": 7,
+    "schema_version": 8,
     "kind": "agy-worker-dispatch-command",
     "job_id": job_id,
     "workdir": workdir,
@@ -1098,6 +1164,9 @@ value = {
     "provider_scope_identity": None,
     "approved_transmission_sha256": None,
     "approved_whole_worktree_sha256": approved_whole_worktree_sha_arg or None,
+    "boost": boost_arg == "1",
+    "boost_policy_sha256": boost_policy_sha_arg or None,
+    "approved_boost_risk_sha256": approved_boost_risk_sha_arg or None,
 }
 descriptor = os.open(selection_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
 try:

@@ -113,7 +113,7 @@ failure. See [Operate and verify a local project](PROJECT_WORKFLOW.md) for the b
 details and advanced recovery surfaces.
 
 The former `--approve-preview-sha` spelling is deprecated and cannot preserve an
-implicit broad default: through at least v0.15.x it works only when paired with
+implicit broad default: through at least v0.16.x it works only when paired with
 `--legacy-preview-approval`, and it emits a migration warning. New callers must use
 one of the two canonical modes above.
 
@@ -295,6 +295,8 @@ prove the worker's architecture prose or completeness.
 | `--provider-scope FILE` | — | Recommended closed read/write policy for bounded jobs; stages selected content only and requires `--approve-transmission-sha`. |
 | `--approve-transmission-sha SHA256` | — | Exact scoped policy/path/content approval binding; grants no execution or downstream authority. |
 | `--approve-whole-worktree SHA256` | — | Explicit broad-mode exception bound to the current path/kind manifest. |
+| `--boost` | — | Advanced one-cycle `task` profile; may invoke provider-side subagents and protected tools and requires a job-bound risk acknowledgement. |
+| `--approve-boost-risk-sha SHA256` | — | Exact warning/job acknowledgement printed by the provider-free Boost preflight; grants no permission or wider transmission. |
 | `--provider-env NAME` | — | Repeatable exact-name opt-in for an additional caller variable passed to local `agy` probes and provider launches. |
 | `--persona NAME` | — | Optional bounded prompt specialization; never authorization or quality evidence. |
 | `--allow-slash-commands` | — | Expert-only opt-in for a fully caller-controlled prompt; disables the normal embedded slash-command protection. |
@@ -306,6 +308,12 @@ prove the worker's architecture prose or completeness.
 The source-owned option contract is the bundled
 [`SKILL.md`](../skills/agy-worker/SKILL.md). Do not infer compatibility, provider
 availability, quality, cost, or routing from a label.
+
+Boost is limited to `task`, `accept-edits`, `--max-cycles 1`, no persona, and
+default slash protection. The controller also requires the provider init frame to
+report `agent=Boost` and `permission_mode=request-review`. A Boost job cannot resume,
+restart, or continue; any further attempt uses a new job plus fresh transmission and
+risk approvals.
 
 Leave slash expansion disabled when any prompt content comes from a repository or
 another model. `--allow-slash-commands` exists only for callers who fully control the

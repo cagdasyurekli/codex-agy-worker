@@ -116,7 +116,7 @@ git -C "$UPSTREAM_SOURCE" config user.name test
 printf 'reviewed upstream\n' > "$UPSTREAM_SOURCE/README.md"
 git -C "$UPSTREAM_SOURCE" add README.md
 git -C "$UPSTREAM_SOURCE" commit -qm 'reviewed upstream fixture'
-git -C "$UPSTREAM_SOURCE" tag v1.1.22
+git -C "$UPSTREAM_SOURCE" tag v1.1.24
 UPSTREAM_HEAD="$(git -C "$UPSTREAM_SOURCE" rev-parse HEAD)"
 git init -q --bare "$UPSTREAM_REMOTE"
 git -C "$UPSTREAM_SOURCE" remote add publish "$UPSTREAM_REMOTE"
@@ -154,7 +154,7 @@ case "${FAKE_AGY_MODE:-version}" in
   usage) printf 'Usage: agy [options] [command]\n'; exit 0 ;;
   fail) exit 7 ;;
 esac
-printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.1.22}}"
+printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.1.24}}"
 STUB
 cat > "$TMP/bin/codex" <<'STUB'
 #!/usr/bin/env bash
@@ -200,7 +200,7 @@ case "${1:-}" in
           unavailable) exit 2 ;;
           malformed) printf '%s\n' 'credential-bearing malformed official bytes'; exit 0 ;;
           drift) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.13}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
-          *) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.22}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
+          *) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.24}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
         esac
         ;;
       official-codex)
@@ -235,10 +235,10 @@ raise SystemExit(0 if module.MANIFEST_URL == expected else 1)
     fi
     case "${FAKE_MANIFEST_RESULT:-unchanged}" in
       unchanged)
-        printf '%s\n' '  distribution manifest: unchanged (1.1.22)'
+        printf '%s\n' '  distribution manifest: unchanged (1.1.24)'
         exit 0 ;;
       drift)
-        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.1.23; verified 1.1.22)'
+        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.1.25; verified 1.1.24)'
         exit 3 ;;
       unavailable)
         printf '%s\n' '  distribution manifest: evidence-unavailable (network evidence unavailable)'
@@ -279,7 +279,7 @@ git -C "$SOURCE" remote add publish "$REMOTE"
 git -C "$SOURCE" push -q publish main --tags
 git --git-dir="$REMOTE" symbolic-ref HEAD refs/heads/main
 export FAKE_PROJECT_REMOTE="$REMOTE"
-export FAKE_AGY_HEAD="556846a4bb94117222f53846896c7eb0d645307e"
+export FAKE_AGY_HEAD="bf27ce1134b4ead2f7bfa0a4fb3cb5fcbebcaa5a"
 export FAKE_CODEX_HEAD="$CODEX_UPSTREAM_HEAD"
 git init -q --bare "$NO_TAG_REMOTE"
 git -C "$SOURCE" push -q "$NO_TAG_REMOTE" main
@@ -933,12 +933,12 @@ expect_matrix_resolution "3.6 Flash medium resolves exactly" \
     gemini-3.6-flash medium gemini-3.6-flash-medium pair-36-medium
 expect_matrix_resolution "3.6 Flash high resolves exactly" \
     gemini-3.6-flash high gemini-3.6-flash-high pair-36-high
-expect_matrix_resolution "3.5 Flash low resolves exactly" \
-    gemini-3.5-flash low gemini-3.5-flash-low pair-35-low
-expect_matrix_resolution "3.5 Flash medium resolves exactly" \
-    gemini-3.5-flash medium gemini-3.5-flash-medium pair-35-medium
-expect_matrix_resolution "3.5 Flash high resolves exactly" \
-    gemini-3.5-flash high gemini-3.5-flash-high pair-35-high
+expect_matrix_resolution "3.8 Flash low resolves exactly" \
+    gemini-3.8-flash low gemini-3.8-flash-low pair-38-low
+expect_matrix_resolution "3.8 Flash medium resolves exactly" \
+    gemini-3.8-flash medium gemini-3.8-flash-medium pair-38-medium
+expect_matrix_resolution "3.8 Flash high resolves exactly" \
+    gemini-3.8-flash high gemini-3.8-flash-high pair-38-high
 expect_matrix_resolution "3.1 Pro low resolves exactly" \
     gemini-3.1-pro low gemini-3.1-pro-low pair-pro-low
 expect_matrix_resolution "3.1 Pro high resolves exactly" \

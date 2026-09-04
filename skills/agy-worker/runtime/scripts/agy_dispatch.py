@@ -78,6 +78,13 @@ COMMAND_V6_FIELDS = COMMAND_V5_FIELDS | {
     "provider_scope_path", "provider_scope_sha256", "provider_scope_identity", "approved_transmission_sha256",
 }
 COMMAND_V7_FIELDS = COMMAND_V6_FIELDS | {"approved_whole_worktree_sha256"}
+COMMAND_V8_FIELDS = COMMAND_V7_FIELDS | {
+    "boost", "boost_policy_sha256", "approved_boost_risk_sha256",
+}
+BOOST_RISK_POLICY_TEXT = (
+    "Boost may invoke subagents and protected tools; this acknowledgement does not grant runtime permissions."
+)
+BOOST_RISK_POLICY_SHA256 = hashlib.sha256(BOOST_RISK_POLICY_TEXT.encode("utf-8")).hexdigest()
 STATE_PROJECT_FIELDS = {
     "workflow", "max_cycles", "cycle", "phase", "assurance",
     "check_summary", "check_counts", "verification_path", "verification_sha256",
@@ -112,7 +119,7 @@ WORKTREE_SNAPSHOT_SEMANTIC_V1 = "semantic-v1"
 CURRENT_WORKTREE_SNAPSHOT_ALGORITHM = WORKTREE_SNAPSHOT_SEMANTIC_V1
 FAILURE_STAGES = {
     "framing", "outer_status", "missing_structured_output", "schema_rejection",
-    "binding_failure", "selection_preflight",
+    "binding_failure", "selection_preflight", "boost_contract",
 }
 LIFECYCLE_PHASES = {
     "dispatching", "awaiting-verification", "repairing", "completed",
@@ -525,10 +532,24 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             raise DispatchError("dispatch command is not canonical")
         value = dict(value)
         value["approved_whole_worktree_sha256"] = None
-    elif set(value) != COMMAND_V7_FIELDS or value.get("schema_version") != 7:
+    elif set(value) == COMMAND_V7_FIELDS and value.get("schema_version") == 7:
+        if raw != canonical(value):
+            raise DispatchError("dispatch command is not canonical")
+        value = dict(value)
+        value.update({
+            "boost": False, "boost_policy_sha256": None,
+            "approved_boost_risk_sha256": None,
+        })
+    elif set(value) != COMMAND_V8_FIELDS or value.get("schema_version") != 8:
         raise DispatchError("dispatch command fields are invalid")
     elif raw != canonical(value):
         raise DispatchError("dispatch command is not canonical")
+    if "boost" not in value:
+        value = dict(value)
+        value.update({
+            "boost": False, "boost_policy_sha256": None,
+            "approved_boost_risk_sha256": None,
+        })
     if value["kind"] != "agy-worker-dispatch-command":
         raise DispatchError("dispatch command version is invalid")
     if (
@@ -608,7 +629,7 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         or not isinstance(approved_sha, str) or SHA_RE.fullmatch(approved_sha) is None
     ):
         raise DispatchError("dispatch provider scope binding is invalid")
-    if value["schema_version"] == 7:
+    if value["schema_version"] in {7, 8}:
         if scope_path is None:
             if not isinstance(approved_whole_sha, str) or SHA_RE.fullmatch(approved_whole_sha) is None:
                 raise DispatchError("dispatch whole-worktree approval binding is invalid")
@@ -616,6 +637,25 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             raise DispatchError("dispatch transmission modes conflict")
     elif approved_whole_sha is not None:
         raise DispatchError("legacy dispatch command cannot carry whole-worktree approval")
+    boost = value["boost"]
+    boost_policy = value["boost_policy_sha256"]
+    boost_approval = value["approved_boost_risk_sha256"]
+    if type(boost) is not bool or (not boost and (boost_policy is not None or boost_approval is not None)):
+        raise DispatchError("dispatch Boost binding is invalid")
+    if boost:
+        expected_approval = hashlib.sha256(
+            f"{BOOST_RISK_POLICY_SHA256}\n{value['job_id']}\n".encode("ascii")
+        ).hexdigest()
+        argv = value["argv"]
+        valid_mode = argv.count("--mode") == 1 and argv[argv.index("--mode") + 1:argv.index("--mode") + 2] == ["accept-edits"]
+        if (
+            boost_policy != BOOST_RISK_POLICY_SHA256 or boost_approval != expected_approval
+            or value["workflow"] != "task" or value["max_cycles"] != 1
+            or argv.count("--agent") != 1 or argv[argv.index("--agent") + 1:argv.index("--agent") + 2] != ["Boost"]
+            or argv.count("--disable-slash-commands") != 1 or not valid_mode
+            or any(flag in argv for flag in ("--conversation", "--continue", "-c"))
+        ):
+            raise DispatchError("dispatch Boost contract is invalid")
     if scope_path is not None and "--add-dir" in value["argv"]:
         raise DispatchError("narrow provider scope cannot grant an additional directory")
     return value, raw, _identity(info)
@@ -3312,10 +3352,23 @@ def _quota_terminal_failure(stream: Path, version: str) -> tuple[str, int | None
     return "provider_quota_exhausted", retry
 
 
+def _boost_stream_is_bound(stream: Path) -> bool:
+    """Require provider-observed Boost identity before accepting a result."""
+    try:
+        first = stream.read_bytes().splitlines()[0]
+        frame = json.loads(first.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
+    except (IndexError, OSError, UnicodeError, json.JSONDecodeError, DispatchError):
+        return False
+    init = frame.get("init") if isinstance(frame, dict) and frame.get("event") == "init" else None
+    return bool(isinstance(init, dict) and init.get("agent") == "Boost" and init.get("permission_mode") == "request-review")
+
+
 def _validate_terminal_envelope(
-    stream: Path, envelope: Path, provider_schema: Path, canonical_schema: Path,
+    stream: Path, envelope: Path, provider_schema: Path, canonical_schema: Path, *, boost: bool = False,
 ) -> tuple[tuple[str, tuple[int, int, int, int, int]] | None, str | None, str | None]:
     """Keep framing, provider status, extraction, and canonical validation distinct."""
+    if boost and not _boost_stream_is_bound(stream):
+        return None, None, "boost_contract"
     result = _terminal_result(stream, strict=True)
     if result is None:
         return None, None, "framing"
@@ -3840,6 +3893,16 @@ def controller(job: Path, ownership_fd: int) -> int:
                                     failure_stage = "framing"
                                     break
                                 if event_kind == "init":
+                                    if command.get("boost"):
+                                        try:
+                                            init_frame = json.loads(line.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
+                                        except (UnicodeError, json.JSONDecodeError, DispatchError):
+                                            init_frame = None
+                                        init_value = init_frame.get("init") if isinstance(init_frame, dict) else None
+                                        if not isinstance(init_value, dict) or init_value.get("agent") != "Boost" or init_value.get("permission_mode") != "request-review":
+                                            reason = "invalid_envelope"
+                                            failure_stage = "boost_contract"
+                                            break
                                     saw_init = True
                                 elif event_kind == "result":
                                     saw_terminal = True
@@ -3953,6 +4016,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                         schema_paths = _bound_schemas(command, state)
                         result_binding, outer_status, failure_stage = _validate_terminal_envelope(
                             stream_path, envelope_path, schema_paths[0], schema_paths[1],
+                            boost=bool(command.get("boost")),
                         )
                         if result_binding is None and reason is None:
                             reason = "invalid_envelope"
@@ -4200,6 +4264,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 preserved_path = current["result_path"] if preserve_candidate_forensics else None
                 preserved_sha = current["result_sha256"] if preserve_candidate_forensics else None
                 preserved_identity = current["result_identity"] if preserve_candidate_forensics else None
+                is_boost = bool(command.get("boost"))
                 updates = {
                     "status": final_status,
                     "reason": reason,
@@ -4232,7 +4297,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                         "blocked" if candidate_unavailable else "driver_review"
                     ) if candidate_recognized else (
                         "none" if reason == "selection_preflight_failed" else
-                        "resume" if current["conversation_id"] else "blocked"
+                        "resume" if current["conversation_id"] and not is_boost else "blocked"
                     ),
                     "next_action_command": None,
                     **(
@@ -4246,7 +4311,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "resume_available": bool(
                         current["conversation_id"] and not candidate_recognized
                         and final_status == "failed"
-                        and reason != "selection_preflight_failed"
+                        and reason != "selection_preflight_failed" and not is_boost
                     ),
                     "continue_available": False,
                     "remote_cancel_unverified": reason in {"cancelled", "interrupted"},
@@ -4282,7 +4347,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                                 final_status in {"succeeded", "failed"}
                                 and reason != "selection_preflight_failed"
                                 and candidate_source != "provider_cancelled"
-                                and current["conversation_id"]
+                                and current["conversation_id"] and not is_boost
                                 and current["attempt"] < current["max_cycles"]
                                 and elapsed < current["max_seconds"]
                             ),
@@ -4402,6 +4467,8 @@ def create_state(
                 )
             else:
                 command = _load_bound_command(job, state, stage_readonly=False)
+            if command.get("boost") and origin in {"conversation-resume", "fresh-restart", "conversation-continue"}:
+                raise DispatchError("Boost dispatches do not resume, restart, or continue")
             if _job_is_inside_worktree(job, command["workdir"]):
                 raise DispatchError("dispatch job directory cannot be inside the target workdir")
             command, state = _bound_lifecycle_inputs(job, state, command)

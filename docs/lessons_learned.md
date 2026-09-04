@@ -1027,6 +1027,24 @@ repair cycles. This closes the approval gap without removing whole-worktree capa
 deadlocking continuation. Legacy records and already-queued states remain readable, but an
 unapproved broad record cannot launch through dispatcher `run`/`start`.
 
+### Bind self-updating capture binaries and Boost authority explicitly (2026-09-03)
+
+Observation: A version-pinned `agy models` observation can replace its own disposable
+snapshot before returning, so post-run digest rejection prevents false evidence but
+cannot produce an inventory. Separately, Boost is an authority change rather than a
+mere speed preference because it may invoke subagents and protected tools.
+Correction: an attempted `UF_IMMUTABLE` guard did not prevent the observed same-user
+self-update, so it is not an accepted capture control. Version manifest rows can instead
+require a disposable snapshot on a macOS kernel-reported read-only mount (for example an
+owner-prepared UDRO image). The runner binds digest and descriptor/path evidence and
+checks the mount flag before and after the child. This blocks the observed in-place
+replacement route, but does not prove that an updater cannot re-execute from a writable
+location; same-UID or administrator tampering remains an explicit residual.
+Boost requires a job-bound warning acknowledgement, a one-cycle task profile, and
+provider-observed `Boost` plus `request-review` identity; it cannot resume, restart, or
+continue. Neither acknowledgement expands transmission, permissions, acceptance, Git,
+or publication authority.
+
 ## Transparent provider dispatch notice and truthful boundaries
 
 When Codex delegates to an external worker CLI backed by provider services, transparency

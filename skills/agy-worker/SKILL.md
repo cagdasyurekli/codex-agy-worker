@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires OpenAI Codex CLI, Bash, Python 3, git, and agy with provider network access. Claude and Claude Code hosts are not supported.
 metadata:
   author: cagdasyurekli
-  version: "0.15.0"
+  version: "0.16.0"
 ---
 
 # Delegate repository work and verify the result
@@ -70,6 +70,16 @@ read [Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md).
 `explore` and `task` accept `1..2` cycles; `project` accepts `1..5`. Personas
 are optional prompt specializations, not capability, approval, routing, verification,
 or quality gates.
+
+The advanced raw dispatcher also offers an opt-in `--boost` profile for one bounded
+`task` cycle. Boost may invoke provider-side subagents and protected tools, so it
+requires the exact job-bound `--approve-boost-risk-sha` printed by the rejected
+preflight. The acknowledgement does not grant runtime permissions or widen provider
+scope. Boost is restricted to `accept-edits`, one cycle, no persona, and default slash
+protection; the controller accepts a result only when the provider init frame reports
+both `agent=Boost` and `permission_mode=request-review`. A Boost job cannot resume,
+restart, or continue. Treat any failed attempt as terminal and request a new job and
+fresh approval rather than reusing its conversation.
 
 For material UX, lifecycle, trust-boundary, security, data-semantics, or other domain plans:
 A coordinator and suitable domain expert must co-plan.

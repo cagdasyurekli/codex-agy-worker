@@ -19,17 +19,30 @@ CLASSIFIER_PATH = ROOT / "scripts" / "version_manifest_capture_classifier.py"
 RUNNER_SOURCE_PATH = ROOT / "scripts" / "version_manifest_capture_runner.py"
 
 classifier_module = runpy.run_path(str(CLASSIFIER_PATH))
+TEST_MANIFEST_DIR = tempfile.TemporaryDirectory(prefix="agy-test-classifier-manifest-")
+TEST_MANIFEST_PATH = pathlib.Path(TEST_MANIFEST_DIR.name) / "agy-version-manifest.json"
+test_manifest = json.loads((ROOT / "compat" / "agy-version-manifest.json").read_text("utf-8"))
+test_manifest["versions"]["1.1.22"]["capture_runner_source_sha256"] = hashlib.sha256(
+    RUNNER_SOURCE_PATH.read_bytes()
+).hexdigest()
+test_manifest_bytes = json.dumps(test_manifest).encode("utf-8")
+TEST_MANIFEST_PATH.write_bytes(test_manifest_bytes)
+TEST_MANIFEST_PATH.with_suffix(".sha256").write_text(
+    hashlib.sha256(test_manifest_bytes).hexdigest() + "\n", encoding="ascii"
+)
+classifier_module["_bind_version_manifest"]("1.1.22", str(TEST_MANIFEST_PATH))
 classify_evidence_root = classifier_module["classify_evidence_root"]
 classify_stderr_bytes = classifier_module["classify_stderr_bytes"]
 ClassificationError = classifier_module["ClassificationError"]
-EXPECTED_RUNNER_SHA256 = classifier_module["EXPECTED_RUNNER_SHA256"]
-EXPECTED_SOURCE_SHA256 = classifier_module["EXPECTED_SOURCE_SHA256"]
-EXPECTED_RECOVERY_BINDING_SHA256 = classifier_module["EXPECTED_RECOVERY_BINDING_SHA256"]
-OUTPUT_PROFILE_NAME = classifier_module["OUTPUT_PROFILE_NAME"]
-OUTPUT_CLASSIFICATION_NAME = classifier_module["OUTPUT_CLASSIFICATION_NAME"]
-SCRATCH_NAMES = classifier_module["SCRATCH_NAMES"]
-RULESET_VERSION = classifier_module["RULESET_VERSION"]
-RULESET_SHA256 = classifier_module["RULESET_SHA256"]
+CLASSIFIER_GLOBALS = classify_evidence_root.__globals__
+EXPECTED_RUNNER_SHA256 = CLASSIFIER_GLOBALS["EXPECTED_RUNNER_SHA256"]
+EXPECTED_SOURCE_SHA256 = CLASSIFIER_GLOBALS["EXPECTED_SOURCE_SHA256"]
+EXPECTED_RECOVERY_BINDING_SHA256 = CLASSIFIER_GLOBALS["EXPECTED_RECOVERY_BINDING_SHA256"]
+OUTPUT_PROFILE_NAME = CLASSIFIER_GLOBALS["OUTPUT_PROFILE_NAME"]
+OUTPUT_CLASSIFICATION_NAME = CLASSIFIER_GLOBALS["OUTPUT_CLASSIFICATION_NAME"]
+SCRATCH_NAMES = CLASSIFIER_GLOBALS["SCRATCH_NAMES"]
+RULESET_VERSION = CLASSIFIER_GLOBALS["RULESET_VERSION"]
+RULESET_SHA256 = CLASSIFIER_GLOBALS["RULESET_SHA256"]
 
 
 def canonical(value: object) -> bytes:
@@ -335,4 +348,7 @@ class ModelsCapture1122ClassifierTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    try:
+        unittest.main()
+    finally:
+        TEST_MANIFEST_DIR.cleanup()

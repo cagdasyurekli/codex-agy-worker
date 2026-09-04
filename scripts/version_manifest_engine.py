@@ -30,6 +30,8 @@ SUPPORT_POLICIES = {
         "version-evidence",
     ),
     "previous": ("capture", "profile", "version-evidence"),
+    # Kept only for the frozen 1.1.22 adapters.  It has no activation authority.
+    "legacy": ("capture", "classifier", "profile", "reprofile", "version-evidence"),
     "historical": (),
 }
 
@@ -55,6 +57,7 @@ class VersionSpec(NamedTuple):
     recovery_summary_bytes: int
     output_profile_name: str
     prior_name: str
+    capture_snapshot_policy: str = "stable"
     historical_recovery_binding_sha256: Optional[str] = None
     historical_recovery_source_sha256: Optional[str] = None
     reprofile_output_name: Optional[str] = None
@@ -78,6 +81,7 @@ class VersionSpec(NamedTuple):
             "prior_name",
         }
         optional = {
+            "capture_snapshot_policy",
             "historical_recovery_binding_sha256", "historical_recovery_source_sha256",
             "reprofile_output_name", "failure_ruleset_version", "capture_runner_source_sha256", "capture_record_sha256",
             "capture_stdout_sha256", "capture_response_sha256",
@@ -132,6 +136,7 @@ class VersionSpec(NamedTuple):
             recovery_summary_bytes=_positive_int(data["recovery_summary_bytes"], "recovery_summary_bytes"),
             output_profile_name=_safe_name(data["output_profile_name"], "output_profile_name"),
             prior_name=_safe_name(data["prior_name"], "prior_name"),
+            capture_snapshot_policy=_snapshot_policy(data.get("capture_snapshot_policy", "stable")),
             historical_recovery_binding_sha256=_optional_digest(data.get("historical_recovery_binding_sha256"), "historical_recovery_binding_sha256"),
             historical_recovery_source_sha256=_optional_digest(data.get("historical_recovery_source_sha256"), "historical_recovery_source_sha256"),
             reprofile_output_name=_optional_name(data.get("reprofile_output_name"), "reprofile_output_name"),
@@ -173,6 +178,8 @@ class VersionSpec(NamedTuple):
             value = getattr(self, key)
             if value is not None:
                 result[key] = list(value) if key == "slugs" else value
+        if self.capture_snapshot_policy != "stable":
+            result["capture_snapshot_policy"] = self.capture_snapshot_policy
         return result
 
 
@@ -215,6 +222,13 @@ def _safe_name(value: object, label: str) -> str:
 
 def _optional_name(value: object, label: str) -> Optional[str]:
     return None if value is None else _safe_name(value, label)
+
+
+def _snapshot_policy(value: object) -> str:
+    policy = _text(value, "capture_snapshot_policy")
+    if policy not in {"stable", "macos-readonly-mount"}:
+        raise EngineError("invalid capture_snapshot_policy")
+    return policy
 
 
 def _url(value: object) -> str:
@@ -322,9 +336,18 @@ def operation_constants(spec: VersionSpec, operation: str) -> Dict[str, object]:
             "HISTORICAL_RECOVERY_SOURCE_SHA256": spec.historical_recovery_source_sha256,
         }
     if operation == "profile":
-        return dict(common, OUTPUT_NAME=spec.output_profile_name)
+        return dict(
+            common,
+            OUTPUT_NAME=spec.output_profile_name,
+            CAPTURE_SNAPSHOT_POLICY=spec.capture_snapshot_policy,
+        )
     if operation == "capture":
-        return dict(common, OUTPUT_PROFILE_NAME=spec.output_profile_name)
+        result = dict(common, OUTPUT_PROFILE_NAME=spec.output_profile_name, CAPTURE_SNAPSHOT_POLICY=spec.capture_snapshot_policy)
+        if spec.capture_snapshot_policy != "stable":
+            if spec.capture_runner_source_sha256 is None:
+                raise EngineError("version does not bind the shared capture runner")
+            result["EXPECTED_CAPTURE_RUNNER_SOURCE_SHA256"] = spec.capture_runner_source_sha256
+        return result
     if operation == "classifier":
         if spec.failure_ruleset_version is None:
             raise EngineError("version does not define failure classification")
