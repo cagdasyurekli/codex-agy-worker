@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -297,6 +298,13 @@ STAGES: tuple[Stage, ...] = (
         {"receipt_id": "workflow"},
     ),
     Stage(
+        "workflow-integration",
+        "installed workflow integration suite",
+        "other-a",
+        ("/usr/bin/python3", "-I", "-S", "-B", "tests/test-workflow-integration.py"),
+        {"receipt_id": "workflow-integration"},
+    ),
+    Stage(
         "packaging",
         "Codex distribution suite",
         "other-a",
@@ -442,6 +450,10 @@ def run_stages(
 
 
 def main(argv: Sequence[str]) -> int:
+    if list(argv[1:]) == ["--list"]:
+        for stage in STAGES:
+            print(f"{stage.id}\t{stage.shard}\t{shlex.join(stage.argv)}")
+        return 0
     repo_root = Path(__file__).resolve().parent.parent
     target_shard: str | None = None
     timing_nonce: str | None = None

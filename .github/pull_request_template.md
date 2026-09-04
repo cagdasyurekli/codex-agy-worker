@@ -19,6 +19,10 @@
 
 Focused checks and exact summaries:
 
+- Candidate commit/tree (and any uncommitted changes covered):
+- Independent reviewer and outcome:
+- Unresolved findings or unrun checks:
+
 ## Safety and release
 
 - [ ] No worker-reported command or test was treated as evidence.

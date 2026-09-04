@@ -2,6 +2,7 @@
 """Focused offline regression checks for the remediation controller contract."""
 from __future__ import annotations
 
+import argparse
 import copy
 import contextlib
 import fcntl
@@ -35,10 +36,26 @@ spec.loader.exec_module(MODULE)
 EXPECTED_CHECKS = 103
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
+GROUP_CHECKS = {"core": 62, "runtime": 1, "recovery": 40}
+
+
+def selected_group(arguments: list[str]) -> str | None:
+    """Parse the optional natural suite partition without changing the default run."""
+    parser = argparse.ArgumentParser(
+        description="Run a remediation-controller test group.",
+    )
+    parser.add_argument("--group", choices=tuple(GROUP_CHECKS))
+    return parser.parse_args(arguments).group
+
+
+SELECTED_GROUP = selected_group(sys.argv[1:])
+ACTIVE_GROUP = "core"
 
 
 def check(label: str, action) -> None:
     global CHECKS_RUN
+    if SELECTED_GROUP is not None and ACTIVE_GROUP != SELECTED_GROUP:
+        return
     if FOCUSED_CHECK is not None and label != FOCUSED_CHECK:
         return
     try:
@@ -2938,7 +2955,9 @@ with tempfile.TemporaryDirectory() as temporary:
     assert runtime_cases_spec is not None and runtime_cases_spec.loader is not None
     runtime_cases = importlib.util.module_from_spec(runtime_cases_spec)
     runtime_cases_spec.loader.exec_module(runtime_cases)
+    ACTIVE_GROUP = "runtime"
     runtime_cases.run(globals())
+    ACTIVE_GROUP = "core"
 
     def queued_baseline_drift_blocks_every_provider_launch_origin() -> None:
         def make_job(label: str) -> tuple[Path, Path, Path, dict]:
@@ -4323,9 +4342,14 @@ with tempfile.TemporaryDirectory() as temporary:
     assert recovery_spec is not None and recovery_spec.loader is not None
     recovery_cases = importlib.util.module_from_spec(recovery_spec)
     recovery_spec.loader.exec_module(recovery_cases)
+    ACTIVE_GROUP = "recovery"
     recovery_cases.run(globals())
 
-expected_checks = 1 if FOCUSED_CHECK is not None else EXPECTED_CHECKS
+expected_checks = (
+    1 if FOCUSED_CHECK is not None
+    else GROUP_CHECKS[SELECTED_GROUP] if SELECTED_GROUP is not None
+    else EXPECTED_CHECKS
+)
 if CHECKS_RUN != expected_checks:
     raise AssertionError(
         f"remediation controller inventory drifted: expected {expected_checks}, ran {CHECKS_RUN}"

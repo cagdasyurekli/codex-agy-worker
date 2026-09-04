@@ -49,15 +49,15 @@ def check(label: str, test: Callable[[], bool] | bool) -> None:
 
 
 # 1. Shard Partition Invariants
-check("inventory has 40 ordered unique stage IDs", len(MODULE.STAGES) == 40 and len({s.id for s in MODULE.STAGES}) == 40)
+check("inventory has 41 ordered unique stage IDs", len(MODULE.STAGES) == 41 and len({s.id for s in MODULE.STAGES}) == 41)
 check("exactly four frozen shard IDs exist", set(MODULE.SHARDS) == {"dispatcher", "dispatcher-remediation", "other-a", "other-b"})
 
 all_shard_stages: list[str] = []
 for shard_id, stages in MODULE.SHARDS.items():
     all_shard_stages.extend(stages)
 
-check("total stage count across four shards is 40", len(all_shard_stages) == 40)
-check("all stages across shards are disjoint and unique", len(set(all_shard_stages)) == 40)
+check("total stage count across four shards is 41", len(all_shard_stages) == 41)
+check("all stages across shards are disjoint and unique", len(set(all_shard_stages)) == 41)
 check("union of shard stages equals canonical inventory stages", set(all_shard_stages) == {s.id for s in MODULE.STAGES})
 
 canonical_order_index = {stage.id: idx for idx, stage in enumerate(MODULE.STAGES)}
@@ -117,6 +117,30 @@ check(
 )
 
 
+def _workflow_preflight_contract() -> bool:
+    workflow = (ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+    required = (
+        "  preflight:\n",
+        "      - name: committed diff hygiene\n",
+        "    needs: [preflight]\n",
+        "    needs: [preflight, shard]\n",
+        "          PREFLIGHT_RESULT: ${{ needs.preflight.result }}\n",
+        "          SHARD_RESULT: ${{ needs.shard.result }}\n",
+        '          if [[ "${PREFLIGHT_RESULT}" != success ]]; then\n',
+        '            --producer-result "${SHARD_RESULT}"\n',
+    )
+    return (
+        all(workflow.count(value) == 1 for value in required)
+        and workflow.count("        run: ./scripts/ci-diff-check.sh\n") == 1
+    )
+
+
+check(
+    "workflow gates all shards on one preflight and aggregate on both producer results",
+    _workflow_preflight_contract,
+)
+
+
 def _stage_manifest_announcements() -> list[str]:
     manifest_script = ROOT / "scripts" / "ci_stages.py"
     content = manifest_script.read_bytes()
@@ -125,7 +149,7 @@ def _stage_manifest_announcements() -> list[str]:
 
 
 check(
-    "stage manifest announcements match canonical 40 stages exactly",
+    "stage manifest announcements match canonical 41 stages exactly",
     _stage_manifest_announcements() == [s.announcement for s in MODULE.STAGES],
 )
 

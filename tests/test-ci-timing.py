@@ -9,6 +9,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import stat
 import subprocess
 import sys
@@ -81,9 +82,26 @@ def rejected(report: dict[str, Any]) -> bool:
     return False
 
 
-check("inventory has 40 ordered unique stage IDs", len(MODULE.STAGES) == 40 and len({s.id for s in MODULE.STAGES}) == 40)
+check("inventory has 41 ordered unique stage IDs", len(MODULE.STAGES) == 41 and len({s.id for s in MODULE.STAGES}) == 41)
 check("inventory digest is lowercase SHA-256", MODULE.SHA256_RE.fullmatch(MODULE.inventory_digest()) is not None)
 check("canonical stage announcement inventory matches observer", lambda: (MODULE.validate_stage_inventory(ROOT / "scripts" / "ci_stages.py") or True))
+
+listing = subprocess.run(
+    [sys.executable, "-I", "-S", "-B", str(SCRIPTS_DIR / "ci_stages.py"), "--list"],
+    capture_output=True, text=True, check=False,
+)
+check("stage listing exposes every canonical command without executing it", lambda: (
+    listing.returncode == 0 and not listing.stderr
+    and listing.stdout == "".join(
+        f"{stage.id}\t{stage.shard}\t{shlex.join(stage.argv)}\n"
+        for stage in MODULE.STAGES
+    )
+))
+bad_listing = subprocess.run(
+    [sys.executable, "-I", "-S", "-B", str(SCRIPTS_DIR / "ci_stages.py"), "--list", "--shard", "other-a"],
+    capture_output=True, text=True, check=False,
+)
+check("listing rejects combined execution arguments", bad_listing.returncode == 2 and not bad_listing.stdout)
 
 passed_report = valid_report()
 failed_report = valid_report("failed", 3)

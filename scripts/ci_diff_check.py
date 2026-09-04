@@ -16,6 +16,13 @@ from pathlib import Path
 GIT = "/usr/bin/git"
 ZERO_SHA = "0" * 40
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
+SAFE_DIAGNOSTIC_PATH_RE = re.compile(
+    r"(?:[A-Za-z0-9._@+=-]+/)*[A-Za-z0-9._@+=-]+\Z"
+)
+MAX_DIAGNOSTIC_PATH_CHARS = 240
+SAFE_DIAGNOSTIC_REASONS = frozenset(
+    {"validation", "change", "binary-pinning", "content-hygiene"}
+)
 MAX_METADATA_BYTES = 1024 * 1024
 MAX_PATHS = 1024
 MAX_BLOB_BYTES = 2 * 1024 * 1024
@@ -39,7 +46,31 @@ EXACT_BINARY_BLOBS = {
 
 
 class CheckRejected(Exception):
-    pass
+    """A bounded rejection that can carry a safe, public diagnostic."""
+
+    def __init__(self, reason: str = "validation", path: str | None = None) -> None:
+        self.reason = reason if reason in SAFE_DIAGNOSTIC_REASONS else "validation"
+        self.path = _diagnostic_path(path)
+
+
+def _diagnostic_path(path: str | None) -> str | None:
+    """Return only a conservative repository-relative path for diagnostics."""
+    if (
+        path is None
+        or len(path) > MAX_DIAGNOSTIC_PATH_CHARS
+        or not SAFE_DIAGNOSTIC_PATH_RE.fullmatch(path)
+        or any(part in {".", ".."} for part in path.split("/"))
+    ):
+        return None
+    return path
+
+
+def rejection_diagnostic(error: CheckRejected) -> str:
+    """Render bounded failure context without exposing content or host paths."""
+    result = f"ci diff check: rejected: {error.reason}"
+    if error.path is not None:
+        result += f": {error.path}"
+    return result
 
 
 class BatchInterrupted(BaseException):
@@ -218,6 +249,7 @@ def _raw_changes(
         except UnicodeDecodeError as exc:
             raise CheckRejected from exc
         parts = header_text.split(" ")
+        safe_path = _diagnostic_path(path)
         if (
             len(parts) != 5
             or not parts[0].startswith(":")
@@ -225,15 +257,15 @@ def _raw_changes(
             or not path
             or "\x00" in path
         ):
-            raise CheckRejected
+            raise CheckRejected("change", safe_path)
         old_mode = parts[0][1:]
         new_mode, old_sha, new_sha, status = parts[1:]
         if not SHA_RE.fullmatch(old_sha) or not SHA_RE.fullmatch(new_sha):
-            raise CheckRejected
+            raise CheckRejected("change", safe_path)
         if status != "A" and old_mode not in REGULAR_MODES:
-            raise CheckRejected
+            raise CheckRejected("change", safe_path)
         if status != "D" and new_mode not in REGULAR_MODES:
-            raise CheckRejected
+            raise CheckRejected("change", safe_path)
         changes.append((path, status, old_sha, new_sha, old_mode, new_mode))
     return changes
 
@@ -483,9 +515,12 @@ def check_committed_range(event: str, base: str, head: str) -> None:
         exact_binary_blob = EXACT_BINARY_BLOBS.get(path)
         if exact_binary_blob is not None:
             if new_sha != exact_binary_blob:
-                raise CheckRejected
+                raise CheckRejected("binary-pinning", path)
             continue
-        _check_head_blob(blob)
+        try:
+            _check_head_blob(blob)
+        except CheckRejected as exc:
+            raise CheckRejected("content-hygiene", path) from exc
 
 
 def main() -> int:
@@ -497,8 +532,8 @@ def main() -> int:
             os.environ.get("AGY_WORKER_CI_BASE_SHA", ""),
             os.environ.get("AGY_WORKER_CI_HEAD_SHA", ""),
         )
-    except CheckRejected:
-        print("ci diff check: rejected", file=sys.stderr)
+    except CheckRejected as exc:
+        print(rejection_diagnostic(exc), file=sys.stderr)
         return 2
     except BatchInterrupted as exc:
         return 128 + exc.signum

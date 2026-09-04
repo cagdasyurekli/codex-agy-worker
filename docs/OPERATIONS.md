@@ -12,12 +12,13 @@ For contribution and release checks, start with
 ## Run the repository checks
 
 The required GitHub `test` job is a fail-closed aggregate over four shards:
-`dispatcher`, `dispatcher-remediation`, `other-a`, and `other-b`. Each shard checks
-out the exact pull-request head (or validated exact manual-dispatch head), enforces
-committed-range diff hygiene, runs its registered stage subset, and publishes a
+`dispatcher`, `dispatcher-remediation`, `other-a`, and `other-b`. A single preflight
+checks committed-range diff hygiene before the shards start.
+Each job checks out the exact pull-request head (or validated exact manual-dispatch
+head). Each shard runs its registered stage subset and publishes a
 mode-`0600` receipt bound to the head and canonical inventory. The aggregate succeeds
-only when all four producers succeeded, every receipt matches the expected head and
-inventory, and every canonical stage ran exactly once.
+only when preflight and all four producers succeeded, every receipt matches the
+expected head and inventory, and every canonical stage ran exactly once.
 
 GitHub retains the uploaded privacy-safe receipt artifact for one day. The receipt
 contains no paths, commands, environment values, logs, or credentials. It is workflow
@@ -32,7 +33,7 @@ same canonical fail-fast suite locally from the repository root:
 ./scripts/ci-offline.sh
 ```
 
-The forty offline stages need no agy provider call, network access, API key, or
+The canonical offline stages need no agy provider call, network access, API key, or
 GitHub login. Ambient local tools may still consult their ordinary user
 configuration. Keep the exact summary with the commit, tree, and `git diff --check`
 evidence. On a clean tracked and untracked worktree, an optional timing report records

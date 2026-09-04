@@ -183,7 +183,7 @@ path = Path(sys.argv[1])
 info = path.lstat()
 assert stat.S_ISREG(info.st_mode)
 data = path.read_bytes()
-assert sha256(data).hexdigest() == "b61b97c538bafa8eeea377f76647122ec04c21aca06f36a9746132854cdf005d"
+assert sha256(data).hexdigest() == "47b0df87519d36901c9e084c16fa3b39fa8b81e177749f166d0374eaea8de415"
 text = data.decode("utf-8")
 required = (
     "name: test\n",
@@ -215,15 +215,16 @@ required = (
     "  test:\n",
     "    name: test\n",
     "    if: always()\n",
-    "    needs: [shard]\n",
+    "    needs: [preflight]\n",
+    "    needs: [preflight, shard]\n",
     "      - name: download shard receipts\n",
     "        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n",
     "          pattern: shard-receipt-*\n",
     "          path: ${{ runner.temp }}/downloaded-shard-receipts\n",
     "      - name: verify aggregate shard receipts\n",
-    "          PRODUCER_RESULT: ${{ needs.shard.result }}\n",
+    "          SHARD_RESULT: ${{ needs.shard.result }}\n",
     "          RECEIPTS_DIR: ${{ runner.temp }}/downloaded-shard-receipts\n",
-    "          /usr/bin/python3 -I -S -B scripts/ci_sharding.py verify-aggregate \\\n            --receipts-dir \"${RECEIPTS_DIR}\" \\\n            --expected-head \"${AGY_WORKER_CI_HEAD_SHA}\" \\\n            --producer-result \"${PRODUCER_RESULT}\"\n",
+    "          /usr/bin/python3 -I -S -B scripts/ci_sharding.py verify-aggregate \\\n            --receipts-dir \"${RECEIPTS_DIR}\" \\\n            --expected-head \"${AGY_WORKER_CI_HEAD_SHA}\" \\\n            --producer-result \"${SHARD_RESULT}\"\n",
 )
 assert all(text.count(item) >= 1 for item in required)
 assert "  push:\n" not in text
@@ -239,7 +240,7 @@ assert "*policy" not in text
 assert "continue-on-error: true" not in text
 assert "mktemp -d -t agyworker-shard-receipt" not in text
 assert "/tmp/agyworker-shard-receipt" not in text
-assert text.count("timeout-minutes:") == 2
+assert text.count("timeout-minutes:") == 3
 PY
 }
 
@@ -281,7 +282,7 @@ EXPECTED_BLOCKS = {
 EXPECTED_COUNTS = {
     "compatibility-watch.yml": 1,
     "feedback-watch.yml": 1,
-    "test.yml": 2,
+    "test.yml": 3,
 }
 
 if target.is_dir():
@@ -364,8 +365,8 @@ assert not any(token in offline_text for token in ("curl ", "wget ", "git fetch"
 sys.path.insert(0, str(stages_file.parent))
 import ci_stages
 
-assert len(ci_stages.STAGES) == 40
-assert len({s.id for s in ci_stages.STAGES}) == 40
+assert len(ci_stages.STAGES) == 41
+assert len({s.id for s in ci_stages.STAGES}) == 41
 assert set(ci_stages.SHARDS) == {"dispatcher", "dispatcher-remediation", "other-a", "other-b"}
 
 required_stage_ids = (
@@ -381,7 +382,7 @@ required_stage_ids = (
     "models-capture-1-1-22-reprofile", "models-capture-1-1-22-classifier",
     "agy-1-1-22-activation", "reporting", "feedback-triage",
     "model-intelligence", "model-evidence-campaign", "codex-usage-report",
-    "delegation-policy", "workflow", "packaging",
+    "delegation-policy", "workflow", "workflow-integration", "packaging",
     "doctor", "conformance", "proof-demo", "bytecode-hygiene",
 )
 assert tuple(s.id for s in ci_stages.STAGES) == required_stage_ids
@@ -572,7 +573,7 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 old = "          persist-credentials: false\n"
-assert text.count(old) == 2
+assert text.count(old) == 3
 path.write_text(text.replace(old, "", 1), encoding="utf-8")
 PY
 if ! ci_workflow_contract "$TMP/persisted-checkout-credentials.yml" 2>/dev/null; then
@@ -589,7 +590,7 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 old = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-assert text.count(old) == 2
+assert text.count(old) == 3
 path.write_text(text.replace(old, "actions/checkout@v4", 1), encoding="utf-8")
 PY
 if ! ci_workflow_contract "$TMP/mutable-checkout-tag.yml" 2>/dev/null \
@@ -607,7 +608,7 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 old = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
-assert text.count(old) == 2
+assert text.count(old) == 3
 path.write_text(text.replace(old, "actions/checkout@1111111111111111111111111111111111111111", 1), encoding="utf-8")
 PY
 if ! ci_workflow_contract "$TMP/different-checkout-sha.yml" 2>/dev/null \
@@ -1195,7 +1196,7 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
-old = """        if exact_binary_blob is not None:\n            if new_sha != exact_binary_blob:\n                raise CheckRejected\n            continue\n"""
+old = """        if exact_binary_blob is not None:\n            if new_sha != exact_binary_blob:\n                raise CheckRejected("binary-pinning", path)\n            continue\n"""
 new = """        if exact_binary_blob is not None:\n            continue\n"""
 assert text.count(old) == 1
 text = text.replace(old, new)
@@ -3411,8 +3412,10 @@ suite_commands = [
 ]
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 35
-    and all(command in contributing for command in suite_commands)
+    len(suite_commands) == len(set(suite_commands)) == 36
+    and "/usr/bin/python3 -I -S -B scripts/ci_stages.py --list" in contributing
+    and {command for command in suite_commands if command in contributing}
+    == {"/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py"}
     and template.count("./scripts/ci-offline.sh") == 1
     and not any(command in template for command in suite_commands)
     and "Human diff review completed" in template
@@ -3431,8 +3434,8 @@ PY
 }
 
 if governance_docs_contract \
-        && grep -Fq 'The forty offline stages' "$ROOT/docs/OPERATIONS.md" \
-        && grep -Fq 'all forty offline stages' "$ROOT/CONTRIBUTING.md" \
+        && grep -Fq 'The canonical offline stages' "$ROOT/docs/OPERATIONS.md" \
+        && grep -Fq 'all registered offline stages' "$ROOT/CONTRIBUTING.md" \
         && grep -Fq '`tests/test-adoption-measurement.py` (41 offline cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-update-notifier.py` (89 offline fake-control cases)' "$ROOT/docs/REPO_MAP.md" \
         && [[ -f "$ROOT/docs/MEASUREMENT.md" ]] \
