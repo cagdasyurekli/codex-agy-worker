@@ -31,12 +31,6 @@
           "release_commit",
           "distribution_url",
           "distribution_sha512",
-          "recovery_binding_sha256",
-          "recovery_stdout",
-          "recovery_runner_sha256",
-          "recovery_runner_bytes",
-          "recovery_summary_bytes",
-          "output_profile_name",
           "prior_name"
         ],
         "additionalProperties": false,
@@ -121,6 +115,50 @@
                 }
               }
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "support_tier": {
+                  "const": "candidate"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "allowed_operations": {
+                  "const": [
+                    "version-evidence"
+                  ]
+                },
+                "capture_snapshot_policy": false,
+                "recovery_binding_sha256": false,
+                "recovery_stdout": false,
+                "recovery_runner_sha256": false,
+                "recovery_runner_bytes": false,
+                "recovery_summary_bytes": false,
+                "output_profile_name": false,
+                "reprofile_output_name": false,
+                "failure_ruleset_version": false,
+                "capture_runner_source_sha256": false,
+                "capture_record_sha256": false,
+                "capture_stdout_sha256": false,
+                "capture_response_sha256": false,
+                "inventory_normalized_sha256": false,
+                "slug_count": false,
+                "slugs": false
+              }
+            },
+            "else": {
+              "required": [
+                "recovery_binding_sha256",
+                "recovery_stdout",
+                "recovery_runner_sha256",
+                "recovery_runner_bytes",
+                "recovery_summary_bytes",
+                "output_profile_name"
+              ]
+            }
           }
         ],
         "properties": {
@@ -134,7 +172,8 @@
               "current",
               "legacy",
               "previous",
-              "historical"
+              "historical",
+              "candidate"
             ]
           },
           "allowed_operations": {

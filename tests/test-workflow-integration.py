@@ -116,7 +116,7 @@ kind = "version" if args == ["--version"] else "help" if args == ["--help"] else
 with calls.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps({{"kind": kind, "argv": args}}, separators=(",", ":")) + "\\n")
 if args == ["--version"]:
-    print("1.1.24")
+    print("1.1.26")
     raise SystemExit(0)
 if args == ["--help"]:
     sys.stderr.write({AGY_HELP!r})
@@ -210,7 +210,7 @@ print(json.dumps({{
         )
         if preview.returncode != 0:
             raise AssertionError(preview.stderr.decode("utf-8", "replace"))
-        manifest_sha = json.loads(preview.stdout)["manifest_sha256"]
+        launch_approval_sha = json.loads(preview.stdout)["launch_approval_sha256"]
         result = self.run_cli(
             "run",
             "--repo",
@@ -218,7 +218,7 @@ print(json.dumps({{
             "--job-id",
             self.job_id,
             "--approve-whole-worktree",
-            manifest_sha,
+            launch_approval_sha,
             "--model",
             MODEL,
             "--effort",

@@ -26,7 +26,7 @@ is_pipeline() {
     fi
     pipeline_runtime_complete "$runtime_root" || return 1
 
-    for required in workflow.sh agy-worker.sh qa-gate.sh verify-job.sh evidence-report.sh benchmark.sh swebench-workflow-study.sh model-recommendation.sh model-selection.sh doctor.sh feedback-triage.sh model-intelligence.sh model-evidence-campaign.sh delegation-policy.sh; do
+    for required in workflow.sh agy-worker.sh qa-gate.sh verify-job.sh evidence-report.sh benchmark.sh swebench-workflow-study.sh model-recommendation.sh model-selection.sh doctor.sh ground-truth.sh feedback-triage.sh model-intelligence.sh model-evidence-campaign.sh delegation-policy.sh; do
         [[ -f "$pipeline_root/$required" && -x "$pipeline_root/$required" \
             && ! -L "$pipeline_root/$required" ]] || return 1
     done
@@ -62,6 +62,7 @@ pipeline_runtime_complete() {
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
+        ground-truth.sh \
         feedback-triage.sh \
         model-intelligence.sh \
         model-evidence-campaign.sh \
@@ -103,6 +104,8 @@ pipeline_runtime_complete() {
 
     for required in \
         scripts/agy_dispatch_worktree.py \
+        scripts/agy_dispatch_containment.py \
+        scripts/agy_dispatch_verification.py \
         schemas/workflow-state.schema.json \
         scripts/version_manifest_engine.py \
         schemas/worker-result.schema.json \

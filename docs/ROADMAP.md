@@ -7,9 +7,23 @@ is not a released/public capability until that slice is reviewed and merged.
 
 Compatibility reconciliation remains a prerequisite for model/effort selection and
 portable receipt work. The offline starter proof depends only on the maintained gate
-and can remain an independent slice. Starting any slice requires a fresh, explicit
-approval; this roadmap does not authorize code, commit, push, pull-request, merge,
+and can remain an independent slice. Each slice must stay within applicable approved
+scope; reuse existing authority when it covers the work. This roadmap does not itself
+authorize code, commit, push, pull-request, merge,
 release, live model use, or another external action.
+
+## v0.17.0 candidate — in progress
+
+This release aims to preserve useful delegation while reducing repeated approvals:
+normal AGY session access by default, optional native isolation, correct workspace
+and result reconciliation, and continued support for existing jobs and optional
+driver-owned verification and repair. The local package metadata is 0.17.0.
+
+The AGY 1.1.26 normal-session task, same-conversation repair, and Boost paths
+passed bounded live qualification and independent review. The candidate activates
+the matching version and inventory bindings; final stable verification, independent
+release acceptance, and publication remain pending. See the
+[activation record](../compat/reviews/agy-1.1.26-activation.md) for coverage limits.
 
 ## Product direction
 
@@ -100,11 +114,11 @@ Every roadmap slice must preserve all of these rules:
 
 ## Current agy inventory correction
 
-The accepted agy `1.1.24` reconciliation combines documented `--effort` and
+The accepted agy `1.1.26` reconciliation combines documented `--effort` and
 machine-readable `models` surfaces with one separately authorized, version-bound JSON
 model capture. The exact unchanged 14-slug list, its SHA-256, reviewed release
 revision, inventory binding, and bounded behavior limits live in
-[`../compat/reviews/agy-1.1.24-activation.md`](../compat/reviews/agy-1.1.24-activation.md).
+[`../compat/reviews/agy-1.1.26-activation.md`](../compat/reviews/agy-1.1.26-activation.md).
 The earlier [`1.1.22` observation](../compat/reviews/agy-1.1.22.md) remains a
 non-activating historical failed-capture record, and the
 [`1.1.12` reconciliation](../compat/reviews/agy-1.1.12.md) remains historical evidence.
@@ -112,7 +126,7 @@ Agent and plugin
 catalogs were not part of that bounded review and remain outside this contract.
 
 This advances the binding without turning advertised flags or historical failure
-behavior into broader agy `1.1.24` promises:
+behavior into broader agy `1.1.26` promises:
 
 - Do not expose `--effort` before G0 reconciles official releases/source/docs with a
   sandbox-correct inventory and bounded behavior tests. G1 may then expose the same
@@ -123,7 +137,7 @@ behavior into broader agy `1.1.24` promises:
   documented commands and validate their expected semantic output; neither an unknown
   subcommand's exit code nor generic usage text is compatibility evidence.
 - Do not assume agy's separate `--model` and `--effort` flags compose safely.
-  The current bounded `1.1.24` JSON inventory advertises the compound slugs.
+  The current bounded `1.1.26` JSON inventory advertises the compound slugs.
   The official release and documentation were human-reconciled, but
   this repository has not yet completed evidence that establishes dual-selector
   composition or precedence. G1 therefore resolves a verified base/effort pair to
@@ -305,7 +319,7 @@ exact fixed GitHub REST paths with no ambient proxy or redirect path, and a boun
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
 ambient-Git transport path and is not claimed hardened by this slice. The later agy
-`1.1.24` reconciliation is the exact active version/release/inventory/matrix binding.
+`1.1.26` reconciliation is the exact active version/release/inventory/matrix binding.
 The first authorized 1.1.22 JSON capture remains historical failed evidence; its later
 accepted capture established the prior baseline, and the separately accepted 1.1.24
 capture advanced the fourteen-slug inventory from Gemini 3.5 Flash to Gemini 3.8 Flash.
@@ -627,8 +641,8 @@ provenance, code-signing verification, or OS attestation.
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. agy `1.1.24` is active because its
-  capture and strict inventory were separately reconciled. Any later version
+  The watch never performs this reconciliation. agy `1.1.26` is active because its
+  capture, strict inventory, and bounded worker paths were separately reconciled. Any later version
   or release movement returns the result to
   drift-review until another reconciliation is accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
@@ -636,7 +650,7 @@ provenance, code-signing verification, or OS attestation.
   bounded CLI behavior—not from a provider API table or a model-name guess. The
   matrix records its agy version and release revision. Any agy version/release drift
   makes it stale and keeps effort resolution disabled until human reconciliation.
-  The verified `1.1.24` inventory exposes compound slugs: Gemini 3.8 Flash, Gemini 3.7
+  The verified `1.1.26` inventory exposes compound slugs: Gemini 3.8 Flash, Gemini 3.7
   Flash, and Gemini 3.6 Flash have low/medium/high. Gemini 3.7 `minimal` is outside the
   reviewed inventory. Official Gemini 3.1 Pro supports medium effort, but the accepted
   account inventory has no reviewed `gemini-3.1-pro-medium` compound slug, so the
@@ -677,7 +691,7 @@ provenance, code-signing verification, or OS attestation.
 - **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
   versus verified differences and stale review dates are reported separately and
   return `3`; unavailable network returns `2` with an inconclusive label; absent
-  future-version evidence retains `1.1.24` and AMBER; version-bound resolution
+  future-version evidence retains `1.1.26` and AMBER; version-bound resolution
   fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,
@@ -1432,7 +1446,8 @@ checks remain mandatory; age alone never authorizes deletion.
 
 Roadmap priority is not authorization. Apply these gates independently:
 
-1. **Feature implementation:** fresh explicit approval for one named slice.
+1. **Feature implementation:** use the user's approved scope across its planned
+   slices and repairs; ask again only when authority or scope materially changes.
 2. **Compatibility watch enablement:** merging or scheduling the daily external
    watcher and changing a verified baseline each require explicit approval. A baseline
    change also requires the G0 reconciliation record; the watcher cannot approve it.

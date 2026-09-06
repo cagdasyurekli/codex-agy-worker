@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires OpenAI Codex CLI, Bash, Python 3, git, and agy with provider network access. Claude and Claude Code hosts are not supported.
 metadata:
   author: cagdasyurekli
-  version: "0.16.0"
+  version: "0.17.0"
 ---
 
 # Delegate repository work and verify the result
@@ -36,10 +36,19 @@ orientation, read [Package README](README.md).
 Obtain explicit approval for the exact transmission mode, repository content, and task
 being sent unless that exact provider transmission was already approved.
 
+For an ordinary job, prepare one concrete approval package covering foreseeable
+provider work, readable/writable scope, derived repair feedback, model, and budgets.
+Reuse that authority while it remains applicable. Fresh state hashes and internal
+candidate checks are mechanical bindings, not requests for another human approval.
+Ask again only for a material change in authority, content exposure, destination, or
+budget. Minimize approvals without treating exactly one approval as a hard requirement.
+Prepare manifests and private paths for the user; ordinary jobs require neither
+hand-authored JSON nor a Goal.
+
 Prefer `--provider-scope FILE --approve-transmission-sha SHA256` for bounded jobs. It binds exact reviewed read entries, their selected-content digest, and a write subset, then stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.
 Whole-worktree dispatch remains an explicit exception. Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that read boundary.
-Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch has an implicit transmission mode: launch requires either `--approve-whole-worktree MANIFEST_SHA256` or the scoped pair above. The deprecated facade-only `--approve-preview-sha` spelling cannot launch by itself and remains temporarily available only with `--legacy-preview-approval`.
-The controller still locally enumerates and validates worktree paths and the scope policy before staging; scoped mode is not a filesystem, network, `PATH`, `HOME`, or same-UID sandbox and retains the documented local-owner and mutation-race residuals.
+Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch has an implicit transmission mode: launch requires either `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` or the scoped pair above. The deprecated facade-only `--approve-preview-sha` spelling cannot launch by itself and remains temporarily available only with `--legacy-preview-approval`.
+New jobs default to `--provider-isolation session`, which uses the existing AGY session without AGY sandbox or native host containment. AGY has normal user filesystem/network authority; selected-file staging and reconciliation are not host isolation. Include this execution mode in the initial approval alongside task/content, then reuse that approval while its scope remains unchanged. Explicit `--provider-isolation native` retains supported macOS scoped containment with private HOME/TMP and reviewed network/Keychain access; it never falls back to session mode. The native `/usr/bin/security` exception allows broader same-user Keychain operations, and its listener rule permits wildcard binds. Read [Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md) for those limits. Preserve the job's selected mode across continuation and repair.
 Provider-scope approval grants neither provider execution, Git action, driver acceptance, nor publication.
 Before each launch, ensure secrets, credentials, private keys, user-denied paths, and unrelated private files are absent from every entry approved for provider transmission; telling the worker not to read an approved entry is not a control.
 
@@ -150,10 +159,13 @@ Unknown files, incomplete architecture knowledge, an unknown first test command,
 of a persona, or a failed first check are not hard stops by themselves. Discover what
 is needed, preserve the candidate, and report evidence limits honestly.
 
-Before changing agy-facing flags or claims, run the repository's `ground-truth.sh`
-and inspect current `agy --help`; do not describe that interface from memory. An agy
-exit zero with empty ordinary output is possible: consume `result.structured_output`,
-not the echoed schema.
+Before changing agy-facing flags or claims, resolve the installed package and run
+`"$PIPELINE/ground-truth.sh"` without arguments, then inspect its current `agy --help`
+output; do not describe that interface from memory. Its default interface phase invokes
+only `agy --version` and `agy --help`. `--account` is a separate explicit action because
+it inspects account-owned model, agent, plugin, and local-settings state. An agy exit
+zero with empty ordinary output is possible: consume `result.structured_output`, not
+the echoed schema.
 
 Before delivery, review the exact candidate bytes and run the relevant driver-owned
 checks. Report only what those checks establish. Do not claim provider success,

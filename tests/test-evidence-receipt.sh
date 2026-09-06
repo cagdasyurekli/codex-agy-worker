@@ -199,7 +199,7 @@ for blocked_verify_env in AGY_WORKER_SCHEMA GIT_DIR GIT_WORK_TREE GIT_CONFIG_COU
 done
 
 cat > "$TMP/unsupported-worker-schema.json" <<'EOF'
-{"type":"object","pattern":"worker-controlled schema must not govern receipts"}
+{"type":"object","$ref":"#/unsupported"}
 EOF
 AGY_WORKER_SCHEMA="$TMP/unsupported-worker-schema.json" \
     "$GATE" --envelope "$TMP/honest.json" --repo "$REPO" --base "$BASE" \
@@ -674,7 +674,7 @@ cat > "$TMP/selection-bin/agy" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
     --version)
-        printf '1.1.24\n'
+        printf '1.1.26\n'
         ;;
     --help)
         printf '%s\n' \

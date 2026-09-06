@@ -40,7 +40,16 @@ raw logs, and controller state from all approved content. Installation alone is 
 provider-transmission consent; scope approval grants no execution, Git, acceptance, or
 publication authority.
 
-The disposable worktree limits ordinary workflow scope but is not a security sandbox.
+A disposable worktree alone is not a security sandbox. New jobs default to
+`--provider-isolation session`: AGY uses the caller's existing session and normal
+filesystem/network authority. Scoped staging selects task inputs and constrains
+reconciliation; it does not prevent access elsewhere on the host. The initial
+approval must disclose this execution mode alongside the selected content.
+Explicit `--provider-isolation native` retains macOS containment with private
+HOME/TMP and reviewed network/Keychain access for scoped jobs. Unsupported native
+launches stop without falling back to session mode. See the
+[exact containment limits](skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md)
+for the writable stage, non-recipient network rule, and process-group cleanup scope.
 Operators remain responsible for credentials, network access, review, testing, and
 access control in each target repository. The skill supports the OpenAI Codex CLI; it
 does not support Claude or Claude Code hosts.

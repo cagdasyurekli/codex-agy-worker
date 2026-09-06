@@ -3,7 +3,7 @@
 set -uo pipefail
 
 DOCTOR_SCHEMA_VERSION=1
-DOCTOR_EXPECTED_AGY_SOURCE_REVISION='bf27ce1134b4ead2f7bfa0a4fb3cb5fcbebcaa5a'
+DOCTOR_EXPECTED_AGY_SOURCE_REVISION='3bc5795ff561c9d71bf1ce272f185aec6013e5e4'
 
 doctor_usage() {
     echo "usage: doctor.sh [--repo DIR] [--format text|json]" >&2
@@ -54,6 +54,7 @@ doctor_runtime_complete() {
         model-recommendation.sh \
         model-selection.sh \
         doctor.sh \
+        ground-truth.sh \
         feedback-triage.sh \
         model-intelligence.sh \
         model-evidence-campaign.sh \
@@ -95,6 +96,8 @@ doctor_runtime_complete() {
 
     for required in \
         scripts/agy_dispatch_worktree.py \
+        scripts/agy_dispatch_containment.py \
+        scripts/agy_dispatch_verification.py \
         schemas/workflow-state.schema.json \
         scripts/version_manifest_engine.py \
         schemas/worker-result.schema.json \

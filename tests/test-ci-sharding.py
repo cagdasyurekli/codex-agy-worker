@@ -49,15 +49,15 @@ def check(label: str, test: Callable[[], bool] | bool) -> None:
 
 
 # 1. Shard Partition Invariants
-check("inventory has 41 ordered unique stage IDs", len(MODULE.STAGES) == 41 and len({s.id for s in MODULE.STAGES}) == 41)
+check("inventory has 44 ordered unique stage IDs", len(MODULE.STAGES) == 44 and len({s.id for s in MODULE.STAGES}) == 44)
 check("exactly four frozen shard IDs exist", set(MODULE.SHARDS) == {"dispatcher", "dispatcher-remediation", "other-a", "other-b"})
 
 all_shard_stages: list[str] = []
 for shard_id, stages in MODULE.SHARDS.items():
     all_shard_stages.extend(stages)
 
-check("total stage count across four shards is 41", len(all_shard_stages) == 41)
-check("all stages across shards are disjoint and unique", len(set(all_shard_stages)) == 41)
+check("total stage count across four shards is 44", len(all_shard_stages) == 44)
+check("all stages across four shards are disjoint and unique", len(set(all_shard_stages)) == 44)
 check("union of shard stages equals canonical inventory stages", set(all_shard_stages) == {s.id for s in MODULE.STAGES})
 
 canonical_order_index = {stage.id: idx for idx, stage in enumerate(MODULE.STAGES)}
@@ -149,7 +149,7 @@ def _stage_manifest_announcements() -> list[str]:
 
 
 check(
-    "stage manifest announcements match canonical 41 stages exactly",
+    "stage manifest announcements match canonical 44 stages exactly",
     _stage_manifest_announcements() == [s.announcement for s in MODULE.STAGES],
 )
 

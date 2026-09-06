@@ -13,15 +13,15 @@ For the public synthetic gate contract, read [QA gate conformance v1](CONFORMANC
 
 1. Capture an immutable base commit and create an isolated worktree.
 2. Choose the transmission mode explicitly. The primary facade requires either
-   `--approve-whole-worktree MANIFEST_SHA256`, acknowledging that every worktree entry
+   `--approve-whole-worktree LAUNCH_APPROVAL_SHA256`, acknowledging that every worktree entry
    may be provider-readable and transmissible, or
    `--provider-scope FILE --approve-transmission-sha SHA256`, which binds exact
    reviewed read/write entries and a selected-content digest, then stages only selected
    entries in a fresh owner-private mode-`0700` Gitless provider cwd.
 3. Dispatch only the approved task. In default mode, requested paths constrain writes
-   and candidate acceptance, not provider reads. Scoped staging narrows provider-visible
-   content, but the controller still locally enumerates and validates worktree paths;
-   it is not a sandbox, and scope approval grants no provider execution, Git,
+   and candidate acceptance, not provider reads. Scoped staging copies selected
+   task inputs, but the controller still locally enumerates and validates worktree paths;
+   session mode uses the existing AGY session; explicit native mode requires supported macOS containment. Scope approval alone grants no provider execution, Git,
    acceptance, or publication authority. See
    [optional selected-content dispatch](USAGE.md#optional-selected-content-dispatch).
 4. Retrieve the bound candidate and inspect its Git diff without trusting the worker
@@ -196,7 +196,13 @@ Read public lifecycle JSON in this order: first `status` for `state_sha256`,
 `available_actions`. `worktree_changes_present` describes current ambient dirtiness;
 `worktree_changed_since_dispatch` is the attribution-relevant signal.
 
-Controller-private V11 state also persists a sanitized
+For new bound jobs, `provider_isolation` names `session` or `native`, and
+`provider_execution` describes `scope`, `agy_sandbox`, `native_containment`, and
+`legacy`. Legacy jobs expose a null isolation label and facts derived from their
+bound command: scoped command V1–V8 jobs do not acquire native containment, while
+scoped V9 jobs retain it. Unbound jobs may have no execution facts yet.
+
+Controller-private V13 state also persists a sanitized
 `provider_terminal_status`: `unknown`, `success`, `error`, or `cancelled`, derived
 only from the exact attempt's structurally valid outer terminal event. The public
 `status`, `wait`, and `result` JSON intentionally omit it. It is not candidate
@@ -205,9 +211,11 @@ acceptance, or billing evidence. A terminal without a recognized structured repo
 can retain that private enum while public `candidate_recognized` is false and
 `failure_stage` is `missing_structured_output`.
 
-Current V11 preserves every externally bound V10 transition and action decision
-atomically while adding this private diagnostic field; migration does not create new
-continuation, restart, or acceptance authority. Then use `candidate_sha256` only
+V11 introduced this private diagnostic field. Current V13 preserves prior bound
+transitions while adding explicitly opted-in scoped repair and local verification;
+migration never grants those opt-ins or creates new acceptance authority. See the
+[optional checks and scoped repair guide](../skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md#optional-checks-and-scoped-repair).
+Then use `candidate_sha256` only
 when `result_available` is
 `true`; then retrieve `result` only when its mechanically derived action is present.
 Review that bound result and build driver evidence before choosing an eligible

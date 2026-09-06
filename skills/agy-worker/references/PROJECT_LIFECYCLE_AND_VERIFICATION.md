@@ -23,10 +23,13 @@ lifecycle, or verifier step fails.
 8. Continue the same conversation for a bounded repair or finalize an honest
    disposition. Preserve useful partial work when the budget ends.
 
-Whole-worktree mode requires its current manifest SHA acknowledgement; requested paths
+Whole-worktree mode requires the preview’s `launch_approval_sha256`, binding the manifest and execution mode; requested paths
 and gate policies constrain writes or candidate acceptance, not provider reads.
-Provider-scope mode
-narrows staged content as described below, but it is not a security sandbox.
+Provider-scope mode narrows staged content and reconciled writes. New jobs default
+to `--provider-isolation session`, retaining the existing AGY session and normal user
+host access. Explicit native mode adds macOS containment with private HOME for scoped
+jobs. The selected mode stays bound through the lifecycle; failures do not switch it.
+Read [Security and compatibility](SECURITY_AND_COMPATIBILITY.md) for the limits.
 
 ## Primary `run`, `status`, `verify-finalize` path
 
@@ -61,7 +64,7 @@ provider approval, obtain the canonical content-free preview:
   > "$STATE_DIR/preview.json"
 ```
 
-Review the preview and its exact `manifest_sha256`. It lists path names and kinds,
+Review the preview, its execution mode, and its `launch_approval_sha256`. It lists path names and kinds,
 not file contents, starts no provider process, and grants no approval. After the user
 approves that exact boundary, capture the approved run's envelope in the owner-private
 state directory. Emit the required user-facing provider notice immediately before this
@@ -128,10 +131,16 @@ Use `status` first. Treat `available_actions` as the canonical mechanical action
 deprecated `next_action`, `next_action_command`, `phase`, and `has_prior_candidate`
 are compatibility aliases, not recommendations or acceptance facts.
 
-Current V11 uses `dispatching` for an active initial, resume, or restart attempt;
+New bound jobs expose `provider_isolation` (`session` or `native`) and
+`provider_execution` facts (`scope`, `agy_sandbox`, `native_containment`, `legacy`).
+Legacy isolation labels remain null: use the bound execution facts, which preserve
+scoped command V1–V8 behavior without native containment and V9 behavior with it.
+Unbound jobs may have no execution facts yet.
+
+Current V13 uses `dispatching` for an active initial, resume, or restart attempt;
 `attempt-failed` for a pre-candidate failure; `awaiting-verification` for a recognized
 candidate; `repairing` for an active continuation; and `repair-failed` for a failed
-continuation. Terminal controller phases are `completed` and `blocked`. Driver
+continuation. `self-verifying` denotes the optional local check action. Terminal controller phases are `completed` and `blocked`. Driver
 dispositions are separately `verified`, `partially_verified`, `rejected`, or
 `blocked`.
 
@@ -147,7 +156,7 @@ Read public lifecycle JSON in this order:
 A null candidate hash is never Verification v2 input. Every emitted action or stale-approval rerun command uses the caller-resolved
 symbolic launcher `"$PIPELINE/agy-worker.sh"`; export `PIPELINE` before copying it.
 
-Controller-private V11 state also preserves a sanitized
+Controller-private state also preserves a sanitized
 `provider_terminal_status` (`unknown`, `success`, `error`, or `cancelled`) for the
 specific attempt. Public status omits it. It is not provider health, quota, routing,
 model acceptance, task acceptance, billing evidence, or candidate acceptance.
@@ -163,6 +172,34 @@ There is no automatic retry or continuation:
   and finalization or an explicit fresh restart; it is neither resumed nor continued.
 - `status`, `wait`, `result`, `extend`, and `cancel` describe local controller state,
   not proven remote-provider state.
+
+## Optional checks and scoped repair
+
+At initial dispatch, `--allow-scoped-repair` binds permission to continue the same
+scoped task/project within its approved write scope, selected model, conversation,
+and budgets. Candidate evolution inside that grant does not require a new human
+approval. External drift or a changed grant is rejected before another provider turn.
+
+For optional local checks, the driver prepares an owner-private manifest and supplies
+`--self-verification-manifest PATH` at initial task/project dispatch. Both options
+are available through `workflow.sh run`. Checks default off; explore and Boost do
+not support them. The driver chooses exact commands, required checks, optional IDs,
+and limits. The worker may request only approved optional IDs; required checks always
+run. Users need not prepare JSON or create a Goal.
+
+After a candidate arrives, use the available `self-verify` action from status. It
+runs once per candidate attempt in a fresh copy of approved content, with no network
+or ambient credentials on supported macOS hosts. Approved system interpreters and
+explicit relative shell scripts are supported; unqualified toolchains fail before
+execution. Raw output stays private. Check execution and preparation spend the
+existing total job allowance; an interrupted action is conservatively charged and
+is not automatically rerun.
+
+When bound advisory results are available, status offers `continue
+--use-self-verification` to reuse them without a separate input JSON. The driver
+still decides whether repair is useful and issues the provider notice before using
+that action. Manual Verification v2 input remains available. Self-verification never
+finalizes a candidate or substitutes for independent diff review and driver checks.
 
 ## Isolated verification copy
 
