@@ -71,8 +71,10 @@ This is a write-acceptance boundary applied after dispatch. In whole-worktree mo
 `--only`, `--allow`, prompt denylists, and `--add-dir` do not prevent reads elsewhere
 in `--workdir`. Recommended provider-scope staging is a distinct pre-dispatch content
 boundary: it copies only selected entries, but the controller still locally enumerates
-and validates worktree/scope paths. It is not filesystem, network, `PATH`, `HOME`, or
-same-UID isolation, and scope approval grants no execution, Git, acceptance, or
+and validates worktree/scope paths. Default session mode retains normal user access
+to the host. Explicit native mode adds macOS containment for scoped dispatch;
+ordinary verification copies do not gain that boundary automatically. Scope approval
+alone grants no execution, Git, acceptance, or
 publication authority. See [selected-content dispatch](USAGE.md#optional-selected-content-dispatch).
 
 ## 4. Let the driver own verification

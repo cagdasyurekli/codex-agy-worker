@@ -62,12 +62,15 @@ Before an agy-backed request, choose and approve one transmission mode. Prefer
 `--provider-scope` for bounded jobs: it binds exact reviewed
 read entries, their selected-content digest, and a write subset, then stages only those
 entries in a fresh owner-private mode-`0700` Gitless provider cwd. Whole-worktree
-dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception and
+dispatch remains an explicit `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` exception and
 may expose every file in the disposable worktree through `agy` to Google/Gemini;
 `--add-dir`, prompt restrictions, and later `qa-gate --only` checks do not narrow that
-read boundary. Scoped staging is
-not a sandbox, and its approval grants no provider execution, Git action, acceptance,
-or publication. Read [PRIVACY.md](PRIVACY.md) before use.
+read boundary. New jobs use the existing AGY session by default. Selected files limit
+staging and reconciliation, not AGY's normal user-level access to the host.
+`--provider-isolation native` optionally adds macOS containment with private HOME/TMP
+for scoped jobs. The chosen mode is included in the initial approval and retained
+through the job. Scope approval alone grants
+no provider execution, Git action, acceptance, or publication. Read [PRIVACY.md](PRIVACY.md).
 
 Before approval, inspect the content-free path boundary without starting `agy`, a
 provider probe, or network activity:
@@ -156,8 +159,9 @@ The worker envelope is input, not acceptance evidence:
    selected-content digest, then stages only selected entries in a fresh owner-private
    mode-`0700` Gitless provider cwd. See
    [selected-content dispatch](docs/USAGE.md#optional-selected-content-dispatch); the
-   stage is not a sandbox, and scope approval grants no provider execution, Git,
-   acceptance, or publication authority.
+   default session mode preserves the existing AGY session; optional native mode
+   requires supported macOS containment. Scope approval alone grants
+   no provider execution, Git, acceptance, or publication authority.
 3. The gate derives changed paths from Git instead of trusting `files_changed`.
 4. Codex runs driver-owned verification; worker-reported commands are never executed.
 5. Codex reports `verified`, `partially_verified`, or `blocked` for that exact
@@ -348,12 +352,13 @@ and the verification command for each maintained surface.
 - agy is the only worker backend.
 - Partial/promisor Git clones are unsupported for disposable worker worktrees.
 - Unresolved merge resolve-undo metadata (REUC) rejects dispatch with resolve_undo_present; the controller never clears index metadata.
-- Each job audits one worktree. Mutation across additional repositories is rejected.
+- Each job audits one worktree. The controller rejects reconciliation outside it.
 - Provider transmission requires explicit approval for the selected mode and content;
   installation is never that approval. Provider scope is recommended for bounded jobs
-  and binds exact reviewed entries plus their selected-content digest without turning
-  scoped staging into a sandbox. Whole-worktree mode is an explicit manifest-bound
-  exception.
+  and binds exact reviewed entries for staging and reconciliation. Default session
+  mode uses normal user authority; native containment is an explicit scoped option
+  on supported macOS hosts. Whole-worktree mode remains manifest-bound. See the
+  privacy guide for network and cleanup limits.
 - Direct model/effort selection has strong offline mechanism coverage but does not
   prove backend identity, availability, quality, cost, or quota efficiency.
 - A green gate proves only the exact candidate, immutable base, path policy, and

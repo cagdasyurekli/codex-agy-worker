@@ -5,7 +5,7 @@ while retaining responsibility for the actual diff, project-owned checks, repair
 decisions, and final assurance label. A worker report is input, never acceptance
 evidence.
 
-Complete the [installation and sandbox setup](INSTALLATION.md) first. Installation
+Complete the [installation and host permission setup](INSTALLATION.md) first. Installation
 does not authorize provider dispatch or repository transmission.
 
 ## Before the first provider dispatch
@@ -24,11 +24,28 @@ credentials, secrets, private keys, unrelated private files, raw worker logs,
 controller state, and denied paths from the entire default transmission or all scoped
 entries. Read [PRIVACY.md](../PRIVACY.md) before use.
 
-Scoped staging reduces provider-visible content but is not a sandbox. The controller
-still locally enumerates and validates worktree paths and scope entries; filesystem,
-network, `PATH`, `HOME`, same-UID, local-owner, and portable mutation-race residuals
-remain. Approving the scope digest grants no provider execution, Git action, driver
-acceptance, or publication.
+New jobs default to `--provider-isolation session` and use the existing AGY session.
+The controller validates local worktree paths and reconciles only approved writes,
+but AGY retains normal user filesystem/network authority. Include this mode with the
+task and selected content in the initial approval; no extra approval step is needed.
+
+Use `--provider-isolation native` explicitly for scoped macOS containment with
+private HOME/TMP. Native mode never falls back to session mode. Include its bound agy
+image's TCP 443, local resolver, TCP listener, and Keychain exposure in the initial
+approval package. See [Security and compatibility](../skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md)
+for the `/usr/bin/security` helper's shared Keychain authority, which cannot be
+restricted to one token or operation, and
+for the exact network and process-group limits. Scope approval alone grants no
+provider execution, Git action, driver acceptance, or publication. The macOS listener
+rule also permits wildcard binds; it is not a loopback-only guarantee.
+
+Prepare one approval package for the task and its foreseeable repairs. Include the
+transmitted content, provider permissions, model, and shared retry/time budget.
+Codex generates current state and candidate approval hashes as it works; these
+mechanical bindings do not themselves require another human approval. Ask again
+only when an action exceeds the approved content, permissions, destination, or budget,
+or the user reserved that decision. An automatic Goal continuation cannot supply
+missing authority.
 
 Before every provider-launch attempt—initial `run`/`start`, `resume`, `continue`, and
 `restart`—Codex must tell the user in one or two concise sentences:
@@ -98,7 +115,7 @@ state directory, the ordinary controller path is the portable `workflow.sh` faca
 1. Run `workflow.sh run ... --preview` and review its exact canonical transmission
    preview.
 2. Repeat the same binding with exactly one explicit mode:
-   `--approve-whole-worktree MANIFEST_SHA256`, or `--provider-scope FILE` plus
+   `--approve-whole-worktree LAUNCH_APPROVAL_SHA256`, or `--provider-scope FILE` plus
    `--approve-transmission-sha TRANSMISSION_SHA256`.
 3. Use `workflow.sh status ...` for read-only, sanitized progress facts.
 4. Use `workflow.sh verify-finalize ...` with repeatable structured
@@ -126,10 +143,10 @@ dispatch artifact path never appeared, so a corrected invocation can retry safel
 
 ## Two rules that make repository work reliable
 
-1. **Keep the worker off the shell.** Under agy's sandbox, shell tools run in
-   `~/.gemini/antigravity-cli/scratch`, not the target repository. Worker file tools
-   can reach the approved target. Let the worker edit with file tools; Codex owns
-   every repository command.
+1. **Let Codex verify the result.** The worker uses file tools against the exact
+   workspace supplied at launch; Codex runs the checks that determine acceptance.
+   In native mode, agy's sandbox shell uses a separate scratch directory, so its
+   shell observations do not establish target workspace availability.
 2. **Bind the intended provider surface.** Prefer the mutually exclusive
    `--provider-scope` mode for bounded jobs and
    bind its exact preview digest. The primary facade accepts this pair directly and
@@ -172,8 +189,9 @@ printf '%s\n' "$TASK" | "$PIPELINE/agy-worker.sh" \
 owner-private mode-`0700` Gitless cwd containing only selected entries; only authorized
 write entries can reconcile back. The controller still enumerates and validates local
 worktree paths and identities before staging. Scope approval grants neither the
-provider launch itself, a Git action, driver acceptance, nor publication, and scoped
-staging is not a security sandbox.
+provider launch itself, a Git action, driver acceptance, nor publication. Session mode
+does not turn this selection into host isolation. Explicit native mode uses the macOS
+containment boundary described above; unsupported hosts reject native mode.
 
 ## Advanced: manual bounded task example
 
@@ -194,12 +212,12 @@ BASE="$(git -C "$TARGET" rev-parse HEAD)"
 git -C "$TARGET" worktree add -b "$JOB_BRANCH" "$WT" "$BASE"
 WHOLE_WORKTREE_SHA="$(
   "$PIPELINE/agy-worker.sh" transmission-preview --workdir "$WT" |
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest_sha256"])'
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["launch_approval_sha256"])'
 )"
 
 if ! echo "Add error-path tests for $WT/src/parser.py.
 Edit ONLY files under $WT/tests/. Use file tools on absolute paths.
-Do NOT run shell commands — they execute in a scratch directory, not this repo.
+Use file tools against the exact workspace; leave shell commands to the driver.
 The driver runs every command. Return commands_run and tests_run as empty arrays." |
   AGY_WORKER_JOB_ID="$JOB_ID" "$PIPELINE/agy-worker.sh" \
     --workflow task --mode accept-edits --tier bulk \
@@ -293,8 +311,9 @@ prove the worker's architecture prose or completeness.
 | `--workdir DIR` | — | Source worktree. Without `--provider-scope`, treat all content as worker-readable and potentially transmissible. |
 | `--add-dir DIR` | — | Repeatable file-tool root for explicit whole-worktree dispatch; it does not narrow provider reads and conflicts with scoped mode. |
 | `--provider-scope FILE` | — | Recommended closed read/write policy for bounded jobs; stages selected content only and requires `--approve-transmission-sha`. |
-| `--approve-transmission-sha SHA256` | — | Exact scoped policy/path/content approval binding; grants no execution or downstream authority. |
-| `--approve-whole-worktree SHA256` | — | Explicit broad-mode exception bound to the current path/kind manifest. |
+| `--provider-isolation session|native` | — | Default `session` uses existing account/session and normal host access; explicit `native` requires scoped mode on supported macOS. Bound for the job's lifetime. |
+| `--approve-transmission-sha SHA256` | — | Exact scoped policy/path/content and execution-mode binding; grants no downstream authority. |
+| `--approve-whole-worktree SHA256` | — | Broad-mode approval bound to the current path/kind manifest and execution mode; use the preview's `launch_approval_sha256`. |
 | `--boost` | — | Advanced one-cycle `task` profile; may invoke provider-side subagents and protected tools and requires a job-bound risk acknowledgement. |
 | `--approve-boost-risk-sha SHA256` | — | Exact warning/job acknowledgement printed by the provider-free Boost preflight; grants no permission or wider transmission. |
 | `--provider-env NAME` | — | Repeatable exact-name opt-in for an additional caller variable passed to local `agy` probes and provider launches. |

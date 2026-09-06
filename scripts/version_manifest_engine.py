@@ -25,6 +25,8 @@ SHA512_RE = re.compile(r"\A[0-9a-f]{128}\Z")
 COMMIT_RE = re.compile(r"\A[0-9a-f]{40}\Z")
 SAFE_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,199}\Z")
 SUPPORT_POLICIES = {
+    # Source/distribution are established; same-version evidence does not exist yet.
+    "candidate": ("version-evidence",),
     "current": (
         "activation", "capture", "classifier", "profile", "reprofile",
         "version-evidence",
@@ -50,12 +52,12 @@ class VersionSpec(NamedTuple):
     release_commit: str
     distribution_url: str
     distribution_sha512: str
-    recovery_binding_sha256: str
-    recovery_stdout: bytes
-    recovery_runner_sha256: str
-    recovery_runner_bytes: int
-    recovery_summary_bytes: int
-    output_profile_name: str
+    recovery_binding_sha256: Optional[str]
+    recovery_stdout: Optional[bytes]
+    recovery_runner_sha256: Optional[str]
+    recovery_runner_bytes: Optional[int]
+    recovery_summary_bytes: Optional[int]
+    output_profile_name: Optional[str]
     prior_name: str
     capture_snapshot_policy: str = "stable"
     historical_recovery_binding_sha256: Optional[str] = None
@@ -72,6 +74,10 @@ class VersionSpec(NamedTuple):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "VersionSpec":
+        evidence_fields = {
+            "recovery_binding_sha256", "recovery_stdout", "recovery_runner_sha256",
+            "recovery_runner_bytes", "recovery_summary_bytes", "output_profile_name",
+        }
         required = {
             "version", "support_tier", "allowed_operations", "expected_stdout",
             "source_sha256", "source_size",
@@ -87,6 +93,13 @@ class VersionSpec(NamedTuple):
             "capture_stdout_sha256", "capture_response_sha256",
             "inventory_normalized_sha256", "slug_count", "slugs",
         }
+        candidate = data.get("support_tier") == "candidate"
+        if candidate:
+            required -= evidence_fields
+            # A candidate cannot carry capture/activation claims, including partial ones.
+            optional = {
+                "historical_recovery_binding_sha256", "historical_recovery_source_sha256",
+            }
         if set(data) - required - optional or required - set(data):
             raise EngineError("version record keys do not match the closed schema")
         version = _text(data["version"], "version")
@@ -129,12 +142,12 @@ class VersionSpec(NamedTuple):
             release_commit=_digest(data["release_commit"], COMMIT_RE, "release_commit"),
             distribution_url=_url(data["distribution_url"]),
             distribution_sha512=_digest(data["distribution_sha512"], SHA512_RE, "distribution_sha512"),
-            recovery_binding_sha256=_digest(data["recovery_binding_sha256"], SHA256_RE, "recovery_binding_sha256"),
-            recovery_stdout=_ascii(data["recovery_stdout"], "recovery_stdout"),
-            recovery_runner_sha256=_digest(data["recovery_runner_sha256"], SHA256_RE, "recovery_runner_sha256"),
-            recovery_runner_bytes=_positive_int(data["recovery_runner_bytes"], "recovery_runner_bytes"),
-            recovery_summary_bytes=_positive_int(data["recovery_summary_bytes"], "recovery_summary_bytes"),
-            output_profile_name=_safe_name(data["output_profile_name"], "output_profile_name"),
+            recovery_binding_sha256=None if candidate else _digest(data["recovery_binding_sha256"], SHA256_RE, "recovery_binding_sha256"),
+            recovery_stdout=None if candidate else _ascii(data["recovery_stdout"], "recovery_stdout"),
+            recovery_runner_sha256=None if candidate else _digest(data["recovery_runner_sha256"], SHA256_RE, "recovery_runner_sha256"),
+            recovery_runner_bytes=None if candidate else _positive_int(data["recovery_runner_bytes"], "recovery_runner_bytes"),
+            recovery_summary_bytes=None if candidate else _positive_int(data["recovery_summary_bytes"], "recovery_summary_bytes"),
+            output_profile_name=None if candidate else _safe_name(data["output_profile_name"], "output_profile_name"),
             prior_name=_safe_name(data["prior_name"], "prior_name"),
             capture_snapshot_policy=_snapshot_policy(data.get("capture_snapshot_policy", "stable")),
             historical_recovery_binding_sha256=_optional_digest(data.get("historical_recovery_binding_sha256"), "historical_recovery_binding_sha256"),
@@ -161,15 +174,11 @@ class VersionSpec(NamedTuple):
             "release_commit": self.release_commit,
             "distribution_url": self.distribution_url,
             "distribution_sha512": self.distribution_sha512,
-            "recovery_binding_sha256": self.recovery_binding_sha256,
-            "recovery_stdout": self.recovery_stdout.decode("ascii"),
-            "recovery_runner_sha256": self.recovery_runner_sha256,
-            "recovery_runner_bytes": self.recovery_runner_bytes,
-            "recovery_summary_bytes": self.recovery_summary_bytes,
-            "output_profile_name": self.output_profile_name,
             "prior_name": self.prior_name,
         }
         for key in (
+            "recovery_binding_sha256", "recovery_stdout", "recovery_runner_sha256",
+            "recovery_runner_bytes", "recovery_summary_bytes", "output_profile_name",
             "historical_recovery_binding_sha256", "historical_recovery_source_sha256",
             "reprofile_output_name", "failure_ruleset_version", "capture_runner_source_sha256", "capture_record_sha256",
             "capture_stdout_sha256", "capture_response_sha256",
@@ -177,7 +186,10 @@ class VersionSpec(NamedTuple):
         ):
             value = getattr(self, key)
             if value is not None:
-                result[key] = list(value) if key == "slugs" else value
+                result[key] = (
+                    value.decode("ascii") if key == "recovery_stdout"
+                    else list(value) if key == "slugs" else value
+                )
         if self.capture_snapshot_policy != "stable":
             result["capture_snapshot_policy"] = self.capture_snapshot_policy
         return result

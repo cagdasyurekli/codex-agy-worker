@@ -92,11 +92,13 @@ DO_NOT_TRACK=1 npx skills add cagdasyurekli/codex-agy-worker \
 `npx` is only an optional installer. The installed skill has no Node runtime
 dependency. Review the copied files before use.
 
-## Required Codex sandbox settings
+## Codex host permissions
 
-agy starts a local language server and writes state under `~/.gemini`. Under Codex's
-default `workspace-write` sandbox it fails with **exit 5 and empty stderr** unless
-both the socket and writable-directory requirements are satisfied.
+agy starts a local language server and writes account state. New worker jobs use
+the existing AGY session by default; an outer Codex sandbox can still prevent that
+session from working. Run with the host permissions already approved for the task.
+For CLI sessions that intentionally use `workspace-write`, the following settings
+allow the language-server socket and writes under `~/.gemini`.
 
 Add this setting to `~/.codex/config.toml`:
 
@@ -124,7 +126,7 @@ also needs network access. Do not use dangerous permission or approval bypass fl
 ## Version drift and direct model selection
 
 The accepted model/effort mapping, exact agy version, and evidence digests live in the
-current [activation record](../compat/reviews/agy-1.1.24-activation.md). Historical
+current [activation record](../compat/reviews/agy-1.1.26-activation.md). Historical
 observations remain history; they do not override the current source and checked-in
 matrix. Codex compatibility evidence is observational and grants neither dispatch nor
 model-selection authority.
@@ -173,7 +175,7 @@ account-owned agy state such as models, agents, plugins, and local permissions.
   through its bounded structured envelope.
 - agy's `--agent` disables `--json-schema`; personas are therefore injected as
   bounded prompt text instead of using that flag.
-- In agy's sandbox, shell tools run in its scratch directory rather than the target
+- In explicit native mode, agy's sandbox shell tools run in its scratch directory rather than the target
   repository. Worker prompts use file tools; Codex owns repository commands.
 - Classify authentication, quota, timeout, or provider failures only from reviewed
   exact signatures. Never turn free-form error prose into an automatic retry.
@@ -188,7 +190,8 @@ account-owned agy state such as models, agents, plugins, and local permissions.
 
 1. Confirm you reviewed the exact installed source commit or release tag.
 2. Run `./doctor.sh --repo /absolute/path/to/target` and respect `not-ready`.
-3. Confirm both Codex sandbox settings above are active.
+3. Confirm the process has the approved host permissions; for a sandboxed CLI
+   session, check both settings above.
 4. Run `./ground-truth.sh` before interpreting an agy interface change.
 5. For reviewed direct selection, inspect current raw help and handle drift without
    changing the caller's model or effort.

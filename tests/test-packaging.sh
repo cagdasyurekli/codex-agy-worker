@@ -38,7 +38,7 @@ PY
 }
 
 ground_truth_phase_contract() {
-    local fixture="$TMP/ground-truth-phase" rc
+    local helper="$1" label="$2" fixture="$TMP/ground-truth-phase-$2" rc
     mkdir -p "$fixture/bin" "$fixture/home/.gemini/antigravity-cli"
     printf '%s\n' \
         '#!/usr/bin/env bash' \
@@ -56,7 +56,7 @@ ground_truth_phase_contract() {
         > "$fixture/home/.gemini/antigravity-cli/settings.json"
 
     HOME="$fixture/home" PATH="$fixture/bin:$PATH" \
-    GROUND_TRUTH_LOG="$fixture/interface.log" "$ROOT/ground-truth.sh" \
+    GROUND_TRUTH_LOG="$fixture/interface.log" "$helper" \
         > "$fixture/interface.out" 2> "$fixture/interface.err" || return 1
     [[ ! -s "$fixture/interface.err" ]] \
         && grep -Fxq 'interface' "$fixture/interface.out" \
@@ -65,7 +65,7 @@ ground_truth_phase_contract() {
         || return 1
 
     HOME="$fixture/home" PATH="$fixture/bin:$PATH" \
-    GROUND_TRUTH_LOG="$fixture/account.log" "$ROOT/ground-truth.sh" --account \
+    GROUND_TRUTH_LOG="$fixture/account.log" "$helper" --account \
         > "$fixture/account.out" 2> "$fixture/account.err" || return 1
     [[ ! -s "$fixture/account.err" ]] \
         && grep -Fxq 'account' "$fixture/account.out" \
@@ -75,7 +75,7 @@ ground_truth_phase_contract() {
         || return 1
 
     HOME="$fixture/home" PATH="$fixture/bin:$PATH" \
-    GROUND_TRUTH_LOG="$fixture/invalid.log" "$ROOT/ground-truth.sh" --invalid \
+    GROUND_TRUTH_LOG="$fixture/invalid.log" "$helper" --invalid \
         > "$fixture/invalid.out" 2> "$fixture/invalid.err"
     rc=$?
     [[ "$rc" == 64 ]] \
@@ -365,14 +365,14 @@ assert not any(token in offline_text for token in ("curl ", "wget ", "git fetch"
 sys.path.insert(0, str(stages_file.parent))
 import ci_stages
 
-assert len(ci_stages.STAGES) == 41
-assert len({s.id for s in ci_stages.STAGES}) == 41
+assert len(ci_stages.STAGES) == 44
+assert len({s.id for s in ci_stages.STAGES}) == 44
 assert set(ci_stages.SHARDS) == {"dispatcher", "dispatcher-remediation", "other-a", "other-b"}
 
 required_stage_ids = (
     "diff-hygiene", "shell-syntax", "python-syntax", "qa-gate", "evidence-receipt",
     "evidence-report", "offline-benchmark", "swebench-workflow-study", "job-lifecycle",
-    "dispatcher", "dispatcher-remediation",
+    "dispatcher", "dispatcher-remediation", "provider-containment", "self-verification", "self-verification-lifecycle",
     "updater", "adoption-measurement", "update-notifier", "version-attestation-runner",
     "version-bootstrap-preflight", "version-bootstrap-runner",
     "version-initial-bootstrap-runner",
@@ -1322,16 +1322,16 @@ python3 - "$TMP/ci-linear-lines-repo/repeated.txt" <<'PY'
 from pathlib import Path
 import sys
 
-Path(sys.argv[1]).write_bytes(b"same line\n" * 6_000)
+Path(sys.argv[1]).write_bytes(b"same line\n" * 16_384)
 PY
 git -C "$TMP/ci-linear-lines-repo" add repeated.txt
 git -C "$TMP/ci-linear-lines-repo" commit -qm repeated
 ci_linear_lines_head="$(git -C "$TMP/ci-linear-lines-repo" rev-parse HEAD)"
 if run_ci_check "$TMP/ci-linear-lines-repo" pull_request \
         "$ci_linear_lines_base" "$ci_linear_lines_head"; then
-    ok "six thousand repeated lines complete under the linear scanner bound"
+    ok "16,384 repeated lines complete under the linear scanner bound"
 else
-    bad "six thousand repeated lines complete under the linear scanner bound"
+    bad "16,384 repeated lines complete under the linear scanner bound"
 fi
 
 init_ci_repo "$TMP/ci-max-paths-repo"
@@ -1374,7 +1374,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.16.0"
+assert manifest["version"] == "0.17.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -1447,7 +1447,7 @@ runtime_wrapper = (
 ).read_text(encoding="utf-8")
 assert '--provider-scope conflicts with --add-dir' in runtime_wrapper
 assert '--provider-scope requires --approve-transmission-sha' in runtime_wrapper
-assert '--approve-whole-worktree MANIFEST_SHA256' in runtime_wrapper
+assert '--approve-whole-worktree LAUNCH_APPROVAL_SHA256' in runtime_wrapper
 assert 'choose provider scope, or explicitly approve whole-worktree transmission' in runtime_wrapper
 dispatcher_source = (
     root / "skills/agy-worker/runtime/scripts/agy_dispatch.py"
@@ -1646,11 +1646,14 @@ fi
 
 if [[ -x "$ROOT/doctor.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/doctor.sh" ]] \
+        && [[ -x "$ROOT/ground-truth.sh" ]] \
+        && [[ -x "$ROOT/skills/agy-worker/runtime/ground-truth.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/doctor-metadata.py" ]] \
-        && ground_truth_phase_contract; then
-    ok "root/portable doctor and ground-truth phases preserve their read-only boundary"
+        && ground_truth_phase_contract "$ROOT/ground-truth.sh" root \
+        && ground_truth_phase_contract "$ROOT/skills/agy-worker/runtime/ground-truth.sh" runtime; then
+    ok "root and portable ground-truth phases preserve their read-only boundary"
 else
-    bad "root/portable doctor and ground-truth phases preserve their read-only boundary"
+    bad "root and portable ground-truth phases preserve their read-only boundary"
 fi
 
 if [[ -x "$ROOT/feedback-triage.sh" ]] \
@@ -1756,7 +1759,11 @@ if [[ -x "$ROOT/agy-worker.sh" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" ]] \
         && [[ -x "$ROOT/skills/agy-worker/runtime/scripts/legacy_dispatch_state.py" ]] \
         && [[ -f "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
-        && [[ ! -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]]; then
+        && [[ ! -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_containment.py" ]] \
+        && [[ ! -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_containment.py" ]] \
+        && [[ -f "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_verification.py" ]] \
+        && [[ ! -x "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_verification.py" ]]; then
     ok "root and portable packages include the progress-aware local dispatcher"
 else
     bad "root and portable packages include the progress-aware local dispatcher"
@@ -1961,6 +1968,7 @@ required_runtime_dependencies=(
     model-recommendation.sh
     model-selection.sh
     doctor.sh
+    ground-truth.sh
     feedback-triage.sh
     model-intelligence.sh
     model-evidence-campaign.sh
@@ -1979,6 +1987,8 @@ required_runtime_dependencies=(
     scripts/agy_dispatch.py
     scripts/legacy_dispatch_state.py
     scripts/agy_dispatch_worktree.py
+    scripts/agy_dispatch_containment.py
+    scripts/agy_dispatch_verification.py
     scripts/version_manifest_engine.py
     scripts/job_lifecycle.py
     scripts/doctor-metadata.py
@@ -2134,6 +2144,8 @@ for specification in \
     'scripts/agy_dispatch.py:executable' \
     'scripts/legacy_dispatch_state.py:executable' \
     'scripts/agy_dispatch_worktree.py:data' \
+    'scripts/agy_dispatch_containment.py:data' \
+    'scripts/agy_dispatch_verification.py:data' \
     'scripts/job_lifecycle.py:executable' \
     'scripts/model_selection.py:executable' \
     'scripts/model_intelligence.py:executable' \
@@ -2348,7 +2360,7 @@ cp "$ROOT/skills/agy-worker/runtime/scripts/model_selection.py" \
 (
     cd "$plain_compile_fixture" || exit 1
     unset PYTHONDONTWRITEBYTECODE PYTHONPYCACHEPREFIX
-    python3 -B -m py_compile scripts/*.py skills/*/runtime/scripts/*.py
+    python3 -I -S -B -c 'import py_compile, sys; sys.pycache_prefix = None; [py_compile.compile(path, doraise=True) for path in sorted(sys.argv[1:])]' scripts/*.py skills/*/runtime/scripts/*.py
 )
 plain_compile_rc=$?
 if [[ "$plain_compile_rc" == 0 ]] \
@@ -2427,8 +2439,8 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.json" \
         && cmp -s "$ROOT/compat/agy-models-inventory-binding.sha256" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.sha256" \
-        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.24" ]] \
-        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-09-03" ]]; then
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.26" ]] \
+        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-09-06" ]]; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
@@ -2859,7 +2871,7 @@ fi
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     'case "$*" in' \
-    '  --version) printf "1.1.24\n" ;;' \
+    '  --version) printf "1.1.26\n" ;;' \
     '  --help) printf "%s\n" "Usage of agy:" "  --add-dir  Add a directory" "  --conversation  Resume a conversation" "  --disable-slash-commands  Disable slash commands" "  --json-schema  Schema path" "  --mode  Execution mode (accept-edits, plan)" "  --model  Select a model" "  --output-format  Format (text, json, stream-json)" "  --print  Run a prompt" "  --print-timeout  Print timeout" "  --sandbox  Sandboxed" >&2 ;;' \
     '  *) exit 97 ;;' \
     'esac' > "$TMP/selector-bin/agy"
@@ -2883,7 +2895,7 @@ fi
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "e3768004b4685754ba5bfd72e75724a2c78b0b9ed78391b0363b5f3d3ff191f1"' \
+        && grep -Fq '"matrix_sha256": "e483cd05549d0c33fe31da222af7308e7a134645748469268832d9c26b1e6306"' \
             "$TMP/copied-selection.json" \
         && [[ "$copied_selection_v2" == 1 ]] \
         && [[ ! -e "$TMP/network-called" ]]; then
@@ -2951,6 +2963,20 @@ else
     bad "resolver rejects a doctor-less bundle without fallback or network"
 fi
 
+cp -R "$ROOT/skills/agy-worker" "$TMP/missing-ground-truth-skill"
+rm -f "$TMP/missing-ground-truth-skill/runtime/ground-truth.sh"
+PATH="$TMP/no-network-bin:$PATH" NETWORK_MARKER="$TMP/missing-ground-truth-network" \
+    bash "$TMP/missing-ground-truth-skill/scripts/resolve-pipeline.sh" \
+    > "$TMP/missing-ground-truth.out" 2> "$TMP/missing-ground-truth.err"
+rc=$?
+if [[ "$rc" == "2" && ! -s "$TMP/missing-ground-truth.out" ]] \
+        && grep -Fq 'complete agy-worker skill bundle' "$TMP/missing-ground-truth.err" \
+        && [[ ! -e "$TMP/missing-ground-truth-network" ]]; then
+    ok "resolver rejects a ground-truth-less bundle without fallback or network"
+else
+    bad "resolver rejects a ground-truth-less bundle without fallback or network"
+fi
+
 mkdir -p "$TMP/bin" "$TMP/installed"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/agy"
 chmod +x "$TMP/bin/agy"
@@ -2998,12 +3024,26 @@ if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]]; then
 else
     bad "standalone install resolves the checkout without rewriting SKILL.md"
 fi
+if [[ -x "$TMP/installed/agy-worker/runtime/ground-truth.sh" ]] \
+        && ground_truth_phase_contract "$TMP/installed/agy-worker/runtime/ground-truth.sh" installed; then
+    ok "installed skill includes the canonical ground-truth helper and phase boundary"
+else
+    bad "installed skill includes the canonical ground-truth helper and phase boundary"
+fi
 if [[ -x "$ROOT/agy-worker.sh" ]] \
         && grep -Fq 'skills/agy-worker/runtime/agy-worker.sh' "$ROOT/agy-worker.sh" \
         && [[ -x "$TMP/installed/agy-worker/runtime/doctor.sh" ]] \
+        && [[ -x "$TMP/installed/agy-worker/runtime/ground-truth.sh" ]] \
+        && grep -Fq '`"$PIPELINE/ground-truth.sh"`' "$TMP/installed/agy-worker/SKILL.md" \
+        && grep -Fq '`"$PIPELINE/ground-truth.sh"`' \
+            "$TMP/installed/agy-worker/references/SECURITY_AND_COMPATIBILITY.md" \
         && [[ -x "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch.py" ]] \
         && [[ -f "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
         && [[ ! -x "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_worktree.py" ]] \
+        && [[ -f "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_containment.py" ]] \
+        && [[ ! -x "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_containment.py" ]] \
+        && [[ -f "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_verification.py" ]] \
+        && [[ ! -x "$TMP/installed/agy-worker/runtime/scripts/agy_dispatch_verification.py" ]] \
         && [[ -x "$TMP/installed/agy-worker/runtime/scripts/doctor-metadata.py" ]] \
         && grep -Fq '`"$PIPELINE/scripts/agy_dispatch.py"`' \
             "$TMP/installed/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
@@ -3188,8 +3228,8 @@ fi
 provider_read_scope_clauses=(
     'Prefer `--provider-scope FILE --approve-transmission-sha SHA256` for bounded jobs. It binds exact reviewed read entries, their selected-content digest, and a write subset, then stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.'
     'Whole-worktree dispatch remains an explicit exception. Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that read boundary.'
-    'Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch has an implicit transmission mode: launch requires either `--approve-whole-worktree MANIFEST_SHA256` or the scoped pair above. The deprecated facade-only `--approve-preview-sha` spelling cannot launch by itself and remains temporarily available only with `--legacy-preview-approval`.'
-    'The controller still locally enumerates and validates worktree paths and the scope policy before staging; scoped mode is not a filesystem, network, `PATH`, `HOME`, or same-UID sandbox and retains the documented local-owner and mutation-race residuals.'
+    'Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch has an implicit transmission mode: launch requires either `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` or the scoped pair above. The deprecated facade-only `--approve-preview-sha` spelling cannot launch by itself and remains temporarily available only with `--legacy-preview-approval`.'
+    'New jobs default to `--provider-isolation session`, which uses the existing AGY session without AGY sandbox or native host containment. AGY has normal user filesystem/network authority; selected-file staging and reconciliation are not host isolation. Include this execution mode in the initial approval alongside task/content, then reuse that approval while its scope remains unchanged. Explicit `--provider-isolation native` retains supported macOS scoped containment with private HOME/TMP and reviewed network/Keychain access; it never falls back to session mode. The native `/usr/bin/security` exception allows broader same-user Keychain operations, and its listener rule permits wildcard binds. Read [Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md) for those limits. Preserve the job'"'"'s selected mode across continuation and repair.'
     'Provider-scope approval grants neither provider execution, Git action, driver acceptance, nor publication.'
     'Before each launch, ensure secrets, credentials, private keys, user-denied paths, and unrelated private files are absent from every entry approved for provider transmission; telling the worker not to read an approved entry is not a control.'
 )
@@ -3246,8 +3286,8 @@ provider_read_scope_weakening_replacements=(
     'do not narrow that read boundary::narrow that read boundary'
     'Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch::Both `workflow.sh run` and the advanced `agy-worker.sh` initial dispatch'
     'a write subset::an unrelated write set'
-    'stages only selected entries::may stage unselected entries'
-    'is not a filesystem, network, `PATH`, `HOME`, or same-UID sandbox::is a complete security sandbox'
+    'AGY has normal user filesystem/network authority::AGY has restricted host authority'
+    'it never falls back to session mode::it may fall back to session mode'
     'grants neither provider execution, Git action, driver acceptance, nor publication::grants provider execution and Git authority'
     'telling the worker not to read an approved entry is not a control::telling the worker not to read an approved entry is sufficient'
 )
@@ -3293,14 +3333,17 @@ root = Path(sys.argv[1])
 required = {
     "README.md": (
         "Prefer `--provider-scope` for bounded jobs",
-        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception",
+        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` exception",
         "The facade requires an explicit choice",
         "Facade `--provider-scope` dispatch instead binds exact reviewed read/write entries",
-        "the stage is not a sandbox, and scope approval grants no provider execution, Git, acceptance, or publication authority",
+        "New jobs use the existing AGY session by default",
+        "--provider-isolation native` optionally adds macOS containment",
     ),
     "PRIVACY.md": (
         "Prefer `--provider-scope` for bounded jobs",
-        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception",
+        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` exception",
+        "--provider-isolation session",
+        "never falls back to session mode",
     ),
     "SECURITY.md": (
         "Prefer `--provider-scope` for bounded jobs",
@@ -3313,6 +3356,8 @@ required = {
     "docs/USAGE.md": (
         "Prefer scoped dispatch for bounded jobs",
         "Whole-worktree dispatch remains an explicit manifest-bound exception",
+        "New jobs default to `--provider-isolation session`",
+        "--approve-whole-worktree LAUNCH_APPROVAL_SHA256",
     ),
     "docs/VERIFYING_AGENT_OUTPUT.md": (
         "Whole-worktree dispatch remains an explicit manifest-bound exception",
@@ -3320,27 +3365,31 @@ required = {
     ),
     "docs/MARKETPLACE.md": (
         "Prefer `--provider-scope` for bounded jobs",
-        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception",
+        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` exception",
+        "new jobs default to `--provider-isolation session`",
     ),
     "docs/REPO_MAP.md": (
         "No initial facade or raw dispatch has an implicit provider-read mode",
         "Whole-worktree mode exposes the entire disposable `--workdir`",
         "Recommended provider-scope mode binds exact reviewed read entries",
+        "Current V13/command V10",
     ),
     "docs/index.md": (
         "No initial launch path has an implicit provider-read mode.",
         "<code>--approve-whole-worktree</code> binds the current path/kind manifest",
         "The recommended bounded-job path is <code>--provider-scope</code> plus the exact transmission digest",
-        "scoped staging is not a sandbox, and its approval grants no provider execution, Git, acceptance, or publication authority",
+        "session mode uses the existing AGY session; explicit native mode requires supported macOS containment",
     ),
     "docs/PROJECT_WORKFLOW.md": (
         "Choose the transmission mode explicitly",
         "`--provider-scope FILE --approve-transmission-sha SHA256`, which binds exact reviewed read/write entries",
-        "it is not a sandbox, and scope approval grants no provider execution, Git, acceptance, or publication authority",
+        "--approve-whole-worktree LAUNCH_APPROVAL_SHA256",
+        "session mode uses the existing AGY session; explicit native mode requires supported macOS containment",
     ),
     "skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md": (
         "Prefer scoped dispatch for bounded jobs",
-        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree MANIFEST_SHA256` exception",
+        "Whole-worktree dispatch remains an explicit `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` exception",
+        "Default `--provider-isolation session` retains the caller's existing HOME/session",
         "Provider-scope approval binds reviewed content and policy; it grants neither provider execution, Git action, driver acceptance, nor publication.",
     ),
 }
@@ -3412,7 +3461,7 @@ suite_commands = [
 ]
 
 valid = (
-    len(suite_commands) == len(set(suite_commands)) == 36
+    len(suite_commands) == len(set(suite_commands)) == 39
     and "/usr/bin/python3 -I -S -B scripts/ci_stages.py --list" in contributing
     and {command for command in suite_commands if command in contributing}
     == {"/usr/bin/python3 -I -S -B tests/test-agy-worker-remediation.py"}
@@ -3468,11 +3517,11 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'V5/V6 retains its exact legacy digest' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses the caller-resolved' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
-        && grep -Fq 'Controller-private V11 state also persists a sanitized' \
+        && grep -Fq 'Controller-private V13 state also persists a sanitized' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
         && grep -Fq '`status`, `wait`, and `result` JSON intentionally omit it' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
-        && grep -Fq 'Current V11 uses `dispatching`' \
+        && grep -Fq 'Current V13 uses `dispatching`' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && grep -Fq '| `--allow-slash-commands` |' "$ROOT/docs/USAGE.md" \
         && grep -Fq 'Leave slash expansion disabled when any prompt content comes from a repository or' \
@@ -3489,10 +3538,9 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (292 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (284 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
-        && grep -Fq 'EXPECTED_CHECKS = 103' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (103 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (301 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
+        && grep -Fq 'EXPECTED_CHECKS = 109' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (109 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (207 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Do not pin exact suite counts in this instruction file' "$ROOT/AGENTS.md" \
         && grep -Fq '`docs/REPO_MAP.md` owns focused-suite inventory' "$ROOT/AGENTS.md" \
@@ -3504,9 +3552,9 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && ! grep -Eq '`tests/test-agy-worker.sh` \((338|348) cases\)' "$ROOT/docs/REPO_MAP.md" \
         && ! grep -Fq 'resolution remains blocked until installed agy exactly matches' \
             "$ROOT/docs/INSTALLATION.md"; then
-    ok "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
+    ok "dispatcher docs describe mode-bound selection, V13 lifecycle state, no-bytecode legacy import, and registered focused coverage"
 else
-    bad "dispatcher docs describe compatible direct selection, v9 migration, no-bytecode legacy import, and registered focused coverage"
+    bad "dispatcher docs describe mode-bound selection, V13 lifecycle state, no-bytecode legacy import, and registered focused coverage"
 fi
 
 bootstrap_preflight_line="$(python3 -c "import sys; from pathlib import Path; sys.path.insert(0, '$ROOT/scripts'); import ci_stages; print([i for i, s in enumerate(ci_stages.STAGES) if s.id == 'version-bootstrap-preflight'][0])")"
@@ -3525,11 +3573,11 @@ if grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-models-capture-profile.py` (121 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq '`tests/test-version-manifest-engine.py` (24 offline cases)' \
+        && grep -Fq '`tests/test-version-manifest-engine.py` (28 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'previous 1.1.16 permits only generic version-evidence/profile/capture' \
+        && grep -Fq 'previous 1.1.24 permits only generic version-evidence/profile/capture' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'historical 1.1.12 permits no executable operation' \
+        && grep -Fq 'historical 1.1.16 and 1.1.12 permit no executable operation' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Fixed 1.1.22 suites: version evidence 45, profile 30, runner 63, classifier 24, reprofile 88 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
@@ -3770,7 +3818,7 @@ if [[ "$brand_valid_rc" == "0" ]] \
         && grep -Fq 'git clone https://github.com/cagdasyurekli/codex-agy-worker.git' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq 'does not authorize a provider dispatch or repository transmission' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq './proof-demo.sh' < <(sed -n '1,120p' "$ROOT/README.md") \
-        && grep -Fq 'Read [PRIVACY.md](PRIVACY.md) before use' < <(sed -n '1,120p' "$ROOT/README.md") \
+        && grep -Fq 'Read [PRIVACY.md](PRIVACY.md).' < <(sed -n '1,120p' "$ROOT/README.md") \
         && grep -Fq '<picture>' "$ROOT/README.md" \
         && grep -Fq 'srcset="docs/assets/brand/logo-dark.svg"' "$ROOT/README.md" \
         && grep -Fq 'src="docs/assets/brand/logo-light.svg" alt=""' "$ROOT/README.md" \

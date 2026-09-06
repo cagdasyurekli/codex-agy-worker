@@ -3,6 +3,15 @@
 These are durable prevention rules for `codex-agy-worker`. This file is not a
 release log, task diary, or list of completed work.
 
+## Reap an exited leader before binding its surviving process group
+
+A terminated child may remain a zombie in Darwin process-group enumeration while
+its detailed process identity is unavailable. Reap an already-exited Popen child
+before binding remaining group members. Preserve UID, session, group, start-time,
+and PID-reuse checks for live members; missing zombie metadata must not become a
+blanket permission to ignore an unbound live process. Cover both exited leaders
+and live leaders with surviving children.
+
 ## A worker report is never evidence
 
 The worker is outside the trust boundary. Its envelope is useful for routing and
@@ -898,6 +907,13 @@ once and bind review to that candidate. PR templates should request the canonica
 and exact focused evidence instead of copying every suite command; mechanical tests
 should derive the inventory from the runner rather than enforce duplicate checklists.
 
+For a remediation regression, use the existing
+`AGY_WORKER_REMEDIATION_FOCUSED_CHECK` exact check label before repeating its owning
+group. Keep passed groups as evidence when their relevant bytes are unchanged.
+For a shell-suite failure investigation, set `KEEP_AGY_WORKER_TEST_TMP=1` so the
+failing fixtures survive the exit trap. Capture the exit code and process handle
+along with output; a missing observation is not permission to start a duplicate run.
+
 ### Driver-side usage observation and token accounting boundaries (2026-08-28)
 
 Observation: Measuring Codex orchestration overhead around delegation must not rely on
@@ -989,6 +1005,18 @@ for CLI selection, environment selection, fixed models, conflicts, unsupported c
 Observation: Version-specific executable algorithm copies create maintenance debt, drift risk, and AST/file churn across multiple supported CLI versions.
 Change: Moved version evidence, capture profile/runner, classification, and reprofile into version-neutral production modules backed by a digest-bound common engine and `compat/agy-version-manifest.json`; the stable 1.1.22 filenames are thin CLI adapters. The fixed suites exercise the shared implementations, and synthetic subprocess coverage binds a new manifest version through every real entry point without editing source. Compatibility activation requires the manifest and fails closed when it is absent. A manifest row remains configuration rather than activation authority: separate evidence, canary, and activation review are required. The copy guard rejects new version-stamped algorithm copies while preserving frozen historical evidence.
 
+### Bootstrap version evidence without future proof fields (2026-09-05)
+
+Observation: The common manifest previously required a same-version recovery binding
+before its version-evidence operation could produce that binding. Copying a prior
+version's hashes into those fields would misrepresent evidence.
+Change: A `candidate` row carries established source/distribution inputs and permits
+only `version-evidence`. It rejects same-version recovery and capture fields; optional
+historical predecessor hashes remain explicitly unvalidated provenance, never proof
+for the candidate. Established tiers still require complete recovery evidence.
+Promote the row only after the corresponding
+evidence exists. Version observation alone never authorizes capture or activation.
+
 ### Narrow provider scope and external 0700 staged worktree (2026-08-30)
 
 Observation: Whole-worktree dispatch gives an external provider read and write visibility over
@@ -1065,3 +1093,13 @@ Provider-boundary honesty is paramount:
 - If preflight fails before provider launch, explicitly state that the task was not sent to AGY.
 - If provider reach is genuinely uncertain, state that it is unverified rather than claiming success.
 - Direct model and effort selection remain caller-owned; recommendations are advisory.
+
+
+### Reuse human authority across bounded repairs
+
+Distinguish driver-generated state/digest approvals from human authority. A changed
+candidate hash does not by itself require a new human prompt. Review foreseeable
+provider startup needs before freezing a live package, and include bounded same-scope
+repairs in its shared budget. Reuse exact-candidate test evidence; run the required
+full suite once the candidate is stable. New data, permissions, destinations, or
+budget still need authority. A Goal continuation is not a missing user decision.

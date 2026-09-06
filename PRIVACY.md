@@ -18,7 +18,7 @@ configuration.
 When a user explicitly dispatches a job, `agy-worker.sh` passes the task prompt to the
 locally installed Antigravity CLI (`agy`), an external tool backed by Google/Gemini
 services. Prefer `--provider-scope` for bounded jobs. Whole-worktree dispatch remains
-an explicit `--approve-whole-worktree MANIFEST_SHA256` exception; when selected, treat
+an explicit `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` exception; when selected, treat
 the entire disposable `--workdir` as worker-readable and potentially transmissible to
 that service, even when the task names only a few paths. Prompt denylist instructions,
 `qa-gate --only`, `--allow`, and `--add-dir` do not narrow that read boundary.
@@ -27,14 +27,33 @@ Optional `--provider-scope FILE --approve-transmission-sha SHA256` binds exact r
 read entries, their selected-content digest, and a write subset, then copies only
 selected entries into a fresh owner-private mode-`0700` Gitless provider cwd. The
 controller still locally enumerates and validates the complete worktree path/kind
-surface and scope entries before staging. Scoped mode reduces provider-visible content
-but is not filesystem, network, `PATH`, `HOME`, or same-UID isolation and retains the
-documented local-owner and mutation-race residuals. Its approval grants no provider
-execution, Git action, driver acceptance, or publication.
+surface and scope entries before staging. New jobs default to
+`--provider-isolation session`, using the caller's existing AGY session and normal
+HOME. AGY retains normal user filesystem and network authority: selection and
+reconciliation do not enforce a host read/write boundary. Disclose this mode in the
+initial approval alongside the task and selected content; the job cannot silently
+switch modes later.
+
+Explicit `--provider-isolation native` requires supported macOS scoped containment
+with private HOME/TMP and never falls back to session mode. In native mode, the bound agy image receives non-local TCP
+443, DNS through the local resolver socket, local TCP listener permissions, and
+reviewed Keychain service access; this is not a recipient allowlist. On macOS,
+the listener rule also permits wildcard binds, so the agy image can expose a
+listener to the local network. Outbound connections to local TCP services remain denied.
+The exact `/usr/bin/security` helper shares the reviewed Keychain service access,
+without additional network or filesystem access. This permission cannot be limited
+to one token or operation; disclose broader same-user Keychain read/change/delete
+authority in the initial approval package.
+The stage is writable, while reconciliation enforces its approved write subset.
+Process-group cleanup and trusted-local-owner limits are described in
+[Security and compatibility](skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md).
+Scope approval alone grants no provider execution, Git action, acceptance, or publication.
 
 Before the initial provider attempt, approve the exact scope transmission digest or
 whole-worktree manifest. Later resume, continue, and restart actions preserve that
-mode and require the exact current controller-state approval. Credentials, secrets,
+mode and require the exact current controller-state approval. Codex binds those
+state values; they do not require another human prompt while the approved task,
+transmission, permissions, and budget still cover the action. Credentials, secrets,
 private keys, regulated or
 user-denied data, and unrelated private files must be absent from the entire default
 worktree transmission or every entry selected for scoped staging. Telling the worker

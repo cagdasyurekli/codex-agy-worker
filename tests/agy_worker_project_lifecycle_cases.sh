@@ -38,7 +38,17 @@ project_scoped_delete_transmission="$(
         --provider-scope "$project_scoped_delete_scope" --format json \
         | python3 -c 'import json, sys; print(json.load(sys.stdin)["transmission_sha256"])'
 )"
+project_scoped_delete_home="$TMP/project-scoped-delete-provider-home"
+mkdir -p "$project_scoped_delete_home"
 printf 'delete the scoped file\n' | FAKE_DELETE_FROM_BOUND_ROOT=scoped-delete.txt \
+    FAKE_MODEL_FILE="$project_scoped_delete_home/model" \
+    FAKE_PROMPT_FILE="$project_scoped_delete_home/prompt" \
+    FAKE_DIRS_FILE="$project_scoped_delete_home/dirs" \
+    FAKE_ARGV_FILE="$project_scoped_delete_home/argv" \
+    FAKE_STAGE_RESULT_FILE="$project_scoped_delete_home/stage-result" \
+    FAKE_WORKER_CALLS_FILE="$project_scoped_delete_home/worker-calls" \
+    FAKE_CALLED_FILE="$project_scoped_delete_home/called" \
+    FAKE_CALLS_FILE=/dev/null \
     AGY_TEST_WORKDIR="$project_scoped_delete_workdir" start_worker project-scoped-delete \
     --workflow project --max-cycles 2 --provider-scope "$project_scoped_delete_scope" \
     --approve-transmission-sha "$project_scoped_delete_transmission" \
@@ -63,7 +73,7 @@ project_verified_feedback project-scoped-delete | control_worker finalize projec
     --approve-state-sha "$project_scoped_delete_sha" --assurance verified \
     > "$TMP/project-scoped-delete.finalize" 2> "$TMP/project-scoped-delete.finalize.err"
 project_scoped_delete_finalize_rc=$?
-project_scoped_delete_calls="$(wc -l < "$TMP/project-scoped-delete.worker-calls" | tr -d ' ')"
+project_scoped_delete_calls="$(wc -l < "$project_scoped_delete_home/worker-calls" | tr -d ' ')"
 if [[ "$project_scoped_delete_start_rc" == 0 && "$project_scoped_delete_wait_rc" == 0 \
         && "$project_scoped_delete_continue_rc" == 64 \
         && "$project_scoped_delete_result_rc" == 0 \

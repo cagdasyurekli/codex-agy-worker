@@ -35,6 +35,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import legacy_dispatch_state as LEGACY
+import agy_dispatch_verification as SELF_VERIFICATION
+import agy_dispatch_containment as CONTAINMENT
 
 
 class _DispatchAPI:
@@ -82,6 +84,19 @@ COMMAND_V7_FIELDS = COMMAND_V6_FIELDS | {"approved_whole_worktree_sha256"}
 COMMAND_V8_FIELDS = COMMAND_V7_FIELDS | {
     "boost", "boost_policy_sha256", "approved_boost_risk_sha256",
 }
+COMMAND_V9_FIELDS = COMMAND_V8_FIELDS | {
+    "allow_scoped_repair", "repair_authority_sha256",
+    "allow_self_verification", "self_verification_manifest_path",
+    "self_verification_manifest_sha256", "self_verification_manifest_identity",
+}
+COMMAND_V10_FIELDS = COMMAND_V9_FIELDS | {"provider_isolation"}
+SCOPED_REPAIR_POLICY_TEXT = (
+    "Scoped repair may transmit only controller-reconciled descendants under the "
+    "unchanged initial scope, selection, workflow, provider environment, cycle, and time limits."
+)
+SCOPED_REPAIR_POLICY_SHA256 = hashlib.sha256(
+    SCOPED_REPAIR_POLICY_TEXT.encode("utf-8")
+).hexdigest()
 BOOST_RISK_POLICY_TEXT = (
     "Boost may invoke subagents and protected tools; this acknowledgement does not grant runtime permissions."
 )
@@ -113,8 +128,17 @@ STATE_V11_FIELDS = {
     "provider_stage_path", "provider_stage_identity",
     "provider_stage_manifest_sha256", "reconciliation_manifest_sha256",
 }
+STATE_V12_FIELDS = {
+    "allow_scoped_repair", "repair_authority_sha256", "repair_lineage_sha256",
+    "repair_parent_result_sha256", "repair_parent_worktree_sha256",
+    "repair_lineage_attempt",
+    "allow_self_verification", "self_verification_elapsed_seconds",
+    "self_verification_run", "self_verification_started_epoch",
+    "self_verification_return_phase",
+}
+STATE_V13_FIELDS = {"provider_isolation"}
 PUBLIC_LAUNCHER = '"$PIPELINE/agy-worker.sh"'
-CURRENT_STATE_SCHEMA = 11
+CURRENT_STATE_SCHEMA = 13
 WORKTREE_SNAPSHOT_LEGACY_V6 = "legacy-v6"
 WORKTREE_SNAPSHOT_SEMANTIC_V1 = "semantic-v1"
 CURRENT_WORKTREE_SNAPSHOT_ALGORITHM = WORKTREE_SNAPSHOT_SEMANTIC_V1
@@ -124,7 +148,7 @@ FAILURE_STAGES = {
 }
 LIFECYCLE_PHASES = {
     "dispatching", "awaiting-verification", "repairing", "completed",
-    "blocked", "attempt-failed", "repair-failed",
+    "blocked", "attempt-failed", "repair-failed", "self-verifying",
 }
 TERMINAL = {"succeeded", "failed", "cancelled", "orphaned"}
 REASONS = {
@@ -225,6 +249,71 @@ def canonical(value: Any) -> bytes:
 
 def digest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+def _provider_isolation_for_command(command: dict[str, Any]) -> str:
+    """Derive the execution mode without rewriting historical command bytes."""
+    schema = command.get("schema_version")
+    if schema == 9:
+        return "native"
+    if isinstance(schema, int) and schema <= 8:
+        return "session"
+    mode = command.get("provider_isolation")
+    if schema != 10 or mode not in {"session", "native"}:
+        raise DispatchError("dispatch provider isolation is invalid")
+    return mode
+
+
+def scoped_repair_authority_sha256(
+    command: dict[str, Any], *, verification_binding_sha256: str | None = None,
+) -> str | None:
+    """Derive the immutable opt-in grant; future verification binds at creation."""
+    if not command.get("allow_scoped_repair", False):
+        return None
+    if verification_binding_sha256 is not None and (
+        not isinstance(verification_binding_sha256, str)
+        or SHA_RE.fullmatch(verification_binding_sha256) is None
+    ):
+        raise DispatchError("repair verification binding is invalid")
+    payload = {
+        "kind": "agy-worker-scoped-repair-authority-v1",
+        "policy_sha256": SCOPED_REPAIR_POLICY_SHA256,
+        "initial_transmission_sha256": command.get("approved_transmission_sha256"),
+        "provider_scope_sha256": command.get("provider_scope_sha256"),
+        "selection_sha256": command.get("selection_sha256"),
+        "agy_version": command.get("agy_version"),
+        "argv_sha256": digest(canonical(command.get("argv"))),
+        "provider_env": command.get("provider_env"),
+        "workflow": command.get("workflow"),
+        "max_cycles": command.get("max_cycles"),
+        "idle_seconds": command.get("idle_seconds"),
+        "hard_seconds": command.get("hard_seconds"),
+        "max_seconds": command.get("max_seconds"),
+        "verification_binding_sha256": verification_binding_sha256,
+    }
+    if command.get("schema_version") == 10:
+        payload["provider_isolation"] = command.get("provider_isolation")
+    return digest(canonical(payload))
+
+
+def self_verification_binding_sha256(command: dict[str, Any]) -> str | None:
+    """Bind the immutable private manifest fields without opening its bytes."""
+    if not command.get("allow_self_verification", False):
+        return None
+    return digest(canonical({
+        "kind": "agy-worker-self-verification-binding-v1",
+        "manifest_path": command.get("self_verification_manifest_path"),
+        "manifest_sha256": command.get("self_verification_manifest_sha256"),
+        "manifest_identity": command.get("self_verification_manifest_identity"),
+    }))
+
+
+def _repair_authority_for_command(command: dict[str, Any]) -> str | None:
+    """Compute repair authority with the command's optional manifest binding."""
+    return scoped_repair_authority_sha256(
+        command,
+        verification_binding_sha256=self_verification_binding_sha256(command),
+    )
 
 
 def _parse_resolve_undo(
@@ -376,6 +465,38 @@ def read_regular(
     if _identity(info) != _identity(after) or _identity(after) != _identity(named):
         raise DispatchError(f"{label} identity changed")
     return b"".join(chunks), named
+
+
+def _bound_self_verification_manifest(
+    command: dict[str, Any], job: Path | None = None,
+) -> SELF_VERIFICATION.Manifest | None:
+    """Reopen, bind, and parse the exact private manifest in its job."""
+    if not command.get("allow_self_verification", False):
+        return None
+    path = Path(command["self_verification_manifest_path"])
+    bound_job = path.parent if job is None else job
+    try:
+        canonical_path = Path(os.path.realpath(path))
+    except OSError as exc:
+        raise DispatchError("self-verification manifest is unavailable") from exc
+    if (
+        canonical_path != path
+        or path.parent != bound_job
+        or _job_is_inside_worktree(bound_job, command["workdir"])
+    ):
+        raise DispatchError("self-verification manifest path is invalid")
+    raw, info = read_regular(path, MAX_COMMAND_BYTES, "self-verification manifest")
+    if (
+        digest(raw) != command["self_verification_manifest_sha256"]
+        or list(_identity(info)) != command["self_verification_manifest_identity"]
+    ):
+        raise DispatchError("self-verification manifest binding changed")
+    try:
+        parsed = SELF_VERIFICATION.parse_manifest(raw)
+        SELF_VERIFICATION.validate_runtime(parsed, Path(command["workdir"]))
+        return parsed
+    except SELF_VERIFICATION.VerificationError as exc:
+        raise DispatchError("self-verification manifest is invalid") from exc
 
 
 def write_atomic(job: Path, name: str, value: Any) -> tuple[bytes, str]:
@@ -541,7 +662,24 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             "boost": False, "boost_policy_sha256": None,
             "approved_boost_risk_sha256": None,
         })
-    elif set(value) != COMMAND_V8_FIELDS or value.get("schema_version") != 8:
+    elif set(value) == COMMAND_V8_FIELDS and value.get("schema_version") == 8:
+        if raw != canonical(value):
+            raise DispatchError("dispatch command is not canonical")
+        value = dict(value)
+        value.update({
+            "allow_scoped_repair": False,
+            "repair_authority_sha256": None,
+            "allow_self_verification": False,
+            "self_verification_manifest_path": None,
+            "self_verification_manifest_sha256": None,
+            "self_verification_manifest_identity": None,
+        })
+    elif set(value) == COMMAND_V9_FIELDS and value.get("schema_version") == 9:
+        if raw != canonical(value):
+            raise DispatchError("dispatch command is not canonical")
+        value = dict(value)
+        value["provider_isolation"] = "native"
+    elif set(value) != COMMAND_V10_FIELDS or value.get("schema_version") != 10:
         raise DispatchError("dispatch command fields are invalid")
     elif raw != canonical(value):
         raise DispatchError("dispatch command is not canonical")
@@ -551,6 +689,23 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             "boost": False, "boost_policy_sha256": None,
             "approved_boost_risk_sha256": None,
         })
+    if "allow_scoped_repair" not in value:
+        value = dict(value)
+        value.update({
+            "allow_scoped_repair": False,
+            "repair_authority_sha256": None,
+        })
+    if "allow_self_verification" not in value:
+        value = dict(value)
+        value.update({
+            "allow_self_verification": False,
+            "self_verification_manifest_path": None,
+            "self_verification_manifest_sha256": None,
+            "self_verification_manifest_identity": None,
+        })
+    if "provider_isolation" not in value:
+        value = dict(value)
+        value["provider_isolation"] = "native" if value["schema_version"] == 9 else "session"
     if value["kind"] != "agy-worker-dispatch-command":
         raise DispatchError("dispatch command version is invalid")
     if (
@@ -630,7 +785,7 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
         or not isinstance(approved_sha, str) or SHA_RE.fullmatch(approved_sha) is None
     ):
         raise DispatchError("dispatch provider scope binding is invalid")
-    if value["schema_version"] in {7, 8}:
+    if value["schema_version"] in {7, 8, 9, 10}:
         if scope_path is None:
             if not isinstance(approved_whole_sha, str) or SHA_RE.fullmatch(approved_whole_sha) is None:
                 raise DispatchError("dispatch whole-worktree approval binding is invalid")
@@ -638,6 +793,17 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             raise DispatchError("dispatch transmission modes conflict")
     elif approved_whole_sha is not None:
         raise DispatchError("legacy dispatch command cannot carry whole-worktree approval")
+    provider_isolation = value["provider_isolation"]
+    if provider_isolation not in {"session", "native"}:
+        raise DispatchError("dispatch provider isolation is invalid")
+    if value["schema_version"] == 10:
+        sandbox_count = value["argv"].count("--sandbox")
+        if provider_isolation == "session" and sandbox_count != 0:
+            raise DispatchError("session dispatch cannot request AGY sandbox")
+        if provider_isolation == "native" and (
+            scope_path is None or sandbox_count != 1
+        ):
+            raise DispatchError("native dispatch must be scoped and sandboxed")
     boost = value["boost"]
     boost_policy = value["boost_policy_sha256"]
     boost_approval = value["approved_boost_risk_sha256"]
@@ -659,6 +825,50 @@ def load_command(job: Path) -> tuple[dict[str, Any], bytes, tuple[int, int, int,
             raise DispatchError("dispatch Boost contract is invalid")
     if scope_path is not None and "--add-dir" in value["argv"]:
         raise DispatchError("narrow provider scope cannot grant an additional directory")
+    allow_self_verification = value["allow_self_verification"]
+    self_verification_fields = (
+        value["self_verification_manifest_path"],
+        value["self_verification_manifest_sha256"],
+        value["self_verification_manifest_identity"],
+    )
+    if type(allow_self_verification) is not bool:
+        raise DispatchError("dispatch self-verification choice is invalid")
+    if allow_self_verification and value["workflow"] not in {"task", "project"}:
+        raise DispatchError("dispatch self-verification workflow is invalid")
+    if not allow_self_verification:
+        if any(item is not None for item in self_verification_fields):
+            raise DispatchError("disabled self-verification cannot carry a manifest")
+    elif (
+        value["schema_version"] not in {9, 10}
+        or value["workflow"] not in {"task", "project"}
+        or value["boost"]
+        or not isinstance(self_verification_fields[0], str)
+        or not Path(self_verification_fields[0]).is_absolute()
+        or not isinstance(self_verification_fields[1], str)
+        or SHA_RE.fullmatch(self_verification_fields[1]) is None
+        or not isinstance(self_verification_fields[2], list)
+        or len(self_verification_fields[2]) != 5
+        or any(type(item) is not int or item < 0 for item in self_verification_fields[2])
+    ):
+        raise DispatchError("dispatch self-verification manifest binding is invalid")
+    allow_repair = value["allow_scoped_repair"]
+    repair_authority = value["repair_authority_sha256"]
+    if type(allow_repair) is not bool:
+        raise DispatchError("dispatch scoped repair choice is invalid")
+    if not allow_repair:
+        if repair_authority is not None:
+            raise DispatchError("disabled scoped repair cannot carry authority")
+    elif (
+        scope_path is None
+        or value["workflow"] not in {"task", "project"}
+        or value["max_cycles"] < 2
+        or value["boost"]
+        or not isinstance(repair_authority, str)
+        or SHA_RE.fullmatch(repair_authority) is None
+        or repair_authority != _repair_authority_for_command(value)
+    ):
+        raise DispatchError("dispatch scoped repair authority is invalid")
+    _bound_self_verification_manifest(value, job)
     return value, raw, _identity(info)
 
 
@@ -701,6 +911,8 @@ def validate_state(value: Any) -> dict[str, Any]:
         "provider_terminal_status",
     }
     fields |= STATE_V11_FIELDS
+    fields |= STATE_V12_FIELDS
+    fields |= STATE_V13_FIELDS
     projected = LEGACY.project_for_read(LEGACY_API, value, fields)
     if projected is not None:
         value = projected
@@ -708,16 +920,18 @@ def validate_state(value: Any) -> dict[str, Any]:
         raise DispatchError("dispatch state fields are invalid")
     if value["kind"] != "agy-worker-dispatch-state":
         raise DispatchError("dispatch state version is invalid")
-    if value["schema_version"] in {9, 10, CURRENT_STATE_SCHEMA} and (
+    if value["provider_isolation"] not in {"session", "native"}:
+        raise DispatchError("dispatch provider isolation state is invalid")
+    if value["schema_version"] in {9, 10, 11, 12, CURRENT_STATE_SCHEMA} and (
         value["worktree_snapshot_algorithm"] != CURRENT_WORKTREE_SNAPSHOT_ALGORITHM
     ):
         raise DispatchError("dispatch worktree snapshot algorithm is invalid")
-    if value["schema_version"] in {10, CURRENT_STATE_SCHEMA} and (
+    if value["schema_version"] in {10, 11, 12, CURRENT_STATE_SCHEMA} and (
         value.get("provider_terminal_status") not in {"unknown", "success", "error", "cancelled"}
     ):
         raise DispatchError("dispatch provider terminal status is invalid")
     root_identity = value.get("worktree_root_identity")
-    if value["schema_version"] in {9, 10, CURRENT_STATE_SCHEMA}:
+    if value["schema_version"] in {9, 10, 11, 12, CURRENT_STATE_SCHEMA}:
         def valid_authority(authority: Any, *, directory: bool | None = None) -> bool:
             if not isinstance(authority, dict) or set(authority) != {
                 "dev", "ino", "type", "mode", "uid", "gid",
@@ -954,6 +1168,106 @@ def validate_state(value: Any) -> dict[str, Any]:
             or (reconciliation_manifest_sha is not None and (not isinstance(reconciliation_manifest_sha, str) or SHA_RE.fullmatch(reconciliation_manifest_sha) is None))
         ):
             raise DispatchError("dispatch provider scope state fields are invalid")
+    allow_repair = value["allow_scoped_repair"]
+    repair_authority = value["repair_authority_sha256"]
+    lineage_sha = value["repair_lineage_sha256"]
+    parent_result_sha = value["repair_parent_result_sha256"]
+    parent_worktree_sha = value["repair_parent_worktree_sha256"]
+    lineage_attempt = value["repair_lineage_attempt"]
+    if type(allow_repair) is not bool:
+        raise DispatchError("dispatch scoped repair choice is invalid")
+    if not allow_repair:
+        if any(item is not None for item in (
+            repair_authority, lineage_sha, parent_result_sha,
+            parent_worktree_sha, lineage_attempt,
+        )):
+            raise DispatchError("disabled scoped repair has authority")
+    elif (
+        scope_path is None
+        or value["workflow"] not in {"task", "project"}
+        or value["max_cycles"] < 2
+        or not isinstance(repair_authority, str)
+        or SHA_RE.fullmatch(repair_authority) is None
+    ):
+        raise DispatchError("dispatch scoped repair authority is invalid")
+    if lineage_sha is None:
+        if any(item is not None for item in (
+            parent_result_sha, parent_worktree_sha, lineage_attempt,
+        )):
+            raise DispatchError("dispatch repair lineage is incomplete")
+    elif (
+        not allow_repair
+        or not isinstance(lineage_sha, str) or SHA_RE.fullmatch(lineage_sha) is None
+        or parent_result_sha is not None and (
+            not isinstance(parent_result_sha, str) or SHA_RE.fullmatch(parent_result_sha) is None
+        )
+        or parent_worktree_sha is not None and (
+            not isinstance(parent_worktree_sha, str) or SHA_RE.fullmatch(parent_worktree_sha) is None
+        )
+        or type(lineage_attempt) is not int
+        or not (1 <= lineage_attempt <= value["attempt"])
+        or reconciliation_manifest_sha is None
+        or candidate_worktree_sha is None
+        or value["result_sha256"] is None
+        or lineage_sha != _compute_repair_lineage_sha256(
+            authority_sha256=repair_authority,
+            attempt=lineage_attempt,
+            parent_result_sha256=parent_result_sha,
+            parent_worktree_sha256=parent_worktree_sha,
+            reconciliation_sha256=reconciliation_manifest_sha,
+            result_sha256=value["result_sha256"],
+            candidate_worktree_sha256=candidate_worktree_sha,
+            selected_content_sha256=selected_content_sha,
+            transmission_sha256=transmission_sha,
+        )
+    ):
+        raise DispatchError("dispatch repair lineage is invalid")
+    allow_self_verification = value["allow_self_verification"]
+    self_verification_elapsed = value["self_verification_elapsed_seconds"]
+    self_verification_run = value["self_verification_run"]
+    self_verification_started = value["self_verification_started_epoch"]
+    self_verification_return = value["self_verification_return_phase"]
+    if type(allow_self_verification) is not bool:
+        raise DispatchError("dispatch self-verification choice is invalid")
+    if allow_self_verification and value["workflow"] not in {"task", "project"}:
+        raise DispatchError("dispatch self-verification workflow is invalid")
+    if (
+        type(self_verification_elapsed) not in (int, float)
+        or not math.isfinite(self_verification_elapsed)
+        or self_verification_elapsed < 0
+        or type(self_verification_run) is not int
+        or not (0 <= self_verification_run <= value["attempt"])
+    ):
+        raise DispatchError("dispatch self-verification accounting is invalid")
+    if self_verification_started is not None and (
+        type(self_verification_started) not in (int, float)
+        or not math.isfinite(self_verification_started)
+        or self_verification_started < 0
+    ):
+        raise DispatchError("dispatch self-verification start is invalid")
+    if not allow_self_verification and (
+        self_verification_elapsed != 0.0
+        or self_verification_run != 0
+        or self_verification_started is not None
+        or self_verification_return is not None
+    ):
+        raise DispatchError("disabled self-verification has runtime state")
+    if value["phase"] == "self-verifying":
+        if (
+            not allow_self_verification
+            or value["continue_available"]
+            or value["status"] not in {"succeeded", "failed"}
+            or not value["candidate_recognized"] or not value["result_available"]
+            or value["driver_disposition"] != "unreviewed" or value["assurance"] != "pending"
+            or self_verification_run != value["attempt"]
+            or self_verification_started is None
+            or self_verification_return not in {
+                "awaiting-verification", "repair-failed",
+            }
+        ):
+            raise DispatchError("active self-verification state is invalid")
+    elif self_verification_started is not None or self_verification_return is not None:
+        raise DispatchError("inactive self-verification has active state")
     current_result = [value["result_path"], value["result_sha256"], value["result_identity"]]
     if any(item is None for item in current_result) != all(item is None for item in current_result):
         raise DispatchError("dispatch result binding is incomplete")
@@ -1079,8 +1393,9 @@ def initial_state(
     schema_bindings: dict[str, Any] | None = None,
     state_schema: int = CURRENT_STATE_SCHEMA,
     explain_worktree_rejection: bool = False,
+    repair_authority_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if state_schema not in {6, 7, 8, 9, 10, CURRENT_STATE_SCHEMA}:
+    if state_schema not in {6, 7, 8, 9, 10, 11, 12, CURRENT_STATE_SCHEMA}:
         raise DispatchError("dispatch state schema is invalid")
     now = time.time()
     workflow = command.get("workflow", "legacy")
@@ -1183,10 +1498,27 @@ def initial_state(
         state["worktree_root_identity"] = root_identity
     if state_schema >= 10:
         state["provider_terminal_status"] = "unknown"
+    if state_schema >= 12:
+        state.update({
+            "allow_scoped_repair": command.get("allow_scoped_repair", False),
+            "repair_authority_sha256": command.get("repair_authority_sha256"),
+            "repair_lineage_sha256": None,
+            "repair_parent_result_sha256": None,
+            "repair_parent_worktree_sha256": None,
+            "repair_lineage_attempt": None,
+            "allow_self_verification": command.get("allow_self_verification", False),
+            "self_verification_elapsed_seconds": 0.0,
+            "self_verification_run": 0,
+            "self_verification_started_epoch": None,
+            "self_verification_return_phase": None,
+        })
+    if state_schema >= 13:
+        state["provider_isolation"] = _provider_isolation_for_command(command)
     if state_schema == CURRENT_STATE_SCHEMA:
         if command.get("provider_scope_path") is not None:
-            scope_path = Path(command["provider_scope_path"])
-            raw_scope, scope_info = read_regular(scope_path, MAX_COMMAND_BYTES, "provider scope")
+            _scope_path, raw_scope, scope_info = _read_provider_scope_file(
+                command["provider_scope_path"], MAX_COMMAND_BYTES,
+            )
             if digest(raw_scope) != command["provider_scope_sha256"]:
                 raise DispatchError("provider scope file changed since dispatch")
             if list(_identity(scope_info)) != command["provider_scope_identity"]:
@@ -1201,9 +1533,16 @@ def initial_state(
             selected_manifest = _build_selected_content_manifest(command["workdir"], scope)
             selected_sha = _selected_content_digest(selected_manifest)
             policy_sha = _canonical_digest(scope)
-            transmission_sha = _compute_transmission_sha256(policy_sha, manifest_sha, selected_sha)
-            if transmission_sha != command["approved_transmission_sha256"]:
-                raise DispatchError("approved transmission SHA does not match current worktree scope")
+            transmission_sha = _bound_transmission_sha256(
+                command, policy_sha, manifest_sha, selected_sha,
+            )
+            _require_scoped_transmission_authority(
+                command,
+                state if repair_authority_state is None else repair_authority_state,
+                selected_content_sha256=selected_sha,
+                transmission_sha256=transmission_sha,
+                provider_origin=origin,
+            )
             state.update({
                 "provider_scope_path": command["provider_scope_path"],
                 "provider_scope_sha256": command["provider_scope_sha256"],
@@ -1222,7 +1561,10 @@ def initial_state(
             approved_whole_sha = command.get("approved_whole_worktree_sha256")
             if approved_whole_sha is not None and origin == "initial":
                 readable_manifest = _scan_readable_worktree(command["workdir"])
-                if _manifest_digest(readable_manifest) != approved_whole_sha:
+                expected_approval = _compute_provider_launch_approval_sha256(
+                    _provider_isolation_for_command(command), _manifest_digest(readable_manifest),
+                ) if command["schema_version"] == 10 else _manifest_digest(readable_manifest)
+                if expected_approval != approved_whole_sha:
                     raise DispatchError(
                         "approved whole-worktree manifest does not match current worktree"
                     )
@@ -1288,7 +1630,9 @@ def _transition_locked(
         # ``validate_state`` projects additive facts while reading old bytes.
         # A cheap active control must write the old generation's exact field
         # shape back, not accidentally persist a partial migration.
-        omitted = set(STATE_V11_FIELDS)
+        omitted = set(STATE_V12_FIELDS)
+        if value["schema_version"] < 11:
+            omitted |= set(STATE_V11_FIELDS)
         if value["schema_version"] < 10:
             omitted |= set(STATE_V10_FIELDS)
         if value["schema_version"] < 9:
@@ -1338,6 +1682,24 @@ def _live_elapsed(value: dict[str, Any], now: float) -> float:
     return elapsed
 
 
+def _verification_live_elapsed(value: dict[str, Any], now: float) -> float:
+    elapsed = float(value.get("self_verification_elapsed_seconds", 0.0))
+    started = value.get("self_verification_started_epoch")
+    if value.get("phase") == "self-verifying" and started is not None:
+        elapsed += max(0.0, now - float(started))
+    return elapsed
+
+
+def _total_live_elapsed(value: dict[str, Any], now: float) -> float:
+    return _live_elapsed(value, now) + _verification_live_elapsed(value, now)
+
+
+def _provider_max_seconds(value: dict[str, Any]) -> float:
+    """Keep provider hard/idle clocks separate from the shared job allowance."""
+    return max(0.0, float(value["max_seconds"])
+               - float(value.get("self_verification_elapsed_seconds", 0.0)))
+
+
 def _freeze_reaped_runtime(
     job: Path, attempt: int, controller_pid: int, elapsed: float,
 ) -> tuple[dict[str, Any], bytes, str, str | None]:
@@ -1368,7 +1730,7 @@ def _freeze_reaped_runtime(
         # post-reap deadline classification.  The terminal projection still
         # handles it with the existing remote-cancel semantics.
         if not current["cancel_requested"]:
-            if frozen_elapsed >= float(current["max_seconds"]):
+            if frozen_elapsed >= _provider_max_seconds(current):
                 deadline = "max-runtime"
             elif frozen_elapsed >= float(current["hard_seconds"]):
                 deadline = "hard"
@@ -1395,7 +1757,7 @@ def _extend_is_eligible(value: dict[str, Any], now: float) -> bool:
         # than one second before either limit would name an operation the lock
         # guard must reject.
         and elapsed + 1.0 <= float(value["hard_seconds"])
-        and float(value["hard_seconds"]) + 1.0 <= float(value["max_seconds"])
+        and float(value["hard_seconds"]) + 1.0 <= _provider_max_seconds(value)
     )
 
 
@@ -1423,6 +1785,11 @@ def _resume_is_eligible(value: dict[str, Any], now: float) -> bool:
 
 def _continue_is_eligible(value: dict[str, Any], now: float) -> bool:
     """Return the state-only half of the exact continuation guard."""
+    return bool(value["continue_available"] and _continue_from_facts(value, now))
+
+
+def _continue_from_facts(value: dict[str, Any], now: float) -> bool:
+    """Recompute eligibility after verification without a circular stored flag."""
     return bool(
         value["workflow"] != "legacy"
         # A failed final direct-selection proof invalidates provider launch
@@ -1430,7 +1797,6 @@ def _continue_is_eligible(value: dict[str, Any], now: float) -> bool:
         # for result review/finalization, but never reuse the selection through
         # another same-conversation continuation.
         and value["reason"] != "selection_preflight_failed"
-        and value["continue_available"]
         and value["candidate_recognized"]
         and value["result_available"]
         and value["candidate_source"] != "provider_cancelled"
@@ -1438,7 +1804,16 @@ def _continue_is_eligible(value: dict[str, Any], now: float) -> bool:
         and _controller_phase(value) in {"awaiting-verification", "repair-failed"}
         and isinstance(value["conversation_id"], str)
         and value["cycle"] < value["max_cycles"]
-        and _live_elapsed(value, now) < float(value["max_seconds"])
+        and _total_live_elapsed(value, now) < float(value["max_seconds"])
+        and (
+            value.get("provider_scope_path") is None
+            or value.get("transmission_sha256") == value.get("approved_transmission_sha256")
+            or (
+                value.get("allow_scoped_repair", False)
+                and value.get("repair_lineage_sha256") is not None
+                and value.get("repair_lineage_attempt") == value["attempt"]
+            )
+        )
     )
 
 
@@ -1468,6 +1843,8 @@ def _verification_copy_is_eligible(value: dict[str, Any]) -> bool:
 
 def _controller_phase(value: dict[str, Any]) -> str | None:
     """Project controller-owned mechanics without trusting legacy raw phase."""
+    if value.get("phase") == "self-verifying":
+        return "self-verifying"
     if value["schema_version"] in {3, 4} and _legacy_prior_result_is_unknown(value):
         return None
     if value["driver_disposition"] in {"verified", "partially_verified", "rejected"}:
@@ -1612,6 +1989,11 @@ def _available_actions(
     """
     job_id = value["job_id"]
     actions: list[dict[str, Any]] = []
+    if value.get("phase") == "self-verifying":
+        return [{
+            "action": "wait",
+            "command": f"{PUBLIC_LAUNCHER} wait --job-id {job_id} --after-state-sha {sha} --format text",
+        }]
     active = _is_active(value)
     if active:
         actions.append({
@@ -1648,6 +2030,25 @@ def _available_actions(
     if terminal_candidate and candidate_bound is None:
         candidate_bound = _candidate_actions_are_bound(job, value)
     if terminal_candidate and candidate_bound:
+        try:
+            CONTAINMENT.require_supported_host()
+            self_verification_host_supported = True
+        except CONTAINMENT.ContainmentError:
+            self_verification_host_supported = False
+        if (
+            value.get("allow_self_verification")
+            and self_verification_host_supported
+            and value.get("self_verification_run", 0) < value["attempt"]
+            and value.get("phase") in {"awaiting-verification", "repair-failed"}
+            and _total_live_elapsed(value, now) < value["max_seconds"]
+            and job is not None
+            and not _job_is_inside_worktree(job, value["workdir"])
+            and lifecycle_mutation_bound is True
+        ):
+            actions.append({
+                "action": "self-verify",
+                "command": f"{PUBLIC_LAUNCHER} self-verify --job-id {job_id} --approve-state-sha {sha} --format text",
+            })
         actions.append({
             "action": "result",
             "command": f"{PUBLIC_LAUNCHER} result --job-id {job_id} --format json",
@@ -1661,7 +2062,7 @@ def _available_actions(
                 "action": "verification-copy",
                 "command": (
                     f"{PUBLIC_LAUNCHER} verification-copy --job-id {job_id} "
-                    "--destination NEW_PRIVATE_DIRECTORY --format text"
+                    "--destination NEW_DIRECTORY_IN_0700_PARENT --format text"
                 ),
                 "requires": ["new owner-private destination outside the candidate"],
             })
@@ -1712,14 +2113,21 @@ def _available_actions(
         terminal_candidate and candidate_bound and _continue_is_eligible(value, now)
         and provider_mutation_available
     ):
+        stored_feedback = False
+        if job is not None and value.get("allow_self_verification"):
+            try:
+                _bound_self_verification_feedback(job, value)
+                stored_feedback = True
+            except (DispatchError, OSError):
+                pass
         actions.append({
             "action": "continue",
             "command": (
                 f"{PUBLIC_LAUNCHER} continue --job-id {job_id} --approve-state-sha {sha} "
                 + (f"--approve-migration-sha {legacy_migration_sha} " if value["schema_version"] in {3, 4} else "")
-                + "< DRIVER_VERIFICATION_JSON"
+                + ("--use-self-verification" if stored_feedback else "< DRIVER_VERIFICATION_JSON")
             ),
-            "requires": ["verification JSON"],
+            "requires": [] if stored_feedback else ["verification JSON"],
         })
     if (
         terminal_candidate and candidate_bound and _finalize_is_eligible(value)
@@ -1749,6 +2157,37 @@ def _public_next_action(actions: list[dict[str, Any]]) -> tuple[str, str | None]
     return str(first["action"]), first.get("command") if isinstance(first.get("command"), str) else None
 
 
+def _provider_execution_from_bound_command(command: dict[str, Any]) -> dict[str, Any]:
+    """Describe the bound launch mechanics without reclassifying old whole jobs."""
+
+    provider_isolation = _provider_isolation_for_command(command)
+    legacy = command["schema_version"] < 10
+    scoped = command.get("provider_scope_path") is not None
+    sandboxed = "--sandbox" in command["argv"]
+    if legacy:
+        if not sandboxed:
+            raise DispatchError("legacy dispatch sandbox binding is unavailable")
+        return {
+            "legacy": True,
+            "scope": "provider-scope" if scoped else "whole-worktree",
+            "agy_sandbox": True,
+            "native_containment": scoped and command["schema_version"] == 9,
+        }
+    return {
+        "legacy": False,
+        "scope": "provider-scope" if scoped else "whole-worktree",
+        "agy_sandbox": sandboxed,
+        "native_containment": provider_isolation == "native",
+    }
+
+
+def bound_provider_execution(job: Path, state: dict[str, Any]) -> dict[str, Any]:
+    """Bind execution facts to the command, not the state projection."""
+
+    command = _load_bound_command(job, state, stage_readonly=False)
+    return _provider_execution_from_bound_command(command)
+
+
 def public_status(value: dict[str, Any], sha: str, *, job: Path | None = None) -> dict[str, Any]:
     now = time.time()
     elapsed = _live_elapsed(value, now)
@@ -1770,7 +2209,7 @@ def public_status(value: dict[str, Any], sha: str, *, job: Path | None = None) -
     provider_launch_bound: bool | None = None
     legacy_migration_sha: str | None = None
     terminal_candidate = bool(
-        not _is_active(value) and value["status"] in TERMINAL
+        not _is_active(value) and value.get("phase") != "self-verifying" and value["status"] in TERMINAL
         and value["candidate_recognized"] and value["result_available"]
     )
     if terminal_candidate:
@@ -1848,6 +2287,21 @@ def public_status(value: dict[str, Any], sha: str, *, job: Path | None = None) -
         if value["driver_disposition"] in {"verified", "partially_verified", "rejected", "blocked"}
         else None
     )
+    provider_execution = None
+    if job is not None:
+        try:
+            provider_execution = bound_provider_execution(job, value)
+        except (OSError, DispatchError):
+            provider_execution = None
+    public_provider_isolation = (
+        None
+        if job is None and value["schema_version"] < CURRENT_STATE_SCHEMA else
+        value["provider_isolation"]
+        if job is None else
+        None
+        if provider_execution is None or provider_execution["legacy"] else
+        value["provider_isolation"]
+    )
     return {
         "attempt": value["attempt"],
         "attempt_origin": value["attempt_origin"],
@@ -1858,6 +2312,8 @@ def public_status(value: dict[str, Any], sha: str, *, job: Path | None = None) -
         "check_summary": value["check_summary"],
         "cycle": value["cycle"],
         "elapsed_seconds": round(elapsed, 3),
+        "self_verification_elapsed_seconds": round(_verification_live_elapsed(value, now), 3),
+        "total_elapsed_seconds": round(_total_live_elapsed(value, now), 3),
         "exit_code": value["exit_code"],
         "hard_seconds": value["hard_seconds"],
         # Kept as a deprecated compatibility hint.  It says nothing about a clean
@@ -1886,6 +2342,8 @@ def public_status(value: dict[str, Any], sha: str, *, job: Path | None = None) -
         "max_cycles": value["max_cycles"],
         "notice_count": value["notice_count"],
         "progress_count": value["progress_count"],
+        "provider_isolation": public_provider_isolation,
+        "provider_execution": provider_execution,
         "controller_phase": _controller_phase(value),
         "phase": value["phase"],
         "legacy_result_provenance": (
@@ -2062,8 +2520,11 @@ def _attempt_paths(job: Path, attempt: int) -> tuple[Path, Path, Path]:
     return job / f"{prefix}.stream.ndjson", job / f"{prefix}.stderr.txt", job / f"{prefix}.envelope.json"
 
 
-def _bind_boost_prompt(argv: list[str], workspace_root: Path, *, scoped: bool) -> None:
-    """Bind Boost file tools to the exact already-approved provider cwd."""
+def _bind_workspace_prompt(
+    argv: list[str], workspace_root: Path, *, scoped: bool, boost: bool,
+    provider_isolation: str, legacy_sandbox: bool,
+) -> None:
+    """Bind every worker's file tools to the exact provider launch cwd."""
     if argv.count("--print") != 1:
         raise DispatchError("dispatch argv contract is invalid")
     print_index = argv.index("--print")
@@ -2071,26 +2532,117 @@ def _bind_boost_prompt(argv: list[str], workspace_root: Path, *, scoped: bool) -
         raise DispatchError("dispatch argv contract is invalid")
     prompt = argv[print_index + 1]
     encoded_root = json.dumps(str(workspace_root), ensure_ascii=True)
+    if provider_isolation not in {"session", "native"}:
+        raise DispatchError("dispatch provider isolation is invalid")
     workspace_shape = (
         "the complete approved Gitless selected-content stage"
         if scoped else "the complete explicitly approved whole worktree"
     )
+    profile = "BOOST " if boost else ""
+    authority_note = (
+        "This legacy launch retains AGY sandbox behavior without native scoped containment."
+        if legacy_sandbox else
+        "This session has normal same-user filesystem and network authority; this prompt "
+        "does not confine host access. Work only beneath the stated root."
+        if provider_isolation == "session" else
+        "Native scoped containment limits this provider to the stated root."
+        if scoped else
+        "This legacy whole-worktree launch retains AGY sandbox behavior without native scoped containment."
+    )
     prefix = (
-        "BOOST FILE-TOOL ROOT — non-negotiable:\n"
+        f"{profile}FILE-TOOL ROOT — non-negotiable:\n"
         f"- The exact absolute workspace root for this attempt is the JSON string {encoded_root}.\n"
         "- File tools require absolute paths. Begin by listing that exact root. For each "
         "task-relative path, use an absolute child path beneath that root; never pass the "
         "relative path alone and never guess or search for another root.\n"
-        f"- This is {workspace_shape}. Do not inspect its parent, HOME, `~/.gemini`, "
-        "or any other directory. Do not call shell or terminal tools.\n"
-        "- If you delegate, include this exact root and all these restrictions in every "
-        "subagent task. If file-tool access fails, return the schema-valid blocked envelope "
-        "without searching elsewhere.\n\n"
+        f"- This is {workspace_shape}. {authority_note} Do not inspect its parent, HOME, "
+        "`~/.gemini`, or any other directory. Do not call shell or terminal tools.\n"
+        + (
+            "- If you delegate, include this exact root and all these restrictions in every "
+            "subagent task. If file-tool access fails, return the schema-valid blocked envelope "
+            "without searching elsewhere.\n\n"
+            if boost else "\n"
+        )
     )
     bound_prompt = prefix + prompt
-    if len(bound_prompt.encode("utf-8")) > MAX_INLINE_PROMPT_BYTES:
-        raise DispatchError("Boost prompt exceeds inline byte limit")
+    # The raw launcher already owns normal-worker prompt admission. Preserve
+    # its accepted range after adding this trusted root binding; Boost keeps
+    # its historical post-prefix inline limit.
+    if boost and len(bound_prompt.encode("utf-8")) > MAX_INLINE_PROMPT_BYTES:
+        raise DispatchError("workspace-root prompt exceeds inline byte limit")
     argv[print_index + 1] = bound_prompt
+
+
+def _init_cwd_matches_launch(init_value: dict[str, Any], launch_cwd: str) -> bool:
+    """Bind a provider-reported cwd only when the stream protocol supplies one."""
+    reported = init_value.get("cwd")
+    if reported is None:
+        return True
+    if not isinstance(reported, str) or not reported or "\x00" in reported:
+        return False
+    try:
+        return (
+            os.path.isabs(reported)
+            and reported == os.path.realpath(reported)
+            and reported == os.path.realpath(launch_cwd)
+        )
+    except OSError:
+        return False
+
+
+def _provider_environment(command: dict[str, Any]) -> dict[str, str]:
+    """Use the existing curated child environment for both launch modes."""
+
+    if _provider_isolation_for_command(command) in {"session", "native"}:
+        return MODEL_SELECTION.child_environment(command["provider_env"])
+    raise DispatchError("dispatch provider isolation is invalid")
+
+
+def _declared_scoped_mutations_match(
+    envelope: Path, binding: tuple[str, tuple[int, int, int, int, int]],
+    operations: list[dict[str, Any]],
+) -> bool:
+    """Require an envelope to declare exactly the staged operations to reconcile."""
+    try:
+        raw, info = read_regular(envelope, 1024 * 1024, "dispatch result")
+        if digest(raw) != binding[0] or _identity(info) != binding[1]:
+            return False
+        value = parse_json(raw, "dispatch result")
+        declared = value.get("files_changed") if isinstance(value, dict) else None
+    except (DispatchError, OSError):
+        return False
+    if not isinstance(declared, list):
+        return False
+    mapping = {"create": "created", "replace": "modified", "delete": "deleted"}
+    expected: set[tuple[str, str]] = set()
+    for operation in operations:
+        # The public envelope contract declares files, while reconciliation
+        # carries directory scaffolding so nested file operations can be
+        # applied descriptor-safely. Directory operations are not reportable
+        # through ``files_changed`` and therefore cannot be part of this exact
+        # file declaration comparison.
+        if operation.get("kind") != "file":
+            continue
+        path, op = operation.get("path"), operation.get("op")
+        change = mapping.get(op) if isinstance(op, str) else None
+        if not isinstance(path, str) or change is None:
+            return False
+        item = (path, change)
+        if item in expected:
+            return False
+        expected.add(item)
+    observed: set[tuple[str, str]] = set()
+    for item in declared:
+        if not isinstance(item, dict):
+            return False
+        path, change = item.get("path"), item.get("change")
+        if not isinstance(path, str) or not isinstance(change, str):
+            return False
+        key = (path, change)
+        if key in observed:
+            return False
+        observed.add(key)
+    return observed == expected
 
 
 def _ensure_new_private(path: Path) -> int:
@@ -2448,6 +3000,12 @@ def _manifest_digest(manifest: list[dict[str, str]]) -> str:
     return _worktree_call("_manifest_digest", manifest)
 
 
+def _read_provider_scope_file(
+    path: str | Path, limit: int,
+) -> tuple[str, bytes, os.stat_result]:
+    return _worktree_call("_read_provider_scope_file", path, limit)
+
+
 def _parse_provider_scope(raw_bytes: bytes) -> dict[str, Any]:
     return _worktree_call("_parse_provider_scope", raw_bytes)
 
@@ -2478,6 +3036,87 @@ def _compute_transmission_sha256(
     return _worktree_call(
         "_compute_transmission_sha256", policy_sha256, readable_manifest_sha256, selected_content_sha256,
     )
+
+
+def _compute_provider_launch_approval_sha256(
+    provider_isolation: str, readable_manifest_sha256: str,
+    transmission_sha256: str | None = None,
+) -> str:
+    return _worktree_call(
+        "_compute_provider_launch_approval_sha256",
+        provider_isolation, readable_manifest_sha256, transmission_sha256,
+    )
+
+
+def _bound_transmission_sha256(
+    command: dict[str, Any], policy_sha256: str,
+    readable_manifest_sha256: str, selected_content_sha256: str,
+) -> str:
+    """Keep legacy scoped approval bytes while binding V10 mode authority."""
+
+    base = _compute_transmission_sha256(
+        policy_sha256, readable_manifest_sha256, selected_content_sha256,
+    )
+    if command["schema_version"] != 10:
+        return base
+    return _compute_provider_launch_approval_sha256(
+        _provider_isolation_for_command(command), readable_manifest_sha256, base,
+    )
+
+
+def _compute_repair_lineage_sha256(
+    *, authority_sha256: str, attempt: int,
+    parent_result_sha256: str | None, parent_worktree_sha256: str | None,
+    reconciliation_sha256: str, result_sha256: str,
+    candidate_worktree_sha256: str, selected_content_sha256: str,
+    transmission_sha256: str,
+) -> str:
+    return digest(canonical({
+        "kind": "agy-worker-scoped-repair-lineage-v1",
+        "authority_sha256": authority_sha256,
+        "attempt": attempt,
+        "parent_result_sha256": parent_result_sha256,
+        "parent_worktree_sha256": parent_worktree_sha256,
+        "reconciliation_sha256": reconciliation_sha256,
+        "result_sha256": result_sha256,
+        "candidate_worktree_sha256": candidate_worktree_sha256,
+        "selected_content_sha256": selected_content_sha256,
+        "transmission_sha256": transmission_sha256,
+    }))
+
+
+def _require_scoped_transmission_authority(
+    command: dict[str, Any], state: dict[str, Any], *,
+    selected_content_sha256: str, transmission_sha256: str,
+    provider_origin: str | None = None,
+) -> None:
+    """Apply the one exact rule used at every scoped transmission check."""
+    if transmission_sha256 == command["approved_transmission_sha256"]:
+        if state.get("transmission_sha256") not in {None, transmission_sha256} or (
+            state.get("selected_content_sha256") not in {None, selected_content_sha256}
+        ):
+            raise DispatchError("worktree scope transmission binding changed")
+        return
+    if provider_origin not in {None, "conversation-continue"}:
+        raise DispatchError("approved transmission SHA does not match current worktree scope")
+    if (
+        not command.get("allow_scoped_repair", False)
+        or not state.get("allow_scoped_repair", False)
+        or command.get("repair_authority_sha256") != state.get("repair_authority_sha256")
+        or command.get("repair_authority_sha256") != _repair_authority_for_command(command)
+        or state.get("repair_lineage_sha256") is None
+        or state.get("repair_lineage_attempt") not in {
+            state.get("attempt"), state.get("attempt", 0) - 1,
+        }
+        or not state.get("candidate_recognized", False)
+        or not state.get("result_available", False)
+        or state.get("worktree_reconciliation") != "available"
+        or state.get("reconciliation_manifest_sha256") is None
+        or state.get("candidate_worktree_sha256") is None
+        or state.get("selected_content_sha256") != selected_content_sha256
+        or state.get("transmission_sha256") != transmission_sha256
+    ):
+        raise DispatchError("scoped repair transmission lineage is unavailable")
 
 
 def _materialize_stage(
@@ -2658,7 +3297,7 @@ def _bound_candidate_worktree(state: dict[str, Any], command: dict[str, Any]) ->
     # same V9 extractor used by lifecycle recovery is repeated here so a
     # direct candidate-binding caller cannot turn a substituted Git boundary
     # into a content-only comparison.
-    if state.get("schema_version") in {9, 10, CURRENT_STATE_SCHEMA} and (
+    if state.get("schema_version") in {9, 10, 11, 12, CURRENT_STATE_SCHEMA} and (
         _git_boundary_identity(command["workdir"])
         != state.get("worktree_root_identity")
     ):
@@ -2767,7 +3406,7 @@ def _verification_copy_destination(destination: Path, worktree: Path) -> tuple[P
         or metadata.st_uid != os.getuid()
         or stat.S_IMODE(metadata.st_mode) != 0o700
     ):
-        raise DispatchError("verification copy destination parent must be owner-private")
+        raise DispatchError("verification copy destination immediate parent must be current-user mode 0700")
     if destination.exists() or destination.is_symlink():
         raise DispatchError("verification copy destination must be new")
     try:
@@ -3039,7 +3678,8 @@ def _restart_guard_accepts(
         # creating another attempt.  Keep that local evidence for Codex, but
         # reject recovery before it can stage or mutate the job.
         and state["reason"] != "selection_preflight_failed"
-        and elapsed < float(state["max_seconds"])
+        and elapsed < _provider_max_seconds(state)
+        and state.get("phase") != "self-verifying"
         and (
             state["workflow"] == "legacy"
             or state["attempt"] < state["max_cycles"]
@@ -3133,12 +3773,16 @@ def _bound_lifecycle_inputs(
                 raise DispatchError("dispatch immutable lifecycle binding changed")
     if checked["workdir"] != command["workdir"]:
         raise DispatchError("dispatch worktree root binding changed")
+    if checked["schema_version"] >= 13 and (
+        checked["provider_isolation"] != _provider_isolation_for_command(command)
+    ):
+        raise DispatchError("dispatch provider isolation binding changed")
     root = Path(command["workdir"])
     try:
         root_info = root.lstat()
     except OSError as exc:
         raise DispatchError("dispatch worktree root is unavailable") from exc
-    if checked["schema_version"] in {9, 10, CURRENT_STATE_SCHEMA}:
+    if checked["schema_version"] in {9, 10, 11, 12, CURRENT_STATE_SCHEMA}:
         root_identity = _dispatch_root_identity(command["workdir"])
         if (
             root_identity is None
@@ -3164,7 +3808,7 @@ def _bound_lifecycle_inputs(
     _load_bound_selection(
         command, checked, legacy_command_binding=read_legacy,
     )
-    if checked["schema_version"] in {9, 10, CURRENT_STATE_SCHEMA}:
+    if checked["schema_version"] in {9, 10, 11, 12, CURRENT_STATE_SCHEMA}:
         _bound_schemas(command, checked)
     elif not read_legacy or _schema_paths(command) is None:
         raise DispatchError("legacy dispatch schema binding cannot be proved")
@@ -3172,9 +3816,22 @@ def _bound_lifecycle_inputs(
         _project_boundary(command["workdir"]) != checked["project_boundary"]
     ):
         raise DispatchError("project worktree boundary changed")
+    if checked["schema_version"] >= 12 and (
+        checked["allow_scoped_repair"] != command.get("allow_scoped_repair", False)
+        or checked["repair_authority_sha256"] != command.get("repair_authority_sha256")
+        or command.get("repair_authority_sha256") != _repair_authority_for_command(command)
+    ):
+        raise DispatchError("dispatch scoped repair authority changed")
+    if checked["schema_version"] >= 12:
+        if checked["allow_self_verification"] != command.get(
+            "allow_self_verification", False
+        ):
+            raise DispatchError("dispatch self-verification authority changed")
+        _bound_self_verification_manifest(command, job)
     if checked.get("provider_scope_path") is not None:
-        scope_path = Path(checked["provider_scope_path"])
-        raw_scope, scope_info = read_regular(scope_path, MAX_COMMAND_BYTES, "provider scope")
+        _scope_path, raw_scope, scope_info = _read_provider_scope_file(
+            checked["provider_scope_path"], MAX_COMMAND_BYTES,
+        )
         if digest(raw_scope) != checked["provider_scope_sha256"]:
             raise DispatchError("provider scope file changed since dispatch")
         if list(_identity(scope_info)) != checked["provider_scope_identity"]:
@@ -3185,7 +3842,15 @@ def _bound_lifecycle_inputs(
             raise DispatchError(f"invalid provider scope: {exc}") from exc
         if bind_terminal_candidate:
             if not (
-                checked["candidate_recognized"] and checked["status"] in TERMINAL
+                checked["candidate_recognized"]
+                and (
+                    checked["status"] in TERMINAL
+                    or (
+                        checked["status"] == "queued"
+                        and checked["attempt_origin"] == "conversation-continue"
+                        and checked["controller_pid"] in {None, os.getpid()}
+                    )
+                )
             ):
                 raise DispatchError("terminal candidate binding is unavailable")
         else:
@@ -3195,9 +3860,19 @@ def _bound_lifecycle_inputs(
             selected_manifest = _build_selected_content_manifest(command["workdir"], scope)
             selected_sha = _selected_content_digest(selected_manifest)
             policy_sha = _canonical_digest(scope)
-            transmission_sha = _compute_transmission_sha256(policy_sha, manifest_sha, selected_sha)
-            if transmission_sha != checked["transmission_sha256"]:
-                raise DispatchError("worktree scope transmission binding changed")
+            transmission_sha = _bound_transmission_sha256(
+                command, policy_sha, manifest_sha, selected_sha,
+            )
+            _require_scoped_transmission_authority(
+                command, checked,
+                selected_content_sha256=selected_sha,
+                transmission_sha256=transmission_sha,
+                provider_origin=(
+                    checked["attempt_origin"]
+                    if checked["status"] in {"queued", "running", "cancel-requested"}
+                    else None
+                ),
+            )
     return command, checked
 
 
@@ -3265,6 +3940,81 @@ def _terminate(process: subprocess.Popen[bytes]) -> int:
         process.kill()
         process.wait()
     return process.returncode
+
+
+def _revalidate_scoped_provider_stage(
+    stage_dir: Path,
+    scope: dict[str, Any],
+    selected_manifest: list[dict[str, Any]],
+    stage_identity: tuple[int, int, int, int, int],
+    stage_manifest_sha: str,
+) -> None:
+    """Rebind the complete fresh stage immediately before native launch."""
+    try:
+        current = stage_dir.lstat()
+    except OSError as exc:
+        raise DispatchError("provider stage is unavailable before launch") from exc
+    identity = (
+        current.st_dev, current.st_ino, current.st_uid,
+        current.st_gid, current.st_mode,
+    )
+    if (
+        identity != stage_identity
+        or not stat.S_ISDIR(current.st_mode)
+        or stat.S_ISLNK(current.st_mode)
+        or current.st_uid != os.getuid()
+        or stat.S_IMODE(current.st_mode) != 0o700
+        or _selected_content_digest(selected_manifest) != stage_manifest_sha
+    ):
+        raise DispatchError("provider stage binding changed before launch")
+    mutations, _operation_sha = _scan_stage_mutations(
+        stage_dir, scope, selected_manifest,
+    )
+    if mutations:
+        raise DispatchError("provider stage changed before launch")
+
+
+def _terminate_provider_process(
+    process: subprocess.Popen[bytes],
+    contained_root: CONTAINMENT.ProcessIdentity | None,
+    *,
+    contained: bool,
+) -> int:
+    """Reap a provider group, using kernel-bound identity when contained."""
+    if not contained:
+        return _terminate(process)
+    if contained_root is None:
+        raise DispatchError("contained provider process identity is unavailable")
+    try:
+        # Reap an already-exited leader before libproc enumeration. Darwin can
+        # report the zombie PID in its group while proc_pidinfo no longer has
+        # a bindable identity for it. The recorded start identity still makes
+        # a subsequently reused leader PID a hard failure.
+        process.poll()
+        CONTAINMENT.terminate_bound_process_group(contained_root, signal.SIGTERM)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=TERM_GRACE)
+        deadline = time.monotonic() + TERM_GRACE
+        while (
+            not CONTAINMENT.process_group_is_quiescent(contained_root)
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+        if not CONTAINMENT.process_group_is_quiescent(contained_root):
+            CONTAINMENT.terminate_bound_process_group(contained_root, signal.SIGKILL)
+        if process.poll() is None:
+            process.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while (
+            not CONTAINMENT.process_group_is_quiescent(contained_root)
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+        if not CONTAINMENT.process_group_is_quiescent(contained_root):
+            raise DispatchError("contained provider process group cleanup is uncertain")
+        return int(process.returncode)
+    except (CONTAINMENT.ContainmentError, OSError, subprocess.SubprocessError) as exc:
+        raise DispatchError("contained provider process group cleanup is uncertain") from exc
 
 
 def _event(line: bytes) -> tuple[bool, str | None, str | None]:
@@ -3613,6 +4363,9 @@ def controller(job: Path, ownership_fd: int) -> int:
         stage_manifest_sha: str | None = None
         stage_identity: tuple[int, int, int, int, int] | None = None
         narrow_source_snapshot: dict[str, Any] | None = None
+        scoped_executable: str | None = None
+        prepared_containment: CONTAINMENT.PreparedContainedLaunch | None = None
+        contained_root: CONTAINMENT.ProcessIdentity | None = None
 
         def controller_transition(updates: dict[str, Any]) -> bool:
             """Do not turn a concurrent approved control into a controller crash."""
@@ -3687,8 +4440,9 @@ def controller(job: Path, ownership_fd: int) -> int:
                     raise DispatchError("dispatch worktree symlink boundary changed")
                 launch_cwd = command["workdir"]
                 if state.get("provider_scope_path") is not None:
-                    scope_path = Path(state["provider_scope_path"])
-                    raw_scope, scope_info = read_regular(scope_path, MAX_COMMAND_BYTES, "provider scope")
+                    _scope_path, raw_scope, scope_info = _read_provider_scope_file(
+                        state["provider_scope_path"], MAX_COMMAND_BYTES,
+                    )
                     if digest(raw_scope) != state["provider_scope_sha256"]:
                         raise DispatchError("provider scope file changed since dispatch")
                     if list(_identity(scope_info)) != state["provider_scope_identity"]:
@@ -3700,13 +4454,27 @@ def controller(job: Path, ownership_fd: int) -> int:
                     selected_manifest = _build_selected_content_manifest(command["workdir"], scope)
                     selected_sha = _selected_content_digest(selected_manifest)
                     policy_sha = _canonical_digest(scope)
-                    transmission_sha = _compute_transmission_sha256(policy_sha, manifest_sha, selected_sha)
-                    if transmission_sha != state["transmission_sha256"]:
-                        raise DispatchError("worktree scope transmission binding changed")
+                    transmission_sha = _bound_transmission_sha256(
+                        command, policy_sha, manifest_sha, selected_sha,
+                    )
+                    _require_scoped_transmission_authority(
+                        command, state,
+                        selected_content_sha256=selected_sha,
+                        transmission_sha256=transmission_sha,
+                        provider_origin=state["attempt_origin"],
+                    )
                     narrow_source_snapshot = _worktree_snapshot(command["workdir"])
                     stage_dir = job / f"stage-{attempt:03d}"
                     stage_identity, stage_manifest_sha = _materialize_stage(command["workdir"], stage_dir, scope, selected_manifest)
                     launch_cwd = str(stage_dir)
+                    if executable_binding is None:
+                        try:
+                            executable_binding = MODEL_SELECTION.resolve_safe_executable()
+                        except MODEL_SELECTION.EvidenceUnavailable as exc:
+                            raise SelectionPreflightError(
+                                "scoped dispatch executable binding is unavailable",
+                            ) from exc
+                    scoped_executable = executable_binding[0]
                 else:
                     approved_whole_sha = command.get("approved_whole_worktree_sha256")
                     if (
@@ -3714,11 +4482,43 @@ def controller(job: Path, ownership_fd: int) -> int:
                         and state["attempt_origin"] == "initial"
                     ):
                         readable_manifest = _scan_readable_worktree(command["workdir"])
-                        if _manifest_digest(readable_manifest) != approved_whole_sha:
+                        expected_approval = _compute_provider_launch_approval_sha256(
+                            _provider_isolation_for_command(command), _manifest_digest(readable_manifest),
+                        ) if command["schema_version"] == 10 else _manifest_digest(readable_manifest)
+                        if expected_approval != approved_whole_sha:
                             raise DispatchError("whole-worktree transmission binding changed")
-                if command["boost"]:
-                    _bind_boost_prompt(
-                        argv, Path(launch_cwd), scoped=scope is not None,
+                _bind_workspace_prompt(
+                    argv, Path(os.path.realpath(launch_cwd)),
+                    scoped=scope is not None, boost=bool(command["boost"]),
+                    provider_isolation=_provider_isolation_for_command(command),
+                    legacy_sandbox=command["schema_version"] < 9,
+                )
+                if scoped_executable is not None and _provider_isolation_for_command(command) == "native":
+                    if stage_dir is None:
+                        raise DispatchError("scoped provider stage is unavailable")
+                    contained_argv = [scoped_executable, *argv[1:]]
+                    if contained_argv.count("--json-schema") != 1:
+                        raise DispatchError("scoped provider schema argument is invalid")
+                    schema_index = contained_argv.index("--json-schema") + 1
+                    if schema_index >= len(contained_argv):
+                        raise DispatchError("scoped provider schema argument is invalid")
+                    # The native binder canonicalizes the exact file. Use the
+                    # same spelling in argv so /var -> /private/var aliases do
+                    # not make the provider's approved schema unreadable.
+                    contained_argv[schema_index] = os.path.realpath(schema_paths[0])
+                    prepared_containment = CONTAINMENT.prepare_contained_launch(
+                        role=CONTAINMENT.ROLE_PROVIDER,
+                        network_policy=CONTAINMENT.NETWORK_PROVIDER_TLS,
+                        job_dir=job,
+                        attempt=attempt,
+                        stage_dir=stage_dir,
+                        target_executable=scoped_executable,
+                        target_argv=contained_argv,
+                        child_environment=MODEL_SELECTION.child_environment(
+                            command["provider_env"],
+                        ),
+                        allow_keychain=True,
+                        read_only_inputs=(contained_argv[schema_index],),
                     )
                 # The prior attempt budget is still a hard stop, but bounded
                 # controller-local proofs do not become a provider timeout.
@@ -3733,7 +4533,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if stop_signal is not None:
                     reason = "interrupted"
                     returncode = 128 + stop_signal
-                elif elapsed >= float(state["max_seconds"]):
+                elif elapsed >= _provider_max_seconds(state):
                     reason, limit_kind = "hard_deadline_exceeded", "max-runtime"
                     returncode = EXIT_BY_REASON[reason]
                 elif elapsed >= float(state["hard_seconds"]):
@@ -3781,21 +4581,49 @@ def controller(job: Path, ownership_fd: int) -> int:
                                     raise SelectionPreflightError(
                                         "dispatch direct selection launch binding changed",
                                     ) from exc
+                            provider_argv: list[str] | tuple[str, ...] = argv
+                            provider_cwd = launch_cwd
+                            provider_environment = _provider_environment(command)
+                            if prepared_containment is not None:
+                                if (
+                                    stage_dir is None
+                                    or scope is None
+                                    or selected_manifest is None
+                                    or stage_identity is None
+                                    or stage_manifest_sha is None
+                                ):
+                                    raise DispatchError("scoped provider launch binding is incomplete")
+                                _revalidate_scoped_provider_stage(
+                                    stage_dir, scope, selected_manifest,
+                                    stage_identity, stage_manifest_sha,
+                                )
+                                confirmed_containment = CONTAINMENT.confirm_contained_launch(
+                                    prepared_containment,
+                                )
+                                provider_argv = confirmed_containment.argv
+                                exact_executable = confirmed_containment.executable
+                                provider_cwd = confirmed_containment.cwd
+                                provider_environment = confirmed_containment.environment
                             launch_mono = time.monotonic()
                             process = subprocess.Popen(
-                                argv,
+                                provider_argv,
                                 executable=exact_executable,
-                                cwd=launch_cwd,
+                                cwd=provider_cwd,
                                 stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
-                                env=MODEL_SELECTION.child_environment(command["provider_env"]),
+                                env=provider_environment,
                                 start_new_session=True,
+                                close_fds=True,
                                 preexec_fn=lambda: os.umask(int(command["child_umask"], 8)),
                             )
                             started_mono = launch_mono
                             heartbeat_mono = started_mono
                             next_notice = started_mono + float(command["notice_seconds"])
+                            if prepared_containment is not None:
+                                contained_root = CONTAINMENT.bind_new_process_group(
+                                    process.pid,
+                                )
                             state, prior_raw, _sha = _transition_locked(
                                 job, state, prior_raw, {"started_epoch": time.time()},
                             )
@@ -3813,7 +4641,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 reason = "resolve_undo_present" if isinstance(exc, ResolveUndoPresentError) else "status_unavailable"
                 failure_stage = "binding_failure"
                 returncode = EXIT_BY_REASON[reason]
-            except DispatchError:
+            except (DispatchError, CONTAINMENT.ContainmentError):
                 reason = "status_unavailable"
                 returncode = EXIT_BY_REASON["status_unavailable"]
             except OSError:
@@ -3845,7 +4673,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if state["cancel_requested"] or stop_signal is not None:
                     reason = "cancelled" if stop_signal is None else "interrupted"
                     break
-                if elapsed >= state["max_seconds"]:
+                if elapsed >= _provider_max_seconds(state):
                     reason, limit_kind = "hard_deadline_exceeded", "max-runtime"
                     break
                 if elapsed >= state["hard_seconds"]:
@@ -3878,7 +4706,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                     # bytes as semantic progress.
                     wait_until = min(
                         started_mono
-                        + max(0.0, float(state["max_seconds"]) - float(state["attempt_base_elapsed"])),
+                        + max(0.0, _provider_max_seconds(state) - float(state["attempt_base_elapsed"])),
                         started_mono
                         + max(0.0, float(state["hard_seconds"]) - float(state["attempt_base_elapsed"])),
                         heartbeat_mono + float(state["idle_seconds"]),
@@ -3904,7 +4732,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if state["cancel_requested"] or stop_signal is not None:
                     reason = "cancelled" if stop_signal is None else "interrupted"
                     break
-                if elapsed >= float(state["max_seconds"]):
+                if elapsed >= _provider_max_seconds(state):
                     reason, limit_kind = "hard_deadline_exceeded", "max-runtime"
                     break
                 if elapsed >= float(state["hard_seconds"]):
@@ -3959,16 +4787,25 @@ def controller(job: Path, ownership_fd: int) -> int:
                                     failure_stage = "framing"
                                     break
                                 if event_kind == "init":
-                                    if command.get("boost"):
-                                        try:
-                                            init_frame = json.loads(line.decode("utf-8", "strict"), object_pairs_hook=_duplicates)
-                                        except (UnicodeError, json.JSONDecodeError, DispatchError):
-                                            init_frame = None
-                                        init_value = init_frame.get("init") if isinstance(init_frame, dict) else None
-                                        if not isinstance(init_value, dict) or init_value.get("agent") != "Boost" or init_value.get("permission_mode") != "request-review":
-                                            reason = "invalid_envelope"
-                                            failure_stage = "boost_contract"
-                                            break
+                                    try:
+                                        init_frame = json.loads(
+                                            line.decode("utf-8", "strict"),
+                                            object_pairs_hook=_duplicates,
+                                        )
+                                    except (UnicodeError, json.JSONDecodeError, DispatchError):
+                                        init_frame = None
+                                    init_value = init_frame.get("init") if isinstance(init_frame, dict) else None
+                                    if not isinstance(init_value, dict) or not _init_cwd_matches_launch(init_value, launch_cwd):
+                                        reason = "status_unavailable"
+                                        failure_stage = "binding_failure"
+                                        break
+                                    if command.get("boost") and (
+                                        init_value.get("agent") != "Boost"
+                                        or init_value.get("permission_mode") != "request-review"
+                                    ):
+                                        reason = "invalid_envelope"
+                                        failure_stage = "boost_contract"
+                                        break
                                     saw_init = True
                                 elif event_kind == "result":
                                     saw_terminal = True
@@ -4011,7 +4848,10 @@ def controller(job: Path, ownership_fd: int) -> int:
                 # Freeze first: fsync, envelope parsing, and reconciliation
                 # are controller-local work and must not keep the provider
                 # clock or extension window alive.
-                returncode = _terminate(process)
+                returncode = _terminate_provider_process(
+                    process, contained_root,
+                    contained=prepared_containment is not None,
+                )
                 process = None
                 runtime_end_mono = time.monotonic()
                 # A hard/max boundary stops semantic event processing, but a
@@ -4133,6 +4973,10 @@ def controller(job: Path, ownership_fd: int) -> int:
                 result_path = str(envelope_path) if result_binding is not None else None
             cleanup_failed = False
             reconciliation_manifest_sha: str | None = None
+            derived_selected_sha: str | None = None
+            derived_selected_files: int | None = None
+            derived_selected_trees: int | None = None
+            derived_transmission_sha: str | None = None
             if stage_dir is not None and stage_dir.exists():
                 try:
                     if (
@@ -4143,6 +4987,12 @@ def controller(job: Path, ownership_fd: int) -> int:
                             "source worktree changed while the narrow provider stage was active"
                         )
                     mutations, op_manifest = _scan_stage_mutations(stage_dir, scope, selected_manifest)
+                    if result_binding is not None and not _declared_scoped_mutations_match(
+                        envelope_path, result_binding, mutations,
+                    ):
+                        raise DispatchError(
+                            "worker files_changed does not match scoped stage mutations"
+                        )
                     if result_binding is not None and outer_status in {
                         "SUCCESS", "ERROR", "CANCELLED",
                     }:
@@ -4241,6 +5091,36 @@ def controller(job: Path, ownership_fd: int) -> int:
                         command["workdir"], state["worktree_baseline"], state=state,
                     )
                 )
+            if (
+                result_binding is not None
+                and candidate_worktree is not None
+                and reconciliation_manifest_sha is not None
+                and scope is not None
+            ):
+                try:
+                    derived_readable = _scan_readable_worktree(command["workdir"])
+                    _validate_scope_against_worktree(
+                        scope, command["workdir"], derived_readable,
+                    )
+                    derived_selected = _build_selected_content_manifest(
+                        command["workdir"], scope,
+                    )
+                    derived_selected_sha = _selected_content_digest(derived_selected)
+                    derived_selected_files = sum(
+                        1 for item in derived_selected if item["kind"] == "file"
+                    )
+                    derived_selected_trees = sum(
+                        1 for item in derived_selected if item["kind"] == "directory"
+                    )
+                    derived_transmission_sha = _bound_transmission_sha256(
+                        command, _canonical_digest(scope),
+                        _manifest_digest(derived_readable), derived_selected_sha,
+                    )
+                except Exception:
+                    derived_selected_sha = None
+                    derived_selected_files = None
+                    derived_selected_trees = None
+                    derived_transmission_sha = None
             # An approved control may land after the last loop observation.  Bind
             # finalization to the current state under the same short transition lock.
             with state_lock(job):
@@ -4331,6 +5211,62 @@ def controller(job: Path, ownership_fd: int) -> int:
                 preserved_sha = current["result_sha256"] if preserve_candidate_forensics else None
                 preserved_identity = current["result_identity"] if preserve_candidate_forensics else None
                 is_boost = bool(command.get("boost"))
+                repair_lineage_updates: dict[str, Any] = {}
+                if current["schema_version"] >= 12 and result_binding is not None:
+                    repair_lineage_updates = {
+                        "repair_lineage_sha256": None,
+                        "repair_parent_result_sha256": None,
+                        "repair_parent_worktree_sha256": None,
+                        "repair_lineage_attempt": None,
+                    }
+                    if (
+                        derived_selected_sha is not None
+                        and derived_selected_files is not None
+                        and derived_selected_trees is not None
+                        and derived_transmission_sha is not None
+                    ):
+                        repair_lineage_updates.update({
+                            "selected_content_sha256": derived_selected_sha,
+                            "selected_file_count": derived_selected_files,
+                            "selected_tree_count": derived_selected_trees,
+                            "transmission_sha256": derived_transmission_sha,
+                        })
+                    if (
+                        current["allow_scoped_repair"]
+                        and candidate_worktree is not None
+                        and reconciliation_manifest_sha is not None
+                        and derived_selected_sha is not None
+                        and derived_selected_files is not None
+                        and derived_selected_trees is not None
+                        and derived_transmission_sha is not None
+                    ):
+                        parent_result_sha = (
+                            current["result_sha256"]
+                            if current["attempt_origin"] == "conversation-continue"
+                            else None
+                        )
+                        parent_worktree_sha = (
+                            current["candidate_worktree_sha256"]
+                            if current["attempt_origin"] == "conversation-continue"
+                            else current["worktree_baseline"]["sha256"]
+                        )
+                        repair_lineage_updates = {
+                            **repair_lineage_updates,
+                            "repair_parent_result_sha256": parent_result_sha,
+                            "repair_parent_worktree_sha256": parent_worktree_sha,
+                            "repair_lineage_attempt": current["attempt"],
+                            "repair_lineage_sha256": _compute_repair_lineage_sha256(
+                                authority_sha256=current["repair_authority_sha256"],
+                                attempt=current["attempt"],
+                                parent_result_sha256=parent_result_sha,
+                                parent_worktree_sha256=parent_worktree_sha,
+                                reconciliation_sha256=reconciliation_manifest_sha,
+                                result_sha256=result_binding[0],
+                                candidate_worktree_sha256=candidate_worktree["sha256"],
+                                selected_content_sha256=derived_selected_sha,
+                                transmission_sha256=derived_transmission_sha,
+                            ),
+                        }
                 updates = {
                     "status": final_status,
                     "reason": reason,
@@ -4384,6 +5320,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "limit_kind": limit_kind,
                     "provider_retry_after_seconds": provider_retry_after,
                     "provider_retry_observed_epoch": provider_retry_observed,
+                    **repair_lineage_updates,
                 }
                 if current.get("provider_scope_path") is not None:
                     updates["reconciliation_manifest_sha256"] = reconciliation_manifest_sha
@@ -4415,7 +5352,23 @@ def controller(job: Path, ownership_fd: int) -> int:
                                 and candidate_source != "provider_cancelled"
                                 and current["conversation_id"] and not is_boost
                                 and current["attempt"] < current["max_cycles"]
-                                and elapsed < current["max_seconds"]
+                                and elapsed < _provider_max_seconds(current)
+                                and (
+                                    current.get("provider_scope_path") is None
+                                    or derived_transmission_sha
+                                    == current.get("approved_transmission_sha256")
+                                    or repair_lineage_updates.get(
+                                        "repair_lineage_sha256"
+                                    ) is not None
+                                    or (
+                                        result_binding is None
+                                        and (
+                                            current.get("transmission_sha256")
+                                            == current.get("approved_transmission_sha256")
+                                            or current.get("repair_lineage_sha256") is not None
+                                        )
+                                    )
+                                )
                             ),
                         })
                     else:
@@ -4438,7 +5391,10 @@ def controller(job: Path, ownership_fd: int) -> int:
                 # time from this reap boundary.  If termination itself raises,
                 # keep ``process`` live so the outer recovery retains the one
                 # retry opportunity instead of assuming the group is gone.
-                _terminate(process)
+                _terminate_provider_process(
+                    process, contained_root,
+                    contained=prepared_containment is not None,
+                )
                 runtime_end_mono = time.monotonic()
                 process = None
             with contextlib.suppress(Exception):
@@ -4458,7 +5414,10 @@ def controller(job: Path, ownership_fd: int) -> int:
             raise
         if process is not None:
             with contextlib.suppress(Exception):
-                _terminate(process)
+                _terminate_provider_process(
+                    process, contained_root,
+                    contained=prepared_containment is not None,
+                )
             process = None
             runtime_end_mono = time.monotonic()
         frozen_elapsed = float(state["elapsed_seconds"])
@@ -4552,7 +5511,7 @@ def create_state(
                 # The terminal/recovery predicates were checked above before
                 # any launch-input probe; preserve that linearization here.
                 pass
-            if float(state["elapsed_seconds"]) >= float(state["max_seconds"]):
+            if float(state["elapsed_seconds"]) >= _provider_max_seconds(state):
                 raise DispatchError("dispatch max runtime is exhausted")
             if state["workflow"] != "legacy" and state["attempt"] >= state["max_cycles"]:
                 raise DispatchError("dispatch max cycles is exhausted")
@@ -4575,6 +5534,9 @@ def create_state(
                     schema_bindings=schema_bindings,
                     state_schema=state["schema_version"],
                     explain_worktree_rejection=True,
+                    repair_authority_state=(
+                        state if origin == "conversation-continue" else None
+                    ),
                 )
                 next_state["sequence"] = state["sequence"] + 1
                 next_state["previous_state_sha256"] = sha
@@ -4583,10 +5545,17 @@ def create_state(
                 next_state["attempt_base_elapsed"] = float(state["elapsed_seconds"])
                 next_state["elapsed_seconds"] = float(state["elapsed_seconds"])
                 next_state["hard_seconds"] = min(
-                    float(state["max_seconds"]),
+                    _provider_max_seconds(state),
                     float(state["elapsed_seconds"]) + float(command["hard_seconds"]),
                 )
                 next_state["max_seconds"] = float(state["max_seconds"])
+                if state["schema_version"] >= 12:
+                    next_state["self_verification_elapsed_seconds"] = float(
+                        state["self_verification_elapsed_seconds"]
+                    )
+                    next_state["self_verification_run"] = state[
+                        "self_verification_run"
+                    ]
                 if state["workflow"] != "legacy":
                     next_state["phase"] = "repairing" if origin == "conversation-continue" else "dispatching"
                     next_state["check_summary"] = state["check_summary"]
@@ -4599,9 +5568,20 @@ def create_state(
                             "result_path", "result_sha256", "result_identity",
                             "candidate_recognized", "candidate_source", "result_available",
                             "candidate_worktree_sha256", "candidate_worktree_entries",
-                            "driver_disposition",
+                            "driver_disposition", "worktree_reconciliation",
+                            "worktree_changes_present",
+                            "worktree_changed_since_dispatch",
                         ):
                             next_state[key] = state[key]
+                        if state["schema_version"] >= 12:
+                            for key in (
+                                "repair_lineage_sha256",
+                                "repair_parent_result_sha256",
+                                "repair_parent_worktree_sha256",
+                                "repair_lineage_attempt",
+                                "reconciliation_manifest_sha256",
+                            ):
+                                next_state[key] = state[key]
                 if verification_path is not None:
                     next_state.update({
                         "verification_path": str(verification_path),
@@ -4664,7 +5644,7 @@ def spawn(
             _terminalize_queued_signal(job, parent_signal)
             return 128 + parent_signal
         bound_command = _load_bound_command(job, state, stage_readonly=False)
-        controller_environment = MODEL_SELECTION.child_environment(bound_command["provider_env"])
+        controller_environment = _provider_environment(bound_command)
         controller_argv = [
             sys.executable, "-I", "-S", "-B", str(Path(__file__).resolve()),
             "controller", "--job-dir", str(job), "--ownership-fd", str(ownership_fd),
@@ -4761,7 +5741,7 @@ def _terminal_projection(
         and state["candidate_source"] != "provider_cancelled"
         and state["conversation_id"]
         and state["attempt"] < state["max_cycles"]
-        and float(state["elapsed_seconds"]) < float(state["max_seconds"])
+        and float(state["elapsed_seconds"]) < _provider_max_seconds(state)
         and status == "failed"
         and allow_continue
         and not candidate_unavailable
@@ -4945,8 +5925,40 @@ def _terminalize_queued_signal(job: Path, number: int) -> None:
         ))
 
 
+def _recover_interrupted_self_verification(job: Path) -> tuple[dict[str, Any], bytes, str]:
+    """Recover only while holding the lifecycle lock; never rerun a check."""
+    with state_lock(job):
+        state, raw, sha = load_state(job)
+        if state.get("phase") != "self-verifying":
+            return state, raw, sha
+        remaining = SELF_VERIFICATION.remaining_seconds(
+            state["max_seconds"], state["elapsed_seconds"],
+            state["self_verification_elapsed_seconds"],
+        )
+        charge = min(remaining, max(0.0, time.time() - state["self_verification_started_epoch"]))
+        updates = {
+            "phase": state["self_verification_return_phase"],
+            "self_verification_started_epoch": None,
+            "self_verification_return_phase": None,
+            "self_verification_elapsed_seconds": state["self_verification_elapsed_seconds"] + charge,
+            "verification_path": None, "verification_sha256": None,
+            "verification_identity": None,
+            "check_counts": _verification_counts(SELF_VERIFICATION.advisory_feedback(state["result_sha256"], [])),
+            "check_summary": "Self-verification was interrupted; wall-clock time was conservatively charged.",
+        }
+        updates["continue_available"] = _continue_from_facts({**state, **updates}, time.time())
+        return _transition_locked(job, state, raw, updates)
+
+
 def command_status(job: Path, output_format: str = "json") -> int:
     state, _raw, sha = read_state_snapshot(job)
+    if state.get("phase") == "self-verifying":
+        try:
+            with lifecycle_lock(job, blocking=False):
+                state, _raw, sha = _recover_interrupted_self_verification(job)
+        except DispatchError as exc:
+            if str(exc) != "dispatch controller is active":
+                raise
     if state["status"] in {"queued", "running", "cancel-requested"}:
         try:
             with lifecycle_lock(job, blocking=False):
@@ -4969,7 +5981,14 @@ def command_wait(job: Path, after: str, timeout: float, output_format: str = "js
     deadline = time.monotonic() + timeout
     while True:
         state, _raw, sha = read_state_snapshot(job)
-        if sha != after or state["status"] in TERMINAL:
+        if state.get("phase") == "self-verifying":
+            try:
+                with lifecycle_lock(job, blocking=False):
+                    state, _raw, sha = _recover_interrupted_self_verification(job)
+            except DispatchError as exc:
+                if str(exc) != "dispatch controller is active":
+                    raise
+        if sha != after or (state["status"] in TERMINAL and state.get("phase") != "self-verifying"):
             print_control_status(state, sha, output_format, job=job)
             return 0
         if time.monotonic() >= deadline:
@@ -4981,7 +6000,7 @@ def command_wait(job: Path, after: str, timeout: float, output_format: str = "js
 def command_result(job: Path, output_format: str = "json") -> int:
     state, _raw, sha = read_state_snapshot(job)
     if state["candidate_recognized"]:
-        if _is_active(state):
+        if _is_active(state) or state.get("phase") == "self-verifying":
             raise DispatchError("dispatch result is unavailable while a repair is active")
         _command, candidate_raw = _bound_current_candidate(job, state)
         if output_format == "text":
@@ -5041,11 +6060,43 @@ def command_result(job: Path, output_format: str = "json") -> int:
     return 0
 
 
+def _bound_self_verification_feedback(job: Path, state: dict[str, Any]) -> dict[str, Any]:
+    """Read only the advisory artifact published for this candidate attempt."""
+    expected = job / "continue-staged" / f"self-verify-{state['attempt']:03d}.json"
+    if (
+        not state.get("allow_self_verification")
+        or state.get("self_verification_run") != state["attempt"]
+        or state.get("phase") not in {"awaiting-verification", "repair-failed"}
+        or state["verification_path"] != str(expected)
+    ):
+        raise DispatchError("current self-verification feedback is unavailable")
+    raw, info = read_regular(expected, MAX_VERIFICATION_BYTES, "self-verification feedback", allowed_modes=(0o400,))
+    if digest(raw) != state["verification_sha256"] or list(_identity(info)) != state["verification_identity"]:
+        raise DispatchError("self-verification feedback binding changed")
+    parent = expected.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode)
+            or parent.st_uid != os.getuid() or stat.S_IMODE(parent.st_mode) != 0o700):
+        raise DispatchError("verification staging directory changed")
+    feedback = _validate_verification(parse_json(raw, "self-verification feedback"))
+    _require_current_candidate_verification(feedback, state)
+    if feedback["coverage"] != "partial" or feedback["diff_review_complete"]:
+        raise DispatchError("self-verification feedback is not advisory")
+    return feedback
+
+
 def command_continue(
     job: Path, approve_sha: str, approve_migration_sha: str | None,
     output_format: str = "json",
+    use_self_verification: bool = False,
 ) -> int:
-    verification = _verification_from_stdin()
+    if use_self_verification:
+        with state_lock(job):
+            state, _raw, sha = load_state(job)
+            if sha != approve_sha:
+                raise _state_approval_error(state, sha, "continue")
+            verification = _bound_self_verification_feedback(job, state)
+    else:
+        verification = _verification_from_stdin()
     return spawn(
         job, "conversation-continue", resume=True, foreground=False,
         approve_sha=approve_sha, approve_migration_sha=approve_migration_sha,
@@ -5127,7 +6178,7 @@ def command_control(job: Path, action: str, approve_sha: str, seconds: float | N
             assert seconds is not None
             if not _extend_is_eligible(state, now):
                 raise DispatchError("deadline extension requires fresh progress before the hard deadline")
-            if seconds <= 0 or state["hard_seconds"] + seconds > state["max_seconds"]:
+            if seconds <= 0 or state["hard_seconds"] + seconds > _provider_max_seconds(state):
                 raise DispatchError("deadline extension exceeds max runtime")
             updates = {"hard_seconds": state["hard_seconds"] + seconds}
         state, _raw, sha = _transition_locked(
@@ -5155,7 +6206,7 @@ def duration(text: str) -> float:
 def parser() -> Parser:
     result = Parser(prog="agy-dispatch")
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
-    for name in ("run", "start", "resume", "restart", "continue", "status", "result", "verification-copy", "controller"):
+    for name in ("run", "start", "resume", "restart", "continue", "status", "result", "verification-copy", "self-verify", "controller"):
         item = commands.add_parser(name)
         item.add_argument("--job-dir", required=True)
         if name == "controller":
@@ -5167,6 +6218,11 @@ def parser() -> Parser:
             item.add_argument("--format", choices=("json", "text"), default="json")
         if name == "verification-copy":
             item.add_argument("--destination", required=True)
+        if name == "continue":
+            item.add_argument("--use-self-verification", action="store_true")
+        if name == "self-verify":
+            item.add_argument("--approve-state-sha", required=True)
+            item.add_argument("--format", choices=("json", "text"), default="json")
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--job-dir", required=True)
     finalize.add_argument("--approve-state-sha", required=True)
@@ -5215,6 +6271,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "continue":
         return command_continue(
             job, args.approve_state_sha, args.approve_migration_sha, args.format,
+            use_self_verification=args.use_self_verification,
         )
     if args.command == "status":
         return command_status(job, args.format)
@@ -5224,6 +6281,13 @@ def main(argv: list[str] | None = None) -> int:
         return command_result(job, args.format)
     if args.command == "verification-copy":
         return command_verification_copy(job, Path(args.destination), args.format)
+    if args.command == "self-verify":
+        try:
+            return SELF_VERIFICATION.command_self_verify(
+                LEGACY_API, job, args.approve_state_sha, args.format, containment=CONTAINMENT,
+            )
+        except (SELF_VERIFICATION.VerificationError, OSError) as exc:
+            raise DispatchError("self-verification could not bind or execute the approved checks") from exc
     if args.command == "finalize":
         return command_finalize(
             job, args.approve_state_sha, args.approve_migration_sha,
@@ -5245,6 +6309,6 @@ if __name__ == "__main__":
         command_name = sys.argv[1] if len(sys.argv) > 1 else ""
         if command_name == "resume":
             raise SystemExit(EXIT_BY_REASON["resume_failed"])
-        if command_name in {"status", "wait", "result", "verification-copy"}:
+        if command_name in {"status", "wait", "result", "verification-copy", "self-verify"}:
             raise SystemExit(EXIT_BY_REASON["status_unavailable"])
         raise SystemExit(64)

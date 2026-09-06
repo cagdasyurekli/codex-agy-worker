@@ -214,11 +214,36 @@ envelope confidence.json '{"status":"completed","summary":"done","files_changed"
 check "out-of-range confidence rejected" 12 confidence.json --verify-argv '["true"]'
 envelope nested_type.json '{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[{"command":"true","passed":"yes"}],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
 check "nested field type rejected" 12 nested_type.json --verify-argv '["true"]'
+envelope requested_checks_valid.json '{"status":"completed","summary":"done","files_changed":[{"path":"a.txt","change":"modified"}],"commands_run":[],"tests_run":[],"requested_check_ids":["unit_core","Lint-2"],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
+check "optional requested check IDs accepted" 0 requested_checks_valid.json --verify-argv '["true"]'
+envelope requested_checks_duplicate.json '{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"requested_check_ids":["unit_core","unit_core"],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
+check "duplicate requested check IDs rejected" 12 requested_checks_duplicate.json --verify-argv '["true"]'
+envelope requested_checks_invalid.json '{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"requested_check_ids":["1unit"],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
+check "invalid requested check ID rejected" 12 requested_checks_invalid.json --verify-argv '["true"]'
+envelope requested_checks_newline.json '{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"requested_check_ids":["unit\n"],"risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
+check "newline requested check ID rejected" 12 requested_checks_newline.json --verify-argv '["true"]'
+envelope requested_checks_wrong_type.json '{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"requested_check_ids":"unit_core","risks":[],"open_questions":[],"confidence":1,"requires_human":false}'
+check "non-array requested check IDs rejected" 12 requested_checks_wrong_type.json --verify-argv '["true"]'
+python3 - "$TMP/requested_checks_overflow.json" <<'PY'
+import json
+import sys
+
+envelope = {
+    "status": "completed", "summary": "done", "files_changed": [],
+    "commands_run": [], "tests_run": [],
+    "requested_check_ids": [f"check{index}" for index in range(33)],
+    "risks": [], "open_questions": [], "confidence": 1,
+    "requires_human": False,
+}
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(envelope, handle)
+PY
+check "more than 32 requested check IDs rejected" 12 requested_checks_overflow.json --verify-argv '["true"]'
 python3 - "$SCHEMA" "$TMP/unsupported-schema.json" <<'PY'
 import json
 import sys
 schema = json.load(open(sys.argv[1]))
-schema["properties"]["files_changed"]["items"]["properties"]["why"]["pattern"] = "x"
+schema["properties"]["files_changed"]["items"]["properties"]["why"]["$ref"] = "#/unsupported"
 with open(sys.argv[2], "w") as handle:
     json.dump(schema, handle)
 PY

@@ -33,15 +33,18 @@ def run(context: dict[str, object]) -> None:
             }
             scope_raw = json.dumps(scope, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
             scope_path.write_bytes(scope_raw); scope_path.chmod(0o600)
-            preview = subprocess.run(
-                [
-                    str(ROOT / "skills/agy-worker/runtime/agy-worker.sh"),
-                    "transmission-preview", "--workdir", str(linked),
-                    "--provider-scope", str(scope_path), "--format", "json",
-                ],
-                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            # V6 stored the unwrapped scoped transmission digest.  The current
+            # preview is session-bound, so derive the historical canonical value
+            # from the frozen scope and manifests rather than treating a new-mode
+            # preview as authority for an old command.
+            parsed_scope = MODULE._parse_provider_scope(scope_raw)
+            readable_manifest = MODULE._scan_readable_worktree(str(linked))
+            selected_manifest = MODULE._build_selected_content_manifest(linked, parsed_scope)
+            approved = MODULE._compute_transmission_sha256(
+                MODULE._canonical_digest(parsed_scope),
+                MODULE._manifest_digest(readable_manifest),
+                MODULE._selected_content_digest(selected_manifest),
             )
-            approved = json.loads(preview.stdout)["transmission_sha256"]
             schema = fixture / "provider.json"; provider_schema(schema)
             scope_info = scope_path.stat()
             command = {
@@ -294,8 +297,18 @@ def run(context: dict[str, object]) -> None:
 
     check("narrow stage rejects unselected writes and reconciles an authorized replacement", narrow_stage_authorization_and_reconciliation_are_end_to_end)
 
-    def scoped_controller_fixture(label: str, behavior: str):
-        """Create one exact V11 narrow-scope controller fixture with a fake provider."""
+    def scoped_controller_fixture(
+        label: str,
+        behavior: str,
+        *,
+        allow_scoped_repair: bool = False,
+        declared_files_changed: list[dict[str, str]] | None = None,
+        init_cwd: str | None = None,
+        nested_directory_ops: bool = False,
+        command_schema: int = 9,
+    ):
+        """Create a V9 native or V8 historical scoped controller fixture."""
+        assert command_schema in {8, 9}
         source_repo = (root / f"scope-acceptance-source-{label}").resolve(); source_repo.mkdir()
         repo = (root / f"scope-acceptance-repo-{label}").resolve()
         subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
@@ -307,6 +320,11 @@ def run(context: dict[str, object]) -> None:
         (source_repo / "tool.sh").write_bytes(initial_tool); (source_repo / "tool.sh").chmod(0o755)
         (source_repo / "denied-secret.txt").write_text("denied-private\n", encoding="utf-8")
         (source_repo / "omitted-private.txt").write_text("omitted-private\n", encoding="utf-8")
+        if nested_directory_ops:
+            (source_repo / "nested").mkdir()
+            (source_repo / "nested" / "old.txt").write_text("old\n", encoding="utf-8")
+            (source_repo / "created-parent").mkdir()
+            (source_repo / "created-parent" / ".keep").write_text("keep\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(source_repo), "add", "."], check=True)
         subprocess.run(["git", "-C", str(source_repo), "commit", "-qm", "base"], check=True)
         subprocess.run([
@@ -325,6 +343,13 @@ def run(context: dict[str, object]) -> None:
                 {"path": "tool.sh", "kind": "file"},
             ],
         }
+        if nested_directory_ops:
+            for section in ("read", "write"):
+                scope[section].extend([
+                    {"path": "nested", "kind": "tree"},
+                    {"path": "created-parent", "kind": "tree"},
+                ])
+                scope[section].sort(key=lambda item: item["path"])
         scope_raw = json.dumps(
             scope, ensure_ascii=True, sort_keys=True, separators=(",", ":"),
         ).encode("ascii") + b"\n"
@@ -342,23 +367,50 @@ def run(context: dict[str, object]) -> None:
 
         job = (root / f"scope-acceptance-job-{label}").resolve(); job.mkdir(mode=0o700)
         bin_dir = root / f"scope-acceptance-bin-{label}"; bin_dir.mkdir()
-        sentinel = root / f"scope-acceptance-provider-{label}.json"
+        # Scoped providers can write their private HOME but cannot write this
+        # test harness's sibling directories. Keep observations inside the
+        # contained job without adding them to candidate reconciliation.
+        sentinel = job / "provider-home" / "observation.json"
         schema = root / f"scope-acceptance-provider-schema-{label}.json"; provider_schema(schema)
+        use_default_declaration = declared_files_changed is None
+        if declared_files_changed is None:
+            declared_files_changed = (
+                [
+                    {"path": "tool.sh", "change": "modified"},
+                    {"path": "payload.bin", "change": "modified"},
+                ]
+                if behavior == "positive" else (
+                    [
+                        {"path": "nested/old.txt", "change": "deleted"},
+                        {"path": "created-parent/new-dir/new.txt", "change": "created"},
+                    ] if behavior == "nested-directory-ops" else []
+                )
+            )
         events = [
-            {"event": "init", "init": {}, "conversation_id": "scope-acceptance"},
             {
                 "event": "result",
                 "result": {
                     "conversation_id": "scope-acceptance", "status": "SUCCESS",
-                    "structured_output": report(summary=f"scope-{behavior}"),
+                    "structured_output": report(
+                        summary=f"scope-{behavior}",
+                        files_changed=declared_files_changed,
+                    ),
                 },
             },
         ]
         fake = bin_dir / "agy"
+        if sys.platform == "darwin":
+            qualified_root = Path("/Library/Developer/CommandLineTools")
+            provider_interpreter = Path(os.path.realpath(qualified_root / "usr/bin/python3"))
+            assert provider_interpreter.is_relative_to(qualified_root)
+        else:
+            provider_interpreter = Path(sys.executable)
         fake.write_text(
-            "#!/usr/bin/env python3\n"
-            "import base64, json, os, stat\n"
+            f"#!{provider_interpreter}\n"
+            "import base64, json, os, stat, sys, time\n"
             "from pathlib import Path\n"
+            "schema_index = sys.argv.index('--json-schema') + 1\n"
+            "json.loads(Path(sys.argv[schema_index]).read_text(encoding='utf-8'))\n"
             f"sentinel = Path({str(sentinel)!r})\n"
             "cwd = Path.cwd()\n"
             "observation = {\n"
@@ -372,14 +424,33 @@ def run(context: dict[str, object]) -> None:
             "    'payload_mode': stat.S_IMODE((cwd / 'payload.bin').stat().st_mode),\n"
             "    'tool_b64': base64.b64encode((cwd / 'tool.sh').read_bytes()).decode('ascii'),\n"
             "    'tool_mode': stat.S_IMODE((cwd / 'tool.sh').stat().st_mode),\n"
+            "    'argv': sys.argv,\n"
+            "    'environment': dict(sorted(os.environ.items())),\n"
             "}\n"
+            "sentinel.parent.mkdir(mode=0o700, parents=True, exist_ok=True)\n"
             "sentinel.write_text(json.dumps(observation, sort_keys=True), encoding='utf-8')\n"
+            f"init_cwd = {init_cwd!r}\n"
+            "init = {} if init_cwd is None else {'cwd': (str(cwd) if init_cwd == '__launch_cwd__' else init_cwd)}\n"
+            f"use_default_declaration = {use_default_declaration!r}\n"
+            "actual_files_changed = None\n"
             f"behavior = {behavior!r}\n"
             "if behavior == 'positive':\n"
-            "    Path('payload.bin').write_bytes(b'\\x00reconciled-binary\\xfe\\xff\\n')\n"
+            "    prior = Path('payload.bin').read_bytes()\n"
+            "    changed = (b'\\x00reconciled-binary-1\\xfe\\xff\\n' if prior.startswith(b'\\x00initial') "
+            "else b'\\x00reconciled-binary-2\\xfd\\xff\\n')\n"
+            "    Path('payload.bin').write_bytes(changed)\n"
             "    os.chmod('payload.bin', 0o700)\n"
             "    Path('tool.sh').write_bytes(b'#!/bin/sh\\nprintf \\\'reconciled\\\\n\\\'\\n')\n"
             "    os.chmod('tool.sh', 0o600)\n"
+            "    if use_default_declaration:\n"
+            "        actual_files_changed = (\n"
+            "            [{'path': 'tool.sh', 'change': 'modified'}, {'path': 'payload.bin', 'change': 'modified'}]\n"
+            "            if prior.startswith(b'\\x00initial') else [{'path': 'payload.bin', 'change': 'modified'}]\n"
+            "        )\n"
+            "elif behavior == 'no-net-effect':\n"
+            "    prior = Path('payload.bin').read_bytes()\n"
+            "    Path('payload.bin').write_bytes(b'transient-stage-touch\\n')\n"
+            "    Path('payload.bin').write_bytes(prior)\n"
             "elif behavior == 'unauthorized':\n"
             "    Path('unauthorized.bin').write_bytes(b'not-authorized\\n')\n"
             "elif behavior == 'symlink':\n"
@@ -387,9 +458,25 @@ def run(context: dict[str, object]) -> None:
             "elif behavior == 'fifo':\n"
             "    os.mkfifo('unauthorized-fifo', 0o600)\n"
             "elif behavior == 'source-drift':\n"
-            f"    Path({str(repo / 'payload.bin')!r}).write_bytes(b'external-source-drift\\n')\n"
+            "    ready = sentinel.with_name('source-drift-ready')\n"
+            "    release = sentinel.with_name('source-drift-release')\n"
+            "    ready.write_text('ready', encoding='ascii')\n"
+            "    deadline = time.monotonic() + 3.0\n"
+            "    while not release.exists() and time.monotonic() < deadline:\n"
+            "        time.sleep(0.01)\n"
+            "    if not release.exists():\n"
+            "        raise RuntimeError('source drift fixture was not released')\n"
             "    Path('payload.bin').write_bytes(b'untrusted-stage-replacement\\n')\n"
+            "elif behavior == 'nested-directory-ops':\n"
+            "    Path('nested/old.txt').unlink()\n"
+            "    Path('nested').rmdir()\n"
+            "    created = Path('created-parent/new-dir/new.txt')\n"
+            "    created.parent.mkdir()\n"
+            "    created.write_text('new\\n', encoding='utf-8')\n"
             f"events = {events!r}\n"
+            "if actual_files_changed is not None:\n"
+            "    events[0]['result']['structured_output']['files_changed'] = actual_files_changed\n"
+            "events.insert(0, {'event': 'init', 'init': init, 'conversation_id': 'scope-acceptance'})\n"
             "for event in events:\n"
             "    print(json.dumps(event, ensure_ascii=True, separators=(',', ':')), flush=True)\n",
             encoding="utf-8",
@@ -397,9 +484,9 @@ def run(context: dict[str, object]) -> None:
         fake.chmod(0o755)
         scope_info = scope_path.stat()
         command = {
-            "schema_version": 6, "kind": "agy-worker-dispatch-command",
+            "schema_version": 9, "kind": "agy-worker-dispatch-command",
             "job_id": f"scope-acceptance-{label}", "workdir": str(repo),
-            "argv": ["agy", "--json-schema", str(schema), "--print", "task"],
+            "argv": ["agy", "--sandbox", "--json-schema", str(schema), "--print", "task"],
             "agy_version": "1.1.22", "agy_version_observed": True,
             "idle_seconds": 2, "hard_seconds": 5, "max_seconds": 20, "notice_seconds": 3,
             "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
@@ -409,18 +496,66 @@ def run(context: dict[str, object]) -> None:
             "provider_scope_sha256": hashlib.sha256(scope_raw).hexdigest(),
             "provider_scope_identity": list(MODULE._identity(scope_info)),
             "approved_transmission_sha256": approved,
+            "approved_whole_worktree_sha256": None,
+            "boost": False, "boost_policy_sha256": None,
+            "approved_boost_risk_sha256": None,
+            "allow_scoped_repair": allow_scoped_repair,
+            "repair_authority_sha256": None,
+            "allow_self_verification": False,
+            "self_verification_manifest_path": None,
+            "self_verification_manifest_sha256": None,
+            "self_verification_manifest_identity": None,
         }
+        if command_schema == 8:
+            command["schema_version"] = 8
+            for field in (
+                "allow_scoped_repair", "repair_authority_sha256",
+                "allow_self_verification", "self_verification_manifest_path",
+                "self_verification_manifest_sha256", "self_verification_manifest_identity",
+            ):
+                command.pop(field)
+        elif allow_scoped_repair:
+            command["repair_authority_sha256"] = MODULE.scoped_repair_authority_sha256(
+                command, verification_binding_sha256=None,
+            )
         MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
         MODULE.create_state(job, "initial", resume=False)
         return repo, job, bin_dir, sentinel, initial_payload, initial_tool
 
     def narrow_provider_launch_is_gitless_and_reconciles_exact_bytes_and_modes() -> None:
-        """The provider sees only selected bytes in a Gitless stage and exact edits reconcile."""
+        """Exercise default-off staging and the bounded scoped repair lineage."""
         repo, job, bin_dir, sentinel, initial_payload, initial_tool = scoped_controller_fixture(
             "positive", "positive",
         )
-        assert run_controller(job, bin_dir) == 0
+        first_rc = run_scoped_controller(job, bin_dir)
+        if first_rc != 0:
+            failed_state, _failed_raw, _failed_sha = MODULE.load_state(job)
+            raise AssertionError((
+                first_rc, failed_state["reason"], failed_state["failure_stage"],
+                failed_state["agy_returncode"], failed_state["progress_count"],
+                failed_state["started_epoch"],
+                (job / "stderr.txt").read_text(encoding="utf-8", errors="replace"),
+            ))
         observed = json.loads(sentinel.read_text(encoding="utf-8"))
+        if scoped_controller_uses_portable_fixture():
+            containment = json.loads((job / "test-only-linux-containment.json").read_text(encoding="utf-8"))
+            assert containment["host"] == "non-darwin-test-fixture"
+            assert containment["prepare"]["target_argv"] == containment["confirm"]["argv"]
+            assert containment["prepare"]["executable"] == containment["confirm"]["executable"]
+            assert containment["prepare"]["cwd"] == containment["confirm"]["cwd"]
+            assert containment["prepare"]["environment"] == containment["confirm"]["environment"]
+            assert observed["argv"] == containment["confirm"]["argv"]
+            assert observed["cwd"] == containment["confirm"]["cwd"]
+            for key, value in containment["confirm"]["environment"].items():
+                assert observed["environment"].get(key) == value, key
+            assert containment["groups"][:1] and containment["groups"][0]["event"] == "bind"
+            assert any(item["event"] == "terminate" for item in containment["groups"])
+        else:
+            assert observed["environment"]["HOME"] == str(job / "provider-home")
+            assert observed["environment"]["TMPDIR"] == str(job / "provider-tmp-001")
+            assert observed["environment"]["XDG_STATE_HOME"] == str(
+                job / "provider-home" / ".local" / "state",
+            )
         stage_path = Path(observed["cwd"])
         assert stage_path.parent == job and stage_path.name == "stage-001"
         assert observed["cwd"] != str(repo) and observed["cwd_mode"] == 0o700
@@ -429,15 +564,259 @@ def run(context: dict[str, object]) -> None:
         assert base64.b64decode(observed["payload_b64"]) == initial_payload
         assert base64.b64decode(observed["tool_b64"]) == initial_tool
         assert observed["payload_mode"] == 0o600 and observed["tool_mode"] == 0o700
-        assert (repo / "payload.bin").read_bytes() == b"\x00reconciled-binary\xfe\xff\n"
+        assert (repo / "payload.bin").read_bytes() == b"\x00reconciled-binary-1\xfe\xff\n"
         assert (repo / "tool.sh").read_bytes() == b"#!/bin/sh\nprintf 'reconciled\\n'\n"
         assert stat.S_IMODE((repo / "payload.bin").stat().st_mode) == 0o700
         assert stat.S_IMODE((repo / "tool.sh").stat().st_mode) == 0o600
         state, _raw, _sha = MODULE.load_state(job)
         assert state["status"] == "succeeded" and state["reconciliation_manifest_sha256"] is not None
+        assert MODULE.bound_provider_execution(job, state) == {
+            "legacy": True, "scope": "provider-scope", "agy_sandbox": True,
+            "native_containment": True,
+        }
         assert state["provider_stage_path"] == str(stage_path) and not stage_path.exists()
+        assert state["allow_scoped_repair"] is False
+        assert state["repair_lineage_sha256"] is None
+        assert state["continue_available"] is False
 
-    check("narrow provider launch uses a Gitless selected-only stage and reconciles exact binary modes", narrow_provider_launch_is_gitless_and_reconciles_exact_bytes_and_modes)
+        legacy_home = root / "legacy-v8-scoped-caller-home"
+        legacy_home.mkdir(mode=0o700)
+        prior_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(legacy_home)
+        try:
+            legacy_repo, legacy_job, legacy_bin, legacy_sentinel, _, _ = scoped_controller_fixture(
+                "legacy-v8-scoped", "no-net-effect", command_schema=8,
+            )
+            assert run_scoped_controller(
+                legacy_job, legacy_bin, native_containment=False,
+            ) == 0
+        finally:
+            if prior_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = prior_home
+        legacy_command, legacy_raw, _legacy_identity = MODULE.load_command(legacy_job)
+        legacy_state, _legacy_state_raw, _legacy_state_sha = MODULE.load_state(legacy_job)
+        legacy_observed = json.loads(legacy_sentinel.read_text(encoding="utf-8"))
+        assert legacy_command["schema_version"] == 8
+        assert legacy_command["argv"].count("--sandbox") == 1
+        assert legacy_raw == MODULE.canonical({
+            key: value for key, value in legacy_command.items()
+            if key in MODULE.COMMAND_V8_FIELDS
+        })
+        assert legacy_observed["environment"]["HOME"] == str(legacy_home)
+        assert MODULE.bound_provider_execution(legacy_job, legacy_state) == {
+            "legacy": True, "scope": "provider-scope", "agy_sandbox": True,
+            "native_containment": False,
+        }
+        assert not (legacy_job / "test-only-linux-containment.json").exists()
+
+        repair_repo, repair_job, repair_bin, _repair_sentinel, _, _ = scoped_controller_fixture(
+            "repair-lineage", "positive", allow_scoped_repair=True,
+        )
+        second_rc = run_scoped_controller(repair_job, repair_bin)
+        if second_rc != 0:
+            failed_state, _failed_raw, _failed_sha = MODULE.load_state(repair_job)
+            raise AssertionError((second_rc, failed_state))
+        first, _first_raw, first_sha = MODULE.load_state(repair_job)
+        command, _command_raw, _command_identity = MODULE.load_command(repair_job)
+        assert command["approved_transmission_sha256"] != first["transmission_sha256"]
+        assert first["repair_authority_sha256"] == command["repair_authority_sha256"]
+        assert first["repair_lineage_attempt"] == 1
+        assert first["repair_parent_result_sha256"] is None
+        assert first["repair_parent_worktree_sha256"] == first["worktree_baseline"]["sha256"]
+        assert first["continue_available"] is True
+        verification = {
+            "schema_version": 2, "summary": "bounded scoped repair",
+            "passed_checks": [], "failed_checks": ["focused"],
+            "advisory_checks": 0, "missing_checks": 0,
+            "candidate_sha256": first["result_sha256"], "coverage": "partial",
+            "verified_findings": 1, "unresolved_gaps": 1,
+            "diff_review_complete": True,
+        }
+        second_queued, _second_queued_sha = MODULE.create_state(
+            repair_job, "conversation-continue", resume=True,
+            approve_sha=first_sha, verification=verification,
+        )
+        assert second_queued["attempt"] == 2
+        assert second_queued["repair_lineage_sha256"] == first["repair_lineage_sha256"]
+        MODULE._bound_lifecycle_inputs(repair_job, second_queued, command)
+        MODULE._bound_current_candidate(repair_job, second_queued)
+        MODULE._bound_worktree_baseline(second_queued, command)
+        assert MODULE._bound_verification(repair_job, second_queued) is not None
+        second_rc = run_scoped_controller(repair_job, repair_bin)
+        if second_rc != 0:
+            failed_state, _failed_raw, _failed_sha = MODULE.load_state(repair_job)
+            raise AssertionError((second_rc, failed_state))
+        second, _second_raw, _second_sha = MODULE.load_state(repair_job)
+        assert (repair_repo / "payload.bin").read_bytes() == b"\x00reconciled-binary-2\xfd\xff\n"
+        assert second["repair_lineage_attempt"] == 2
+        assert second["repair_parent_result_sha256"] == first["result_sha256"]
+        assert second["repair_parent_worktree_sha256"] == first["candidate_worktree_sha256"]
+        assert second["transmission_sha256"] != first["transmission_sha256"]
+        assert second["continue_available"] is False
+
+        for label, changed_path in (
+            ("repair-selected-drift", "payload.bin"),
+            ("repair-unselected-drift", "omitted-private.txt"),
+        ):
+            drift_repo, drift_job, drift_bin, _sentinel, _, _ = scoped_controller_fixture(
+                label, "positive", allow_scoped_repair=True,
+            )
+            assert run_scoped_controller(drift_job, drift_bin) == 0
+            drift_state, drift_raw, drift_sha = MODULE.load_state(drift_job)
+            (drift_repo / changed_path).write_bytes(b"external-driver-edit\n")
+            try:
+                MODULE.create_state(
+                    drift_job, "conversation-continue", resume=True,
+                    approve_sha=drift_sha,
+                    verification={**verification, "candidate_sha256": drift_state["result_sha256"]},
+                )
+            except MODULE.DispatchError:
+                pass
+            else:
+                raise AssertionError(f"external {changed_path} edit acquired repair authority")
+            assert (drift_job / MODULE.STATE_NAME).read_bytes() == drift_raw
+
+        launch_repo, launch_job, launch_bin, launch_sentinel, _, _ = scoped_controller_fixture(
+            "repair-prelaunch-drift", "positive", allow_scoped_repair=True,
+        )
+        assert run_scoped_controller(launch_job, launch_bin) == 0
+        launch_state, _launch_raw, launch_sha = MODULE.load_state(launch_job)
+        MODULE.create_state(
+            launch_job, "conversation-continue", resume=True,
+            approve_sha=launch_sha,
+            verification={**verification, "candidate_sha256": launch_state["result_sha256"]},
+        )
+        provider_observation = launch_sentinel.read_bytes()
+        (launch_repo / "omitted-private.txt").write_bytes(b"prelaunch-external-edit\n")
+        assert run_scoped_controller(launch_job, launch_bin) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        assert launch_sentinel.read_bytes() == provider_observation
+        rejected, _rejected_raw, _rejected_sha = MODULE.load_state(launch_job)
+        assert (rejected["status"], rejected["reason"], rejected["failure_stage"]) == (
+            "failed", "status_unavailable", "binding_failure",
+        )
+
+    check(
+        "narrow launch stays Gitless while opt-in repair binds descendants and rejects external drift",
+        narrow_provider_launch_is_gitless_and_reconciles_exact_bytes_and_modes,
+    )
+
+    def scoped_init_cwd_binds_the_actual_launch_directory_when_present() -> None:
+        """Optional provider cwd evidence is exact when the protocol supplies it."""
+        repo, job, bin_dir, sentinel, _payload, _tool = scoped_controller_fixture(
+            "init-cwd-match", "positive", init_cwd="__launch_cwd__",
+        )
+        matched_rc = run_scoped_controller(job, bin_dir)
+        if matched_rc != 0:
+            failed, _raw, _sha = MODULE.load_state(job)
+            raise AssertionError((
+                matched_rc, failed["reason"], failed["failure_stage"],
+                (job / "stderr.txt").read_text(encoding="utf-8", errors="replace"),
+            ))
+        observed = json.loads(sentinel.read_text(encoding="utf-8"))
+        assert Path(observed["cwd"]) == job / "stage-001"
+        succeeded, _raw, _sha = MODULE.load_state(job)
+        assert succeeded["status"] == "succeeded"
+
+        for label, declared_cwd in (
+            ("init-cwd-mismatch", str((root / "different-canonical-cwd").resolve())),
+            ("init-cwd-relative", "stage-001"),
+        ):
+            failed_repo, failed_job, failed_bin, failed_sentinel, initial_payload, initial_tool = (
+                scoped_controller_fixture(label, "positive", init_cwd=declared_cwd)
+            )
+            assert run_scoped_controller(failed_job, failed_bin) == MODULE.EXIT_BY_REASON["status_unavailable"]
+            assert failed_sentinel.exists(), label
+            failed, _raw, _sha = MODULE.load_state(failed_job)
+            assert (failed["status"], failed["reason"], failed["failure_stage"]) == (
+                "failed", "status_unavailable", "binding_failure",
+            )
+            assert (failed_repo / "payload.bin").read_bytes() == initial_payload
+            assert (failed_repo / "tool.sh").read_bytes() == initial_tool
+
+    check(
+        "optional provider init cwd accepts only the exact canonical launch directory",
+        scoped_init_cwd_binds_the_actual_launch_directory_when_present,
+    )
+
+    def scoped_declared_mutations_must_match_reconciled_stage_operations() -> None:
+        """Reported changes cannot omit, duplicate, relabel, or invent staged work."""
+        exact = [
+            {"path": "payload.bin", "change": "modified"},
+            {"path": "tool.sh", "change": "modified"},
+        ]
+        cases = (
+            ("missing", exact[:1]),
+            ("duplicate", [*exact, exact[0]]),
+            ("wrong-kind", [{"path": "payload.bin", "change": "created"}, exact[1]]),
+            ("invented", [*exact, {"path": "invented.txt", "change": "modified"}]),
+            ("out-of-scope", [*exact, {"path": "omitted-private.txt", "change": "modified"}]),
+        )
+        for label, declared in cases:
+            repo, job, bin_dir, sentinel, initial_payload, initial_tool = scoped_controller_fixture(
+                f"declared-{label}", "positive", declared_files_changed=declared,
+            )
+            rejected_rc = run_scoped_controller(job, bin_dir)
+            if rejected_rc != MODULE.EXIT_BY_REASON["status_unavailable"]:
+                failed, _raw, _sha = MODULE.load_state(job)
+                raise AssertionError((
+                    label, rejected_rc, failed["reason"], failed["failure_stage"],
+                    (job / "stderr.txt").read_text(encoding="utf-8", errors="replace"),
+                ))
+            assert sentinel.exists(), label
+            failed, _raw, _sha = MODULE.load_state(job)
+            assert (failed["status"], failed["reason"], failed["failure_stage"]) == (
+                "failed", "status_unavailable", "binding_failure",
+            )
+            assert (repo / "payload.bin").read_bytes() == initial_payload
+            assert (repo / "tool.sh").read_bytes() == initial_tool
+            assert not (job / "stage-001").exists()
+
+    check(
+        "scoped files_changed must declare each reconciled mutation exactly once",
+        scoped_declared_mutations_must_match_reconciled_stage_operations,
+    )
+
+    def scoped_file_declarations_ignore_authorized_directory_scaffolding() -> None:
+        """File evidence remains exact while tree operations reconcile independently."""
+        repo, job, bin_dir, sentinel, _payload, _tool = scoped_controller_fixture(
+            "nested-directory-ops", "nested-directory-ops", nested_directory_ops=True,
+        )
+        nested_rc = run_scoped_controller(job, bin_dir)
+        if nested_rc != 0:
+            failed, _raw, _sha = MODULE.load_state(job)
+            raise AssertionError((
+                nested_rc, failed["reason"], failed["failure_stage"],
+                (job / "stderr.txt").read_text(encoding="utf-8", errors="replace"),
+            ))
+        assert sentinel.exists()
+        assert not (repo / "nested").exists()
+        assert (repo / "created-parent" / "new-dir" / "new.txt").read_text(encoding="utf-8") == "new\n"
+        succeeded, _raw, _sha = MODULE.load_state(job)
+        assert succeeded["status"] == "succeeded"
+
+    check(
+        "scoped file declarations retain authorized nested directory reconciliation",
+        scoped_file_declarations_ignore_authorized_directory_scaffolding,
+    )
+
+    def scoped_no_net_change_accepts_an_empty_file_declaration() -> None:
+        """Transient stage writes are not claimed when the final state is unchanged."""
+        repo, job, bin_dir, sentinel, initial_payload, initial_tool = scoped_controller_fixture(
+            "no-net-effect", "no-net-effect",
+        )
+        assert run_scoped_controller(job, bin_dir) == 0
+        assert sentinel.exists()
+        assert (repo / "payload.bin").read_bytes() == initial_payload
+        assert (repo / "tool.sh").read_bytes() == initial_tool
+        succeeded, _raw, _sha = MODULE.load_state(job)
+        assert succeeded["status"] == "succeeded"
+
+    check(
+        "scoped no-net stage writes accept an empty files_changed declaration",
+        scoped_no_net_change_accepts_an_empty_file_declaration,
+    )
 
     def narrow_postlaunch_unauthorized_symlink_and_source_drift_fail_closed() -> None:
         """Unapproved stage paths and concurrent source changes cannot reconcile."""
@@ -445,7 +824,7 @@ def run(context: dict[str, object]) -> None:
             repo, job, bin_dir, sentinel, initial_payload, initial_tool = scoped_controller_fixture(
                 behavior, behavior,
             )
-            assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+            assert run_scoped_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
             assert sentinel.exists(), f"{behavior} fixture did not reach the provider"
             state, _raw, _sha = MODULE.load_state(job)
             assert (state["status"], state["reason"], state["failure_stage"]) == (
@@ -467,7 +846,28 @@ def run(context: dict[str, object]) -> None:
         repo, job, bin_dir, sentinel, _initial_payload, initial_tool = scoped_controller_fixture(
             "source-drift", "source-drift",
         )
-        assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        ready = sentinel.with_name("source-drift-ready")
+        release = sentinel.with_name("source-drift-release")
+        drift_error: list[BaseException] = []
+
+        def mutate_source_outside_provider() -> None:
+            try:
+                deadline = time.monotonic() + 4.0
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                if not ready.exists():
+                    raise AssertionError("scoped provider did not reach source-drift barrier")
+                (repo / "payload.bin").write_bytes(b"external-source-drift\n")
+                release.write_text("release", encoding="ascii")
+            except BaseException as exc:
+                drift_error.append(exc)
+
+        drift_thread = threading.Thread(target=mutate_source_outside_provider)
+        drift_thread.start()
+        drift_rc = run_scoped_controller(job, bin_dir)
+        drift_thread.join(timeout=5.0)
+        assert not drift_thread.is_alive() and not drift_error
+        assert drift_rc == MODULE.EXIT_BY_REASON["status_unavailable"]
         assert sentinel.exists()
         state, _raw, _sha = MODULE.load_state(job)
         assert (state["status"], state["reason"], state["failure_stage"]) == (
@@ -487,7 +887,7 @@ def run(context: dict[str, object]) -> None:
         )
         (repo / "denied-secret.txt").unlink()
         (repo / "denied-secret.txt").symlink_to(repo / "omitted-private.txt")
-        assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        assert run_scoped_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
         assert not sentinel.exists()
 
         repo, job, bin_dir, sentinel, _initial_payload, _initial_tool = scoped_controller_fixture(
@@ -495,26 +895,20 @@ def run(context: dict[str, object]) -> None:
         )
         attacker_stage = job / "stage-001"; attacker_stage.mkdir(mode=0o700)
         (attacker_stage / "attacker-owned.txt").write_text("preserve\n", encoding="utf-8")
-        assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        assert run_scoped_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
         assert not sentinel.exists()
         assert (attacker_stage / "attacker-owned.txt").read_text(encoding="utf-8") == "preserve\n"
 
         repo, job, bin_dir, sentinel, _initial_payload, _initial_tool = scoped_controller_fixture(
             "copy-drift", "positive",
         )
-        original_materialize = MODULE._materialize_stage
-        injected = False
-        def drift_immediately_before_copy(source_root, stage_dir, scope, selected_manifest):
-            nonlocal injected
-            injected = True
-            (Path(source_root) / "payload.bin").write_bytes(b"copy-window-source-drift\n")
-            return original_materialize(source_root, stage_dir, scope, selected_manifest)
-        MODULE._materialize_stage = drift_immediately_before_copy
-        try:
-            assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["status_unavailable"]
-        finally:
-            MODULE._materialize_stage = original_materialize
-        assert injected and not sentinel.exists()
+        assert run_scoped_controller(
+            job, bin_dir, fixture_kind="copy-drift",
+        ) == MODULE.EXIT_BY_REASON["status_unavailable"]
+        marker = job / "copy-drift-injected"
+        assert marker.exists(), "copy-drift injection did not run"
+        assert marker.read_text(encoding="ascii") == "injected\n"
+        assert not sentinel.exists()
         assert (repo / "payload.bin").read_bytes() == b"copy-window-source-drift\n"
         state, _raw, _sha = MODULE.load_state(job)
         assert (state["status"], state["reason"]) == ("failed", "status_unavailable")
@@ -625,7 +1019,7 @@ def run(context: dict[str, object]) -> None:
 
     check("interrupted empty-directory reconciliation recovers durably and idempotently", interrupted_empty_directory_recovery_is_durable_and_idempotent)
 
-    def normal_standard_and_linked_worktrees_create_bound_v11_state() -> None:
+    def normal_standard_and_linked_worktrees_create_bound_v13_state() -> None:
         fixture = root / "bound-positive-controls"; fixture.mkdir()
         source_repo = fixture / "source"; source_repo.mkdir()
         linked = fixture / "linked-worktree"
@@ -656,7 +1050,7 @@ def run(context: dict[str, object]) -> None:
                 MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
                 state, _state_sha = MODULE.create_state(job, "initial", resume=False)
                 persisted = json.loads((job / MODULE.STATE_NAME).read_text(encoding="utf-8"))
-                assert state["schema_version"] == persisted["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 11, label
+                assert state["schema_version"] == persisted["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 13, label
                 assert state["worktree_snapshot_algorithm"] == MODULE.CURRENT_WORKTREE_SNAPSHOT_ALGORITHM, label
                 assert state["worktree_baseline"] is not None, label
                 assert state["worktree_root_identity"] is not None, label
@@ -705,8 +1099,15 @@ def run(context: dict[str, object]) -> None:
             for label, worktree in (("standard", source_repo), ("linked", linked)):
                 assert with_reader(var_alias_reader, lambda: MODULE._git_boundary_identity(str(worktree))) is not None, label
                 assert with_reader(var_alias_reader, lambda: MODULE._worktree_snapshot(str(worktree))) is not None, label
-            assert {("rev-parse", "--show-toplevel"), ("rev-parse", "--absolute-git-dir")} <= aliases
-            assert ("rev-parse", "--git-common-dir") in aliases
+            # The compatibility exception is deliberately only /var to
+            # /private/var.  This fixture may instead live under /private/tmp
+            # (whose /tmp alias is not accepted), so no /var observation is
+            # possible or required on that canonical root.
+            if str(source_repo.resolve(strict=True)).startswith("/private/var/"):
+                assert {("rev-parse", "--show-toplevel"), ("rev-parse", "--absolute-git-dir")} <= aliases
+                assert ("rev-parse", "--git-common-dir") in aliases
+            else:
+                assert not aliases
 
             git_link = fixture / "git-dir-link"; git_link.symlink_to(source_repo / ".git", target_is_directory=True)
             common_link = fixture / "common-dir-link"; common_link.symlink_to(source_repo / ".git", target_is_directory=True)
@@ -732,7 +1133,7 @@ def run(context: dict[str, object]) -> None:
 
     # Keep the established current dispatch-state case as the inventory owner: this
     # is its plumbing-alias integration branch, not a new suite count.
-    check("normal standard and linked worktrees persist a bound V11 dispatch state", normal_standard_and_linked_worktrees_create_bound_v11_state)
+    check("normal standard and linked worktrees persist a bound V13 dispatch state", normal_standard_and_linked_worktrees_create_bound_v13_state)
 
     def extracted_worktree_facade_preserves_all_signatures_and_patch_seams() -> None:
         """The split keeps the old module surface and its intentional test seams."""
@@ -1392,7 +1793,7 @@ def run(context: dict[str, object]) -> None:
         })
         state.pop("worktree_snapshot_algorithm")
         state.pop("provider_terminal_status")
-        for field in MODULE.STATE_V11_FIELDS:
+        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
             state.pop(field)
         root_identity = state.pop("worktree_root_identity")
         legacy_raw, legacy_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
@@ -1413,7 +1814,12 @@ def run(context: dict[str, object]) -> None:
         assert {"result", "continue", "finalize"} <= actions
         substituted = dict(loaded)
         substituted["candidate_worktree_sha256"] = semantic["sha256"]
-        substituted_raw, substituted_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, substituted)
+        persisted_substituted = dict(substituted)
+        for field in {*MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+            persisted_substituted.pop(field)
+        substituted_raw, substituted_sha = MODULE.write_atomic(
+            job, MODULE.STATE_NAME, persisted_substituted,
+        )
         stale = MODULE.public_status(substituted, substituted_sha, job=job)
         assert {item["action"] for item in stale["available_actions"]} == {"result"}
         assert stale["result_available"] is True
@@ -1429,7 +1835,7 @@ def run(context: dict[str, object]) -> None:
             [sys.executable, str(SOURCE), "result", "--job-dir", str(job)],
             check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        assert delivered.returncode == 0
+        assert delivered.returncode == 0, delivered.stderr.decode("utf-8", "replace")
         assert delivered.stdout == _envelope.read_bytes() and delivered.stderr == b""
         assert (job / MODULE.STATE_NAME).read_bytes() == substituted_raw
 
@@ -1460,7 +1866,12 @@ def run(context: dict[str, object]) -> None:
             assert not provider_called.exists(), arguments
             assert not (job / "continue-staged").exists(), arguments
             assert not list(job.glob("*stream.ndjson")), arguments
-        _raw, loaded_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, loaded)
+        persisted_loaded = dict(loaded)
+        for field in {*MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+            persisted_loaded.pop(field)
+        _raw, loaded_sha = MODULE.write_atomic(
+            job, MODULE.STATE_NAME, persisted_loaded,
+        )
         verification = {
             "schema_version": 2, "summary": "legacy driver repair", "passed_checks": [],
             "failed_checks": ["fixture"], "advisory_checks": 0, "missing_checks": 0,
@@ -1508,7 +1919,7 @@ def run(context: dict[str, object]) -> None:
                 state.pop("worktree_root_identity")
             if version < MODULE.CURRENT_STATE_SCHEMA:
                 state.pop("provider_terminal_status")
-                for field in MODULE.STATE_V11_FIELDS:
+                for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
                     state.pop(field)
             _raw, legacy_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             loaded, _raw, loaded_sha = MODULE.load_state(job)
@@ -1543,7 +1954,7 @@ def run(context: dict[str, object]) -> None:
         v9_command = json.loads((_job / MODULE.COMMAND_NAME).read_text(encoding="utf-8"))
         v9_state["schema_version"] = 9
         v9_state.pop("provider_terminal_status")
-        for field in MODULE.STATE_V11_FIELDS:
+        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
             v9_state.pop(field)
         v9_state["selection_sha256"] = "0" * 64
         MODULE.validate_state(v9_state)
@@ -1573,7 +1984,7 @@ def run(context: dict[str, object]) -> None:
                     workflow=workflow, linked=workflow == "project",
                 )
                 state["schema_version"] = version
-                removed = {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}
+                removed = {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}
                 if version == 1:
                     removed.update(MODULE.STATE_PROJECT_FIELDS)
                     removed.update({"provider_retry_after_seconds", "provider_retry_observed_epoch"})
@@ -1675,7 +2086,7 @@ def run(context: dict[str, object]) -> None:
             for key in {
                 *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS,
                 *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS,
-                *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS,
+                *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS,
             }:
                 state.pop(key, None)
             if version == 3:
@@ -1841,7 +2252,7 @@ def run(context: dict[str, object]) -> None:
                 state.pop("worktree_snapshot_algorithm")
             state.pop("worktree_root_identity")
             state.pop("provider_terminal_status")
-            for field in MODULE.STATE_V11_FIELDS:
+            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
                 state.pop(field)
             old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             loaded, _raw, loaded_sha = MODULE.load_state(job)
@@ -1907,7 +2318,7 @@ def run(context: dict[str, object]) -> None:
         job, state, _sha, _envelope = current_candidate_fixture(
             "v10-inside-worktree", inside_worktree=True,
         )
-        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 11
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 13
         state["continue_available"] = True
         before, sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         state, loaded_raw, loaded_sha = MODULE.load_state(job)
@@ -2266,7 +2677,7 @@ def run(context: dict[str, object]) -> None:
         v7.pop("worktree_snapshot_algorithm")
         v7.pop("worktree_root_identity")
         v7.pop("provider_terminal_status")
-        for field in MODULE.STATE_V11_FIELDS:
+        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
             v7.pop(field)
         assert MODULE.validate_state(v7)["schema_version"] == 7
         assert MODULE._state_worktree_snapshot(v7, command["workdir"]) == MODULE._worktree_snapshot(command["workdir"])
@@ -2355,8 +2766,10 @@ def run(context: dict[str, object]) -> None:
             "_target = os.environ.get('AGY_FIFO_RACE_PATH')\n"
             "_open = os.open\n"
             "_fired = False\n"
-            "def _race_open(path, flags, mode=0o777, *, dir_fd=None):\n"
+            "def _race_open(path, flags, mode=0o777, dir_fd=None):\n"
             "    global _fired\n"
+            "    if not isinstance(path, (str, bytes, os.PathLike)):\n"
+            "        path, flags, mode, dir_fd = flags, mode, dir_fd, None\n"
             "    if not _fired and _target and os.path.abspath(os.fspath(path)) == _target:\n"
             "        _fired = True\n"
             "        os.unlink(_target)\n"
@@ -2375,7 +2788,7 @@ def run(context: dict[str, object]) -> None:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        manifest_sha = json.loads(preview.stdout)["manifest_sha256"]
+        launch_approval_sha = json.loads(preview.stdout)["launch_approval_sha256"]
         env = dict(os.environ)
         env.update({
             "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
@@ -2390,7 +2803,7 @@ def run(context: dict[str, object]) -> None:
         process = subprocess.Popen(
             [
                 str(worker), "--workdir", str(repo),
-                "--approve-whole-worktree", manifest_sha,
+                "--approve-whole-worktree", launch_approval_sha,
                 "--model", "gemini-3.6-flash", "--effort", "high",
             ],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -3251,14 +3664,14 @@ def run(context: dict[str, object]) -> None:
     def v10_sanitized_outer_terminal_disposition_contracts() -> None:
         """Issue #82: Sanitized outer terminal disposition and V10 migration."""
         job, state, state_sha, _envelope = current_candidate_fixture("v10-terminal-disposition")
-        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 11
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 13
         assert state["provider_terminal_status"] == "unknown"
 
         # 1. State validation bounds on provider_terminal_status enum
         for valid_status in ("unknown", "success", "error", "cancelled"):
             candidate_state = dict(state)
             candidate_state["schema_version"] = 10
-            for field in MODULE.STATE_V11_FIELDS:
+            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
                 candidate_state.pop(field)
             candidate_state["provider_terminal_status"] = valid_status
             MODULE.validate_state(candidate_state)
@@ -3266,7 +3679,7 @@ def run(context: dict[str, object]) -> None:
         for invalid_status in ("canceled", "SUCCESS", "ERROR", "CANCELLED", None, 123, "", "other"):
             candidate_state = dict(state)
             candidate_state["schema_version"] = 10
-            for field in MODULE.STATE_V11_FIELDS:
+            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
                 candidate_state.pop(field)
             candidate_state["provider_terminal_status"] = invalid_status
             try:
@@ -3339,7 +3752,7 @@ def run(context: dict[str, object]) -> None:
         candidate_state_v9["status"] = "succeeded"
         candidate_state_v9["driver_disposition"] = "unreviewed"
         candidate_state_v9.pop("provider_terminal_status", None)
-        for field in MODULE.STATE_V11_FIELDS:
+        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
             candidate_state_v9.pop(field)
         v9_actions = [item["action"] for item in MODULE.public_status(candidate_state_v9, "0" * 64, job=job)["available_actions"]]
         assert "verification-copy" in v9_actions, f"verification-copy missing in v9 actions: {v9_actions}"

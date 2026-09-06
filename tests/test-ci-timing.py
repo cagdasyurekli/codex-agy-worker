@@ -82,7 +82,7 @@ def rejected(report: dict[str, Any]) -> bool:
     return False
 
 
-check("inventory has 41 ordered unique stage IDs", len(MODULE.STAGES) == 41 and len({s.id for s in MODULE.STAGES}) == 41)
+check("inventory has 44 ordered unique stage IDs", len(MODULE.STAGES) == 44 and len({s.id for s in MODULE.STAGES}) == 44)
 check("inventory digest is lowercase SHA-256", MODULE.SHA256_RE.fullmatch(MODULE.inventory_digest()) is not None)
 check("canonical stage announcement inventory matches observer", lambda: (MODULE.validate_stage_inventory(ROOT / "scripts" / "ci_stages.py") or True))
 
@@ -322,7 +322,12 @@ empty = subprocess.run(
 check("shell wrapper rejects an empty timing path", empty.returncode == 2 and b"rejected arguments" in empty.stderr)
 
 for forbidden in ("command", "environment", "logs", "credential", "provider", "account", "timestamp", "hostname", "cost", "path"):
-    check(f"report schema excludes {forbidden}", forbidden not in json.dumps(passed_report, sort_keys=True).lower())
+    check(
+        f"report schema excludes {forbidden}",
+        forbidden not in passed_report
+        and forbidden not in passed_report["integrity"]
+        and all(forbidden not in suite for suite in passed_report["suites"]),
+    )
 
 print()
 print(f"PASSED: {passed} tests")

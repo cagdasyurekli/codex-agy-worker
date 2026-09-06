@@ -30,20 +30,28 @@ a new conversation.
 
 Keep these hard boundaries regardless of workflow:
 
-- Do not let a job write outside its disposable worktree, enter `.git`, or escape via a
-  symlink. User denylist paths constrain requested writes. Gate `--only` constrains
+- Keep requested writes and controller reconciliation within the disposable worktree;
+  reject `.git` access and symlink escapes during reconciliation. Session mode retains
+  normal user host access and cannot enforce a provider filesystem boundary.
+  User denylist paths constrain requested writes. Gate `--only` constrains
   candidate changed paths after dispatch; `--allow` only exempts matching undeclared
   artifacts from rejection. None of these isolate provider reads.
 - Prefer `--provider-scope` for bounded jobs. It binds exact reviewed read entries, a
   selected-content digest, and a
   write subset, then stages only those entries in a fresh owner-private mode-`0700`
   Gitless provider cwd. Whole-worktree dispatch remains an explicit exception and
-  requires `--approve-whole-worktree` bound to the current path/kind manifest; without
+  requires `--approve-whole-worktree` bound to the preview’s mode-bound
+  `launch_approval_sha256`; without
   provider scope, treat every worktree entry as worker-readable and potentially
   transmissible to Google/Gemini, and remember that `--add-dir` does not narrow it.
   The controller still locally enumerates and validates
-  worktree/scope paths, and the stage is not a filesystem, network, `PATH`, `HOME`, or
-  same-UID sandbox. Keep secrets, denied paths, and unrelated private content outside
+  worktree/scope paths. New jobs default to `--provider-isolation session`, preserving
+  the existing AGY session and normal user filesystem/network access. Include this
+  mode in the initial approval; do not add a separate approval step. Explicit
+  `--provider-isolation native` adds supported macOS scoped containment with private
+  HOME/TMP and documented network/Keychain exposure, without fallback to session.
+  Preserve the selected mode across repair and legacy jobs' original behavior. Keep
+  secrets, denied paths, and unrelated private content outside
   every entry approved for either transmission mode.
 - Provider, probe, and verifier children start with an operational allowlist. Do not
   pass `--provider-env` or `--verify-env` without approval for each variable name and
@@ -63,8 +71,8 @@ Keep these hard boundaries regardless of workflow:
   If baseline activation needs new evidence or authority, keep the goal active and
   report that exact blocker instead of silently narrowing the requested outcome.
 
-Before external agy dispatch, confirm approval for the exact mode and content. Default
-mode requires whole-worktree approval. Scoped mode requires the exact reviewed policy
+Before external agy dispatch, confirm approval for the exact mode and content. Whole-worktree
+transmission requires its explicit `launch_approval_sha256` approval. Scoped mode requires the exact reviewed policy
 and `transmission_sha256`; that approval grants neither provider execution, Git action,
 driver acceptance, nor publication.
 
@@ -91,13 +99,16 @@ recovery or compatibility surfaces; the facade delegates to them and does not ow
 second lifecycle state machine or infer driver assurance.
 
 `project` state is a local controller record, not provider truth. Use its status/wait
-commands for progress, `continue` only with driver-owned strict verification JSON, and
+commands for progress, `continue` only with driver-owned candidate-bound Verification
+v2 (manual input or the bound optional self-verification artifact), and
 `finalize` only after Codex has established the assurance result. Preserve the candidate
 when the cycle or time budget ends; report what passed, what did not, and the next safe
 action. Fresh `restart` remains an explicit user decision.
-Because the current `continue` surface cannot collect a fresh transmission approval, a
-scoped candidate whose approved content changed is result/finalize-only; never treat its
-original transmission SHA as authority to send the changed bytes again.
+Without an explicit initial scoped-repair grant, a scoped candidate whose approved
+content changed is result/finalize-only. With `--allow-scoped-repair`, the controller
+binds permitted candidate evolution to the same scope, model, conversation, and budget.
+Do not request another human approval solely to refresh a mechanical state digest;
+require new authority for material scope, exposure, destination, or budget changes.
 
 Do not describe agy's interface from memory. Run `./ground-truth.sh` and inspect
 `agy --help` before changing agy-facing flags or claims. agy can return exit 0 with
@@ -200,12 +211,8 @@ inventories: route with one relevant map row, then use a narrow current-graph qu
 only when relationships materially help. Check graph freshness and verify every
 material edge against source and tests. When relevant source changes make the graph
 stale and a current relationship or impact query would materially help, follow the
-Graphify skill's incremental update workflow before relying on it. If
-`graphify-out/graph.json` already exists, an in-scope change to code structure,
-workflow or trust boundaries, or graph-indexed documentation requires an incremental
-Graphify refresh and graph-health readback before completion. Pure wording changes,
-test-expectation corrections, and release or publication actions alone do not trigger
-a refresh. Run it only over the reviewed repository corpus; if refresh fails, report
-the graph as stale and do not cite it. Never add generated `graphify-out/` artifacts
+Graphify skill's incremental update workflow before relying on it. Do not rebuild
+an index merely because source changed. Run any needed refresh only over the reviewed
+repository corpus; if refresh fails, report the graph as stale and do not cite it. Never add generated `graphify-out/` artifacts
 to Git or an agy prompt, and keep owner-private evidence or untracked campaign
 material outside the Graphify corpus.

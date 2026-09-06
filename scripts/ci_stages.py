@@ -117,6 +117,27 @@ STAGES: tuple[Stage, ...] = (
         {"receipt_id": "dispatcher-remediation"},
     ),
     Stage(
+        "provider-containment",
+        "provider containment suite",
+        "other-b",
+        ("/usr/bin/python3", "-I", "-S", "-B", "tests/test-provider-containment.py"),
+        {"receipt_id": "provider-containment"},
+    ),
+    Stage(
+        "self-verification",
+        "self-verification suite",
+        "other-a",
+        ("/usr/bin/python3", "-I", "-S", "-B", "tests/test-self-verification.py"),
+        {"receipt_id": "self-verification"},
+    ),
+    Stage(
+        "self-verification-lifecycle",
+        "self-verification lifecycle suite",
+        "other-a",
+        ("/usr/bin/python3", "-I", "-S", "-B", "tests/test-self-verification-lifecycle.py"),
+        {"receipt_id": "self-verification-lifecycle"},
+    ),
+    Stage(
         "updater",
         "updater suite",
         "other-a",

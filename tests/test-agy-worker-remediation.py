@@ -33,10 +33,17 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 103
+EXPECTED_CHECKS = 109
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
-GROUP_CHECKS = {"core": 62, "runtime": 1, "recovery": 40}
+# This test-only switch exercises portable controller mechanics on macOS when
+# nested Seatbelt execution is unavailable. It has no production counterpart.
+PORTABLE_SCOPED_FIXTURE = os.environ.get(
+    "AGY_WORKER_REMEDIATION_PORTABLE_FIXTURE",
+) == "1"
+# The prior partition labels were transposed: the source contained 61 core and
+# 41 recovery calls. The manifest/grant and nested-deletion cases raise core to 63.
+GROUP_CHECKS = {"core": 63, "runtime": 1, "recovery": 45}
 
 
 def selected_group(arguments: list[str]) -> str | None:
@@ -122,6 +129,226 @@ def run_controller(job: Path, bin_dir: Path) -> int:
                 os.close(descriptor)
             except OSError:
                 pass
+
+
+def _run_scoped_controller_linux_fixture(
+    job: Path, bin_dir: Path, *, fixture_kind: str = "normal",
+) -> int:
+    """Run scoped recovery mechanics under an explicit non-native test adapter.
+
+    Native Seatbelt containment is covered by ``test-provider-containment.py``.
+    This subprocess fixture keeps the portable controller/reconciliation tests
+    meaningful on Linux without adding a production host exception or claiming
+    that their green result establishes native containment.
+    """
+    harness = r'''
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+from types import SimpleNamespace
+import sys
+
+source = Path(sys.argv[1])
+job = Path(sys.argv[2])
+ownership_fd = int(sys.argv[3])
+fixture_kind = sys.argv[4]
+spec = importlib.util.spec_from_file_location("agy_dispatch_linux_fixture", source)
+dispatch = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(dispatch)
+
+
+class TestOnlyNonDarwinContainment:
+    """Narrow adapter for portable controller mechanism tests only.
+
+    It never represents Seatbelt, host support, or production containment.  It
+    binds only the child session the controller just spawned and writes its
+    inspection record into the owner-private job fixture.
+    """
+
+    ContainmentError = RuntimeError
+    ROLE_PROVIDER = "provider"
+    NETWORK_PROVIDER_TLS = "provider-tls"
+
+    def __init__(self, directory):
+        self.job = directory
+        self.trace_path = directory / "test-only-linux-containment.json"
+        self.trace = {"host": "non-darwin-test-fixture", "groups": []}
+        self.bound_pids = set()
+
+    def _record(self):
+        descriptor = os.open(
+            self.trace_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+            0o600,
+        )
+        try:
+            os.write(descriptor, json.dumps(
+                self.trace, sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8"))
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def prepare_contained_launch(
+        self, *, role, network_policy, job_dir, attempt, stage_dir,
+        target_executable, target_argv, child_environment, allow_keychain,
+        read_only_inputs,
+    ):
+        if role != self.ROLE_PROVIDER or network_policy != self.NETWORK_PROVIDER_TLS:
+            raise self.ContainmentError("test containment policy is invalid")
+        if Path(job_dir) != self.job or Path(stage_dir).parent != self.job:
+            raise self.ContainmentError("test containment path is invalid")
+        if not target_argv or target_argv[0] != str(target_executable):
+            raise self.ContainmentError("test containment target is invalid")
+        if not allow_keychain or len(read_only_inputs) != 1:
+            raise self.ContainmentError("test containment inputs are invalid")
+        home = self.job / "provider-home"
+        attempt_tmp = self.job / f"provider-tmp-{attempt:03d}"
+        home.mkdir(mode=0o700, exist_ok=True)
+        home.chmod(0o700)
+        attempt_tmp.mkdir(mode=0o700, exist_ok=False)
+        for directory in (home, attempt_tmp):
+            directory.chmod(0o700)
+        environment = dict(child_environment)
+        environment.update({
+            "HOME": str(home),
+            "TMPDIR": str(attempt_tmp),
+            "XDG_CACHE_HOME": str(home / ".cache"),
+            "XDG_CONFIG_HOME": str(home / ".config"),
+            "XDG_DATA_HOME": str(home / ".local" / "share"),
+            "XDG_STATE_HOME": str(home / ".local" / "state"),
+        })
+        prepared = SimpleNamespace(
+            target_argv=tuple(target_argv), target_executable=str(target_executable),
+            stage_dir=str(stage_dir), environment=environment,
+        )
+        self.trace["prepare"] = {
+            "target_argv": list(prepared.target_argv),
+            "executable": prepared.target_executable,
+            "cwd": prepared.stage_dir,
+            "environment": dict(sorted(prepared.environment.items())),
+        }
+        self._record()
+        return prepared
+
+    def confirm_contained_launch(self, prepared):
+        if not prepared.target_argv or prepared.target_argv[0] != prepared.target_executable:
+            raise self.ContainmentError("test containment target changed")
+        confirmed = SimpleNamespace(
+            argv=prepared.target_argv,
+            executable=prepared.target_executable,
+            cwd=prepared.stage_dir,
+            environment=dict(prepared.environment),
+        )
+        self.trace["confirm"] = {
+            "argv": list(confirmed.argv),
+            "executable": confirmed.executable,
+            "cwd": confirmed.cwd,
+            "environment": dict(sorted(confirmed.environment.items())),
+        }
+        self._record()
+        return confirmed
+
+    def bind_new_process_group(self, pid):
+        if type(pid) is not int or pid <= 1:
+            raise self.ContainmentError("test containment PID is invalid")
+        self.bound_pids.add(pid)
+        self.trace["groups"].append({"event": "bind", "pid": pid})
+        self._record()
+        return pid
+
+    def terminate_bound_process_group(self, pid, number=signal.SIGKILL):
+        if pid not in self.bound_pids or number not in {signal.SIGTERM, signal.SIGKILL}:
+            raise self.ContainmentError("test containment cleanup is invalid")
+        self.trace["groups"].append({"event": "terminate", "pid": pid, "signal": number})
+        self._record()
+        try:
+            os.killpg(pid, number)
+        except ProcessLookupError:
+            pass
+        return ()
+
+    def process_group_is_quiescent(self, pid):
+        if pid not in self.bound_pids:
+            raise self.ContainmentError("test containment group is unbound")
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        return False
+
+
+adapter = TestOnlyNonDarwinContainment(job)
+original_containment = dispatch.CONTAINMENT
+dispatch.CONTAINMENT = adapter
+original_materialize = dispatch._materialize_stage
+if fixture_kind == "copy-drift":
+    def drift_immediately_before_copy(source_root, stage_dir, scope, selected_manifest):
+        (Path(source_root) / "payload.bin").write_bytes(b"copy-window-source-drift\n")
+        (job / "copy-drift-injected").write_text("injected\n", encoding="ascii")
+        return original_materialize(source_root, stage_dir, scope, selected_manifest)
+    dispatch._materialize_stage = drift_immediately_before_copy
+try:
+    raise SystemExit(dispatch.controller(job, ownership_fd))
+finally:
+    dispatch._materialize_stage = original_materialize
+    dispatch.CONTAINMENT = original_containment
+'''
+    lock = job / MODULE.LOCK_NAME
+    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    os.fchmod(descriptor, 0o600)
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    environment = os.environ.copy()
+    environment["PATH"] = f"{bin_dir}{os.pathsep}{environment.get('PATH', '')}"
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable, "-I", "-S", "-B", "-c", harness,
+                str(SOURCE), str(job), str(descriptor), fixture_kind,
+            ],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=environment, pass_fds=(descriptor,), check=False,
+        )
+    finally:
+        os.close(descriptor)
+    if completed.stdout or completed.stderr:
+        raise AssertionError((
+            "test-only Linux containment controller emitted output",
+            completed.stdout.decode("utf-8", "replace"),
+            completed.stderr.decode("utf-8", "replace"),
+        ))
+    return completed.returncode
+
+
+def scoped_controller_uses_portable_fixture() -> bool:
+    """Keep macOS scoped tests on Seatbelt unless explicitly simulating Linux."""
+    return sys.platform != "darwin" or PORTABLE_SCOPED_FIXTURE
+
+
+def run_scoped_controller(
+    job: Path, bin_dir: Path, *, fixture_kind: str = "normal",
+    native_containment: bool = True,
+) -> int:
+    """Run the historical execution path or native containment as command-bound."""
+    if native_containment and scoped_controller_uses_portable_fixture():
+        return _run_scoped_controller_linux_fixture(job, bin_dir, fixture_kind=fixture_kind)
+    if fixture_kind != "copy-drift":
+        return run_controller(job, bin_dir)
+    original_materialize = MODULE._materialize_stage
+
+    def drift_immediately_before_copy(source_root, stage_dir, scope, selected_manifest):
+        (Path(source_root) / "payload.bin").write_bytes(b"copy-window-source-drift\n")
+        (job / "copy-drift-injected").write_text("injected\n", encoding="ascii")
+        return original_materialize(source_root, stage_dir, scope, selected_manifest)
+
+    MODULE._materialize_stage = drift_immediately_before_copy
+    try:
+        return run_controller(job, bin_dir)
+    finally:
+        MODULE._materialize_stage = original_materialize
 
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -448,6 +675,76 @@ with tempfile.TemporaryDirectory() as temporary:
 
     check("stale approval guidance includes only required placeholders and invents no values", stale_approval_guidance_keeps_required_caller_inputs)
 
+    def self_verification_manifest_is_private_and_bound_into_repair_authority() -> None:
+        job = (root / "self-verification-binding-job").resolve(); job.mkdir(mode=0o700)
+        candidate = (root / "self-verification-binding-worktree").resolve(); candidate.mkdir()
+        manifest = job / "self-verification-manifest.json"
+        manifest_raw = MODULE.canonical({
+            "schema_version": 1,
+            "kind": "agy-worker-self-verification",
+            "max_seconds": 10,
+            "checks": [{
+                "id": "required", "argv": ["/usr/bin/python3", "-V"],
+                "required": True, "timeout_seconds": 5,
+                "output_limit_bytes": 1024,
+            }],
+        })
+        manifest.write_bytes(manifest_raw); manifest.chmod(0o600)
+        manifest_info = manifest.stat()
+        command = {
+            "schema_version": 9, "kind": "agy-worker-dispatch-command",
+            "job_id": "self-verification-binding", "workdir": str(candidate),
+            "argv": ["agy", "--print", "task"],
+            "agy_version": "1.1.22", "agy_version_observed": True,
+            "idle_seconds": 1, "hard_seconds": 2, "max_seconds": 20,
+            "notice_seconds": 3, "stage_dir": None, "stage_file": None,
+            "child_umask": "022", "resume_prompt": "resume",
+            "continue_prompt": "continue", "selection_path": None,
+            "selection_sha256": None, "selection_identity": None,
+            "provider_env": [], "provider_scope_path": str(manifest),
+            "provider_scope_sha256": "2" * 64,
+            "provider_scope_identity": list(MODULE._identity(manifest_info)),
+            "approved_transmission_sha256": "1" * 64,
+            "approved_whole_worktree_sha256": None,
+            "boost": False, "boost_policy_sha256": None,
+            "approved_boost_risk_sha256": None,
+            "allow_self_verification": True,
+            "self_verification_manifest_path": str(manifest),
+            "self_verification_manifest_sha256": MODULE.digest(manifest_raw),
+            "self_verification_manifest_identity": list(MODULE._identity(manifest_info)),
+            "allow_scoped_repair": True,
+            "workflow": "task", "max_cycles": 2,
+            "repair_authority_sha256": None,
+        }
+        parsed = MODULE._bound_self_verification_manifest(command, job)
+        assert parsed is not None and parsed.checks[0].identifier == "required"
+        binding = MODULE.self_verification_binding_sha256(command)
+        authority = MODULE.scoped_repair_authority_sha256(
+            command, verification_binding_sha256=binding,
+        )
+        command["repair_authority_sha256"] = authority
+        MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+        loaded, _raw, _identity = MODULE.load_command(job)
+        assert loaded["repair_authority_sha256"] == authority
+        drifted = dict(command)
+        drifted["self_verification_manifest_sha256"] = "3" * 64
+        assert MODULE.scoped_repair_authority_sha256(
+            drifted,
+            verification_binding_sha256=MODULE.self_verification_binding_sha256(drifted),
+        ) != authority
+        manifest.write_bytes(manifest_raw + b" ")
+        try:
+            MODULE.load_command(job)
+        except MODULE.DispatchError as exc:
+            assert str(exc) == "self-verification manifest binding changed"
+        else:
+            raise AssertionError("changed self-verification manifest retained repair authority")
+
+    check(
+        "private self-verification manifest is exact and changes the scoped repair grant",
+        self_verification_manifest_is_private_and_bound_into_repair_authority,
+    )
+
     def state_v4_migrates_additively() -> None:
         command = {
             "workdir": str(root), "workflow": "legacy", "max_cycles": 1, "job_id": "legacy",
@@ -456,7 +753,7 @@ with tempfile.TemporaryDirectory() as temporary:
         state = MODULE.initial_state(command, "initial", 1, command_sha="0" * 64, command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None, state_schema=8)
         state.update({"phase": None, "assurance": None})
         state["schema_version"] = 4
-        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}:
+        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
             state.pop(key, None)
         migrated = MODULE.validate_state(state)
         assert migrated["candidate_source"] == "none"
@@ -477,7 +774,7 @@ with tempfile.TemporaryDirectory() as temporary:
         )
         original.update({"phase": None, "assurance": None})
         v3 = copy.deepcopy(original); v3["schema_version"] = 3
-        for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}:
+        for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
             v3.pop(key, None)
         validated_v3 = MODULE.validate_state(v3)
         assert validated_v3["schema_version"] == 3
@@ -527,7 +824,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 "last_success_identity": list(MODULE._identity(info)),
                 "phase": "awaiting-verification", "assurance": "pending", "resume_available": False,
             })
-            for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}:
+            for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
                 state.pop(key)
             MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             return job, worktree, artifact
@@ -1586,6 +1883,79 @@ with tempfile.TemporaryDirectory() as temporary:
 
     check("tracked untracked ignored deleted symlink and mode changes alter the bounded digest", reconciliation_hashes_content_under_same_git_status)
 
+    def snapshot_accepts_nested_deletions_and_rejects_parent_replacement_races() -> None:
+        """A missing tracked parent is a deletion only while it stays missing."""
+        repo = root / "nested-deletion-repo"; repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email", "fixture@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Fixture"], check=True)
+        nested = repo / "nested"; nested.mkdir()
+        (nested / "tracked.txt").write_text("nested\n", encoding="utf-8")
+        root_file = repo / "root.txt"; root_file.write_text("root\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True)
+
+        baseline = MODULE._worktree_snapshot(str(repo)); assert baseline is not None
+        assert MODULE._worktree_snapshot(str(repo)) == baseline
+
+        shutil.rmtree(nested)
+        unstaged = MODULE._worktree_snapshot(str(repo)); assert unstaged is not None
+        assert unstaged["entries"] == 1 and unstaged != baseline
+
+        subprocess.run(["git", "-C", str(repo), "reset", "--hard", "-q", "HEAD"], check=True)
+        subprocess.run(["git", "-C", str(repo), "rm", "-qr", "nested"], check=True)
+        staged = MODULE._worktree_snapshot(str(repo)); assert staged is not None
+        assert staged["entries"] == 1 and staged != baseline and staged != unstaged
+
+        subprocess.run(["git", "-C", str(repo), "reset", "--hard", "-q", "HEAD"], check=True)
+        root_file.unlink()
+        root_deleted = MODULE._worktree_snapshot(str(repo)); assert root_deleted is not None
+        assert root_deleted["entries"] == 1 and root_deleted != baseline
+
+        subprocess.run(["git", "-C", str(repo), "reset", "--hard", "-q", "HEAD"], check=True)
+        outside = root / "nested-deletion-outside"; outside.mkdir()
+        (outside / "tracked.txt").write_text("outside\n", encoding="utf-8")
+
+        def race_missing_parent(replacement: str) -> None:
+            shutil.rmtree(nested)
+            original_open = MODULE.os.open
+            opens = 0
+
+            def replace_before_revalidation(path, flags, *args, **kwargs):
+                nonlocal opens
+                if path == b"nested" and kwargs.get("dir_fd") is not None:
+                    opens += 1
+                    if opens == 2:
+                        if replacement == "directory":
+                            nested.mkdir()
+                            (nested / "tracked.txt").write_text("late\n", encoding="utf-8")
+                        else:
+                            nested.symlink_to(outside, target_is_directory=True)
+                return original_open(path, flags, *args, **kwargs)
+
+            MODULE.os.open = replace_before_revalidation
+            try:
+                assert MODULE._worktree_snapshot(str(repo)) is None
+                assert opens == 2, (replacement, opens)
+            finally:
+                MODULE.os.open = original_open
+                if nested.is_symlink():
+                    nested.unlink()
+                elif nested.exists():
+                    shutil.rmtree(nested)
+                subprocess.run(
+                    ["git", "-C", str(repo), "reset", "--hard", "-q", "HEAD"],
+                    check=True,
+                )
+
+        race_missing_parent("directory")
+        race_missing_parent("symlink")
+
+    check(
+        "snapshot accepts staged and unstaged nested deletions but rejects missing-parent replacement races",
+        snapshot_accepts_nested_deletions_and_rejects_parent_replacement_races,
+    )
+
     def semantic_snapshot_ignores_ephemeral_driver_caches_and_index_refresh() -> None:
         """Driver checks may refresh Git/cache metadata without changing a candidate."""
         repo = root / "semantic-cache-repo"; repo.mkdir()
@@ -1624,6 +1994,7 @@ with tempfile.TemporaryDirectory() as temporary:
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         bound_provider = root / "bound-provider.json"; provider_schema(bound_provider)
         command = {
+            "schema_version": 10, "provider_isolation": "session",
             "workdir": str(repo), "workflow": "task", "max_cycles": 1, "job_id": "bound",
             "hard_seconds": 2, "max_seconds": 4, "idle_seconds": 1,
             "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
@@ -2313,7 +2684,7 @@ with tempfile.TemporaryDirectory() as temporary:
             "phase": None, "assurance": None,
         })
         state["schema_version"] = 4
-        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS}:
+        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
             state.pop(key)
         old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         loaded, _raw, read_sha = MODULE.read_state_snapshot(job)
@@ -3046,6 +3417,7 @@ with tempfile.TemporaryDirectory() as temporary:
         removed = MODULE._worktree_snapshot(str(repo)); assert removed is not None
         assert removed["sha256"] == baseline["sha256"] and removed["entries"] == baseline["entries"]
         command = {
+            "schema_version": 10, "provider_isolation": "session",
             "workdir": str(repo), "workflow": "task", "max_cycles": 2, "job_id": "empty-topology",
             "hard_seconds": 2, "max_seconds": 4, "idle_seconds": 1,
         }

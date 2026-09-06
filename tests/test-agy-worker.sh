@@ -124,7 +124,7 @@ assert value["user_model"] == model
 assert value.get("user_effort", "") == effort
 assert value["resolved_agy_model"] == resolved
 assert len(value["matrix_sha256"]) == 64
-assert value["matrix_agy_version"] == "1.1.24"
+assert value["matrix_agy_version"] == "1.1.26"
 assert len(value["matrix_source_revision"]) == 40
 assert value["recommendation_only"] is True
 assert value["applied"] is False
@@ -225,8 +225,8 @@ LOGS_REAL="$(cd "$TMP/logs" && pwd -P)"
 whole_worktree_manifest_sha() {
     local worker_path="$1" worktree_path="$2" canonical_worktree
     canonical_worktree="$(cd "$worktree_path" && pwd -P)" || return 64
-    "$worker_path" transmission-preview --workdir "$canonical_worktree" \
-        | python3 -c 'import json, sys; print(json.load(sys.stdin)["manifest_sha256"])'
+    "$worker_path" transmission-preview --workdir "$canonical_worktree" --provider-isolation session \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin)["launch_approval_sha256"])'
 }
 
 echo "transmission preview boundary:"
@@ -330,6 +330,19 @@ assert scoped["contents_read"] is True
 assert scoped["provider_launched"] is False
 assert scoped["network_used"] is False
 assert b"CHANGED-SECRET-CONTENT-MUST-NOT-APPEAR" not in scoped_run.stdout
+scope_path.chmod(0o644)
+invalid_scope_run = subprocess.run(
+    [
+        worker, "transmission-preview", "--workdir", str(worktree),
+        "--provider-scope", str(scope_path), "--format", "json",
+    ],
+    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    env=environment, check=False,
+)
+assert invalid_scope_run.returncode == 20 and not invalid_scope_run.stdout
+assert invalid_scope_run.stderr == b"agy-worker.sh: transmission preview unavailable\n"
+assert b"Traceback" not in invalid_scope_run.stderr
+scope_path.chmod(0o600)
 
 typed = worktree / "type-boundary"
 typed.write_text("x")
@@ -586,11 +599,143 @@ else
     bad "provider scope parser validates schema, paths, and write-covered-by-read invariants"
 fi
 
+if python3 -B - "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py" \
+        "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" "$WORKER" <<'PY'
+import importlib.util
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import tempfile
+
+sys.dont_write_bytecode = True
+worktree_path, dispatch_path, worker_path = map(Path, sys.argv[1:])
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+worktree = load("scope_worktree", worktree_path)
+dispatch = load("scope_dispatch", dispatch_path)
+readers = (
+    (worktree._read_provider_scope_file, worktree.ReadableManifestError),
+    (dispatch._read_provider_scope_file, dispatch.DispatchError),
+)
+
+with tempfile.TemporaryDirectory(prefix="agy-provider-scope-") as temporary:
+    root = Path(temporary).resolve(strict=True)
+    root.chmod(0o700)
+    scope = root / "scope.json"
+    scope.write_bytes(b'{"schema_version":1}')
+    scope.chmod(0o600)
+
+    expected = None
+    for reader, _error_type in readers:
+        resolved, raw, info = reader(scope, 512 * 1024)
+        binding = (resolved, raw, (info.st_dev, info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)))
+        expected = binding if expected is None else expected
+        assert binding == expected
+        assert stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1
+
+    for mode in (0o644, 0o400, 0o660):
+        scope.chmod(mode)
+        for reader, error_type in readers:
+            try:
+                reader(scope, 512 * 1024)
+            except error_type:
+                pass
+            else:
+                raise AssertionError(f"mode {mode:o} was accepted")
+    scope.chmod(0o600)
+
+    alias = root / "scope-alias.json"
+    alias.symlink_to(scope)
+    for reader, error_type in readers:
+        try:
+            reader(alias, 512 * 1024)
+        except error_type:
+            pass
+        else:
+            raise AssertionError("symlink was accepted")
+    alias.unlink()
+
+    hardlink = root / "scope-hardlink.json"
+    os.link(scope, hardlink)
+    for reader, error_type in readers:
+        try:
+            reader(scope, 512 * 1024)
+        except error_type:
+            pass
+        else:
+            raise AssertionError("hardlink was accepted")
+    hardlink.unlink()
+
+    fifo = root / "scope.fifo"
+    os.mkfifo(fifo, 0o600)
+    for reader, error_type in readers:
+        try:
+            reader(fifo, 512 * 1024)
+        except error_type:
+            pass
+        else:
+            raise AssertionError("FIFO was accepted")
+
+    immediate_parent = root / "verification-parent"
+    immediate_parent.mkdir(mode=0o755)
+    immediate_parent.chmod(0o755)
+    try:
+        dispatch._verification_copy_destination(immediate_parent / "candidate", root)
+    except dispatch.DispatchError as exc:
+        assert str(exc) == "verification copy destination immediate parent must be current-user mode 0700"
+    else:
+        raise AssertionError("non-0700 immediate parent was accepted")
+
+    for reader, error_type in readers:
+        scope.write_bytes(b"before")
+        scope.chmod(0o600)
+        replacement = root / "replacement.json"
+        replacement.write_bytes(b"after")
+        replacement.chmod(0o600)
+        original_read = os.read
+        swapped = [False]
+        def replace_after_read(descriptor, count):
+            chunk = original_read(descriptor, count)
+            if not swapped[0]:
+                os.replace(replacement, scope)
+                swapped[0] = True
+            return chunk
+        os.read = replace_after_read
+        try:
+            reader(scope, 512 * 1024)
+        except error_type:
+            pass
+        else:
+            raise AssertionError("replacement during read was accepted")
+        finally:
+            os.read = original_read
+
+help_result = subprocess.run(
+    [str(worker_path), "verification-copy", "--help"],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+)
+assert help_result.returncode == 0 and not help_result.stdout
+assert b"NEW_DIRECTORY_IN_0700_PARENT" in help_result.stderr
+PY
+then
+    ok "provider scope reads and verification-copy immediate-parent boundary are strict and explicit"
+else
+    bad "provider scope reads and verification-copy immediate-parent boundary are strict and explicit"
+fi
+
 # Help is an informational CLI surface, never a result-envelope path.  It must
 # succeed before log/state setup for the top level and every public subcommand;
 # malformed use remains a normal 64 with no stdout JSON.
 help_ok=1
-for help_command in '' run start status wait result extend cancel resume restart continue finalize; do
+for help_command in '' run start status wait result extend cancel resume restart continue self-verify finalize; do
     help_out="$TMP/help-${help_command:-top}.out"
     help_err="$TMP/help-${help_command:-top}.err"
     if [[ -n "$help_command" ]]; then
@@ -628,6 +773,10 @@ cat > "$TMP/bin/agy" <<'FAKE'
 #!/usr/bin/env bash
 set -u
 FAKE_EXECUTABLE_CONTENT_SENTINEL=round-two-binding-original
+fake_helper_python=python3
+if [[ "${OSTYPE:-}" == darwin* ]]; then
+    fake_helper_python=/Library/Developer/CommandLineTools/usr/bin/python3
+fi
 FAKE_CALLS_FILE="${FAKE_CALLS_FILE:-/dev/null}"
 FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-/dev/null}"
 if [[ -n "${FAKE_ENV_OBSERVED_FILE:-}" ]]; then
@@ -637,17 +786,20 @@ if [[ -n "${FAKE_ENV_OBSERVED_FILE:-}" ]]; then
         printf '%s:absent\n' "${1:-worker}" >> "$FAKE_ENV_OBSERVED_FILE"
     fi
 fi
+if [[ -n "${FAKE_HOME_OBSERVED_FILE:-}" ]]; then
+    printf '%s\n' "$HOME" > "$FAKE_HOME_OBSERVED_FILE"
+fi
 if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
     printf 'version\n' >> "$FAKE_CALLS_FILE"
     case "${FAKE_VERSION_MODE:-ready}" in
-        ready) printf '1.1.24\n' ;;
+        ready) printf '1.1.26\n' ;;
         quota113) printf '1.1.13\n' ;;
-        prefixed) printf 'agy 1.1.24\n' ;;
+        prefixed) printf 'agy 1.1.26\n' ;;
         drift) printf '1.1.11\n' ;;
         drift117) printf '1.1.17\n' ;;
         drift999) printf '9.9.9\n' ;;
         empty) : ;;
-        malformed) printf 'version 1.1.24\n' ;;
+        malformed) printf 'version 1.1.26\n' ;;
         oversize) i=0; while [[ $i -lt 140 ]]; do printf x; i=$((i+1)); done; printf '\n' ;;
         stream) while :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done ;;
         child-stream)
@@ -838,8 +990,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 if [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}" ]]; then
-    python3 -B - "$FAKE_PROMPT_FILE" "$FAKE_EDIT_FROM_BOUND_ROOT" \
-        "${FAKE_EDIT_CONTENT:-provider changed}" <<'PY'
+    fake_helper_error="${TMPDIR:-/tmp}/agy-worker-fake-edit-$$.stderr"
+    if ! "$fake_helper_python" -B - "$FAKE_PROMPT_FILE" "$FAKE_EDIT_FROM_BOUND_ROOT" \
+        "${FAKE_EDIT_CONTENT:-provider changed}" 2>"$fake_helper_error" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -854,6 +1007,14 @@ else:
 target = Path(root) / sys.argv[2]
 target.write_text(sys.argv[3] + "\n", encoding="utf-8")
 PY
+    then
+        printf '%s' 'fake agy: bound-root edit helper failed: ' >&2
+        /usr/bin/head -c 4096 "$fake_helper_error" >&2 || :
+        printf '\n' >&2
+        rm -f "$fake_helper_error"
+        exit 97
+    fi
+    rm -f "$fake_helper_error"
 fi
 if [[ -n "${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
     python3 -B - "$FAKE_PROMPT_FILE" "$FAKE_DELETE_FROM_BOUND_ROOT" <<'PY'
@@ -1018,15 +1179,40 @@ if [[ "${FAKE_DISPATCH_MODE:-result}" == "result" ]]; then
 fi
 if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
-elif [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
-    envelope="$(python3 -B - "${FAKE_EDIT_FROM_BOUND_ROOT:-$FAKE_DELETE_FROM_BOUND_ROOT}" \
-        "${FAKE_DELETE_FROM_BOUND_ROOT:+deleted}" <<'PY'
+elif [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}" ]]; then
+    fake_helper_error="${TMPDIR:-/tmp}/agy-worker-fake-envelope-$$.stderr"
+    if ! envelope="$("$fake_helper_python" -B - "$FAKE_EDIT_FROM_BOUND_ROOT" \
+        "" 2>"$fake_helper_error" <<'PY'
 import json
 import sys
 print(json.dumps({
     "status": "completed",
     "summary": "done",
     "files_changed": [{"path": sys.argv[1], "change": sys.argv[2] or "modified"}],
+    "commands_run": [],
+    "tests_run": [],
+    "risks": [],
+    "open_questions": [],
+    "confidence": 1,
+    "requires_human": False,
+}, separators=(",", ":")))
+PY
+)"; then
+        printf '%s' 'fake agy: result envelope helper failed: ' >&2
+        /usr/bin/head -c 4096 "$fake_helper_error" >&2 || :
+        printf '\n' >&2
+        rm -f "$fake_helper_error"
+        exit 97
+    fi
+    rm -f "$fake_helper_error"
+elif [[ -n "${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
+    envelope="$(python3 -B - "$FAKE_DELETE_FROM_BOUND_ROOT" deleted <<'PY'
+import json
+import sys
+print(json.dumps({
+    "status": "completed",
+    "summary": "done",
+    "files_changed": [{"path": sys.argv[1], "change": sys.argv[2]}],
     "commands_run": [],
     "tests_run": [],
     "risks": [],
@@ -1053,7 +1239,7 @@ run_worker() {
     for fake_provider_env_name in \
         FAKE_AGY_STATUS FAKE_ARGV_FILE FAKE_BAD_ENVELOPE FAKE_CALLED_FILE \
         FAKE_CALLS_FILE FAKE_CHILD_PID_FILE FAKE_DIRS_FILE FAKE_DISPATCH_COUNT_FILE \
-        FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_ERROR_LINE \
+        FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_HOME_OBSERVED_FILE FAKE_ERROR_LINE \
         FAKE_BOOST_INIT FAKE_BOOST_AGENT FAKE_BOOST_PERMISSION_MODE \
         FAKE_DELETE_FROM_BOUND_ROOT FAKE_EDIT_CONTENT FAKE_EDIT_FROM_BOUND_ROOT \
         FAKE_EXECUTABLE_SYMLINK_TARGET \
@@ -1090,13 +1276,13 @@ run_worker() {
     AGY_WORKER_MODE="${AGY_WORKER_MODE:-accept-edits}" \
     AGY_WORKER_LOG_DIR="${AGY_TEST_LOG_DIR:-$TMP/logs}" \
     AGY_WORKER_JOB_ID="$job" \
-    FAKE_MODEL_FILE="$TMP/$job.model" \
-    FAKE_PROMPT_FILE="$TMP/$job.prompt" \
-    FAKE_DIRS_FILE="$TMP/$job.dirs" \
-    FAKE_ARGV_FILE="$TMP/$job.argv" \
-    FAKE_STAGE_RESULT_FILE="$TMP/$job.stage-result" \
-    FAKE_CALLS_FILE="$TMP/$job.calls" \
-    FAKE_WORKER_CALLS_FILE="$TMP/$job.worker-calls" \
+    FAKE_MODEL_FILE="${FAKE_MODEL_FILE:-$TMP/$job.model}" \
+    FAKE_PROMPT_FILE="${FAKE_PROMPT_FILE:-$TMP/$job.prompt}" \
+    FAKE_DIRS_FILE="${FAKE_DIRS_FILE:-$TMP/$job.dirs}" \
+    FAKE_ARGV_FILE="${FAKE_ARGV_FILE:-$TMP/$job.argv}" \
+    FAKE_STAGE_RESULT_FILE="${FAKE_STAGE_RESULT_FILE:-$TMP/$job.stage-result}" \
+    FAKE_CALLS_FILE="${FAKE_CALLS_FILE:-$TMP/$job.calls}" \
+    FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-$TMP/$job.worker-calls}" \
     FAKE_VERSION_MODE="${FAKE_VERSION_MODE:-ready}" \
     FAKE_HELP_MODE="${FAKE_HELP_MODE:-ready}" \
     FAKE_MUTATE_EXECUTABLE="${FAKE_MUTATE_EXECUTABLE:-}" \
@@ -1129,12 +1315,13 @@ run_worker() {
     FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
     FAKE_SIDE_EFFECT_FILE="${FAKE_SIDE_EFFECT_FILE:-}" \
     FAKE_ENV_OBSERVED_FILE="${FAKE_ENV_OBSERVED_FILE:-}" \
+    FAKE_HOME_OBSERVED_FILE="${FAKE_HOME_OBSERVED_FILE:-}" \
     FAKE_ERROR_LINE="${FAKE_ERROR_LINE:-}" \
     FAKE_WARNING_LINE="${FAKE_WARNING_LINE:-}" \
     FAKE_QUOTA_ERROR="${FAKE_QUOTA_ERROR:-}" \
     FAKE_WORKER_VERIFIED="${FAKE_WORKER_VERIFIED:-0}" \
     FAKE_UTF8_SUMMARY="${FAKE_UTF8_SUMMARY:-0}" \
-    FAKE_CALLED_FILE="$TMP/$job.called" \
+    FAKE_CALLED_FILE="${FAKE_CALLED_FILE:-$TMP/$job.called}" \
     FAKE_SIGNAL_PARENT="${FAKE_SIGNAL_PARENT:-}" \
     FAKE_EXIT_CODE="${FAKE_EXIT_CODE:-0}" \
     "$worker_path" --workdir "$workdir" \
@@ -1224,10 +1411,17 @@ source = Path(sys.argv[1])
 target = Path(sys.argv[2])
 value = json.loads(source.read_text(encoding="utf-8"))
 value["schema_version"] = 6
+value.pop("provider_isolation")
 value.pop("approved_whole_worktree_sha256")
 value.pop("boost")
 value.pop("boost_policy_sha256")
 value.pop("approved_boost_risk_sha256")
+value.pop("allow_scoped_repair")
+value.pop("repair_authority_sha256")
+value.pop("allow_self_verification")
+value.pop("self_verification_manifest_path")
+value.pop("self_verification_manifest_sha256")
+value.pop("self_verification_manifest_identity")
 target.write_text(
     json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n",
     encoding="utf-8",
@@ -1282,12 +1476,23 @@ command.update({
     "max_seconds": 5,
     "notice_seconds": 2,
 })
+command.pop("provider_isolation")
 command.pop("approved_whole_worktree_sha256")
 command.pop("boost")
 command.pop("boost_policy_sha256")
 command.pop("approved_boost_risk_sha256")
+command.pop("allow_scoped_repair")
+command.pop("repair_authority_sha256")
+command.pop("allow_self_verification")
+command.pop("self_verification_manifest_path")
+command.pop("self_verification_manifest_sha256")
+command.pop("self_verification_manifest_identity")
+# V6 whole-worktree records predate provider_isolation; their historical AGY
+# sandbox argv remains the authoritative execution fact after normalization.
+command["argv"].insert(1, "--sandbox")
 module.write_atomic(job, module.COMMAND_NAME, command)
 loaded, command_raw, command_identity = module.load_command(job)
+assert loaded["argv"].count("--sandbox") == 1
 state = module.initial_state(
     loaded,
     "initial",
@@ -1332,6 +1537,10 @@ terminal, _, _ = module.load_state(job)
 assert terminal["status"] == "succeeded"
 assert terminal["attempt_origin"] == "initial"
 assert terminal["candidate_recognized"] is True
+assert module.bound_provider_execution(job, terminal) == {
+    "legacy": True, "scope": "whole-worktree", "agy_sandbox": True,
+    "native_containment": False,
+}
 assert (temp / "legacy-queued-v6.worker-calls").read_text(encoding="utf-8").splitlines() == ["worker"]
 PY
 legacy_queued_v6_rc=$?
@@ -1416,14 +1625,220 @@ BOOST_TRANSMISSION_SHA="$(
         --provider-scope "$BOOST_SCOPE" --format json \
         | python3 -c 'import json, sys; print(json.load(sys.stdin)["transmission_sha256"])'
 )"
+printf 'scoped repair authority test\n' | run_worker scoped-repair-authority \
+    --workflow task --max-cycles 2 --allow-scoped-repair \
+    --provider-scope "$BOOST_SCOPE" --approve-transmission-sha "$BOOST_TRANSMISSION_SHA" \
+    > "$TMP/scoped-repair-authority.out" 2> "$TMP/scoped-repair-authority.err"
+scoped_repair_authority_rc=$?
+if [[ "$scoped_repair_authority_rc" == 0 ]] && python3 -I -S -B - \
+        "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" \
+        "$TMP/logs/scoped-repair-authority" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+
+source, job_text = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("scoped_repair_command", source)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+command, _raw, _identity = module.load_command(Path(job_text).resolve())
+assert command["schema_version"] == 10
+assert command["provider_isolation"] == "session"
+assert command["allow_scoped_repair"] is True
+assert command["allow_self_verification"] is False
+assert command["repair_authority_sha256"] == module.scoped_repair_authority_sha256(
+    command, verification_binding_sha256=None,
+)
+PY
+then
+    ok "scoped repair opt-in writes one immutable command authority"
+else
+    bad "scoped repair opt-in command authority"
+fi
+
+scoped_repair_constraint_failures=0
+for repair_case in no-scope workflow cycles; do
+    repair_args=(--workflow task --max-cycles 2 --allow-scoped-repair)
+    case "$repair_case" in
+        no-scope) ;;
+        workflow) repair_args=(--workflow explore --max-cycles 2 --allow-scoped-repair --provider-scope "$BOOST_SCOPE" --approve-transmission-sha "$BOOST_TRANSMISSION_SHA") ;;
+        cycles) repair_args=(--workflow task --max-cycles 1 --allow-scoped-repair --provider-scope "$BOOST_SCOPE" --approve-transmission-sha "$BOOST_TRANSMISSION_SHA") ;;
+    esac
+    printf 'invalid scoped repair profile\n' | run_worker "scoped-repair-invalid-$repair_case" "${repair_args[@]}" \
+        > "$TMP/scoped-repair-invalid-$repair_case.out" 2> "$TMP/scoped-repair-invalid-$repair_case.err"
+    repair_case_rc=$?
+    if [[ "$repair_case_rc" != 64 || -e "$TMP/scoped-repair-invalid-$repair_case.called" ]]; then
+        scoped_repair_constraint_failures=$((scoped_repair_constraint_failures + 1))
+    fi
+done
+if (( scoped_repair_constraint_failures == 0 )); then
+    ok "scoped repair rejects missing scope and unsupported workflow or cycle bounds"
+else
+    bad "scoped repair public constraints"
+fi
+
+SELF_VERIFY_MANIFEST="$TMP/self-verification-valid.json"
+cat > "$SELF_VERIFY_MANIFEST" <<'JSON'
+{"checks":[{"argv":["/usr/bin/true"],"id":"required_check","output_limit_bytes":1024,"required":true,"timeout_seconds":5},{"argv":["/bin/sh","checks/optional.sh"],"id":"optional_check","output_limit_bytes":512,"required":false,"timeout_seconds":5}],"kind":"agy-worker-self-verification","max_seconds":10,"schema_version":1}
+JSON
+chmod 0600 "$SELF_VERIFY_MANIFEST"
+SELF_VERIFY_MANIFEST="$(cd "$(dirname "$SELF_VERIFY_MANIFEST")" && pwd -P)/$(basename "$SELF_VERIFY_MANIFEST")"
+
+printf 'self-verification manifest CLI binding\n' | run_worker self-verification-valid \
+    --workflow task --max-cycles 2 \
+    --self-verification-manifest "$SELF_VERIFY_MANIFEST" \
+    > "$TMP/self-verification-valid.out" 2> "$TMP/self-verification-valid.err"
+self_verification_valid_rc=$?
+if [[ "$self_verification_valid_rc" == 0 ]] && python3 -I -S -B - \
+        "$SELF_VERIFY_MANIFEST" \
+        "$LOGS_REAL/self-verification-valid/self-verification-manifest.json" \
+        "$LOGS_REAL/self-verification-valid/dispatch-command.json" \
+        "$TMP/self-verification-valid.prompt" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+
+source_path, copied_path, command_path, prompt_path = map(Path, sys.argv[1:])
+source = source_path.read_bytes()
+copied = copied_path.read_bytes()
+command = json.loads(command_path.read_text(encoding="utf-8"))
+prompt = prompt_path.read_text(encoding="utf-8")
+info = copied_path.stat()
+
+assert copied == source
+assert stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1
+assert command["schema_version"] == 10
+assert command["provider_isolation"] == "session"
+assert command["allow_self_verification"] is True
+assert command["self_verification_manifest_path"] == str(copied_path)
+assert command["self_verification_manifest_sha256"] == hashlib.sha256(source).hexdigest()
+assert command["self_verification_manifest_identity"] == [
+    info.st_dev, info.st_ino, info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode),
+]
+assert "Required check IDs, run automatically: required_check" in prompt
+assert "Optional check IDs, request only when useful: optional_check" in prompt
+assert "requested_check_ids may contain each optional ID at most once" in prompt
+for private_value in (
+    "/usr/bin/true", "/bin/sh", "checks/optional.sh", str(source_path), str(copied_path),
+):
+    assert private_value not in prompt
+PY
+then
+    ok "self-verification CLI copies and binds the private manifest with an ID-only prompt"
+else
+    bad "self-verification CLI manifest copy, command binding, or prompt boundary"
+fi
+
+cp "$SELF_VERIFY_MANIFEST" "$TMP/self-verification-mode.json"
+chmod 0644 "$TMP/self-verification-mode.json"
+ln -s "$SELF_VERIFY_MANIFEST" "$TMP/self-verification-symlink.json"
+cp "$SELF_VERIFY_MANIFEST" "$TMP/self-verification-hardlink-anchor.json"
+chmod 0600 "$TMP/self-verification-hardlink-anchor.json"
+ln "$TMP/self-verification-hardlink-anchor.json" "$TMP/self-verification-hardlink.json"
+TMP_REAL="$(cd "$TMP" && pwd -P)"
+self_verification_unsafe_failures=0
+for unsafe_case in mode symlink hardlink; do
+    unsafe_manifest="$TMP_REAL/self-verification-$unsafe_case.json"
+    printf 'unsafe self-verification manifest\n' | run_worker "self-verification-invalid-$unsafe_case" \
+        --workflow task --max-cycles 2 --self-verification-manifest "$unsafe_manifest" \
+        > "$TMP/self-verification-invalid-$unsafe_case.out" \
+        2> "$TMP/self-verification-invalid-$unsafe_case.err"
+    unsafe_rc=$?
+    if [[ "$unsafe_rc" != 64 \
+            || -e "$TMP/self-verification-invalid-$unsafe_case.called" \
+            || -e "$LOGS_REAL/self-verification-invalid-$unsafe_case/self-verification-manifest.json" ]] \
+            || ! grep -Fq 'self-verification manifest is invalid or unavailable' \
+                "$TMP/self-verification-invalid-$unsafe_case.err"; then
+        self_verification_unsafe_failures=$((self_verification_unsafe_failures + 1))
+    fi
+done
+if (( self_verification_unsafe_failures == 0 )); then
+    ok "self-verification CLI rejects non-private, symlinked, and hard-linked manifests before provider launch"
+else
+    bad "self-verification CLI unsafe manifest boundaries"
+fi
+
+printf 'unsupported explore verification\n' | AGY_WORKER_MODE=plan \
+    run_worker self-verification-explore --workflow explore --max-cycles 1 \
+    --self-verification-manifest "$SELF_VERIFY_MANIFEST" \
+    > "$TMP/self-verification-explore.out" 2> "$TMP/self-verification-explore.err"
+self_verification_explore_rc=$?
+SELF_VERIFY_BOOST_APPROVAL_SHA="$(printf '%s\n%s\n' \
+    "$BOOST_POLICY_SHA" 'self-verification-boost' | shasum -a 256 | awk '{print $1}')"
+printf 'unsupported Boost verification\n' | run_worker self-verification-boost \
+    --workflow task --max-cycles 1 --boost \
+    --approve-boost-risk-sha "$SELF_VERIFY_BOOST_APPROVAL_SHA" \
+    --self-verification-manifest "$SELF_VERIFY_MANIFEST" \
+    > "$TMP/self-verification-boost.out" 2> "$TMP/self-verification-boost.err"
+self_verification_boost_rc=$?
+if [[ "$self_verification_explore_rc" == 64 && "$self_verification_boost_rc" == 64 \
+        && ! -e "$TMP/self-verification-explore.called" \
+        && ! -e "$TMP/self-verification-boost.called" ]] \
+        && grep -Fq 'requires task or project workflow' "$TMP/self-verification-explore.err" \
+        && grep -Fq 'unavailable with Boost' "$TMP/self-verification-boost.err"; then
+    ok "self-verification CLI rejects explore and Boost before provider launch"
+else
+    bad "self-verification CLI workflow and Boost boundaries"
+fi
+
+AGY_WORKER_LOG_DIR="$TMP/logs" "$WORKER" status --job-id self-verification-valid \
+    --use-self-verification > "$TMP/self-verification-wrong-action.out" \
+    2> "$TMP/self-verification-wrong-action.err"
+self_verification_wrong_action_rc=$?
+AGY_WORKER_LOG_DIR="$TMP/logs" "$WORKER" continue --job-id self-verification-valid \
+    --approve-state-sha "$(printf '0%.0s' {1..64})" \
+    --use-self-verification --use-self-verification \
+    > "$TMP/self-verification-repeated.out" 2> "$TMP/self-verification-repeated.err"
+self_verification_repeated_rc=$?
+AGY_WORKER_LOG_DIR="$TMP/logs" "$WORKER" status --job-id self-verification-valid \
+    --format json > "$TMP/self-verification-status.json" 2> "$TMP/self-verification-status.err"
+self_verification_status_rc=$?
+self_verification_state_sha="$(python3 -I -S -B -c \
+    'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["state_sha256"])' \
+    "$TMP/self-verification-status.json" 2>/dev/null)"
+self_verification_worker_calls_before="$(wc -l < "$TMP/self-verification-valid.worker-calls")"
+AGY_WORKER_LOG_DIR="$TMP/logs" "$WORKER" continue --job-id self-verification-valid \
+    --approve-state-sha "$self_verification_state_sha" --use-self-verification \
+    > "$TMP/self-verification-continue.out" 2> "$TMP/self-verification-continue.err"
+self_verification_continue_rc=$?
+self_verification_worker_calls_after="$(wc -l < "$TMP/self-verification-valid.worker-calls")"
+if [[ "$self_verification_wrong_action_rc" == 64 \
+        && "$self_verification_repeated_rc" == 64 \
+        && "$self_verification_status_rc" == 0 \
+        && "$self_verification_continue_rc" == 64 \
+        && "$self_verification_worker_calls_after" == "$self_verification_worker_calls_before" ]] \
+        && grep -Fq -- '--use-self-verification is valid only with continue' \
+            "$TMP/self-verification-wrong-action.err" \
+        && grep -Fq 'usage: agy-worker.sh' "$TMP/self-verification-repeated.err" \
+        && grep -Fq 'self-verification feedback is unavailable' \
+            "$TMP/self-verification-continue.err"; then
+    ok "stored self-verification feedback is explicit, continue-only, and single-use"
+else
+    bad "stored self-verification continue routing boundary"
+fi
+
+BOOST_PROVIDER_HOME="$TMP/boost-approved-provider-home"
+mkdir -p "$BOOST_PROVIDER_HOME"
 printf 'Boost profile test\n' | FAKE_BOOST_INIT=1 \
+    FAKE_MODEL_FILE="$BOOST_PROVIDER_HOME/model" \
+    FAKE_PROMPT_FILE="$BOOST_PROVIDER_HOME/prompt" \
+    FAKE_DIRS_FILE="$BOOST_PROVIDER_HOME/dirs" \
+    FAKE_ARGV_FILE="$BOOST_PROVIDER_HOME/argv" \
+    FAKE_STAGE_RESULT_FILE="$BOOST_PROVIDER_HOME/stage-result" \
+    FAKE_CALLS_FILE=/dev/null \
+    FAKE_WORKER_CALLS_FILE="$BOOST_PROVIDER_HOME/worker-calls" \
+    FAKE_CALLED_FILE="$BOOST_PROVIDER_HOME/called" \
     FAKE_EDIT_FROM_BOUND_ROOT=boost-target.txt FAKE_EDIT_CONTENT='scoped Boost changed' \
     run_worker boost-approved \
     --workflow task --max-cycles 1 --boost --approve-boost-risk-sha "$BOOST_APPROVAL_SHA" \
     --provider-scope "$BOOST_SCOPE" --approve-transmission-sha "$BOOST_TRANSMISSION_SHA" \
     > "$TMP/boost-approved.out" 2> "$TMP/boost-approved.err"
 boost_approved_rc=$?
-if [[ "$boost_approved_rc" == 0 ]] && python3 -B - "$TMP/boost-approved.argv" \
+if [[ "$boost_approved_rc" == 0 ]] && python3 -B - "$BOOST_PROVIDER_HOME/argv" \
         "$TMP/logs/boost-approved/dispatch-command.json" "$TMP/repo" \
         "$LOGS_REAL/boost-approved/stage-001" \
         "$ROOT/skills/agy-worker/runtime/scripts/agy_dispatch.py" <<'PY'
@@ -1435,7 +1850,9 @@ argv = open(sys.argv[1], "rb").read().split(b"\0")
 command = json.load(open(sys.argv[2], encoding="utf-8"))
 prompt = argv[-2].decode("utf-8") if argv[-1] == b"" else argv[-1].decode("utf-8")
 normalized_prompt = " ".join(prompt.split())
-assert command["schema_version"] == 8 and command["boost"] is True
+assert command["schema_version"] == 10 and command["boost"] is True
+assert command["provider_isolation"] == "session"
+assert b"--sandbox" not in argv
 assert command["provider_scope_path"] is not None
 assert command["approved_whole_worktree_sha256"] is None
 assert argv.count(b"--agent") == 1 and argv[argv.index(b"--agent") + 1] == b"Boost"
@@ -1456,7 +1873,7 @@ assert "including `pwd`, `ls`, `find`, or `git`" in normalized_prompt
 assert "include this entire contract in every subagent task" in normalized_prompt
 assert "Use file tools to inspect and edit the approved workspace." in prompt
 assert "use absolute child paths beneath that root" in normalized_prompt
-assert "shell tools run in a separate scratch directory" in normalized_prompt
+assert "normal AGY session with same-user filesystem and network authority" in normalized_prompt
 assert "complete approved Gitless selected-content stage" in prompt
 assert prompt.index("BOOST FILE-TOOL ROOT") < prompt.index("BOOST WORKSPACE CONTRACT")
 assert prompt.index("BOOST WORKSPACE CONTRACT") < prompt.index("OUTPUT CONTRACT")
@@ -1470,7 +1887,10 @@ assert spec.loader is not None
 spec.loader.exec_module(module)
 weird_root = Path('/private/tmp/space "quote" \\ slash\nline/stage-001')
 synthetic = ["agy", "--print", "ORIGINAL-PROMPT"]
-module._bind_boost_prompt(synthetic, weird_root, scoped=True)
+module._bind_workspace_prompt(
+    synthetic, weird_root, scoped=True, boost=True,
+    provider_isolation="native", legacy_sandbox=False,
+)
 assert synthetic[-2] == "--print" and synthetic[-1].endswith("ORIGINAL-PROMPT")
 synthetic_start = synthetic[-1].index(root_marker) + len(root_marker)
 synthetic_root, synthetic_end = json.JSONDecoder().raw_decode(synthetic[-1][synthetic_start:])
@@ -1478,7 +1898,10 @@ assert synthetic_root == str(weird_root)
 assert "\nline" not in synthetic[-1][synthetic_start:synthetic_start + synthetic_end]
 oversized = ["agy", "--print", "x" * module.MAX_INLINE_PROMPT_BYTES]
 try:
-    module._bind_boost_prompt(oversized, weird_root, scoped=True)
+    module._bind_workspace_prompt(
+        oversized, weird_root, scoped=True, boost=True,
+        provider_isolation="native", legacy_sandbox=False,
+    )
 except module.DispatchError:
     pass
 else:
@@ -1486,10 +1909,148 @@ else:
 assert oversized[-1] == "x" * module.MAX_INLINE_PROMPT_BYTES
 PY
 then
-    ok "approved Boost dispatch pins V8, one agent, slash protection, and the file-tool preamble"
+    ok "approved Boost dispatch pins session mode, one agent, slash protection, and the file-tool preamble"
 else
     bad "approved Boost dispatch profile"
 fi
+
+printf 'normal scoped root target\n' > "$TMP/repo/normal-root-target.txt"
+NORMAL_ROOT_SCOPE="$TMP/normal-root.scope.json"
+NORMAL_ROOT_PROVIDER_HOME="$LOGS_REAL/normal-root-prompt/provider-home"
+NORMAL_ROOT_CALLER_HOME="$TMP/native-caller-home"
+mkdir -p "$NORMAL_ROOT_CALLER_HOME"
+chmod 0700 "$NORMAL_ROOT_CALLER_HOME"
+printf '%s\n' \
+    '{"schema_version":1,"kind":"agy-worker-provider-scope","read":[{"path":"normal-root-target.txt","kind":"file"}],"write":[{"path":"normal-root-target.txt","kind":"file"}]}' \
+    > "$NORMAL_ROOT_SCOPE"
+chmod 0600 "$NORMAL_ROOT_SCOPE"
+NORMAL_ROOT_TRANSMISSION_SHA="$(
+    "$WORKER" transmission-preview --workdir "$BOOST_WORKDIR" \
+        --provider-scope "$NORMAL_ROOT_SCOPE" --provider-isolation native --format json \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin)["transmission_sha256"])'
+)"
+NORMAL_ROOT_SESSION_TRANSMISSION_SHA="$(
+    "$WORKER" transmission-preview --workdir "$BOOST_WORKDIR" \
+        --provider-scope "$NORMAL_ROOT_SCOPE" --provider-isolation session --format json \
+        | python3 -c 'import json, sys; print(json.load(sys.stdin)["transmission_sha256"])'
+)"
+printf 'mode-bound scoped approval mismatch\n' | \
+    FAKE_CALLED_FILE="$TMP/normal-root-mode-mismatch.called" \
+    run_worker normal-root-mode-mismatch --workflow task --max-cycles 1 --provider-isolation native \
+    --provider-scope "$NORMAL_ROOT_SCOPE" --approve-transmission-sha "$NORMAL_ROOT_SESSION_TRANSMISSION_SHA" \
+    > "$TMP/normal-root-mode-mismatch.out" 2> "$TMP/normal-root-mode-mismatch.err"
+normal_root_mode_mismatch_rc=$?
+if [[ "$normal_root_mode_mismatch_rc" == 64 && ! -e "$TMP/normal-root-mode-mismatch.called" ]]; then
+    ok "scoped launch approval is bound to provider isolation"
+else
+    bad "scoped launch approval provider-isolation binding"
+fi
+printf 'normal scoped root prompt\n' | \
+    FAKE_MODEL_FILE="$NORMAL_ROOT_PROVIDER_HOME/model" \
+    FAKE_PROMPT_FILE="$NORMAL_ROOT_PROVIDER_HOME/prompt" \
+    FAKE_DIRS_FILE="$NORMAL_ROOT_PROVIDER_HOME/dirs" \
+    FAKE_ARGV_FILE="$NORMAL_ROOT_PROVIDER_HOME/argv" \
+    FAKE_STAGE_RESULT_FILE="$NORMAL_ROOT_PROVIDER_HOME/stage-result" \
+    FAKE_CALLS_FILE=/dev/null \
+    FAKE_WORKER_CALLS_FILE="$NORMAL_ROOT_PROVIDER_HOME/worker-calls" \
+    FAKE_CALLED_FILE="$NORMAL_ROOT_PROVIDER_HOME/called" \
+    FAKE_HOME_OBSERVED_FILE="$NORMAL_ROOT_PROVIDER_HOME/home" \
+    HOME="$NORMAL_ROOT_CALLER_HOME" \
+    FAKE_EDIT_FROM_BOUND_ROOT=normal-root-target.txt FAKE_EDIT_CONTENT='normal scoped changed' \
+    run_worker normal-root-prompt \
+    --workflow task --max-cycles 1 --provider-isolation native \
+    --provider-scope "$NORMAL_ROOT_SCOPE" --approve-transmission-sha "$NORMAL_ROOT_TRANSMISSION_SHA" \
+    > "$TMP/normal-root-prompt.out" 2> "$TMP/normal-root-prompt.err"
+normal_root_prompt_rc=$?
+if [[ "$normal_root_prompt_rc" == 0 ]] && python3 -B - \
+        "$NORMAL_ROOT_PROVIDER_HOME/argv" \
+        "$TMP/logs/normal-root-prompt/dispatch-command.json" "$TMP/repo" \
+        "$LOGS_REAL/normal-root-prompt/stage-001" "$NORMAL_ROOT_PROVIDER_HOME/home" \
+        "$NORMAL_ROOT_CALLER_HOME" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
+command = json.load(open(sys.argv[2], encoding="utf-8"))
+prompt = argv[argv.index(b"--print") + 1].decode("utf-8")
+root_marker = "The exact absolute workspace root for this attempt is the JSON string "
+root_start = prompt.index(root_marker) + len(root_marker)
+decoded_root, root_end = json.JSONDecoder().raw_decode(prompt[root_start:])
+assert command["schema_version"] == 10 and command["boost"] is False
+assert command["provider_isolation"] == "native"
+assert argv.count(b"--sandbox") == 1
+assert command["provider_scope_path"] is not None
+assert Path(open(sys.argv[5], encoding="utf-8").read().strip()).is_absolute()
+assert open(sys.argv[5], encoding="utf-8").read().strip() != sys.argv[6]
+assert prompt.startswith("FILE-TOOL ROOT — non-negotiable:\n")
+assert not prompt.startswith("BOOST FILE-TOOL ROOT")
+assert decoded_root == os.path.realpath(sys.argv[4]) and Path(decoded_root).is_absolute()
+assert prompt[root_start + root_end:].startswith(".\n")
+assert "absolute child path beneath that root" in prompt
+assert "never guess or search for another root" in prompt
+assert "If you delegate" not in prompt
+assert sys.argv[3] not in prompt
+assert (Path(sys.argv[3]) / "normal-root-target.txt").read_text(encoding="utf-8") == "normal scoped changed\n"
+PY
+then
+    ok "normal scoped dispatch pins the final stage root in its file-tool prompt"
+else
+    if [[ -s "$LOGS_REAL/normal-root-prompt/stderr.txt" ]]; then
+        printf '%s' 'normal scoped root provider stderr: ' >&2
+        /usr/bin/head -c 4096 "$LOGS_REAL/normal-root-prompt/stderr.txt" >&2 || :
+        printf '\n' >&2
+    fi
+    bad "normal scoped file-tool root binding"
+fi
+rm -f "$TMP/repo/normal-root-target.txt"
+
+printf 'normal whole root target\n' > "$TMP/repo/normal-whole-root-target.txt"
+NORMAL_WHOLE_CALLER_HOME="$TMP/session-caller-home"
+mkdir -p "$NORMAL_WHOLE_CALLER_HOME"
+chmod 0700 "$NORMAL_WHOLE_CALLER_HOME"
+printf 'normal whole root prompt\n' | \
+    FAKE_HOME_OBSERVED_FILE="$TMP/normal-whole-root-prompt.home" \
+    HOME="$NORMAL_WHOLE_CALLER_HOME" \
+    FAKE_EDIT_FROM_BOUND_ROOT=normal-whole-root-target.txt FAKE_EDIT_CONTENT='normal whole changed' \
+    run_worker normal-whole-root-prompt --workflow task --max-cycles 1 \
+    > "$TMP/normal-whole-root-prompt.out" 2> "$TMP/normal-whole-root-prompt.err"
+normal_whole_root_prompt_rc=$?
+if [[ "$normal_whole_root_prompt_rc" == 0 ]] && python3 -B - \
+        "$TMP/normal-whole-root-prompt.argv" \
+        "$TMP/logs/normal-whole-root-prompt/dispatch-command.json" "$TMP/repo" \
+        "$TMP/normal-whole-root-prompt.home" "$NORMAL_WHOLE_CALLER_HOME" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+argv = [item for item in open(sys.argv[1], "rb").read().split(b"\0") if item]
+command = json.load(open(sys.argv[2], encoding="utf-8"))
+prompt = argv[argv.index(b"--print") + 1].decode("utf-8")
+root_marker = "The exact absolute workspace root for this attempt is the JSON string "
+root_start = prompt.index(root_marker) + len(root_marker)
+decoded_root, root_end = json.JSONDecoder().raw_decode(prompt[root_start:])
+assert command["schema_version"] == 10 and command["boost"] is False
+assert command["provider_isolation"] == "session"
+assert b"--sandbox" not in argv
+assert command["provider_scope_path"] is None
+assert open(sys.argv[4], encoding="utf-8").read().strip() == sys.argv[5]
+assert isinstance(command["approved_whole_worktree_sha256"], str)
+assert prompt.startswith("FILE-TOOL ROOT — non-negotiable:\n")
+assert decoded_root == os.path.realpath(sys.argv[3]) and Path(decoded_root).is_absolute()
+assert prompt[root_start + root_end:].startswith(".\n")
+assert "complete explicitly approved whole worktree" in prompt
+assert "never guess or search for another root" in prompt
+assert (Path(sys.argv[3]) / "normal-whole-root-target.txt").read_text(encoding="utf-8") == "normal whole changed\n"
+PY
+then
+    ok "normal whole-worktree dispatch pins its approved root in the file-tool prompt"
+else
+    bad "normal whole-worktree file-tool root binding"
+fi
+rm -f "$TMP/repo/normal-whole-root-target.txt"
 
 WHOLE_BOOST_APPROVAL_SHA="$(printf '%s\n%s\n' "$BOOST_POLICY_SHA" 'boost-whole-approved' | shasum -a 256 | awk '{print $1}')"
 printf 'whole Boost target\n' > "$TMP/repo/whole-boost-target.txt"
@@ -1759,8 +2320,8 @@ assert record.get("user_effort", "") == user_effort
 assert record["user_model_source"] == model_source
 assert record.get("user_effort_source", "") == effort_source
 assert record["resolved_agy_model"] == expected
-assert record["installed_agy_version"] == "1.1.24"
-assert record["matrix_agy_version"] == "1.1.24"
+assert record["installed_agy_version"] == "1.1.26"
+assert record["matrix_agy_version"] == "1.1.26"
 assert record["version_relation"] == "match"
 assert record["critical_interface_probe_version"] == 1
 assert record["critical_interface_status"] == "compatible"
@@ -2283,11 +2844,24 @@ fixture_cache_source="$TMP/selector-fixture-cache-source"
 fixture_cache_destination="$TMP/selector-fixture-cache-destination"
 cp -R "$ROOT/skills/agy-worker" "$fixture_cache_source"
 mkdir -p "$fixture_cache_source/runtime/scripts/__pycache__"
-python3 -m py_compile "$fixture_cache_source/runtime/scripts/model_selection.py"
+python3 -I -S -B - "$fixture_cache_source/runtime/scripts/model_selection.py" \
+        "$fixture_cache_source/runtime/scripts/__pycache__/model_selection.fixture.pyc" <<'PY'
+import py_compile
+import sys
+
+py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)
+PY
 make_selector_fixture "$fixture_cache_destination" clean "$fixture_cache_source"
 fixture_cache_baseline=1
 selector_fixture_has_no_bytecode "$fixture_cache_destination" || fixture_cache_baseline=0
-python3 -m py_compile "$fixture_cache_destination/runtime/scripts/model_selection.py"
+mkdir -p "$fixture_cache_destination/runtime/scripts/__pycache__"
+python3 -I -S -B - "$fixture_cache_destination/runtime/scripts/model_selection.py" \
+        "$fixture_cache_destination/runtime/scripts/__pycache__/model_selection.fixture.pyc" <<'PY'
+import py_compile
+import sys
+
+py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)
+PY
 fixture_cache_generated=1
 selector_fixture_has_no_bytecode "$fixture_cache_destination" && fixture_cache_generated=0
 if [[ "$fixture_cache_baseline" == 1 && "$fixture_cache_generated" == 1 ]]; then
@@ -2355,7 +2929,7 @@ assert value == {
     "schema_version": 1,
     "kind": "agy-worker-compatibility-review-evidence",
     "installed_agy_version": "1.1.17",
-    "matrix_agy_version": "1.1.24",
+    "matrix_agy_version": "1.1.26",
     "version_relation": "drift",
     "compatibility_status": "direct-selection-review-required",
     "critical_interface_status": "compatible",
@@ -2682,13 +3256,21 @@ printf 'same-target symlink replacement must not read this task\n' | \
     run_worker executable-symlink-same-target-drift --model gemini-3.6-flash --effort high \
     > "$TMP/executable-symlink-same-target-drift.out" 2> "$TMP/executable-symlink-same-target-drift.err"
 rc=$?
+symlink_drift_calls="$(cat "$TMP/executable-symlink-same-target-drift.calls")"
+# Either the first selector or the wrapper's repeated binding check may reject
+# the changed entry. Both must stop before task intake and provider launch.
 if [[ "$rc" == 8 \
-        && "$(cat "$TMP/executable-symlink-same-target-drift.calls")" == $'version\nhelp' \
+        && ( "$symlink_drift_calls" == $'version\nhelp' \
+             || "$symlink_drift_calls" == $'version\nhelp\nversion\nhelp' ) \
         && ! -s "$TMP/executable-symlink-same-target-drift.worker-calls" \
         && ! -e "$TMP/logs/executable-symlink-same-target-drift/task.txt" ]]; then
     ok "atomic same-target executable symlink replacement stops before task or provider"
 else
     bad "atomic same-target executable symlink replacement boundary"
+    printf '    rc=%s calls=%q worker_calls=%s task_present=%s\n' "$rc" \
+        "$(cat "$TMP/executable-symlink-same-target-drift.calls" 2>/dev/null)" \
+        "$([[ -s "$TMP/executable-symlink-same-target-drift.worker-calls" ]] && echo yes || echo no)" \
+        "$([[ -e "$TMP/logs/executable-symlink-same-target-drift/task.txt" ]] && echo yes || echo no)"
 fi
 
 printf 'different executable target must not read this task\n' | \
@@ -3567,10 +4149,12 @@ printf 'broad audit is a usable default plan\n' | (
             --provider-env FAKE_MODEL_FILE --provider-env FAKE_PROMPT_FILE --provider-env FAKE_DIRS_FILE --provider-env FAKE_ARGV_FILE --provider-env FAKE_STAGE_RESULT_FILE --provider-env FAKE_CALLED_FILE
 ) > "$TMP/plan-without-persona.out" 2> "$TMP/plan-without-persona.err"
 rc=$?
-plan_without_persona_prompt="$TMP/plan-without-persona.prompt"
+plan_without_persona_root_prompt="$TMP/plan-without-persona.prompt"
+plan_without_persona_prompt="$plan_without_persona_root_prompt"
 if [[ -f "$TMP/logs/plan-without-persona/staged/full-prompt.txt" ]]; then
     plan_without_persona_prompt="$TMP/logs/plan-without-persona/staged/full-prompt.txt"
 fi
+plan_without_persona_root="$(cd "$TMP/repo" && pwd -P)"
 if [[ "$rc" == "0" ]] \
         && [[ -s "$TMP/plan-without-persona.out" ]] \
         && [[ -e "$TMP/plan-without-persona.called" ]] \
@@ -3579,9 +4163,9 @@ if [[ "$rc" == "0" ]] \
             "$plan_without_persona_prompt" \
         && ! grep -Fq 'Use file tools to inspect and edit the approved workspace.' \
             "$plan_without_persona_prompt" \
-        && grep -Fq 'a separate scratch' \
+        && grep -Fq 'This job runs in a normal AGY session with same-user filesystem and network authority' \
             "$plan_without_persona_prompt" \
-        && ! grep -Fq "$TMP/repo" "$plan_without_persona_prompt"; then
+        && grep -Fq "$plan_without_persona_root" "$plan_without_persona_root_prompt"; then
     ok "generic plan dispatches without a persona and receives the read-only file-tool preamble"
 else
     bad "generic plan should remain usable without a persona"
@@ -3780,7 +4364,7 @@ start_worker() {
     for fake_provider_env_name in \
         FAKE_AGY_STATUS FAKE_ARGV_FILE FAKE_BAD_ENVELOPE FAKE_CALLED_FILE \
         FAKE_CALLS_FILE FAKE_CHILD_PID_FILE FAKE_DIRS_FILE FAKE_DISPATCH_COUNT_FILE \
-        FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_ERROR_LINE \
+        FAKE_DISPATCH_MODE FAKE_ENV_OBSERVED_FILE FAKE_HOME_OBSERVED_FILE FAKE_ERROR_LINE \
         FAKE_DELETE_FROM_BOUND_ROOT FAKE_EDIT_CONTENT FAKE_EDIT_FROM_BOUND_ROOT \
         FAKE_EXECUTABLE_SYMLINK_TARGET FAKE_EXIT_CODE FAKE_FAIL_FIRST \
         FAKE_HEARTBEAT_AFTER_FIRST_READY FAKE_HEARTBEAT_AFTER_FIRST_RELEASE \
@@ -3813,10 +4397,10 @@ start_worker() {
     fi
     PATH="$TMP/bin:$PATH" AGY_WORKER_LOG_DIR="$TMP/logs" AGY_WORKER_JOB_ID="$job" \
         AGY_WORKER_MODE="${AGY_WORKER_MODE:-accept-edits}" \
-        FAKE_MODEL_FILE="$TMP/$job.model" FAKE_PROMPT_FILE="$TMP/$job.prompt" \
-        FAKE_DIRS_FILE="$TMP/$job.dirs" FAKE_ARGV_FILE="$TMP/$job.argv" \
-        FAKE_STAGE_RESULT_FILE="$TMP/$job.stage-result" \
-        FAKE_CALLS_FILE="$TMP/$job.calls" FAKE_WORKER_CALLS_FILE="$TMP/$job.worker-calls" \
+        FAKE_MODEL_FILE="${FAKE_MODEL_FILE:-$TMP/$job.model}" FAKE_PROMPT_FILE="${FAKE_PROMPT_FILE:-$TMP/$job.prompt}" \
+        FAKE_DIRS_FILE="${FAKE_DIRS_FILE:-$TMP/$job.dirs}" FAKE_ARGV_FILE="${FAKE_ARGV_FILE:-$TMP/$job.argv}" \
+        FAKE_STAGE_RESULT_FILE="${FAKE_STAGE_RESULT_FILE:-$TMP/$job.stage-result}" \
+        FAKE_CALLS_FILE="${FAKE_CALLS_FILE:-$TMP/$job.calls}" FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-$TMP/$job.worker-calls}" \
         FAKE_DISPATCH_MODE="${FAKE_DISPATCH_MODE:-result}" \
         FAKE_HEARTBEAT_COUNT="${FAKE_HEARTBEAT_COUNT:-8}" \
         FAKE_HEARTBEAT_DELAY="${FAKE_HEARTBEAT_DELAY:-0.10}" \
@@ -4212,7 +4796,7 @@ state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
 for field in module.STATE_V5_FIELDS:
     state.pop(field)
-for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS}:
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS, *module.STATE_V12_FIELDS, *module.STATE_V13_FIELDS}:
     state.pop(field)
 state["schema_version"] = 3
 state["phase"] = None
@@ -4656,6 +5240,7 @@ workdir = job.parent / "state-snapshot-workdir"
 workdir.mkdir(mode=0o700)
 subprocess.run(["git", "init", "-q", str(workdir)], check=True)
 command = {
+    "schema_version": 10, "provider_isolation": "session",
     "job_id": "state-snapshot", "workdir": str(workdir),
     "idle_seconds": 1.0, "hard_seconds": 2.0, "max_seconds": 3.0,
     "workflow": "legacy", "max_cycles": 1,
@@ -4665,7 +5250,7 @@ state = module.initial_state(
     command_identity=(1, 1, os.getuid(), os.getgid(), 0o600),
     stage_sha=None, stage_identity=None,
 )
-assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 11
+assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 13
 assert state["worktree_root_identity"] is not None
 assert state["worktree_baseline"] is not None
 assert state["worktree_snapshot_algorithm"] == module.WORKTREE_SNAPSHOT_SEMANTIC_V1
@@ -4926,6 +5511,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import stat
 import subprocess
@@ -4940,6 +5526,15 @@ repo = root / "historical-v2-direct-repo"; repo.mkdir()
 subprocess.run(["git", "init", "-q", str(repo)], check=True)
 job = (root / "historical-v2-direct-job"); job.mkdir(mode=0o700); job = job.resolve()
 provider_schema = source.parent.parent / "schemas" / "worker-result.provider.schema.json"
+# The provider consumes RE2, where `$` is a strict end-of-text anchor. Keep the
+# driver schema's Python-search spelling separate while enforcing the same IDs.
+provider_document = json.loads(provider_schema.read_text(encoding="utf-8"))
+provider_id_pattern = provider_document["properties"]["requested_check_ids"]["items"]["pattern"]
+assert provider_id_pattern == r"^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+assert "(?" not in provider_id_pattern
+strict_id = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}").fullmatch
+assert all(strict_id(value) for value in ("A", "unit_core", "Lint-2", "Z" * 64))
+assert all(not strict_id(value) for value in ("", "1unit", "unit.", "unit\n", "A" * 65, "é"))
 matrix, matrix_sha, matrix_version, matrix_revision = module.MODEL_SELECTION.load_policy()
 resolved_model, selection_mode = module.MODEL_SELECTION.resolve_model(
     matrix, "gemini-3.7-flash", "high",
@@ -5557,7 +6152,7 @@ for field in module.STATE_PROJECT_FIELDS:
     state.pop(field)
 for field in module.STATE_V5_FIELDS:
     state.pop(field)
-for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS}:
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS, *module.STATE_V12_FIELDS, *module.STATE_V13_FIELDS}:
     state.pop(field)
 state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")

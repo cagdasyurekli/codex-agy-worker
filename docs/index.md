@@ -129,7 +129,7 @@ runs no provider</code></pre>
     </article>
     <article class="evidence-item">
       <h3>Authority remains separate</h3>
-      <p>This means scoped staging is not a sandbox, and its approval grants no provider execution, Git, acceptance, or publication authority.</p>
+      <p>This means session mode uses the existing AGY session; explicit native mode requires supported macOS containment. Scope approval alone grants no provider execution, Git, acceptance, or publication authority.</p>
     </article>
     <article class="evidence-item">
       <h3>Offline comparison only</h3>
