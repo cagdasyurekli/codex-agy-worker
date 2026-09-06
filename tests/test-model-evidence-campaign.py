@@ -160,7 +160,7 @@ def make_valid_record(
         "measured_metadata": ({
             "provenance_type": "local",
             "source_uri": "local://campaign/synthetic",
-            "agy_version": "1.1.26",
+            "agy_version": "1.1.27",
             "effort": "high",
             "accounting": "observed_actual",
             "tokenizer": "cl100k_base",

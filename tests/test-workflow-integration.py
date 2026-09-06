@@ -116,7 +116,7 @@ kind = "version" if args == ["--version"] else "help" if args == ["--help"] else
 with calls.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps({{"kind": kind, "argv": args}}, separators=(",", ":")) + "\\n")
 if args == ["--version"]:
-    print("1.1.26")
+    print("1.1.27")
     raise SystemExit(0)
 if args == ["--help"]:
     sys.stderr.write({AGY_HELP!r})

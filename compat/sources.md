@@ -39,10 +39,10 @@ separately authorized mutation path.
 - Fixed `darwin_arm64` distribution manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
 - Installed interface evidence: `./ground-truth.sh`
 
-The verified active baseline is agy `1.1.24` at official release commit
-`bf27ce1134b4ead2f7bfa0a4fb3cb5fcbebcaa5a`; its accepted inventory is reconciled in
-[`reviews/agy-1.1.24-activation.md`](reviews/agy-1.1.24-activation.md). The earlier
-1.1.22 observations remain historical records. The active matrix binds every
+The verified active baseline is agy `1.1.27` at official release commit
+`1ae9cb7b51667192c051b73a91099c71e816ca5f`; its accepted inventory is reconciled in
+[`reviews/agy-1.1.27-activation.md`](reviews/agy-1.1.27-activation.md). Earlier
+activation records remain historical evidence. The active matrix binds every
 adjustable pair to one exact advertised compound slug and records fixed choices as
 non-adjustable. It neither forwards `--effort` nor attests the effective provider
 backend; silent fallback could not be independently excluded.
@@ -63,7 +63,7 @@ in [`reviews/agy-1.1.13-quota-terminal.md`](reviews/agy-1.1.13-quota-terminal.md
 It authorizes only the exact version/shape classifier and sanitized countdown; it is
 not a general quota/rate-limit signature, baseline update, or retry authority.
 
-`agy-distribution-manifest.json` records the observed `1.1.22` version, exact Google
+`agy-distribution-manifest.json` records the observed `1.1.27` version, exact Google
 Storage archive URL, and lowercase SHA-512 tuple. It is an observational snapshot,
 not an authoritative baseline, signature, or permission to download the archive.
 The checker fetches only the fixed small manifest, rejects redirects and malformed
@@ -101,9 +101,9 @@ resolution until another human reconciliation is accepted. Codex drift remains
 observation-only and never disables agy dispatch.
 
 The original agy `1.1.22` failed capture is retained as non-activating historical
-metadata. The separately authorized 1.1.24 capture and human reconciliation advance
+metadata. The separately authorized 1.1.27 capture and human reconciliation advance
 the active version, release binding, inventory, and matrix only through
-[`reviews/agy-1.1.24-activation.md`](reviews/agy-1.1.24-activation.md). Neither record
+[`reviews/agy-1.1.27-activation.md`](reviews/agy-1.1.27-activation.md). Neither record
 authorizes another account call.
 Ordinary version-independent literal model pass-through and agy-owned default
 selection remain independent of that matrix; reviewed model/effort resolution still

@@ -1374,7 +1374,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.17.0"
+assert manifest["version"] == "0.18.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -2439,7 +2439,7 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.json" \
         && cmp -s "$ROOT/compat/agy-models-inventory-binding.sha256" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.sha256" \
-        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.26" ]] \
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.27" ]] \
         && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-09-06" ]]; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
@@ -2871,7 +2871,7 @@ fi
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     'case "$*" in' \
-    '  --version) printf "1.1.26\n" ;;' \
+    '  --version) printf "1.1.27\n" ;;' \
     '  --help) printf "%s\n" "Usage of agy:" "  --add-dir  Add a directory" "  --conversation  Resume a conversation" "  --disable-slash-commands  Disable slash commands" "  --json-schema  Schema path" "  --mode  Execution mode (accept-edits, plan)" "  --model  Select a model" "  --output-format  Format (text, json, stream-json)" "  --print  Run a prompt" "  --print-timeout  Print timeout" "  --sandbox  Sandboxed" >&2 ;;' \
     '  *) exit 97 ;;' \
     'esac' > "$TMP/selector-bin/agy"
@@ -2895,7 +2895,7 @@ fi
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "e483cd05549d0c33fe31da222af7308e7a134645748469268832d9c26b1e6306"' \
+        && grep -Fq '"matrix_sha256": "56ee4cefdf918184e8bae57c49f01c51c18e49b30ff0bd4b322d8801703dfaac"' \
             "$TMP/copied-selection.json" \
         && [[ "$copied_selection_v2" == 1 ]] \
         && [[ ! -e "$TMP/network-called" ]]; then
@@ -3538,10 +3538,10 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (301 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
-        && grep -Fq 'EXPECTED_CHECKS = 109' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (109 focused cases)' "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq '`tests/test-doctor.sh` (207 cases)' "$ROOT/docs/REPO_MAP.md" \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (302 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
+        && grep -Fq 'EXPECTED_CHECKS = 111' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (111 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq '`tests/test-doctor.sh` (219 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Do not pin exact suite counts in this instruction file' "$ROOT/AGENTS.md" \
         && grep -Fq '`docs/REPO_MAP.md` owns focused-suite inventory' "$ROOT/AGENTS.md" \
         && grep -Fq '`scripts/ci_stages.py` owns the' "$ROOT/AGENTS.md" \
@@ -3575,9 +3575,9 @@ if grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-version-manifest-engine.py` (28 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'previous 1.1.24 permits only generic version-evidence/profile/capture' \
+        && grep -Fq 'previous 1.1.26 permits only generic version-evidence/profile/capture' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'historical 1.1.16 and 1.1.12 permit no executable operation' \
+        && grep -Fq 'historical 1.1.24, 1.1.16, and 1.1.12 permit no executable operation' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Fixed 1.1.22 suites: version evidence 45, profile 30, runner 63, classifier 24, reprofile 88 offline cases' \
             "$ROOT/docs/REPO_MAP.md" \
