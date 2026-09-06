@@ -773,6 +773,10 @@ cat > "$TMP/bin/agy" <<'FAKE'
 #!/usr/bin/env bash
 set -u
 FAKE_EXECUTABLE_CONTENT_SENTINEL=round-two-binding-original
+fake_helper_python=python3
+if [[ "${OSTYPE:-}" == darwin* ]]; then
+    fake_helper_python=/Library/Developer/CommandLineTools/usr/bin/python3
+fi
 FAKE_CALLS_FILE="${FAKE_CALLS_FILE:-/dev/null}"
 FAKE_WORKER_CALLS_FILE="${FAKE_WORKER_CALLS_FILE:-/dev/null}"
 if [[ -n "${FAKE_ENV_OBSERVED_FILE:-}" ]]; then
@@ -986,8 +990,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 if [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}" ]]; then
-    python3 -B - "$FAKE_PROMPT_FILE" "$FAKE_EDIT_FROM_BOUND_ROOT" \
-        "${FAKE_EDIT_CONTENT:-provider changed}" <<'PY'
+    fake_helper_error="${TMPDIR:-/tmp}/agy-worker-fake-edit-$$.stderr"
+    if ! "$fake_helper_python" -B - "$FAKE_PROMPT_FILE" "$FAKE_EDIT_FROM_BOUND_ROOT" \
+        "${FAKE_EDIT_CONTENT:-provider changed}" 2>"$fake_helper_error" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -1002,6 +1007,14 @@ else:
 target = Path(root) / sys.argv[2]
 target.write_text(sys.argv[3] + "\n", encoding="utf-8")
 PY
+    then
+        printf '%s' 'fake agy: bound-root edit helper failed: ' >&2
+        /usr/bin/head -c 4096 "$fake_helper_error" >&2 || :
+        printf '\n' >&2
+        rm -f "$fake_helper_error"
+        exit 97
+    fi
+    rm -f "$fake_helper_error"
 fi
 if [[ -n "${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
     python3 -B - "$FAKE_PROMPT_FILE" "$FAKE_DELETE_FROM_BOUND_ROOT" <<'PY'
@@ -1166,15 +1179,40 @@ if [[ "${FAKE_DISPATCH_MODE:-result}" == "result" ]]; then
 fi
 if [[ "${FAKE_BAD_ENVELOPE:-0}" == "1" ]]; then
     envelope='{"status":"completed","summary":"done","files_changed":[],"commands_run":[],"tests_run":[],"risks":[],"open_questions":[],"confidence":9,"requires_human":false}'
-elif [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
-    envelope="$(python3 -B - "${FAKE_EDIT_FROM_BOUND_ROOT:-$FAKE_DELETE_FROM_BOUND_ROOT}" \
-        "${FAKE_DELETE_FROM_BOUND_ROOT:+deleted}" <<'PY'
+elif [[ -n "${FAKE_EDIT_FROM_BOUND_ROOT:-}" ]]; then
+    fake_helper_error="${TMPDIR:-/tmp}/agy-worker-fake-envelope-$$.stderr"
+    if ! envelope="$("$fake_helper_python" -B - "$FAKE_EDIT_FROM_BOUND_ROOT" \
+        "" 2>"$fake_helper_error" <<'PY'
 import json
 import sys
 print(json.dumps({
     "status": "completed",
     "summary": "done",
     "files_changed": [{"path": sys.argv[1], "change": sys.argv[2] or "modified"}],
+    "commands_run": [],
+    "tests_run": [],
+    "risks": [],
+    "open_questions": [],
+    "confidence": 1,
+    "requires_human": False,
+}, separators=(",", ":")))
+PY
+)"; then
+        printf '%s' 'fake agy: result envelope helper failed: ' >&2
+        /usr/bin/head -c 4096 "$fake_helper_error" >&2 || :
+        printf '\n' >&2
+        rm -f "$fake_helper_error"
+        exit 97
+    fi
+    rm -f "$fake_helper_error"
+elif [[ -n "${FAKE_DELETE_FROM_BOUND_ROOT:-}" ]]; then
+    envelope="$(python3 -B - "$FAKE_DELETE_FROM_BOUND_ROOT" deleted <<'PY'
+import json
+import sys
+print(json.dumps({
+    "status": "completed",
+    "summary": "done",
+    "files_changed": [{"path": sys.argv[1], "change": sys.argv[2]}],
     "commands_run": [],
     "tests_run": [],
     "risks": [],
@@ -1959,6 +1997,11 @@ PY
 then
     ok "normal scoped dispatch pins the final stage root in its file-tool prompt"
 else
+    if [[ -s "$LOGS_REAL/normal-root-prompt/stderr.txt" ]]; then
+        printf '%s' 'normal scoped root provider stderr: ' >&2
+        /usr/bin/head -c 4096 "$LOGS_REAL/normal-root-prompt/stderr.txt" >&2 || :
+        printf '\n' >&2
+    fi
     bad "normal scoped file-tool root binding"
 fi
 rm -f "$TMP/repo/normal-root-target.txt"

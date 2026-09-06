@@ -399,8 +399,14 @@ def run(context: dict[str, object]) -> None:
             },
         ]
         fake = bin_dir / "agy"
+        if sys.platform == "darwin":
+            qualified_root = Path("/Library/Developer/CommandLineTools")
+            provider_interpreter = Path(os.path.realpath(qualified_root / "usr/bin/python3"))
+            assert provider_interpreter.is_relative_to(qualified_root)
+        else:
+            provider_interpreter = Path(sys.executable)
         fake.write_text(
-            "#!/usr/bin/env python3\n"
+            f"#!{provider_interpreter}\n"
             "import base64, json, os, stat, sys, time\n"
             "from pathlib import Path\n"
             "schema_index = sys.argv.index('--json-schema') + 1\n"

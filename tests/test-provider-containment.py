@@ -24,6 +24,8 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SUBJECT = ROOT / "skills" / "agy-worker" / "runtime" / "scripts" / "agy_dispatch_containment.py"
 SCRIPTS = SUBJECT.parent
+CLT_PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3"
+CLT_PYTHON_EXECUTABLE = str(Path(os.path.realpath(CLT_PYTHON)))
 sys.path.insert(0, str(SCRIPTS))
 SPEC = importlib.util.spec_from_file_location("agy_dispatch_containment_tested", SUBJECT)
 assert SPEC is not None and SPEC.loader is not None
@@ -253,14 +255,14 @@ def compile_process_path_probe(stage: Path) -> tuple[Path, Path]:
 
 
 def system_python_process_path() -> Path:
-    """Return the kernel image path used by the Apple-shipped Python launcher."""
+    """Return the kernel image path used by the qualified CLT Python image."""
     script = (
         "import ctypes, os; b=ctypes.create_string_buffer(4096); "
         "p=ctypes.CDLL('/usr/lib/libproc.dylib').proc_pidpath(os.getpid(),b,len(b)); "
         "print(b.value.decode() if p > 0 else '')"
     )
     result = subprocess.run(
-        ["/usr/bin/python3", "-I", "-S", "-B", "-c", script],
+        [CLT_PYTHON, "-I", "-S", "-B", "-c", script],
         check=False, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
@@ -788,11 +790,11 @@ def canonical_self_verify_python_executes() -> bool:
     try:
         output = stage / "python-ok"
         argv = [
-            "/usr/bin/python3", "-I", "-S", "-B", "-c",
+            CLT_PYTHON_EXECUTABLE, "-I", "-S", "-B", "-c",
             f"from pathlib import Path; Path({str(output)!r}).write_text('ok')",
         ]
         prepared = prepare(
-            job, stage, "/usr/bin/python3", argv,
+            job, stage, CLT_PYTHON_EXECUTABLE, argv,
             {"SHOULD_BE_REMOVED": "provider-only"}, role=MODULE.ROLE_SELF_VERIFY,
         )
         environment = MODULE.confirm_contained_launch(prepared).environment
@@ -908,7 +910,7 @@ def integrated_stage_rebind_and_outside_write_denial() -> bool:
             stage, scope, selected, stage_identity, stage_sha,
         )
         target = DISPATCH.CONTAINMENT
-        python = "/usr/bin/python3"
+        python = CLT_PYTHON_EXECUTABLE
         script = (
             "import errno,os,time\n"
             "from pathlib import Path\n"

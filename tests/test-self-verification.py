@@ -351,7 +351,10 @@ class VerificationContracts(unittest.TestCase):
                 "Path('generated.txt').write_text('copy-only')\n"
                 "print('safe-check')\n"
             )
-            argv = ("/usr/bin/python3", "-I", "-S", "-B", "-c", program)
+            qualified_root = Path("/Library/Developer/CommandLineTools")
+            qualified_python = Path(os.path.realpath(qualified_root / "usr/bin/python3"))
+            self.assertTrue(qualified_python.is_relative_to(qualified_root))
+            argv = (str(qualified_python), "-I", "-S", "-B", "-c", program)
             check = module.Check("native", argv, True, 5, 4096)
             prepared = native.prepare_contained_launch(
                 role=native.ROLE_SELF_VERIFY, network_policy=native.NETWORK_DENY_ALL,
@@ -361,7 +364,15 @@ class VerificationContracts(unittest.TestCase):
             )
             result = module.run_check(check, prepared, containment=native,
                                       log_directory=logs, remaining=5)
-            self.assertEqual(result.outcome, "passed")
+            stderr = (logs / "native.stderr").read_text(encoding="utf-8", errors="replace")
+            stderr = stderr.replace(str(job), "<test-root>")[:check.output_limit_bytes]
+            self.assertEqual(
+                result.outcome,
+                "passed",
+                f"outcome={result.outcome} exit={result.exit_code} "
+                f"stdout_bytes={result.stdout_bytes} stderr_bytes={result.stderr_bytes} "
+                f"stderr={stderr!r}",
+            )
             self.assertEqual(sentinel.read_text(), "unchanged")
             self.assertEqual((stage / "generated.txt").read_text(), "copy-only")
             self.assertEqual((logs / "native.stdout").read_text(), "safe-check\n")
