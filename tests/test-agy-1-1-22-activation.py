@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused offline tests for the active agy 1.1.26 compatibility binding."""
+"""Focused offline tests for the active agy 1.1.27 compatibility binding."""
 
 from __future__ import annotations
 
@@ -14,22 +14,22 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "skills" / "agy-worker" / "runtime"
 MODULE_PATH = RUNTIME / "scripts" / "compatibility.py"
-SPEC = importlib.util.spec_from_file_location("agy_1_1_26_compatibility", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location("agy_1_1_27_compatibility", MODULE_PATH)
 if SPEC is None or SPEC.loader is None:
     raise SystemExit("cannot load compatibility module")
 compatibility = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(compatibility)
 
-VERSION = "1.1.26"
-REVISION = "3bc5795ff561c9d71bf1ce272f185aec6013e5e4"
-SOURCE_SHA256 = "1f6e0a36834022fbe459fae51a48f83ceaf790ecb06f1ee2dc64b708864db7d9"
-VERSION_BINDING_SHA256 = "5507b8e35f64227035a21f46ba4eee73894750c28ebb312f2403c996904e7541"
-CAPTURE_SHA256 = "fbae01f14e218d5d0c1126a92c2358be0cb08a64a6f68164d131a128e132373b"
+VERSION = "1.1.27"
+REVISION = "1ae9cb7b51667192c051b73a91099c71e816ca5f"
+SOURCE_SHA256 = "d583be1344ea9cfa0c45cff2c1342af7837f4833c4edb65e69bee84776a45caa"
+VERSION_BINDING_SHA256 = "a1f8b651123f1e95ef7e744ae45e9066967b6ceb0a710ddfd685e54b14b0b0a6"
+CAPTURE_SHA256 = "ac8ddc28fcca90a20e05f6bd0678d32550db451a8e3402e4c287154eab289b33"
 STDOUT_SHA256 = "d02970e6b6b4e0910461999afca8fb99d757e9094ab2874b557dad18fc75464a"
 RESPONSE_SHA256 = "b1cc011310435afa07b1e132a5b7f3e22297aa21427177461c858bcbd6a58794"
 NORMALIZED_SHA256 = "d5e58ab55e91ebd4a2cd23841c76cbe12b47d607c62cd8c834fc8f6b9f078ad7"
-MATRIX_SHA256 = "e483cd05549d0c33fe31da222af7308e7a134645748469268832d9c26b1e6306"
-BINDING_SHA256 = "3c32e8203931849de80c6511c3eb3709faf25dc9fede8c6f68c875f7102ba886"
+MATRIX_SHA256 = "56ee4cefdf918184e8bae57c49f01c51c18e49b30ff0bd4b322d8801703dfaac"
+BINDING_SHA256 = "3a554f90922321700120e2c398f865a4894b2128087a4bac90968ddf2409762d"
 OLD_VERSION = "1.1.16"
 OLD_REVISION = "efa16f096dc02fb654b7e86958d268195284d014"
 
@@ -107,26 +107,26 @@ def _() -> None:
 
 @test("active review is additive and prior observation remains historical")
 def _() -> None:
-    activation = canonical("reviews/agy-1.1.26-activation.md").read_text()
+    activation = canonical("reviews/agy-1.1.27-activation.md").read_text()
     observation = canonical("reviews/agy-1.1.22.md").read_text()
-    assert "AGY **1.1.26**" in activation
-    assert "Activation promotes 1.1.26 to current" in activation
+    assert "AGY **1.1.27**" in activation
+    assert "Activation promotes 1.1.27 to current" in activation
     assert "does **not** activate 1.1.22" in observation
 
 
 @test("activation preserves the sanitized structured-capture boundary")
 def _() -> None:
-    activation = canonical("reviews/agy-1.1.26-activation.md").read_text()
+    activation = canonical("reviews/agy-1.1.27-activation.md").read_text()
     assert VERSION_BINDING_SHA256 in activation
     assert NORMALIZED_SHA256 in activation
     assert "account inventory records bind" in activation
 
 
-@test("activation preserves controller retry and closed-binary residual")
+@test("activation preserves denied-action and closed-binary residuals")
 def _() -> None:
-    activation = canonical("reviews/agy-1.1.26-activation.md").read_text()
-    assert "four explicitly approved provider starts" in activation
-    assert "Both unused contingency starts were closed" in activation
+    activation = canonical("reviews/agy-1.1.27-activation.md").read_text()
+    assert "The denied-action payload shape remains unverified" in activation
+    assert "The closed-binary provider backend cannot be independently attested" in activation
 
 
 @test("matrix byte digest is exact")

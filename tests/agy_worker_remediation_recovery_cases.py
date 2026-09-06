@@ -303,12 +303,14 @@ def run(context: dict[str, object]) -> None:
         *,
         allow_scoped_repair: bool = False,
         declared_files_changed: list[dict[str, str]] | None = None,
+        stage_declaration: str = "relative",
         init_cwd: str | None = None,
         nested_directory_ops: bool = False,
         command_schema: int = 9,
     ):
         """Create a V9 native or V8 historical scoped controller fixture."""
         assert command_schema in {8, 9}
+        assert stage_declaration in {"relative", "absolute", "other-root", "dot", "dotdot", "empty", "root"}
         source_repo = (root / f"scope-acceptance-source-{label}").resolve(); source_repo.mkdir()
         repo = (root / f"scope-acceptance-repo-{label}").resolve()
         subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
@@ -432,6 +434,7 @@ def run(context: dict[str, object]) -> None:
             f"init_cwd = {init_cwd!r}\n"
             "init = {} if init_cwd is None else {'cwd': (str(cwd) if init_cwd == '__launch_cwd__' else init_cwd)}\n"
             f"use_default_declaration = {use_default_declaration!r}\n"
+            f"stage_declaration = {stage_declaration!r}\n"
             "actual_files_changed = None\n"
             f"behavior = {behavior!r}\n"
             "if behavior == 'positive':\n"
@@ -447,6 +450,27 @@ def run(context: dict[str, object]) -> None:
             "            [{'path': 'tool.sh', 'change': 'modified'}, {'path': 'payload.bin', 'change': 'modified'}]\n"
             "            if prior.startswith(b'\\x00initial') else [{'path': 'payload.bin', 'change': 'modified'}]\n"
             "        )\n"
+            "        if stage_declaration != 'relative':\n"
+            "            if stage_declaration == 'absolute':\n"
+            "                report_root = str(cwd)\n"
+            "                separator = '/'\n"
+            "            elif stage_declaration == 'other-root':\n"
+            "                report_root = str(cwd.parent / 'other-stage')\n"
+            "                separator = '/'\n"
+            "            elif stage_declaration == 'dot':\n"
+            "                report_root = str(cwd) + '/.'\n"
+            "                separator = '/'\n"
+            "            elif stage_declaration == 'dotdot':\n"
+            "                report_root = str(cwd) + '/nested/..'\n"
+            "                separator = '/'\n"
+            "            elif stage_declaration == 'empty':\n"
+            "                report_root = str(cwd)\n"
+            "                separator = '//'\n"
+            "            else:\n"
+            "                report_root = str(cwd)\n"
+            "                separator = ''\n"
+            "            for declared in actual_files_changed:\n"
+            "                declared['path'] = report_root if stage_declaration == 'root' else report_root + separator + declared['path']\n"
             "elif behavior == 'no-net-effect':\n"
             "    prior = Path('payload.bin').read_bytes()\n"
             "    Path('payload.bin').write_bytes(b'transient-stage-touch\\n')\n"
@@ -776,6 +800,55 @@ def run(context: dict[str, object]) -> None:
     check(
         "scoped files_changed must declare each reconciled mutation exactly once",
         scoped_declared_mutations_must_match_reconciled_stage_operations,
+    )
+
+    def scoped_absolute_stage_declarations_reconcile_only_exact_canonical_children() -> None:
+        """Replay the observed absolute stage report without relaxing its boundary."""
+        repo, job, bin_dir, sentinel, _payload, _tool = scoped_controller_fixture(
+            "absolute-stage", "positive", stage_declaration="absolute",
+        )
+        accepted_rc = run_scoped_controller(job, bin_dir)
+        if accepted_rc != 0:
+            failed, _raw, _sha = MODULE.load_state(job)
+            raise AssertionError((
+                accepted_rc, failed["reason"], failed["failure_stage"],
+                (job / "stderr.txt").read_text(encoding="utf-8", errors="replace"),
+            ))
+        assert sentinel.exists()
+        assert (repo / "payload.bin").read_bytes() == b"\x00reconciled-binary-1\xfe\xff\n"
+        assert (repo / "tool.sh").read_bytes() == b"#!/bin/sh\nprintf 'reconciled\\n'\n"
+        state, _raw, _sha = MODULE.load_state(job)
+        assert state["status"] == "succeeded"
+        result = json.loads(Path(state["result_path"]).read_text(encoding="utf-8"))
+        assert {item["path"] for item in result["files_changed"]} == {"payload.bin", "tool.sh"}
+        gate = ROOT / "skills/agy-worker/runtime/qa-gate.sh"
+        base = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+        checked = subprocess.run(
+            [
+                str(gate), "--repo", str(repo), "--base", base, "--envelope", state["result_path"],
+                "--expect-edits", "--verify-argv", '["/bin/test","-f","payload.bin"]',
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        assert checked.returncode == 0, checked.stderr.decode("utf-8", "replace")
+
+        for variant in ("other-root", "dot", "dotdot", "empty", "root"):
+            rejected_repo, rejected_job, rejected_bin, rejected_sentinel, initial_payload, initial_tool = (
+                scoped_controller_fixture(f"absolute-stage-{variant}", "positive", stage_declaration=variant)
+            )
+            assert run_scoped_controller(rejected_job, rejected_bin) == MODULE.EXIT_BY_REASON["status_unavailable"]
+            assert rejected_sentinel.exists()
+            assert (rejected_repo / "payload.bin").read_bytes() == initial_payload
+            assert (rejected_repo / "tool.sh").read_bytes() == initial_tool
+
+        stage = root / "absolute-stage-direct"; stage.mkdir()
+        alias = root / "absolute-stage-alias"; alias.symlink_to(stage, target_is_directory=True)
+        assert MODULE._stage_relative_declared_path(str(stage / "payload.bin"), stage) == "payload.bin"
+        assert MODULE._stage_relative_declared_path(str(alias / "payload.bin"), stage) is None
+
+    check(
+        "scoped absolute stage declarations reconcile only exact canonical stage children",
+        scoped_absolute_stage_declarations_reconcile_only_exact_canonical_children,
     )
 
     def scoped_file_declarations_ignore_authorized_directory_scaffolding() -> None:

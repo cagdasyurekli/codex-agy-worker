@@ -33,7 +33,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 109
+EXPECTED_CHECKS = 111
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 # This test-only switch exercises portable controller mechanics on macOS when
@@ -43,7 +43,7 @@ PORTABLE_SCOPED_FIXTURE = os.environ.get(
 ) == "1"
 # The prior partition labels were transposed: the source contained 61 core and
 # 41 recovery calls. The manifest/grant and nested-deletion cases raise core to 63.
-GROUP_CHECKS = {"core": 63, "runtime": 1, "recovery": 45}
+GROUP_CHECKS = {"core": 64, "runtime": 1, "recovery": 46}
 
 
 def selected_group(arguments: list[str]) -> str | None:
@@ -2265,6 +2265,65 @@ with tempfile.TemporaryDirectory() as temporary:
         assert state["provider_terminal_status"] == "error"
 
     check("controller maps ERROR plus valid report to failed unreviewed exit 25", controller_preserves_outer_error_candidate)
+
+    def exact_1_1_27_denial_signal_preserves_candidate_without_reuse() -> None:
+        cases = [
+            ("denial", "1.1.27", True, "failed", "permission_required", 6),
+            ("ordinary", "1.1.27", False, "succeeded", None, 0),
+            ("prior-version", "1.1.26", True, "succeeded", None, 0),
+        ]
+        for label, version, include_denial, expected_status, expected_reason, expected_exit in cases:
+            repo = root / f"denied-actions-{label}-repo"; repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            job = root / f"denied-actions-{label}-job"; job.mkdir(mode=0o700)
+            bin_dir = root / f"denied-actions-{label}-bin"; bin_dir.mkdir()
+            terminal = {
+                "conversation_id": "conversation-1", "status": "SUCCESS",
+                "structured_output": report(summary=f"denied-actions-{label}"),
+            }
+            if include_denial:
+                # Presence only: the provider's undocumented payload shape is
+                # never parsed or persisted by the controller.
+                terminal["denied_actions"] = None
+            events = [
+                {"event": "init", "init": {}, "conversation_id": "conversation-1"},
+                {"event": "result", "result": terminal},
+            ]
+            fake = bin_dir / "agy"
+            fake.write_text(
+                "#!/bin/sh\nprintf '%s\\n' " + " ".join(
+                    shlex.quote(json.dumps(event)) for event in events
+                ) + "\n",
+                encoding="utf-8",
+            ); fake.chmod(0o755)
+            command = {
+                "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": f"denied-actions-{label}",
+                "workdir": str(repo), "argv": ["agy", "--json-schema", str(provider), "--print", "task"],
+                "agy_version": version, "agy_version_observed": True,
+                "idle_seconds": 2, "hard_seconds": 3, "max_seconds": 20, "notice_seconds": 3,
+                "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+                "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+            }
+            MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+            MODULE.create_state(job, "initial", resume=False)
+            assert run_controller(job, bin_dir) == expected_exit
+            state, _raw, sha = MODULE.load_state(job)
+            assert (state["status"], state["reason"], state["exit_code"]) == (
+                expected_status, expected_reason, expected_exit,
+            )
+            assert state["candidate_recognized"] and state["result_available"]
+            assert state["candidate_source"] == "provider_success"
+            assert state["provider_terminal_status"] == "success"
+            assert state["failure_stage"] is None
+            if include_denial and version == "1.1.27":
+                assert not state["resume_available"] and not state["continue_available"]
+                actions = {item["action"] for item in MODULE.public_status(state, sha, job=job)["available_actions"]}
+                assert "resume" not in actions and "continue" not in actions
+
+    check(
+        "exact 1.1.27 denied_actions presence blocks provider reuse but preserves a valid SUCCESS candidate",
+        exact_1_1_27_denial_signal_preserves_candidate_without_reuse,
+    )
 
     def invalid_error_and_cancelled_candidate_are_separate() -> None:
         cases = [
