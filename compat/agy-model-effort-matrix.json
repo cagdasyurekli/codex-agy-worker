@@ -2,8 +2,8 @@
   "schema_version": 1,
   "resolution_status": "active",
   "inventory": {
-    "agy_version": "1.1.27",
-    "reviewed_source_revision": "1ae9cb7b51667192c051b73a91099c71e816ca5f",
+    "agy_version": "1.2.2",
+    "reviewed_source_revision": "ba985e6b5de2ac8aa09860a154a102831eb7722b",
     "evidence": [
       "agy-models",
       "official-release",

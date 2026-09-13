@@ -52,7 +52,7 @@ def run(context: dict[str, object]) -> None:
             fake = bin_dir / "agy"
             fake.write_text(
                 "#!/bin/sh\n"
-                "if [ \"${1:-}\" = --version ] && [ \"$#\" = 1 ]; then printf 'version\\n' >> " + shlex.quote(str(calls)) + "; printf '1.1.27\\n'; exit 0; fi\n"
+                "if [ \"${1:-}\" = --version ] && [ \"$#\" = 1 ]; then printf 'version\\n' >> " + shlex.quote(str(calls)) + "; printf '1.2.2\\n'; exit 0; fi\n"
                 "if [ \"${1:-}\" = --help ] && [ \"$#\" = 1 ]; then printf 'help\\n' >> " + shlex.quote(str(calls)) + "; sleep \"${FAKE_DIRECT_HELP_DELAY:-0}\"; cat >&2 <<'HELP'\n" + help_text + "HELP\nexit 0\nfi\n"
                 "printf 'provider\\n' >> " + shlex.quote(str(calls)) + "\nprintf '%s\\n' \"$@\" > " + shlex.quote(str(args)) + "\npwd > " + shlex.quote(str(cwd)) + "\n"
                 + "if [ -n \"${FAKE_DIRECT_HEARTBEAT_COUNT:-}\" ]; then\n"
@@ -85,7 +85,7 @@ def run(context: dict[str, object]) -> None:
             command = {
                 "schema_version": 7, "kind": "agy-worker-dispatch-command", "job_id": f"direct-{label}",
                 "workdir": str(repo), "argv": ["agy", "--sandbox", "--mode", "accept-edits", "--add-dir", str(repo), "--json-schema", str(schema), "--model", "gemini-3.6-flash-high", "--print", "task"],
-                "agy_version": "1.1.27", "agy_version_observed": True,
+                "agy_version": "1.2.2", "agy_version_observed": True,
                 "selection_path": str(selection_path), "selection_sha256": MODULE.digest(raw), "selection_identity": list(MODULE._identity(info)),
                 "idle_seconds": idle_seconds, "hard_seconds": hard_seconds, "max_seconds": max_seconds, "notice_seconds": 3,
                 "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": workflow,
@@ -129,6 +129,16 @@ def run(context: dict[str, object]) -> None:
             assert state["selection_sha256"] == command["selection_sha256"]
             assert state["selection_identity"] == command["selection_identity"]
             assert state["attempt_origin"] == origin
+            label = command["job_id"].removeprefix("direct-")
+            provider_arguments = (root / f"direct-reprobe-args-{label}").read_text(
+                encoding="utf-8",
+            ).splitlines()
+            if origin in {"conversation-resume", "conversation-continue"}:
+                assert provider_arguments.count("--conversation") == 1
+                conversation_index = provider_arguments.index("--conversation")
+                assert provider_arguments[conversation_index + 1] == "conversation-1"
+            else:
+                assert "--conversation" not in provider_arguments
 
         # Initial, resume, and explicit restart each enter the same controller
         # path and must re-probe directly before their provider Popen.

@@ -568,6 +568,11 @@ def run(context: dict[str, object]) -> None:
             assert containment["prepare"]["executable"] == containment["confirm"]["executable"]
             assert containment["prepare"]["cwd"] == containment["confirm"]["cwd"]
             assert containment["prepare"]["environment"] == containment["confirm"]["environment"]
+            assert containment["prepare"]["provider_max_cycles"] == 2
+            assert containment["prepare"]["provider_write_selectors"] == [
+                {"kind": "file", "path": "payload.bin"},
+                {"kind": "file", "path": "tool.sh"},
+            ]
             assert observed["argv"] == containment["confirm"]["argv"]
             assert observed["cwd"] == containment["confirm"]["cwd"]
             for key, value in containment["confirm"]["environment"].items():

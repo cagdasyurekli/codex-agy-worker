@@ -52,11 +52,11 @@ CANDIDATE_EVIDENCE = ["installed-agy-models"]
 ACTIVE_INVENTORY_BINDING = {
     "schema_version": 1,
     "status": "accepted-current-inventory",
-    "agy_version": "1.1.27",
-    "reviewed_source_revision": "1ae9cb7b51667192c051b73a91099c71e816ca5f",
-    "source_sha256": "d583be1344ea9cfa0c45cff2c1342af7837f4833c4edb65e69bee84776a45caa",
-    "version_binding_sha256": "a1f8b651123f1e95ef7e744ae45e9066967b6ceb0a710ddfd685e54b14b0b0a6",
-    "capture_record_sha256": "ac8ddc28fcca90a20e05f6bd0678d32550db451a8e3402e4c287154eab289b33",
+    "agy_version": "1.2.2",
+    "reviewed_source_revision": "ba985e6b5de2ac8aa09860a154a102831eb7722b",
+    "source_sha256": "cabadc15a61944372bede1fdff186701c17467dd9d718e97dc79283055d3c101",
+    "version_binding_sha256": "cc3bd8bb44b31891e2bed4c4367ed90ae2334e0df29e9fba2e94bce7c3105bef",
+    "capture_record_sha256": "73d65488b618b721d70d85076cc1ca67c8ead62e0606588502aeb69e5230d032",
     "capture_stdout_sha256": "d02970e6b6b4e0910461999afca8fb99d757e9094ab2874b557dad18fc75464a",
     "capture_response_sha256": "b1cc011310435afa07b1e132a5b7f3e22297aa21427177461c858bcbd6a58794",
     "inventory_normalized_sha256": "d5e58ab55e91ebd4a2cd23841c76cbe12b47d607c62cd8c834fc8f6b9f078ad7",
@@ -75,8 +75,8 @@ ACTIVE_INVENTORY_BINDING = {
         "gemini-3.8-flash-high",
         "gemini-3.8-flash-low",
         "gemini-3.8-flash-medium",
-        "gpt-oss-120b-medium",
-    ],
+        "gpt-oss-120b-medium"
+    ]
 }
 
 

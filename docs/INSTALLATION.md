@@ -125,10 +125,16 @@ also needs network access. Do not use dangerous permission or approval bypass fl
 
 ## Refused actions and report paths
 
-For AGY 1.1.27, a valid result containing `denied_actions` stops with
+For exact AGY 1.1.27 and 1.2.2, a valid result containing `denied_actions` stops with
 `permission_required`. A valid candidate remains available for review and
 finalization; the worker does not automatically continue past a permission denial.
 The field's payload shape is not interpreted.
+
+For observed AGY 1.2.2, the reviewed partial-output timeout warning stops provider
+success even when the process exits zero. A valid candidate remains available for
+independent review; an invalid report does not become a candidate. The warning must
+match the job's bound duration. AGY 1.2.2 is the v0.19.0 compatibility
+baseline, supported by the [bounded activation evidence](../compat/reviews/agy-1.2.2-activation.md).
 
 File tools use absolute workspace paths. Final `files_changed` reports should use
 workspace-relative paths. Scoped reconciliation also accepts canonical absolute
@@ -138,7 +144,7 @@ mutation and scope checks; paths elsewhere remain invalid.
 ## Version drift and direct model selection
 
 The accepted model/effort mapping, exact agy version, and evidence digests live in the
-current [activation record](../compat/reviews/agy-1.1.27-activation.md). Historical
+current [activation record](../compat/reviews/agy-1.2.2-activation.md). Historical
 observations remain history; they do not override the current source and checked-in
 matrix. Codex compatibility evidence is observational and grants neither dispatch nor
 model-selection authority.
