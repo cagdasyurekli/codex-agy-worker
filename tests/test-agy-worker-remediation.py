@@ -33,7 +33,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 111
+EXPECTED_CHECKS = 112
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 # This test-only switch exercises portable controller mechanics on macOS when
@@ -41,9 +41,9 @@ FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 PORTABLE_SCOPED_FIXTURE = os.environ.get(
     "AGY_WORKER_REMEDIATION_PORTABLE_FIXTURE",
 ) == "1"
-# The prior partition labels were transposed: the source contained 61 core and
-# 41 recovery calls. The manifest/grant and nested-deletion cases raise core to 63.
-GROUP_CHECKS = {"core": 64, "runtime": 1, "recovery": 46}
+# The prior partition labels were transposed; keep these explicit inventories
+# synchronized with the canonical grouped and ungrouped suite runs.
+GROUP_CHECKS = {"core": 65, "runtime": 1, "recovery": 46}
 
 
 def selected_group(arguments: list[str]) -> str | None:
@@ -195,7 +195,7 @@ class TestOnlyNonDarwinContainment:
     def prepare_contained_launch(
         self, *, role, network_policy, job_dir, attempt, stage_dir,
         target_executable, target_argv, child_environment, allow_keychain,
-        read_only_inputs,
+        read_only_inputs, provider_max_cycles, provider_write_selectors,
     ):
         if role != self.ROLE_PROVIDER or network_policy != self.NETWORK_PROVIDER_TLS:
             raise self.ContainmentError("test containment policy is invalid")
@@ -203,7 +203,12 @@ class TestOnlyNonDarwinContainment:
             raise self.ContainmentError("test containment path is invalid")
         if not target_argv or target_argv[0] != str(target_executable):
             raise self.ContainmentError("test containment target is invalid")
-        if not allow_keychain or len(read_only_inputs) != 1:
+        if (
+            not allow_keychain or len(read_only_inputs) != 1
+            or type(provider_max_cycles) is not int or not (attempt <= provider_max_cycles <= 5)
+            or not isinstance(provider_write_selectors, list)
+            or any(set(item) != {"kind", "path"} for item in provider_write_selectors)
+        ):
             raise self.ContainmentError("test containment inputs are invalid")
         home = self.job / "provider-home"
         attempt_tmp = self.job / f"provider-tmp-{attempt:03d}"
@@ -230,6 +235,8 @@ class TestOnlyNonDarwinContainment:
             "executable": prepared.target_executable,
             "cwd": prepared.stage_dir,
             "environment": dict(sorted(prepared.environment.items())),
+            "provider_max_cycles": provider_max_cycles,
+            "provider_write_selectors": provider_write_selectors,
         }
         self._record()
         return prepared
@@ -2266,25 +2273,40 @@ with tempfile.TemporaryDirectory() as temporary:
 
     check("controller maps ERROR plus valid report to failed unreviewed exit 25", controller_preserves_outer_error_candidate)
 
-    def exact_1_1_27_denial_signal_preserves_candidate_without_reuse() -> None:
+    def reviewed_denial_signal_preserves_candidate_without_reuse() -> None:
         cases = [
-            ("denial", "1.1.27", True, "failed", "permission_required", 6),
-            ("ordinary", "1.1.27", False, "succeeded", None, 0),
-            ("prior-version", "1.1.26", True, "succeeded", None, 0),
+            ("denial", "1.1.27", True, True, "failed", "permission_required", 6),
+            ("ordinary", "1.1.27", False, True, "succeeded", None, 0),
+            ("denial-1-2-2", "1.2.2", True, True, "failed", "permission_required", 6),
+            ("ordinary-1-2-2", "1.2.2", False, True, "succeeded", None, 0),
+            ("unreviewed-intermediate", "1.2.1", True, True, "succeeded", None, 0),
+            ("prior-version", "1.1.26", True, True, "succeeded", None, 0),
+            # The live 1.2.2 denial emitted this top-level key but no structured
+            # report.  Presence cannot manufacture a candidate or supersede the
+            # envelope validator's missing-structured-output classification.
+            ("live-invalid-1-2-2", "1.2.2", True, False, "failed", "invalid_envelope", 4),
         ]
-        for label, version, include_denial, expected_status, expected_reason, expected_exit in cases:
+        for (
+            label, version, include_denial, valid_candidate,
+            expected_status, expected_reason, expected_exit,
+        ) in cases:
             repo = root / f"denied-actions-{label}-repo"; repo.mkdir()
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
             job = root / f"denied-actions-{label}-job"; job.mkdir(mode=0o700)
             bin_dir = root / f"denied-actions-{label}-bin"; bin_dir.mkdir()
             terminal = {
                 "conversation_id": "conversation-1", "status": "SUCCESS",
-                "structured_output": report(summary=f"denied-actions-{label}"),
+                "structured_output": (
+                    report(summary=f"denied-actions-{label}") if valid_candidate else None
+                ),
             }
             if include_denial:
                 # Presence only: the provider's undocumented payload shape is
                 # never parsed or persisted by the controller.
-                terminal["denied_actions"] = None
+                terminal["denied_actions"] = (
+                    [{"action": "command", "display_name": "RunCommand"}]
+                    if version == "1.2.2" else None
+                )
             events = [
                 {"event": "init", "init": {}, "conversation_id": "conversation-1"},
                 {"event": "result", "result": terminal},
@@ -2306,23 +2328,344 @@ with tempfile.TemporaryDirectory() as temporary:
             }
             MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
             MODULE.create_state(job, "initial", resume=False)
-            assert run_controller(job, bin_dir) == expected_exit
+            actual_exit = run_controller(job, bin_dir)
+            assert actual_exit == expected_exit, (label, actual_exit, expected_exit)
             state, _raw, sha = MODULE.load_state(job)
             assert (state["status"], state["reason"], state["exit_code"]) == (
                 expected_status, expected_reason, expected_exit,
             )
-            assert state["candidate_recognized"] and state["result_available"]
-            assert state["candidate_source"] == "provider_success"
+            assert state["candidate_recognized"] is valid_candidate
+            assert state["result_available"] is valid_candidate
+            assert state["candidate_source"] == (
+                "provider_success" if valid_candidate else "none"
+            )
             assert state["provider_terminal_status"] == "success"
-            assert state["failure_stage"] is None
-            if include_denial and version == "1.1.27":
+            assert state["failure_stage"] == (
+                None if valid_candidate else "missing_structured_output"
+            )
+            if valid_candidate and include_denial and version in {"1.1.27", "1.2.2"}:
                 assert not state["resume_available"] and not state["continue_available"]
                 actions = {item["action"] for item in MODULE.public_status(state, sha, job=job)["available_actions"]}
                 assert "resume" not in actions and "continue" not in actions
 
     check(
-        "exact 1.1.27 denied_actions presence blocks provider reuse but preserves a valid SUCCESS candidate",
-        exact_1_1_27_denial_signal_preserves_candidate_without_reuse,
+        "reviewed exact-version denied_actions presence blocks provider reuse but preserves a valid SUCCESS candidate",
+        reviewed_denial_signal_preserves_candidate_without_reuse,
+    )
+
+    def exact_1_2_2_partial_timeout_signal_preserves_candidate() -> None:
+        assert MODULE._reviewed_provider_timeout_lines("1.2.2", 8) == {
+            b"[agy] print timeout after 8s with turn in progress; returning partial output",
+        }
+        assert MODULE._reviewed_provider_timeout_lines("1.2.2", 7200) == {
+            b"[agy] print timeout after 7200s with turn in progress; returning partial output",
+            b"[agy] print timeout after 2h0m0s with turn in progress; returning partial output",
+        }
+        assert MODULE._reviewed_provider_timeout_lines("1.2.1", 20) == set()
+        timeout_line = next(iter(MODULE._reviewed_provider_timeout_lines("1.2.2", 20)))
+
+        cases = [
+            ("exact", "1.2.2", True, False, timeout_line, report(summary="partial"), "provider_timeout", 17, True),
+            ("timeout-and-denial", "1.2.2", True, True, timeout_line, report(summary="denied-partial"), "permission_required", 6, True),
+            ("near-miss", "1.2.2", True, False, timeout_line + b".", report(summary="complete"), None, 0, True),
+            ("unreviewed-version", "1.2.1", True, False, timeout_line, report(summary="complete"), None, 0, True),
+            ("unobserved-version", "1.2.2", False, False, timeout_line, report(summary="complete"), None, 0, True),
+            ("invalid-envelope", "1.2.2", True, False, timeout_line, None, "invalid_envelope", 4, False),
+        ]
+        for (
+            label, version, version_observed, include_denial, stderr_line, candidate,
+            expected_reason, expected_exit, expected_candidate,
+        ) in cases:
+            repo = root / f"partial-timeout-{label}-repo"; repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            job = root / f"partial-timeout-{label}-job"; job.mkdir(mode=0o700)
+            bin_dir = root / f"partial-timeout-{label}-bin"; bin_dir.mkdir()
+            terminal = {
+                "conversation_id": "conversation-1", "status": "SUCCESS",
+                "structured_output": candidate,
+            }
+            if include_denial:
+                terminal["denied_actions"] = [
+                    {"action": "command", "display_name": "RunCommand"},
+                ]
+            events = [
+                {"event": "init", "init": {}, "conversation_id": "conversation-1"},
+                {"event": "result", "result": terminal},
+            ]
+            fake = bin_dir / "agy"
+            payload = b"".join(
+                json.dumps(item).encode("utf-8") + b"\n" for item in events
+            )
+            fake.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os\n"
+                f"os.write(1, {payload!r})\n"
+                f"os.write(2, {(stderr_line + bytes([10]))!r})\n",
+                encoding="utf-8",
+            ); fake.chmod(0o755)
+            bound_provider = root / f"partial-timeout-{label}-provider.json"
+            provider_schema(bound_provider)
+            command = {
+                "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": f"partial-timeout-{label}",
+                "workdir": str(repo), "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
+                "agy_version": version, "agy_version_observed": version_observed,
+                "idle_seconds": 2, "hard_seconds": 3, "max_seconds": 20, "notice_seconds": 3,
+                "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+                "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+            }
+            MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+            MODULE.create_state(job, "initial", resume=False)
+            actual_exit = run_controller(job, bin_dir)
+            state, _raw, state_sha = MODULE.load_state(job)
+            assert actual_exit == expected_exit, (
+                label, actual_exit, expected_exit, state["reason"], state["failure_stage"],
+                (job / "stream.ndjson").read_bytes(),
+            )
+            assert (state["status"], state["reason"], state["exit_code"]) == (
+                "succeeded" if expected_reason is None else "failed",
+                expected_reason,
+                expected_exit,
+            )
+            assert state["candidate_recognized"] is expected_candidate
+            assert state["result_available"] is expected_candidate
+            assert state["provider_terminal_status"] == "success"
+            assert state["driver_disposition"] == (
+                "unreviewed" if expected_candidate else "not_applicable"
+            )
+            if expected_reason == "provider_timeout":
+                assert state["candidate_source"] == "provider_success"
+                assert state["continue_available"]
+                public = MODULE.public_status(state, state_sha, job=job)
+                actions = {item["action"] for item in public["available_actions"]}
+                assert public["result_available"] and "result" in actions
+                assert public["continue_available"] and "continue" in actions
+            elif expected_reason == "permission_required":
+                assert state["candidate_source"] == "provider_success"
+                assert not state["resume_available"] and not state["continue_available"]
+
+        # A leader can publish the timeout result and exit while one of its
+        # descendants still owns the stream pipes.  The controller must keep
+        # its process-group deadline, reap that descendant, and then retain the
+        # already-bound partial candidate under the provider timeout signal.
+        repo = root / "partial-timeout-descendant-repo"; repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        job = root / "partial-timeout-descendant-job"; job.mkdir(mode=0o700)
+        bin_dir = root / "partial-timeout-descendant-bin"; bin_dir.mkdir()
+        child_record = root / "partial-timeout-descendant-child"
+        events = [
+            {"event": "init", "init": {}, "conversation_id": "conversation-1"},
+            {"event": "result", "result": {
+                "conversation_id": "conversation-1", "status": "SUCCESS",
+                "structured_output": report(summary="partial-with-live-descendant"),
+            }},
+        ]
+        payload = b"".join(
+            json.dumps(item).encode("utf-8") + b"\n" for item in events
+        )
+        fake = bin_dir / "agy"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, signal, time\n"
+            f"record = {str(child_record)!r}\n"
+            "child = os.fork()\n"
+            "if child == 0:\n"
+            "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "    while True: time.sleep(60)\n"
+            "with open(record, 'w', encoding='ascii') as handle:\n"
+            "    handle.write(f'{child} {os.getpgrp()}\\n')\n"
+            f"os.write(1, {payload!r})\n"
+            f"os.write(2, {(timeout_line + bytes([10]))!r})\n"
+            "os._exit(0)\n",
+            encoding="utf-8",
+        ); fake.chmod(0o755)
+        bound_provider = root / "partial-timeout-descendant-provider.json"
+        provider_schema(bound_provider)
+        command = {
+            "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": "partial-timeout-descendant",
+            "workdir": str(repo), "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
+            "agy_version": "1.2.2", "agy_version_observed": True,
+            "idle_seconds": 1, "hard_seconds": 4, "max_seconds": 20, "notice_seconds": 3,
+            "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+            "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+        }
+        MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+        MODULE.create_state(job, "initial", resume=False)
+        actual_exit = run_controller(job, bin_dir)
+        state, _raw, _sha = MODULE.load_state(job)
+        assert actual_exit == MODULE.EXIT_BY_REASON["provider_timeout"], (
+            actual_exit, state["reason"], state["failure_stage"], state["agy_returncode"],
+            (job / "stream.ndjson").read_bytes(), (job / "stderr.txt").read_bytes(),
+        )
+        assert (state["status"], state["reason"], state["limit_kind"]) == (
+            "failed", "provider_timeout", None,
+        )
+        assert state["candidate_recognized"] and state["result_available"]
+        assert state["provider_terminal_status"] == "success"
+        child, group = map(int, child_record.read_text(encoding="ascii").split())
+        assert child != group
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            raise AssertionError("partial-timeout descendant process group survived")
+
+        # Reaping a descendant-held pipe is not itself permission to recover a
+        # report after idle timeout.  The leader must have exited cleanly and
+        # the exact reviewed timeout marker must be present.  A missing marker
+        # and a leader still running both retain the ordinary idle-timeout path.
+        for label, exited_leader in (
+            ("idle-exited-no-marker", True),
+            ("idle-live-no-marker", False),
+        ):
+            repo = root / f"{label}-repo"; repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            job = root / f"{label}-job"; job.mkdir(mode=0o700)
+            bin_dir = root / f"{label}-bin"; bin_dir.mkdir()
+            child_record = root / f"{label}-child"
+            fake = bin_dir / "agy"
+            if exited_leader:
+                program = (
+                    "#!/usr/bin/env python3\n"
+                    "import os, signal, time\n"
+                    f"record = {str(child_record)!r}\n"
+                    "child = os.fork()\n"
+                    "if child == 0:\n"
+                    "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                    "    while True: time.sleep(60)\n"
+                    "with open(record, 'w', encoding='ascii') as handle:\n"
+                    "    handle.write(f'{child} {os.getpgrp()}\\n')\n"
+                    f"os.write(1, {payload!r})\n"
+                    "os._exit(0)\n"
+                )
+            else:
+                program = (
+                    "#!/usr/bin/env python3\n"
+                    "import os, time\n"
+                    f"os.write(1, {payload!r})\n"
+                    "time.sleep(60)\n"
+                )
+            fake.write_text(program, encoding="utf-8"); fake.chmod(0o755)
+            bound_provider = root / f"{label}-provider.json"
+            provider_schema(bound_provider)
+            command = {
+                "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": label,
+                "workdir": str(repo), "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
+                "agy_version": "1.2.2", "agy_version_observed": True,
+                "idle_seconds": 1, "hard_seconds": 4, "max_seconds": 20, "notice_seconds": 3,
+                "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+                "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+            }
+            MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+            MODULE.create_state(job, "initial", resume=False)
+            assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["idle_timeout"]
+            state, _raw, _sha = MODULE.load_state(job)
+            assert (state["status"], state["reason"], state["limit_kind"]) == (
+                "failed", "idle_timeout", "idle",
+            )
+            assert not state["candidate_recognized"] and not state["result_available"]
+            assert state["candidate_source"] == "none"
+            assert state["provider_terminal_status"] == "unknown"
+            assert state["agy_returncode"] == (0 if exited_leader else -signal.SIGTERM)
+            if exited_leader:
+                child, group = map(int, child_record.read_text(encoding="ascii").split())
+                assert child != group
+                try:
+                    os.killpg(group, 0)
+                except ProcessLookupError:
+                    pass
+                else:
+                    raise AssertionError("unmarked idle descendant process group survived")
+
+        # Marker-driven recovery after an idle timeout still obeys denial
+        # precedence and cannot make the retained conversation reusable.
+        repo = root / "partial-timeout-denied-descendant-repo"; repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        job = root / "partial-timeout-denied-descendant-job"; job.mkdir(mode=0o700)
+        bin_dir = root / "partial-timeout-denied-descendant-bin"; bin_dir.mkdir()
+        denied_events = [
+            {"event": "init", "init": {}, "conversation_id": "conversation-1"},
+            {"event": "result", "result": {
+                "conversation_id": "conversation-1", "status": "SUCCESS",
+                "structured_output": report(summary="denied-partial-with-live-descendant"),
+                "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }},
+        ]
+        denied_payload = b"".join(
+            json.dumps(item).encode("utf-8") + b"\n" for item in denied_events
+        )
+        fake = bin_dir / "agy"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, signal, time\n"
+            "child = os.fork()\n"
+            "if child == 0:\n"
+            "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "    while True: time.sleep(60)\n"
+            f"os.write(1, {denied_payload!r})\n"
+            f"os.write(2, {(timeout_line + bytes([10]))!r})\n"
+            "os._exit(0)\n",
+            encoding="utf-8",
+        ); fake.chmod(0o755)
+        bound_provider = root / "partial-timeout-denied-descendant-provider.json"
+        provider_schema(bound_provider)
+        command = {
+            "schema_version": 3, "kind": "agy-worker-dispatch-command",
+            "job_id": "partial-timeout-denied-descendant", "workdir": str(repo),
+            "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
+            "agy_version": "1.2.2", "agy_version_observed": True,
+            "idle_seconds": 1, "hard_seconds": 4, "max_seconds": 20, "notice_seconds": 3,
+            "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+            "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+        }
+        MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+        MODULE.create_state(job, "initial", resume=False)
+        assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["permission_required"]
+        state, _raw, _sha = MODULE.load_state(job)
+        assert (state["status"], state["reason"], state["limit_kind"]) == (
+            "failed", "permission_required", None,
+        )
+        assert state["candidate_recognized"] and state["result_available"]
+        assert state["candidate_source"] == "provider_success"
+        assert not state["resume_available"] and not state["continue_available"]
+
+        # A provider marker cannot weaken a controller-owned hard boundary.
+        repo = root / "partial-timeout-hard-repo"; repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        job = root / "partial-timeout-hard-job"; job.mkdir(mode=0o700)
+        bin_dir = root / "partial-timeout-hard-bin"; bin_dir.mkdir()
+        fake = bin_dir / "agy"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, time\n"
+            f"os.write(1, {payload!r})\n"
+            f"os.write(2, {(timeout_line + bytes([10]))!r})\n"
+            "time.sleep(60)\n",
+            encoding="utf-8",
+        ); fake.chmod(0o755)
+        bound_provider = root / "partial-timeout-hard-provider.json"
+        provider_schema(bound_provider)
+        command = {
+            "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": "partial-timeout-hard",
+            "workdir": str(repo), "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
+            "agy_version": "1.2.2", "agy_version_observed": True,
+            "idle_seconds": 1, "hard_seconds": 1, "max_seconds": 20, "notice_seconds": 3,
+            "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+            "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+        }
+        MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+        MODULE.create_state(job, "initial", resume=False)
+        assert run_controller(job, bin_dir) == MODULE.EXIT_BY_REASON["hard_deadline_exceeded"]
+        state, _raw, _sha = MODULE.load_state(job)
+        assert (state["status"], state["reason"], state["limit_kind"]) == (
+            "failed", "hard_deadline_exceeded", "hard",
+        )
+        assert state["candidate_recognized"] and state["result_available"]
+        assert state["provider_terminal_status"] == "success"
+
+    check(
+        "exact reviewed 1.2.2 print-timeout stderr marks provider failure while preserving a valid partial candidate",
+        exact_1_2_2_partial_timeout_signal_preserves_candidate,
     )
 
     def invalid_error_and_cancelled_candidate_are_separate() -> None:

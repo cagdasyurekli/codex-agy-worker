@@ -40,10 +40,24 @@ with private HOME/TMP and never falls back to session mode. In native mode, the 
 reviewed Keychain service access; this is not a recipient allowlist. On macOS,
 the listener rule also permits wildcard binds, so the agy image can expose a
 listener to the local network. Outbound connections to local TCP services remain denied.
-The exact `/usr/bin/security` helper shares the reviewed Keychain service access,
-without additional network or filesystem access. This permission cannot be limited
+The bound agy image can inspect metadata and existence of its executable's exact
+parent directory for Core Foundation SSL initialization. This adds no directory
+listing or sibling-file access and does not transfer to a different executed image.
+The same image can read metadata for ancestors of its private HOME so SQLite can
+resolve conversation database paths. This grants no ancestor listing or file data;
+other executable images and self-verification receive no such exception.
+Native preparation expresses the approved staged read/write scope in a generated
+private AGY settings file. It copies no user settings and grants no commands,
+URLs, MCP tools, or ambient paths; the native filesystem boundary remains in force.
+
+The exact `/usr/bin/security` helper shares the reviewed Keychain service access
+and can read the bound default Keychain file. This file rule grants no provider,
+other-executable, directory, write, or additional network access. Before native
+launch, the driver reads only the default Keychain locator and file identity, then
+creates a minimal locator preference in the private provider HOME; it does not copy
+owner preferences or credentials. The existing service permission cannot be limited
 to one token or operation; disclose broader same-user Keychain read/change/delete
-authority in the initial approval package.
+authority and the helper's exact file access in the initial approval package.
 The stage is writable, while reconciliation enforces its approved write subset.
 Process-group cleanup and trusted-local-owner limits are described in
 [Security and compatibility](skills/agy-worker/references/SECURITY_AND_COMPATIBILITY.md).

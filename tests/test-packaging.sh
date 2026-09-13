@@ -1374,7 +1374,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.18.0"
+assert manifest["version"] == "0.19.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -2439,8 +2439,10 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.json" \
         && cmp -s "$ROOT/compat/agy-models-inventory-binding.sha256" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.sha256" \
-        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.1.27" ]] \
-        && [[ "$(<"$ROOT/compat/agy-last-reviewed.txt")" == "2026-09-06" ]]; then
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.2.2" ]] \
+        && grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' "$ROOT/compat/agy-last-reviewed.txt" \
+        && grep -Fxq "Reviewed: $(<"$ROOT/compat/agy-last-reviewed.txt")" \
+            "$ROOT/compat/reviews/agy-1.2.2-activation.md"; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
@@ -2871,7 +2873,7 @@ fi
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     'case "$*" in' \
-    '  --version) printf "1.1.27\n" ;;' \
+    '  --version) printf "1.2.2\n" ;;' \
     '  --help) printf "%s\n" "Usage of agy:" "  --add-dir  Add a directory" "  --conversation  Resume a conversation" "  --disable-slash-commands  Disable slash commands" "  --json-schema  Schema path" "  --mode  Execution mode (accept-edits, plan)" "  --model  Select a model" "  --output-format  Format (text, json, stream-json)" "  --print  Run a prompt" "  --print-timeout  Print timeout" "  --sandbox  Sandboxed" >&2 ;;' \
     '  *) exit 97 ;;' \
     'esac' > "$TMP/selector-bin/agy"
@@ -2895,7 +2897,7 @@ fi
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "56ee4cefdf918184e8bae57c49f01c51c18e49b30ff0bd4b322d8801703dfaac"' \
+        && grep -Fq '"matrix_sha256": "2c12abf09910489b681a01c88b43e8fbaf7df3a68fd715c7280c7f6fff6c89e4"' \
             "$TMP/copied-selection.json" \
         && [[ "$copied_selection_v2" == 1 ]] \
         && [[ ! -e "$TMP/network-called" ]]; then
@@ -3076,26 +3078,26 @@ governance_clauses=(
     'The final human-readable handoff must report the planner/reviewer separation.'
 )
 
-governance_skill_contract() {
-    local skill_path="$1" clause
+governance_lifecycle_contract() {
+    local lifecycle_path="$1" clause
     for clause in "${governance_clauses[@]}"; do
-        [[ "$(grep -Fxc "$clause" "$skill_path")" == "1" ]] || return 1
+        [[ "$(grep -Fxc "$clause" "$lifecycle_path")" == "1" ]] || return 1
     done
 }
 
 if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]] \
-        && governance_skill_contract "$TMP/installed/agy-worker/SKILL.md"; then
-    ok "installed skill preserves independent material-plan governance and handoff disclosure"
+        && governance_lifecycle_contract "$TMP/installed/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"; then
+    ok "installed lifecycle guide preserves independent material-plan governance and handoff disclosure"
 else
-    bad "installed skill preserves independent material-plan governance and handoff disclosure"
+    bad "installed lifecycle guide preserves independent material-plan governance and handoff disclosure"
 fi
 
 governance_mutants_rejected=1
 governance_mutant_index=0
 for clause in "${governance_clauses[@]}"; do
     governance_mutant_index=$((governance_mutant_index + 1))
-    mutant="$TMP/governance-skill-mutant-$governance_mutant_index.md"
-    if ! python3 -B - "$TMP/installed/agy-worker/SKILL.md" "$mutant" "$clause" <<'PY'
+    mutant="$TMP/governance-lifecycle-mutant-$governance_mutant_index.md"
+    if ! python3 -B - "$TMP/installed/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" "$mutant" "$clause" <<'PY'
 from pathlib import Path
 import sys
 
@@ -3111,7 +3113,7 @@ PY
         governance_mutants_rejected=0
         break
     fi
-    if governance_skill_contract "$mutant"; then
+    if governance_lifecycle_contract "$mutant"; then
         governance_mutants_rejected=0
         break
     fi
@@ -3133,27 +3135,27 @@ provider_notice_clauses=(
     'Direct model and effort selection remain caller-owned; recommendations are advisory.'
 )
 
-provider_notice_skill_contract() {
-    local skill_path="$1" clause
+provider_notice_lifecycle_contract() {
+    local lifecycle_path="$1" clause
     for clause in "${provider_notice_clauses[@]}"; do
-        [[ "$(grep -Fxc "$clause" "$skill_path")" == "1" ]] || return 1
+        [[ "$(grep -Fxc "$clause" "$lifecycle_path")" == "1" ]] || return 1
     done
 }
 
 if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]] \
-        && provider_notice_skill_contract "$TMP/installed/agy-worker/SKILL.md" \
-        && provider_notice_skill_contract "$ROOT/skills/agy-worker/SKILL.md"; then
-    ok "installed skill preserves user-facing provider dispatch notice and boundary contract"
+        && provider_notice_lifecycle_contract "$TMP/installed/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
+        && provider_notice_lifecycle_contract "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"; then
+    ok "installed lifecycle guide preserves user-facing provider dispatch notice and boundary contract"
 else
-    bad "installed skill preserves user-facing provider dispatch notice and boundary contract"
+    bad "installed lifecycle guide preserves user-facing provider dispatch notice and boundary contract"
 fi
 
 provider_notice_mutants_rejected=1
 provider_notice_mutant_index=0
 for clause in "${provider_notice_clauses[@]}"; do
     provider_notice_mutant_index=$((provider_notice_mutant_index + 1))
-    mutant="$TMP/provider-notice-skill-mutant-$provider_notice_mutant_index.md"
-    if ! python3 -B - "$TMP/installed/agy-worker/SKILL.md" "$mutant" "$clause" <<'PY'
+    mutant="$TMP/provider-notice-lifecycle-mutant-$provider_notice_mutant_index.md"
+    if ! python3 -B - "$TMP/installed/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" "$mutant" "$clause" <<'PY'
 from pathlib import Path
 import sys
 
@@ -3169,7 +3171,7 @@ PY
         provider_notice_mutants_rejected=0
         break
     fi
-    if provider_notice_skill_contract "$mutant"; then
+    if provider_notice_lifecycle_contract "$mutant"; then
         provider_notice_mutants_rejected=0
         break
     fi
@@ -3197,7 +3199,7 @@ for pair in "${weakening_replacements[@]}"; do
     old_fragment="${pair%%::*}"
     new_fragment="${pair##*::}"
     mutant="$TMP/provider-notice-weakened-$provider_notice_weakening_mutant_index.md"
-    if ! python3 -B - "$TMP/installed/agy-worker/SKILL.md" "$mutant" "$old_fragment" "$new_fragment" <<'PY'
+    if ! python3 -B - "$TMP/installed/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" "$mutant" "$old_fragment" "$new_fragment" <<'PY'
 from pathlib import Path
 import sys
 
@@ -3214,7 +3216,7 @@ PY
         provider_notice_weakening_mutants_rejected=0
         break
     fi
-    if provider_notice_skill_contract "$mutant"; then
+    if provider_notice_lifecycle_contract "$mutant"; then
         provider_notice_weakening_mutants_rejected=0
         break
     fi
@@ -3223,6 +3225,16 @@ if [[ "$provider_notice_weakening_mutants_rejected" == "1" ]]; then
     ok "installed provider notice contract rejects every clause weakening mutation"
 else
     bad "installed provider notice contract rejects every clause weakening mutation"
+fi
+
+if [[ "$installed_root" == "$(cd "$ROOT" && pwd -P)" ]] \
+        && grep -Fq '[Project lifecycle and verification](references/PROJECT_LIFECYCLE_AND_VERIFICATION.md#approval-bindings-and-launch-notices)' "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq '[Project lifecycle and verification](references/PROJECT_LIFECYCLE_AND_VERIFICATION.md#approval-bindings-and-launch-notices)' "$TMP/installed/agy-worker/SKILL.md" \
+        && grep -Fq '[Project lifecycle and verification](references/PROJECT_LIFECYCLE_AND_VERIFICATION.md#material-planning-governance)' "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq '[Project lifecycle and verification](references/PROJECT_LIFECYCLE_AND_VERIFICATION.md#material-planning-governance)' "$TMP/installed/agy-worker/SKILL.md"; then
+    ok "source and installed skill entrypoints link to lifecycle-owned notice and governance contracts"
+else
+    bad "source and installed skill entrypoints link to lifecycle-owned notice and governance contracts"
 fi
 
 provider_read_scope_clauses=(
@@ -3539,8 +3551,8 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (302 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
-        && grep -Fq 'EXPECTED_CHECKS = 111' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (111 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'EXPECTED_CHECKS = 112' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (112 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (219 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Do not pin exact suite counts in this instruction file' "$ROOT/AGENTS.md" \
         && grep -Fq '`docs/REPO_MAP.md` owns focused-suite inventory' "$ROOT/AGENTS.md" \
@@ -3575,7 +3587,7 @@ if grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-version-manifest-engine.py` (28 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'previous 1.1.26 permits only generic version-evidence/profile/capture' \
+        && grep -Fq 'previous 1.1.27 and 1.1.26 permit only generic version-evidence/profile/capture' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'historical 1.1.24, 1.1.16, and 1.1.12 permit no executable operation' \
             "$ROOT/docs/REPO_MAP.md" \
@@ -4294,7 +4306,7 @@ if grep -Fq '24 quota exhausted' "$ROOT/skills/agy-worker/runtime/agy-worker.sh"
         && grep -Fq 'Before every reviewed direct' "$ROOT/docs/INSTALLATION.md" \
         && grep -Fq 'dispatch, including an exact-version match, Codex must inspect current bounded raw' \
             "$ROOT/docs/INSTALLATION.md" \
-        && grep -Fq 'Before every' "$ROOT/skills/agy-worker/SKILL.md" \
+        && grep -Fq 'Before every' "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && grep -Fq 'reviewed direct dispatch, including an exact-version match, Codex must inspect' \
             "$ROOT/skills/agy-worker/references/TROUBLESHOOTING.md" \
         && grep -Fq 'Codex inspects current bounded raw help before every reviewed direct dispatch' \

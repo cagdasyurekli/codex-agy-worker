@@ -101,18 +101,33 @@ def prepare(
     network_policy: str = MODULE.NETWORK_DENY_ALL,
     read_only_inputs: tuple[Path, ...] = (),
 ) -> object:
-    return MODULE.prepare_contained_launch(
-        role=role,
-        network_policy=network_policy,
-        job_dir=job,
-        attempt=1,
-        stage_dir=stage,
-        target_executable=executable,
-        target_argv=argv,
-        child_environment=environment,
-        allow_keychain=allow_keychain,
-        read_only_inputs=read_only_inputs,
-    )
+    original_discovery = MODULE._discover_default_keychain
+    if allow_keychain:
+        synthetic = job.parent / "synthetic-default.keychain-db"
+        synthetic.write_bytes(b"synthetic keychain metadata fixture\n")
+        synthetic.chmod(0o600)
+        binding = MODULE._bind_keychain(synthetic)
+        MODULE._discover_default_keychain = lambda: binding
+    try:
+        return MODULE.prepare_contained_launch(
+            role=role,
+            network_policy=network_policy,
+            job_dir=job,
+            attempt=1,
+            stage_dir=stage,
+            target_executable=executable,
+            target_argv=argv,
+            child_environment=environment,
+            allow_keychain=allow_keychain,
+            read_only_inputs=read_only_inputs,
+            provider_max_cycles=1 if allow_keychain else None,
+            provider_write_selectors=(
+                ({"kind": "file", "path": "candidate.py"},)
+                if allow_keychain else ()
+            ),
+        )
+    finally:
+        MODULE._discover_default_keychain = original_discovery
 
 
 def shell_probe(stage: Path) -> Path:
@@ -428,6 +443,8 @@ def role_and_network_policy_fail_closed() -> bool:
             job_dir=job, attempt=1, stage_dir=stage,
             target_executable="/usr/bin/true", target_argv=["/usr/bin/true"],
             child_environment={}, allow_keychain=True,
+            provider_max_cycles=1,
+            provider_write_selectors=({"kind": "file", "path": "candidate.py"},),
         ))
         return bad_network and self_verify_network and bad_keychain
     finally:
@@ -445,6 +462,7 @@ def security_helper_keychain_exception_is_exact_and_provider_only() -> bool:
     profile = MODULE.render_profile(
         target_executable=target, role=MODULE.ROLE_PROVIDER,
         network_policy=MODULE.NETWORK_PROVIDER_TLS, allow_keychain=True,
+        keychain_path="/private/tmp/agyworker-synthetic.keychain-db",
     ).decode("utf-8")
     helper = """(with-filter (process-path \"/usr/bin/security\")
   (allow mach-lookup
@@ -452,7 +470,9 @@ def security_helper_keychain_exception_is_exact_and_provider_only() -> bool:
     (global-name \"com.apple.securityd.xpc\")
     (global-name \"com.apple.securityd.general\")
     (global-name \"com.apple.trustd\")
-    (global-name \"com.apple.trustd.agent\")))
+    (global-name \"com.apple.trustd.agent\"))
+  (allow file-read*
+    (literal \"/private/tmp/agyworker-synthetic.keychain-db\")))
 """
     self_verify = MODULE.render_profile(
         target_executable="/usr/bin/true", role=MODULE.ROLE_SELF_VERIFY,
@@ -505,6 +525,520 @@ def runtime_input_drift_fails_closed() -> bool:
         schema.write_text('{"type":"string"}\n', encoding="utf-8")
         return rejects(lambda: MODULE.confirm_contained_launch(prepared))
     finally:
+        shutil.rmtree(root)
+
+
+def keychain_preferences_create_once_and_reject_drift() -> bool:
+    """The generated preference never replaces a changed private artifact."""
+    root, job, _stage, _checkout, _ambient = fixture("keychain-preferences")
+    original_payload = MODULE._default_keychain_preferences_payload
+    try:
+        keychain_file = root / "default.keychain-db"
+        keychain_file.write_bytes(b"metadata fixture\n")
+        keychain_file.chmod(0o644)
+        keychain = MODULE._bind_keychain(keychain_file)
+        home = MODULE._ensure_private_directory(job / "provider-home", existing_ok=True)
+        MODULE._default_keychain_preferences_payload = lambda _binding: b"synthetic plist\n"
+        first = MODULE._prepare_keychain_preferences(job, Path(home.path), keychain)
+        repaired = MODULE._prepare_keychain_preferences(job, Path(home.path), keychain)
+        preferences = Path(first.path)
+        sidecar = job / ".provider-keychain-preferences.binding"
+        initial = (
+            first == repaired
+            and preferences.read_bytes() == b"synthetic plist\n"
+            and stat.S_IMODE(preferences.stat().st_mode) == 0o600
+            and stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+        )
+        preferences.write_bytes(b"changed\n")
+        changed_rejected = rejects(lambda: MODULE._prepare_keychain_preferences(
+            job, Path(home.path), keychain,
+        ))
+        preferences.unlink()
+        deleted_rejected = rejects(lambda: MODULE._prepare_keychain_preferences(
+            job, Path(home.path), keychain,
+        ))
+        preferences.symlink_to(keychain_file)
+        symlink_rejected = rejects(lambda: MODULE._prepare_keychain_preferences(
+            job, Path(home.path), keychain,
+        ))
+        return initial and changed_rejected and deleted_rejected and symlink_rejected
+    finally:
+        MODULE._default_keychain_preferences_payload = original_payload
+        shutil.rmtree(root)
+
+
+def provider_settings_are_precomputed_private_and_rebound() -> bool:
+    root, job, _stage, _checkout, _ambient = fixture("provider-settings")
+    try:
+        home = MODULE._ensure_private_directory(job / "provider-home", existing_ok=True)
+        selectors = (
+            {"kind": "file", "path": "candidate.py"},
+            {"kind": "tree", "path": "output"},
+        )
+        validated = MODULE._validate_provider_write_selectors(selectors)
+        first = MODULE._prepare_provider_settings(job, Path(home.path), 2, validated)
+        repaired = MODULE._prepare_provider_settings(job, Path(home.path), 2, validated)
+        settings = Path(first.path)
+        sidecar = job / ".provider-antigravity-settings.binding"
+        expected = {
+            "permissions": {"allow": [
+                f"read_file({job / 'stage-001'})",
+                f"write_file({job / 'stage-001' / 'candidate.py'})",
+                f"write_file({job / 'stage-001' / 'output'})",
+                f"read_file({job / 'stage-002'})",
+                f"write_file({job / 'stage-002' / 'candidate.py'})",
+                f"write_file({job / 'stage-002' / 'output'})",
+            ]},
+        }
+        initial = (
+            first == repaired
+            and json.loads(settings.read_text(encoding="utf-8")) == expected
+            and stat.S_IMODE(settings.stat().st_mode) == 0o600
+            and stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+        )
+        settings.write_bytes(b"tampered")
+        changed_rejected = rejects(lambda: MODULE._prepare_provider_settings(
+            job, Path(home.path), 2, validated,
+        ))
+        settings.unlink()
+        deleted_rejected = rejects(lambda: MODULE._prepare_provider_settings(
+            job, Path(home.path), 2, validated,
+        ))
+        settings.symlink_to(root / "outside-settings.json")
+        symlink_rejected = rejects(lambda: MODULE._prepare_provider_settings(
+            job, Path(home.path), 2, validated,
+        ))
+        invalid_selector_rejected = rejects(lambda: MODULE._validate_provider_write_selectors((
+            {"kind": "file", "path": "../escape"},
+        ))) and rejects(lambda: MODULE._validate_provider_write_selectors((
+            {"kind": "tree", "path": ".git"},
+        ))) and rejects(lambda: MODULE._validate_provider_write_selectors((
+            {"kind": "file", "path": "literal*rule"},
+        )))
+        return (
+            initial and changed_rejected and deleted_rejected and symlink_rejected
+            and invalid_selector_rejected
+        )
+    finally:
+        shutil.rmtree(root)
+
+
+def provider_settings_leaf_is_immutable_but_home_state_stays_writable() -> bool:
+    if sys.platform != "darwin":
+        return None
+    root, job, stage, _checkout, _ambient = fixture("provider-settings-profile")
+    try:
+        script = stage / "settings-probe.py"
+        script.write_text(
+            "from pathlib import Path\n"
+            "import os,json\n"
+            "home = Path(os.environ['HOME'])\n"
+            "result = Path(os.environ['TMPDIR']) / 'settings-result'\n"
+            "(home / 'ordinary-state').write_text('allowed')\n"
+            "settings = home / '.gemini/antigravity-cli/settings.json'\n"
+            "replacement = home / 'replacement-settings'\n"
+            "replacement.write_text('tampered')\n"
+            "observed = {'readable': bool(settings.read_bytes())}\n"
+            "for name,action in [('write', lambda: settings.write_text('tampered')), ('unlink', settings.unlink), ('replace', lambda: os.replace(replacement, settings))]:\n"
+            "    try: action()\n"
+            "    except PermissionError: observed[name] = 'denied'\n"
+            "    else: observed[name] = 'allowed'\n"
+            "result.write_text(json.dumps(observed))\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o600)
+        prepared = prepare(
+            job, stage, "/usr/bin/python3",
+            ["/usr/bin/python3", "-I", "-S", "-B", str(script)],
+            {}, allow_keychain=True,
+        )
+        confirmed = run_confirmed(prepared)
+        profile = Path(prepared.profile.path).read_text(encoding="utf-8")
+        settings = Path(prepared.provider_settings.path)
+        result = Path(prepared.attempt_tmp.path) / "settings-result"
+        confirmed_rebinds = confirmed.returncode == 0
+        settings.write_text("tampered", encoding="utf-8")
+        try:
+            MODULE.confirm_contained_launch(prepared)
+        except MODULE.ContainmentError as exc:
+            settings_error = str(exc) == "native provider permission settings are unavailable"
+        else:
+            settings_error = False
+        return (
+            confirmed.returncode == 0
+            and (Path(prepared.private_home.path) / "ordinary-state").read_text() == "allowed"
+            and json.loads(result.read_text()) == {
+                "readable": True, "write": "denied", "unlink": "denied", "replace": "denied",
+            }
+            and f'(deny file-write*\n  (literal "{settings}"))' in profile
+            and confirmed_rebinds
+            and settings_error
+        )
+    finally:
+        shutil.rmtree(root)
+
+
+def provider_settings_rule_targets_and_failures_are_exact() -> bool:
+    if sys.platform != "darwin":
+        return None
+    root, job, stage, _checkout, _ambient = fixture("provider-settings-boundary")
+    original_discovery = MODULE._discover_default_keychain
+    original_preferences = MODULE._prepare_keychain_preferences
+    original_settings = MODULE._prepare_provider_settings
+    try:
+        selectors = MODULE._validate_provider_write_selectors((
+            {"kind": "file", "path": "candidate.py"},
+        ))
+        grammar_job = root / "job*rule"
+        grammar_job.mkdir(mode=0o700)
+        grammar_rejected = rejects(lambda: MODULE._provider_settings_payload(
+            grammar_job, 1, selectors,
+        ))
+        mismatched = job / "stage-other"
+        mismatched.mkdir(mode=0o700)
+        stage_rejected = rejects(lambda: MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_PROVIDER, network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job, attempt=1, stage_dir=mismatched,
+            target_executable="/usr/bin/true", target_argv=["/usr/bin/true"],
+            child_environment={}, allow_keychain=True, provider_max_cycles=1,
+            provider_write_selectors=({"kind": "file", "path": "candidate.py"},),
+        ))
+        verification_copy = job / "verification-copy"
+        verification_copy.mkdir(mode=0o700)
+        self_verify = MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_SELF_VERIFY, network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job, attempt=1, stage_dir=verification_copy,
+            target_executable="/usr/bin/true", target_argv=["/usr/bin/true"],
+            child_environment={},
+        )
+
+        def exact_error(action: Callable[[], object], expected: str) -> bool:
+            try:
+                action()
+            except MODULE.ContainmentError as exc:
+                return str(exc) == expected
+            return False
+
+        settings_validation = exact_error(lambda: MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_PROVIDER, network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job, attempt=1, stage_dir=stage,
+            target_executable="/usr/bin/true", target_argv=["/usr/bin/true"],
+            child_environment={}, allow_keychain=True, provider_max_cycles=1,
+            provider_write_selectors=({"kind": "file", "path": "bad*selector"},),
+        ), "native provider permission settings are unavailable")
+        MODULE._discover_default_keychain = lambda: (_ for _ in ()).throw(
+            MODULE.ContainmentError("synthetic auth failure"),
+        )
+        authentication = exact_error(lambda: MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_PROVIDER, network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job, attempt=1, stage_dir=stage,
+            target_executable="/usr/bin/true", target_argv=["/usr/bin/true"],
+            child_environment={}, allow_keychain=True, provider_max_cycles=1,
+            provider_write_selectors=({"kind": "file", "path": "candidate.py"},),
+        ), "native provider authentication is unavailable")
+        keychain_file = root / "synthetic.keychain-db"
+        keychain_file.write_bytes(b"metadata only\n")
+        keychain_file.chmod(0o600)
+        MODULE._discover_default_keychain = lambda: MODULE._bind_keychain(keychain_file)
+        MODULE._prepare_keychain_preferences = lambda *_args: object()
+        MODULE._prepare_provider_settings = lambda *_args: (_ for _ in ()).throw(
+            MODULE.ContainmentError("synthetic settings failure"),
+        )
+        settings_preparation = exact_error(lambda: MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_PROVIDER, network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job, attempt=1, stage_dir=stage,
+            target_executable="/usr/bin/true", target_argv=["/usr/bin/true"],
+            child_environment={}, allow_keychain=True, provider_max_cycles=1,
+            provider_write_selectors=({"kind": "file", "path": "candidate.py"},),
+        ), "native provider permission settings are unavailable")
+        return (
+            grammar_rejected and stage_rejected
+            and self_verify.stage.path == str(verification_copy)
+            and self_verify.provider_settings is None
+            and not (Path(self_verify.private_home.path) / ".gemini").exists()
+            and settings_validation
+            and authentication and settings_preparation
+        )
+    finally:
+        MODULE._discover_default_keychain = original_discovery
+        MODULE._prepare_keychain_preferences = original_preferences
+        MODULE._prepare_provider_settings = original_settings
+        shutil.rmtree(root)
+
+
+def keychain_binding_is_metadata_only_and_rebinds_identity() -> bool:
+    if sys.platform != "darwin":
+        return None
+    root, job, stage, _checkout, _ambient = fixture("keychain-binding")
+    original_discovery = MODULE._discover_default_keychain
+    original_payload = MODULE._default_keychain_preferences_payload
+    original_read_hash = MODULE._read_hash
+    original_lstat = MODULE.os.lstat
+    original_canonical = MODULE._canonical_existing
+    try:
+        keychain_file = root / "default.keychain-db"
+        keychain_file.write_bytes(b"first metadata bytes\n")
+        keychain_file.chmod(0o644)
+        lstat_calls = 0
+
+        def metadata_churn(path: object) -> object:
+            nonlocal lstat_calls
+            result = original_lstat(path)
+            if os.fspath(path) == str(keychain_file):
+                lstat_calls += 1
+                if lstat_calls == 1:
+                    keychain_file.write_bytes(b"between-lstat content churn\n")
+            return result
+
+        MODULE._canonical_existing = lambda _path: keychain_file
+        MODULE.os.lstat = metadata_churn
+        churn_tolerated = MODULE._bind_keychain(keychain_file)
+        MODULE.os.lstat = original_lstat
+        MODULE._canonical_existing = original_canonical
+        MODULE._read_hash = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("keychain database must not be hashed"),
+        )
+        keychain = MODULE._bind_keychain(keychain_file)
+        MODULE._read_hash = original_read_hash
+        MODULE._default_keychain_preferences_payload = lambda _binding: b"synthetic plist\n"
+        MODULE._discover_default_keychain = lambda: keychain
+        prepared = MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_PROVIDER, network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job, attempt=1, stage_dir=stage,
+            target_executable="/usr/bin/true", target_argv=["/usr/bin/true"],
+            child_environment={}, allow_keychain=True,
+            provider_max_cycles=1,
+            provider_write_selectors=({"kind": "file", "path": "candidate.py"},),
+        )
+        keychain_file.write_bytes(b"changed content is allowed\n")
+        unchanged_identity_passes = MODULE.confirm_contained_launch(prepared).argv[0] == "/usr/bin/sandbox-exec"
+        replacement = root / "replacement.keychain-db"
+        replacement.write_bytes(b"replacement\n")
+        replacement.chmod(0o644)
+        replacement.replace(keychain_file)
+        identity_drift_rejected = rejects(lambda: MODULE.confirm_contained_launch(prepared))
+        return (
+            churn_tolerated.path == str(keychain_file)
+            and lstat_calls == 2
+            and unchanged_identity_passes and identity_drift_rejected
+        )
+    finally:
+        MODULE._discover_default_keychain = original_discovery
+        MODULE._default_keychain_preferences_payload = original_payload
+        MODULE._read_hash = original_read_hash
+        MODULE.os.lstat = original_lstat
+        MODULE._canonical_existing = original_canonical
+        shutil.rmtree(root)
+
+
+def keychain_policy_is_helper_only_and_self_verify_never_discovers() -> bool:
+    keychain = "/private/tmp/agyworker-helper-only.keychain-db"
+    profile = MODULE.render_profile(
+        target_executable="/usr/bin/true", role=MODULE.ROLE_PROVIDER,
+        network_policy=MODULE.NETWORK_DENY_ALL, allow_keychain=True,
+        keychain_path=keychain,
+    ).decode("utf-8")
+    helper_clause = (
+        '(with-filter (process-path "/usr/bin/security")\n'
+        '  (allow mach-lookup\n'
+    )
+    return (
+        helper_clause in profile
+        and profile.count(f'(literal "{keychain}")') == 1
+        and f'(with-filter (process-path "/bin/cat")' not in profile
+        and rejects(lambda: MODULE.render_profile(
+            target_executable="/usr/bin/true", role=MODULE.ROLE_SELF_VERIFY,
+            network_policy=MODULE.NETWORK_DENY_ALL, allow_keychain=False,
+            keychain_path=keychain,
+        ))
+    )
+
+
+def keychain_locator_is_bounded_closed_and_strict() -> bool:
+    """Exercise only synthetic locator scripts; no owner Keychain is queried."""
+    if sys.platform != "darwin":
+        return None
+    root, _job, _stage, _checkout, _ambient = fixture("keychain-locator")
+    original_helper = MODULE.SECURITY_HELPER
+    original_deadline = MODULE.KEYCHAIN_LOCATOR_DEADLINE_SECONDS
+    original_grace = MODULE.KEYCHAIN_LOCATOR_TERM_GRACE_SECONDS
+    try:
+        database = root / "default.keychain-db"
+        database.write_bytes(b"metadata only\n")
+        database.chmod(0o644)
+
+        def locator_script(name: str, body: str) -> Path:
+            script = root / name
+            script.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+            script.chmod(0o755)
+            return script
+
+        def discovered(script: Path) -> object:
+            MODULE.SECURITY_HELPER = script
+            return MODULE._discover_default_keychain()
+
+        quoted = f"printf '\"%s\"\\n' \"{database}\""
+        valid = discovered(locator_script("valid-security", quoted))
+        expected = MODULE._bind_keychain(database)
+        indented = locator_script(
+            "indented-security", f"printf '    \"%s\"\\n' \"{database}\"",
+        )
+        indented_valid = discovered(indented)
+        invalid = locator_script("invalid-security", "printf 'not quoted\\n'")
+        multiple = locator_script("multiple-security", quoted + "; " + quoted)
+        trailing = locator_script(
+            "trailing-security", f"printf '\"%s\" trailing\\n' \"{database}\"",
+        )
+        symlink = root / "linked.keychain-db"
+        symlink.symlink_to(database)
+        linked = locator_script(
+            "linked-security", f"printf '\"%s\"\\n' \"{symlink}\"",
+        )
+        directory = root / "not-a-keychain"
+        directory.mkdir(mode=0o700)
+        nonregular = locator_script(
+            "directory-security", f"printf '\"%s\"\\n' \"{directory}\"",
+        )
+        writable = root / "writable.keychain-db"
+        writable.write_bytes(b"metadata only\n")
+        writable.chmod(0o666)
+        writable_script = locator_script(
+            "writable-security", f"printf '\"%s\"\\n' \"{writable}\"",
+        )
+        oversized = locator_script(
+            "oversized-security", "while :; do printf 0123456789abcdef; done",
+        )
+        timeout = locator_script("timeout-security", "sleep 2")
+        MODULE.KEYCHAIN_LOCATOR_DEADLINE_SECONDS = 0.05
+        MODULE.KEYCHAIN_LOCATOR_TERM_GRACE_SECONDS = 0.05
+        return (
+            valid == expected
+            and indented_valid == expected
+            and rejects(lambda: discovered(invalid))
+            and rejects(lambda: discovered(multiple))
+            and rejects(lambda: discovered(trailing))
+            and rejects(lambda: discovered(linked))
+            and rejects(lambda: discovered(nonregular))
+            and rejects(lambda: discovered(writable_script))
+            and rejects(lambda: discovered(oversized))
+            and rejects(lambda: discovered(timeout))
+        )
+    finally:
+        MODULE.SECURITY_HELPER = original_helper
+        MODULE.KEYCHAIN_LOCATOR_DEADLINE_SECONDS = original_deadline
+        MODULE.KEYCHAIN_LOCATOR_TERM_GRACE_SECONDS = original_grace
+        shutil.rmtree(root)
+
+
+def keychain_locator_reaps_leaderless_descendants() -> bool:
+    """An exited locator leader cannot leave its fresh session running."""
+    if sys.platform != "darwin":
+        return None
+    root, _job, _stage, _checkout, _ambient = fixture("keychain-locator-reap")
+    original_helper = MODULE.SECURITY_HELPER
+    original_deadline = MODULE.KEYCHAIN_LOCATOR_DEADLINE_SECONDS
+    original_grace = MODULE.KEYCHAIN_LOCATOR_TERM_GRACE_SECONDS
+    try:
+        database = root / "default.keychain-db"
+        database.write_bytes(b"metadata only\n")
+        database.chmod(0o644)
+
+        def helper(name: str, body: str) -> Path:
+            script = root / name
+            script.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+            script.chmod(0o755)
+            return script
+
+        def run(script: Path) -> bool:
+            MODULE.SECURITY_HELPER = script
+            return rejects(MODULE._discover_default_keychain)
+
+        def gone(pid_path: Path) -> bool:
+            pid = int(pid_path.read_text(encoding="ascii").strip())
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    return True
+                time.sleep(0.02)
+            return False
+
+        MODULE.KEYCHAIN_LOCATOR_DEADLINE_SECONDS = 0.3
+        MODULE.KEYCHAIN_LOCATOR_TERM_GRACE_SECONDS = 0.3
+        holding_pid = root / "holding.pid"
+        holding = helper(
+            "holding-stdout-security",
+            f"sleep 30 & echo $! > '{holding_pid}'; exit 0",
+        )
+        closes_pid = root / "closed.pid"
+        closes = helper(
+            "closed-stdout-security",
+            f"sleep 30 >/dev/null 2>&1 & echo $! > '{closes_pid}'; "
+            f"printf '\"%s\"\\n' '{database}'; exit 0",
+        )
+        holding_rejected = run(holding)
+        holding_gone = holding_pid.exists() and gone(holding_pid)
+        closed_rejected = run(closes)
+        closed_gone = closes_pid.exists() and gone(closes_pid)
+        return holding_rejected and holding_gone and closed_rejected and closed_gone
+    finally:
+        MODULE.SECURITY_HELPER = original_helper
+        MODULE.KEYCHAIN_LOCATOR_DEADLINE_SECONDS = original_deadline
+        MODULE.KEYCHAIN_LOCATOR_TERM_GRACE_SECONDS = original_grace
+        shutil.rmtree(root)
+
+
+def private_keychain_publication_failures_are_sanitized() -> bool:
+    root, _job, _stage, _checkout, _ambient = fixture("keychain-publish-failure")
+    original_write = MODULE.os.write
+    original_fsync = MODULE.os.fsync
+    original_fchmod = MODULE.os.fchmod
+    try:
+        def normalized(path: Path) -> bool:
+            try:
+                MODULE._publish_private_file(path, b"payload\n")
+            except MODULE.ContainmentError as exc:
+                return str(exc) == "native provider authentication is unavailable"
+            return False
+
+        MODULE.os.write = lambda *_args: (_ for _ in ()).throw(OSError("synthetic write"))
+        write_failure = normalized(root / "write.plist")
+        MODULE.os.write = original_write
+        MODULE.os.fsync = lambda *_args: (_ for _ in ()).throw(OSError("synthetic fsync"))
+        fsync_failure = normalized(root / "fsync.plist")
+        MODULE.os.fsync = original_fsync
+        MODULE.os.fchmod = lambda *_args: (_ for _ in ()).throw(OSError("synthetic chmod"))
+        chmod_failure = normalized(root / "chmod.plist")
+        return write_failure and fsync_failure and chmod_failure
+    finally:
+        MODULE.os.write = original_write
+        MODULE.os.fsync = original_fsync
+        MODULE.os.fchmod = original_fchmod
+        shutil.rmtree(root)
+
+
+def self_verify_never_runs_keychain_discovery() -> bool:
+    if sys.platform != "darwin":
+        return None
+    root, job, stage, _checkout, _ambient = fixture("no-self-verify-keychain")
+    original_discovery = MODULE._discover_default_keychain
+    calls = 0
+    try:
+        def unavailable() -> object:
+            nonlocal calls
+            calls += 1
+            raise AssertionError("self-verification must not discover a Keychain")
+        MODULE._discover_default_keychain = unavailable
+        prepared = MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_SELF_VERIFY, network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job, attempt=1, stage_dir=stage,
+            target_executable="/usr/bin/true", target_argv=["/usr/bin/true"],
+            child_environment={}, allow_keychain=False,
+        )
+        return calls == 0 and prepared.keychain is None and prepared.keychain_preferences is None
+    finally:
+        MODULE._discover_default_keychain = original_discovery
         shutil.rmtree(root)
 
 
@@ -910,6 +1444,11 @@ def integrated_stage_rebind_and_outside_write_denial() -> bool:
             stage, scope, selected, stage_identity, stage_sha,
         )
         target = DISPATCH.CONTAINMENT
+        synthetic_keychain = root / "synthetic-default.keychain-db"
+        synthetic_keychain.write_bytes(b"integration metadata fixture\n")
+        synthetic_keychain.chmod(0o600)
+        original_discovery = target._discover_default_keychain
+        target._discover_default_keychain = lambda: target._bind_keychain(synthetic_keychain)
         python = CLT_PYTHON_EXECUTABLE
         script = (
             "import errno,os,time\n"
@@ -955,6 +1494,8 @@ def integrated_stage_rebind_and_outside_write_denial() -> bool:
             child_environment={"PATH": "/usr/bin:/bin", "SECRET_SHOULD_NOT_PASS": "provider-approved"},
             allow_keychain=True,
             read_only_inputs=(schema,),
+            provider_max_cycles=3,
+            provider_write_selectors=scope["write"],
         )
         confirmed = target.confirm_contained_launch(prepared)
         process = subprocess.Popen(
@@ -1034,16 +1575,275 @@ def integrated_stage_rebind_and_outside_write_denial() -> bool:
             )
         return True
     finally:
+        if "target" in locals() and "original_discovery" in locals():
+            target._discover_default_keychain = original_discovery
         if "inherited_fd" in locals() and inherited_fd >= 0:
             os.close(inherited_fd)
         shutil.rmtree(root)
 
 
+def provider_parent_metadata_rule_is_exact() -> bool:
+    target = '/private/owned parent "quoted"/provider'
+    provider = MODULE.render_profile(
+        target_executable=target, role=MODULE.ROLE_PROVIDER,
+        network_policy=MODULE.NETWORK_DENY_ALL, allow_keychain=False,
+    ).decode()
+    verifier = MODULE.render_profile(
+        target_executable=target, role=MODULE.ROLE_SELF_VERIFY,
+        network_policy=MODULE.NETWORK_DENY_ALL, allow_keychain=False,
+    ).decode()
+    addition = (
+        f'\n(with-filter (process-path {MODULE._scheme_string(target)})\n'
+        '  (allow file-read-metadata file-test-existence\n'
+        f'    (literal {MODULE._scheme_string(str(Path(target).parent))}))\n'
+        '  ; SQLite resolves every ancestor before opening its private conversation DB.\n'
+        '  (allow file-read-metadata (path-ancestors (param "HOME"))))\n'
+    )
+    return provider.count(addition) == 1 and provider.replace(addition, "") == verifier
+
+
+def provider_home_ancestor_metadata_is_image_bound() -> bool:
+    """Exercise the SQLite-required ancestor lstat grant in a native profile."""
+    if sys.platform != "darwin":
+        return None
+    root, _job, _stage, _checkout, _ambient = fixture("home-ancestor-metadata")
+    try:
+        source = root / "ancestor-probe.c"
+        source.write_text(r'''
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static int denied(void) { return errno == EACCES || errno == EPERM; }
+
+static int parent_path(const char *home, char path[PATH_MAX]) {
+    if (strlcpy(path, home, PATH_MAX) >= PATH_MAX) return 0;
+    char *slash = strrchr(path, '/');
+    if (!slash || slash == path) return 0;
+    *slash = '\0';
+    return 1;
+}
+
+static int trim_parent(char path[PATH_MAX]) {
+    char *slash = strrchr(path, '/');
+    if (!slash) return 0;
+    if (slash == path) {
+        if (path[1] == '\0') return 0;
+        path[1] = '\0';
+        return 1;
+    }
+    *slash = '\0';
+    return 1;
+}
+
+static int every_ancestor_lstat(const char *home) {
+    char path[PATH_MAX]; struct stat st;
+    if (!parent_path(home, path)) return 0;
+    for (;;) {
+        if (lstat(path, &st) != 0) return 0;
+        if (!trim_parent(path)) return 1;
+    }
+}
+
+static int immediate_ancestor_directory_listing_denied(const char *home) {
+    char path[PATH_MAX];
+    if (!parent_path(home, path)) return 0;
+    errno = 0; DIR *directory = opendir(path);
+    if (directory || !denied()) { if (directory) closedir(directory); return 0; }
+    return 1;
+}
+
+static int immediate_parent_lstat_denied(const char *home) {
+    char path[PATH_MAX]; struct stat st;
+    if (!parent_path(home, path)) return 0;
+    errno = 0;
+    return lstat(path, &st) == -1 && denied();
+}
+
+int main(int argc, char **argv) {
+    if (argc == 3 && strcmp(argv[1], "child") == 0)
+        return immediate_parent_lstat_denied(argv[2]) ? 0 : 1;
+    if (argc != 5) return 90;
+    struct stat st;
+    int ancestors_lstat = every_ancestor_lstat(argv[1]);
+    int ancestors_listing_denied = immediate_ancestor_directory_listing_denied(argv[1]);
+    errno = 0; int ancestor_data = open(argv[3], O_RDONLY);
+    int ancestor_data_denied = ancestor_data == -1 && denied();
+    if (ancestor_data >= 0) close(ancestor_data);
+    errno = 0; int sibling_metadata_denied = lstat(argv[2], &st) == -1 && denied();
+    errno = 0; int descriptor = open(argv[2], O_RDONLY);
+    int sibling_read_denied = descriptor == -1 && denied();
+    if (descriptor >= 0) close(descriptor);
+    pid_t child = fork();
+    if (child < 0) return 91;
+    if (!child) { execl(argv[4], argv[4], "child", argv[1], (char *)NULL); _exit(92); }
+    int status;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status)) return 93;
+    printf("%d %d %d %d %d %d\n", ancestors_lstat, ancestors_listing_denied,
+           ancestor_data_denied, sibling_metadata_denied, sibling_read_denied,
+           WEXITSTATUS(status) == 0);
+    return 0;
+}
+''', encoding="utf-8")
+        for role, expected in (
+            (MODULE.ROLE_PROVIDER, "1 1 1 1 1 1"),
+            (MODULE.ROLE_SELF_VERIFY, "0 1 1 1 1 1"),
+        ):
+            job = root / f"{role}-job"
+            stage = job / "stage-001"
+            job.mkdir(mode=0o700)
+            stage.mkdir(mode=0o700)
+            target = stage / "ancestor-probe"
+            child = stage / "other-image"
+            sibling = job / "private-sibling"
+            ancestor_data = job / "ancestor-data"
+            sibling.write_text("not readable or metadata-visible\n", encoding="utf-8")
+            ancestor_data.write_text("not readable from a HOME ancestor\n", encoding="utf-8")
+            subprocess.run(
+                ["/usr/bin/clang", "-O0", "-Wall", "-Wextra", "-Werror",
+                 str(source), "-o", str(target)],
+                check=True, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+            )
+            shutil.copy2(target, child)
+            target.chmod(0o700)
+            child.chmod(0o700)
+            prepared = prepare(
+                job, stage, target,
+                [str(target), str(job / "provider-home"), str(sibling), str(ancestor_data), str(child)],
+                {"PATH": "/usr/bin:/bin"}, role=role,
+            )
+            result = run_confirmed(prepared)
+            observed = result.stdout.decode("utf-8", errors="strict").strip()
+            if result.returncode != 0 or observed != expected:
+                raise AssertionError(
+                    f"{role} ancestor metadata mismatch: rc={result.returncode} "
+                    f"stdout={result.stdout!r} stderr={result.stderr!r} expected={expected!r}"
+                )
+        return True
+    finally:
+        shutil.rmtree(root)
+
+
+def external_provider_bundle_preserves_metadata_boundary() -> bool:
+    if sys.platform != "darwin":
+        return None
+    root, job, stage, _checkout, _ambient = fixture("bundle-metadata")
+    try:
+        image_dir = root / "external-provider"
+        image_dir.mkdir(mode=0o700)
+        target = image_dir / "provider"
+        sibling = image_dir / "private-sentinel"
+        sibling.write_text("synthetic private sibling\n", encoding="utf-8")
+        source = root / "bundle-probe.c"
+        source.write_text(r'''
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
+#include <dirent.h>
+#include <errno.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static int denied(void) { return errno == EACCES || errno == EPERM; }
+int main(int argc, char **argv) {
+    if (argc != 3) return 90;
+    struct stat st;
+    int parent_stat = stat(argv[1], &st) == 0;
+    DIR *dir = opendir(argv[1]);
+    int listing_denied = !dir && denied();
+    if (dir) closedir(dir);
+    FILE *file = fopen(argv[2], "r");
+    int sibling_read_denied = !file && denied();
+    if (file) fclose(file);
+    int sibling_stat_denied = stat(argv[2], &st) == -1 && denied();
+    pid_t child = fork();
+    if (child < 0) return 91;
+    if (!child) _exit(stat(argv[1], &st) == 0 ? 0 : 1);
+    int status;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status)) return 92;
+    int fork_stat = WEXITSTATUS(status) == 0;
+    child = fork();
+    if (child < 0) return 93;
+    if (!child) {
+        if (!freopen("/dev/null", "w", stderr)) _exit(94);
+        execl("/usr/bin/stat", "stat", "-f", "%i", argv[1], (char *)NULL);
+        _exit(95);
+    }
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status)) return 96;
+    int exec_stat_denied = WEXITSTATUS(status) == 1;
+    CFBundleRef bundle = CFBundleGetMainBundle();
+    CFDictionaryRef info = bundle ? CFBundleGetInfoDictionary(bundle) : NULL;
+    SecPolicyRef policy = SecPolicyCreateSSL(true, CFSTR("example.com"));
+    printf("{\"parent_stat\":%d,\"listing_denied\":%d,"
+           "\"sibling_read_denied\":%d,\"sibling_stat_denied\":%d,"
+           "\"fork_stat\":%d,\"exec_stat_denied\":%d,"
+           "\"bundle\":%d,\"info\":%d,\"policy\":%d}\n",
+           parent_stat, listing_denied, sibling_read_denied, sibling_stat_denied,
+           fork_stat, exec_stat_denied, bundle != NULL, info != NULL, policy != NULL);
+    if (policy) CFRelease(policy);
+    return 0;
+}
+''', encoding="utf-8")
+        subprocess.run(
+            ["/usr/bin/clang", "-Wall", "-Wextra", "-Werror", "-framework",
+             "CoreFoundation", "-framework", "Security", str(source), "-o", str(target)],
+            check=True, capture_output=True, timeout=30,
+        )
+        target.chmod(0o700)
+        for role, allowed in ((MODULE.ROLE_SELF_VERIFY, 0), (MODULE.ROLE_PROVIDER, 1)):
+            role_job = root / role
+            role_job.mkdir(mode=0o700)
+            role_stage = role_job / "stage-001"
+            role_stage.mkdir(mode=0o700)
+            prepared = prepare(
+                role_job, role_stage, target,
+                [str(target), str(image_dir), str(sibling)],
+                {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}, role=role,
+            )
+            confirmed = MODULE.confirm_contained_launch(prepared)
+            result = subprocess.run(
+                confirmed.argv, cwd=confirmed.cwd, env=confirmed.environment,
+                capture_output=True, text=True, timeout=15,
+            )
+            expected = {
+                "parent_stat": allowed, "listing_denied": 1,
+                "sibling_read_denied": 1, "sibling_stat_denied": 1,
+                "fork_stat": allowed, "exec_stat_denied": 1,
+                "bundle": allowed, "info": allowed, "policy": allowed,
+            }
+            if result.returncode != 0 or json.loads(result.stdout) != expected:
+                raise AssertionError(f"{role}: {result!r}; expected {expected!r}")
+        return True
+    finally:
+        shutil.rmtree(root)
+
+
+check("provider parent metadata is the only safely escaped role-specific read delta", provider_parent_metadata_rule_is_exact)
+check("provider HOME ancestor metadata is exact, non-readable, and removed by another image", provider_home_ancestor_metadata_is_image_bound)
+check("external provider SSL policy needs only image-bound parent metadata", external_provider_bundle_preserves_metadata_boundary)
 check("profile, role, HOME, TMP, and exact target are launch-bound", profile_and_environment_are_private)
 check("invalid network and self-verification provider authority fail closed", role_and_network_policy_fail_closed)
 check("Keychain helper exception is exact, provider-only, and network-free", security_helper_keychain_exception_is_exact_and_provider_only)
 check("profile identity drift fails before native launch", binding_drift_fails_closed)
 check("exact read-only runtime input drift fails before native launch", runtime_input_drift_fails_closed)
+check("private generated DefaultKeychain preferences create once and reject repair drift", keychain_preferences_create_once_and_reject_drift)
+check("precomputed provider settings bind all repair stages and reject drift", provider_settings_are_precomputed_private_and_rebound)
+check("provider settings leaf stays immutable while ordinary HOME state remains writable", provider_settings_leaf_is_immutable_but_home_state_stays_writable)
+check("provider settings rule targets, stages, and failure labels stay bounded", provider_settings_rule_targets_and_failures_are_exact)
+check("default keychain identity is metadata-only and allows content churn only", keychain_binding_is_metadata_only_and_rebinds_identity)
+check("Keychain read authority is helper-only and self-verification has none", keychain_policy_is_helper_only_and_self_verify_never_discovers)
+check("synthetic default-Keychain locator is closed, bounded, and strict", keychain_locator_is_bounded_closed_and_strict)
+check("locator cleanup reaps descendants after leader exit on timeout and apparent success", keychain_locator_reaps_leaderless_descendants)
+check("private Keychain preference publication failures are sanitized before launch", private_keychain_publication_failures_are_sanitized)
+check("self-verification skips all Keychain discovery and preference state", self_verify_never_runs_keychain_discovery)
 check("unsupported hosts fail before creating containment state", unsupported_host_fails_before_creation)
 check("native stage boundary denies checkout, Git, HOME, siblings, and local deputies", native_boundary_is_enforced)
 check("Apple localhost token denies IPv4, IPv6, and interface-local owned listeners", localhost_predicate_blocks_owned_local_endpoints)

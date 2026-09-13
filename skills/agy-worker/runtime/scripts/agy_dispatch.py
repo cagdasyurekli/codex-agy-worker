@@ -4097,7 +4097,58 @@ def _event(line: bytes) -> tuple[bool, str | None, str | None]:
     return True, conversation, event
 
 
-def _classify_stderr(path: Path, version: str, returncode: int) -> str:
+def _reviewed_provider_timeout_lines(version: str, seconds: object) -> set[bytes]:
+    """Build only the exact 1.2.2 timeout lines bound to this job's limit.
+
+    The installed binary exposes a ``%s`` duration slot but its unavailable
+    source does not establish whether that slot retains the integer-seconds
+    flag spelling or uses Go's canonical whole-second duration spelling.  The
+    wrapper always supplies a positive integer number of seconds.  Accept only
+    those two equivalent spellings for that exact bound value.
+    """
+    if version != "1.2.2" or type(seconds) not in (int, float):
+        return set()
+    if not math.isfinite(seconds) or seconds <= 0 or seconds != int(seconds):
+        return set()
+    total = int(seconds)
+    if total > 7 * 24 * 3600:
+        return set()
+    raw = f"{total}s"
+    if total < 60:
+        canonical = raw
+    elif total < 3600:
+        minutes, remainder = divmod(total, 60)
+        canonical = f"{minutes}m{remainder}s"
+    else:
+        hours, remainder = divmod(total, 3600)
+        minutes, remainder = divmod(remainder, 60)
+        canonical = f"{hours}h{minutes}m{remainder}s"
+    prefix = "[agy] print timeout after "
+    suffix = " with turn in progress; returning partial output"
+    return {
+        f"{prefix}{duration}{suffix}".encode("ascii")
+        for duration in {raw, canonical}
+    }
+
+
+def _has_reviewed_provider_timeout(
+    path: Path, version: str, seconds: object,
+) -> bool:
+    expected = _reviewed_provider_timeout_lines(version, seconds)
+    if not expected:
+        return False
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False
+    return bool(expected.intersection(raw.splitlines()))
+
+
+def _classify_stderr(
+    path: Path, version: str, returncode: int, provider_timeout_seconds: object = None,
+) -> str:
+    if _has_reviewed_provider_timeout(path, version, provider_timeout_seconds):
+        return "provider_timeout"
     if returncode == 0:
         return "empty_output"
     try:
@@ -4213,14 +4264,14 @@ def _quota_terminal_failure(stream: Path, version: str) -> tuple[str, int | None
     return "provider_quota_exhausted", retry
 
 
-def _has_1_1_27_denied_actions(stream: Path, version: str) -> bool:
-    """Recognize only the documented 1.1.27 top-level denial signal.
+def _has_reviewed_denied_actions(stream: Path, version: str) -> bool:
+    """Recognize only reviewed exact-version top-level denial signals.
 
     Its payload is provider-owned and deliberately never interpreted or copied
     into public state. Call this only after the terminal envelope has passed
     schema validation, so presence cannot turn an invalid report into a candidate.
     """
-    if version != "1.1.27":
+    if version not in {"1.1.27", "1.2.2"}:
         return False
     result = _terminal_result(stream, strict=True)
     return isinstance(result, dict) and "denied_actions" in result
@@ -4300,6 +4351,7 @@ def controller(job: Path, ownership_fd: int) -> int:
     started_mono: float | None = None
     runtime_end_mono: float | None = None
     runtime_frozen = False
+    idle_timeout_with_exited_provider = False
 
     def interrupted(number: int, _frame: Any) -> None:
         nonlocal stop_signal
@@ -4584,6 +4636,8 @@ def controller(job: Path, ownership_fd: int) -> int:
                         ),
                         allow_keychain=True,
                         read_only_inputs=(contained_argv[schema_index],),
+                        provider_max_cycles=command["max_cycles"],
+                        provider_write_selectors=scope["write"],
                     )
                 # The prior attempt budget is still a hard stop, but bounded
                 # controller-local proofs do not become a provider timeout.
@@ -4917,6 +4971,9 @@ def controller(job: Path, ownership_fd: int) -> int:
                     process, contained_root,
                     contained=prepared_containment is not None,
                 )
+                idle_timeout_with_exited_provider = bool(
+                    reason == "idle_timeout" and returncode == 0
+                )
                 process = None
                 runtime_end_mono = time.monotonic()
                 # A hard/max boundary stops semantic event processing, but a
@@ -4953,13 +5010,21 @@ def controller(job: Path, ownership_fd: int) -> int:
             outer_status: str | None = None
             provider_retry_after: int | None = None
             provider_retry_observed: float | None = None
+            reviewed_idle_partial = bool(
+                idle_timeout_with_exited_provider
+                and _has_reviewed_provider_timeout(
+                    stderr_path,
+                    command["agy_version"] if command["agy_version_observed"] else "",
+                    command["max_seconds"],
+                )
+            )
             # A deadline is a controller fact, not a reason to discard a
             # terminal report already emitted by the bounded provider.  Parse
             # that report for candidate/provenance evidence, but never let its
             # outer SUCCESS/ERROR/CANCELLED disposition publish past the
             # frozen deadline.  Cancellation and binding failures retain their
             # existing fail-closed precedence and do not enter this path.
-            if reason in {None, "hard_deadline_exceeded"}:
+            if reason in {None, "hard_deadline_exceeded"} or reviewed_idle_partial:
                 if reason is None:
                     terminal_failure = _quota_terminal_failure(
                         stream_path,
@@ -4977,10 +5042,14 @@ def controller(job: Path, ownership_fd: int) -> int:
                 if reason in {None, "hard_deadline_exceeded"} and sizes["stdout"] == 0:
                     if reason is None:
                         reason = (
-                            _classify_stderr(stderr_path, command["agy_version"], returncode)
-                            if returncode != 0 else "empty_output"
+                            _classify_stderr(
+                                stderr_path,
+                                command["agy_version"] if command["agy_version_observed"] else "",
+                                returncode,
+                                command["max_seconds"],
+                            )
                         )
-                elif reason in {None, "hard_deadline_exceeded"}:
+                elif reason in {None, "hard_deadline_exceeded"} or reviewed_idle_partial:
                     try:
                         if schema_paths is None:
                             raise DispatchError("dispatch schema binding is unavailable")
@@ -4992,14 +5061,24 @@ def controller(job: Path, ownership_fd: int) -> int:
                         if result_binding is None and reason is None:
                             reason = "invalid_envelope"
                         elif (
-                            reason is None
-                            and result_binding is not None
-                            and _has_1_1_27_denied_actions(
+                            result_binding is not None
+                            and reason != "hard_deadline_exceeded"
+                            and _has_reviewed_denied_actions(
                                 stream_path,
                                 command["agy_version"] if command["agy_version_observed"] else "",
                             )
                         ):
-                            reason = "permission_required"
+                            reason, limit_kind = "permission_required", None
+                        elif (
+                            result_binding is not None
+                            and reason != "hard_deadline_exceeded"
+                            and _has_reviewed_provider_timeout(
+                                stderr_path,
+                                command["agy_version"] if command["agy_version_observed"] else "",
+                                command["max_seconds"],
+                            )
+                        ):
+                            reason, limit_kind = "provider_timeout", None
                         elif reason is None and outer_status == "ERROR":
                             reason = "provider_terminal_error"
                         elif reason is None and outer_status == "CANCELLED":

@@ -9,6 +9,33 @@ Read [Security and compatibility](SECURITY_AND_COMPATIBILITY.md) before a first 
 dispatch. Use [Troubleshooting](TROUBLESHOOTING.md) when a preflight, provider,
 lifecycle, or verifier step fails.
 
+## Approval, bindings, and launch notices
+
+Human approval authorizes an exact provider transmission boundary and its intended
+work. `launch_approval_sha256`, `transmission_sha256`, `state_sha256`, candidate, and
+dispatch SHA values mechanically bind that decision to current reviewed facts; they do
+not themselves grant authority. Refresh a binding only when the already-approved
+action remains available. Request fresh human authority when content exposure,
+destination, isolation mode, scope, or budget materially changes. A normal job needs
+no hand-authored JSON or Goal.
+
+One approved package may cover foreseeable provider work and a bounded repair. For
+whole-worktree mode, use the preview's exact `launch_approval_sha256`; for provider
+scope, use the exact `transmission_sha256`. Approval reuse does not authorize a Git
+action, acceptance, publication, installation, account action, or a new provider
+execution beyond the approved job.
+
+Before every provider-launch attempt (initial start/run, resume, continue, and restart), tell the user in one or two concise user-facing sentences what task is being sent to AGY.
+Include a short public-safe task label, caller-selected model information, caller-selected effort when separately selectable, and the exact resolved model slug.
+For default selection where no model is selected or the default tier is used, state truthfully that the provider default model is used and that model or effort is unresolved, without inventing a resolved slug or thinking level.
+For fixed/compound/literal models where effort is not separately selectable, state that accurately without inferring backend reasoning or inventing a thinking level.
+The notice must precede every dispatch attempt and remain accurate afterward.
+If preflight fails before provider launch, explicitly state that the task was not sent to AGY.
+If provider reach is genuinely uncertain, state that it is unverified rather than claiming success.
+Direct model and effort selection remain caller-owned; recommendations are advisory.
+
+The notice does not require another response while the existing approval applies.
+
 ## Lifecycle at a glance
 
 1. Capture an immutable base commit and create a branch-backed disposable worktree.
@@ -179,6 +206,9 @@ At initial dispatch, `--allow-scoped-repair` binds permission to continue the sa
 scoped task/project within its approved write scope, selected model, conversation,
 and budgets. Candidate evolution inside that grant does not require a new human
 approval. External drift or a changed grant is rejected before another provider turn.
+Without that initial grant, a scoped candidate is result/finalize-only. A fresh state
+or candidate binding does not by itself require fresh human approval, but it cannot
+extend the original grant.
 
 For optional local checks, the driver prepares an owner-private manifest and supplies
 `--self-verification-manifest PATH` at initial task/project dispatch. Both options
@@ -284,6 +314,16 @@ Use the current `STATE_SHA` with eligible lower-level `continue` or `finalize`
 commands. A bounded repair request may cite failed checks, missing checks, advisory
 results, coverage gaps, or review findings. It must continue the same conversation
 while budget remains and must be preceded by the provider notice.
+
+## Material planning governance
+
+For material UX, lifecycle, trust-boundary, security, data-semantics, or other domain plans:
+A coordinator and suitable domain expert must co-plan.
+Freeze user journeys, acceptance tests, and authority/privacy constraints before implementation.
+The final acceptor must be a different agent or fresh context; no planner or implementer may self-accept.
+Purely mechanical changes are exempt.
+Verification v2 and the controller bind candidate evidence, not agent identity or governance.
+The final human-readable handoff must report the planner/reviewer separation.
 
 ## Assurance and preservation
 
