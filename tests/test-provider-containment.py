@@ -648,8 +648,8 @@ def provider_settings_leaf_is_immutable_but_home_state_stays_writable() -> bool:
         )
         script.chmod(0o600)
         prepared = prepare(
-            job, stage, "/usr/bin/python3",
-            ["/usr/bin/python3", "-I", "-S", "-B", str(script)],
+            job, stage, CLT_PYTHON_EXECUTABLE,
+            [CLT_PYTHON_EXECUTABLE, "-I", "-S", "-B", str(script)],
             {}, allow_keychain=True,
         )
         confirmed = run_confirmed(prepared)
