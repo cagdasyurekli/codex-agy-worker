@@ -56,6 +56,10 @@ behavior:
 - Runtime and metadata were independently reviewed before documentation with no remaining executable
   findings; the mirrored `clientInfo` 0.20.0 correction passed 17 owning usage tests.
 
+Live execution canaries, session qualification, and independent driver
+verification established earlier under 1.2.6 (including resolution of `status_unavailable`
+and `binding_failure` boundary cases) remain historical reference points.
+
 Unknown or malformed `AGY_ERROR` lines stay unclassified (`agy_failed_unclassified`).
 Invalid envelopes remain distinct (failing closed to `invalid_envelope` at exit 4).
 `binding_failure` applies only to actual binding failures, keeping strict fail-closed
