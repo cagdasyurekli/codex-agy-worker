@@ -1,7 +1,7 @@
 ---
 layout: default
-title: "codex-agy-worker — delegate coding work, verify before trust"
-description: "Delegate bounded coding work from Codex to Antigravity CLI while Codex independently checks Git scope and runs driver-owned verification before acceptance."
+title: "codex-agy-worker — Codex skill for Antigravity CLI"
+description: "A Codex agent skill that delegates repository exploration and coding to Antigravity CLI (agy). Codex reviews the Git diff and runs independent checks before accepting the result."
 canonical_url: "https://cagdasyurekli.github.io/codex-agy-worker/"
 ---
 
