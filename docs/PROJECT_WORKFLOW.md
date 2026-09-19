@@ -25,10 +25,15 @@ For the public synthetic gate contract, read [QA gate conformance v1](CONFORMANC
    acceptance, or publication authority. See
    [optional selected-content dispatch](USAGE.md#optional-selected-content-dispatch).
 4. Retrieve the bound candidate and inspect its Git diff without trusting the worker
-   report or executing any worker-reported command.
-5. Run writable build and test commands in a separate verification copy.
+   report or executing any worker-reported command. Worker envelopes are not evidence.
+5. Run writable build and test commands in a separate verification copy. Reuse
+   driver-owned checks only for identical candidate bytes and relevant environment;
+   after changes rerun affected checks and run the required full suite once the final
+   executable candidate is stable.
 6. Bind the driver findings to Verification v2, then choose a bounded repair in the
-   same conversation or finalize an honest disposition.
+   same conversation or finalize an honest disposition. Failed product checks return
+   concrete sanitized feedback to the same AGY conversation for bounded repair; do not
+   allow silent direct-Codex fallback after provider failure or exhausted budget.
 7. Preserve accepted work on its branch. Cleanup is available only for narrowly
    rejected or explicitly discarded candidates and requires current exact approvals.
 
@@ -37,6 +42,12 @@ strict workflow policy is satisfied; `partially_verified` records useful work wi
 unresolved evidence; `rejected` records work Codex declines; and `blocked` records a
 genuine authority, repository-boundary, or execution block. A failed first check is
 a repair signal, not permission to erase the candidate or start a fresh conversation.
+Use initial `--allow-scoped-repair` for approved multi-turn scoped work. One exact
+upfront approval may cover predictable same-scope repairs and mechanical digest/state
+refresh; provider-launch notices are status, not repeated permission requests. New scope,
+content exposure, destination, isolation, permissions or budget still require authority.
+Preserve required current raw-help/semantic version preflight on each launch; add no cache
+or alternate controller. Preserve Goal as an ordinary-use opt-in, not a prerequisite.
 
 ## Primary facade and advanced recovery
 

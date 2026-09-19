@@ -2,8 +2,10 @@
 
 `agy-worker` lets Codex delegate repository exploration and implementation to agy
 while retaining responsibility for the actual diff, project-owned checks, repair
-decisions, and final assurance label. A worker report is input, never acceptance
-evidence.
+decisions, and final assurance label. In normal use, delegate substantial exploration
+and implementation to agy before duplicating it in Codex. Codex reads only scope and
+authority necessities, then spot-checks material findings and reviews the actual diff.
+A worker report is input, never acceptance evidence.
 
 Complete the [installation and host permission setup](INSTALLATION.md) first. Installation
 does not authorize provider dispatch or repository transmission.
@@ -41,11 +43,16 @@ rule also permits wildcard binds; it is not a loopback-only guarantee.
 
 Prepare one approval package for the task and its foreseeable repairs. Include the
 transmitted content, provider permissions, model, and shared retry/time budget.
-Codex generates current state and candidate approval hashes as it works; these
+Use initial `--allow-scoped-repair` for approved multi-turn scoped work. One exact
+upfront approval may cover predictable same-scope repairs and mechanical digest/state
+refresh; provider-launch notices are status, not repeated permission requests. New scope,
+content exposure, destination, isolation, permissions or budget still require authority.
+Preserve required current raw-help/semantic version preflight on each launch; add no cache
+or alternate controller. Codex generates current state and candidate approval hashes as it works; these
 mechanical bindings do not themselves require another human approval. Ask again
 only when an action exceeds the approved content, permissions, destination, or budget,
-or the user reserved that decision. An automatic Goal continuation cannot supply
-missing authority.
+or the user reserved that decision. Preserve Goal as an ordinary-use opt-in, not a
+prerequisite; an automatic Goal continuation cannot supply missing authority.
 
 Before every provider-launch attempt—initial `run`/`start`, `resume`, `continue`, and
 `restart`—Codex must tell the user in one or two concise sentences:
@@ -72,7 +79,10 @@ sent. If provider reach is uncertain, state that it is unverified.
 `explore` and `task` accept `1..2` total provider attempts and default to `2`.
 `project` accepts `1..5` and defaults to `5`. Legacy raw mode is exactly one attempt.
 Unknown files, architecture, or initial test commands are ordinary discovery work;
-they are not reasons to reject a useful task.
+they are not reasons to reject a useful task. Existing self-verification is optional
+advisory feedback when a focused command is known; an unknown first command or
+architecture does not prohibit useful delegation. Keep final Codex independent
+acceptance.
 
 ### Explicit delegation-first policy
 
@@ -86,10 +96,12 @@ policy decision before dispatch.
 The evaluator cannot infer earlier work, launch agy, select or change a model or
 effort, authorize Git operations, or accept a candidate. A missing transmission
 approval, provider/preflight failure, hard stop, or exhausted cycle budget fails
-closed without silently moving the substantive task to Codex. Direct-Codex work or
-second-eye-only use must be an explicit override. Fixed agy overhead can make small
-tasks inefficient, and token observations do not by themselves prove billing,
-quota, cost, or savings.
+closed without silently moving the substantive task to Codex; do not allow silent
+direct-Codex fallback after provider failure or exhausted budget. Failed product checks
+return concrete sanitized feedback to the same AGY conversation for bounded repair.
+Direct-Codex work or second-eye-only use must be an explicit override. Fixed agy overhead
+can make small tasks inefficient, and token observations do not by themselves prove
+billing, quota, cost, or savings.
 
 After installation, start a new Codex session and ask in natural language:
 

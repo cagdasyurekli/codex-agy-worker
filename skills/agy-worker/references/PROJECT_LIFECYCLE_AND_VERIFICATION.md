@@ -17,13 +17,18 @@ dispatch SHA values mechanically bind that decision to current reviewed facts; t
 not themselves grant authority. Refresh a binding only when the already-approved
 action remains available. Request fresh human authority when content exposure,
 destination, isolation mode, scope, or budget materially changes. A normal job needs
-no hand-authored JSON or Goal.
+no hand-authored JSON or Goal. Preserve Goal as an ordinary-use
+opt-in, not a prerequisite.
 
-One approved package may cover foreseeable provider work and a bounded repair. For
-whole-worktree mode, use the preview's exact `launch_approval_sha256`; for provider
+One exact upfront approval may cover predictable same-scope repairs and mechanical
+digest/state refresh. Use initial `--allow-scoped-repair` for approved multi-turn
+scoped work; provider-launch notices are status, not repeated permission requests.
+For whole-worktree mode, use the preview's exact `launch_approval_sha256`; for provider
 scope, use the exact `transmission_sha256`. Approval reuse does not authorize a Git
 action, acceptance, publication, installation, account action, or a new provider
-execution beyond the approved job.
+execution beyond the approved job. New scope, content exposure, destination,
+isolation, permissions or budget still require authority. Preserve required current
+raw-help/semantic version preflight on each launch; add no cache or alternate controller.
 
 Before every provider-launch attempt (initial start/run, resume, continue, and restart), tell the user in one or two concise user-facing sentences what task is being sent to AGY.
 Include a short public-safe task label, caller-selected model information, caller-selected effort when separately selectable, and the exact resolved model slug.
@@ -204,10 +209,11 @@ There is no automatic retry or continuation:
 
 At initial dispatch, `--allow-scoped-repair` binds permission to continue the same
 scoped task/project within its approved write scope, selected model, conversation,
-and budgets. Candidate evolution inside that grant does not require a new human
-approval. External drift or a changed grant is rejected before another provider turn.
-Without that initial grant, a scoped candidate is result/finalize-only. A fresh state
-or candidate binding does not by itself require fresh human approval, but it cannot
+and budgets. One exact upfront approval may cover predictable same-scope repairs and
+mechanical digest/state refresh; candidate evolution inside that grant does not
+require a new human approval. External drift or a changed grant is rejected before
+another provider turn. Without that initial grant, a scoped candidate is result/finalize-only.
+A fresh state or candidate binding does not by itself require fresh human approval, but it cannot
 extend the original grant.
 
 For optional local checks, the driver prepares an owner-private manifest and supplies
@@ -228,8 +234,11 @@ is not automatically rerun.
 When bound advisory results are available, status offers `continue
 --use-self-verification` to reuse them without a separate input JSON. The driver
 still decides whether repair is useful and issues the provider notice before using
-that action. Manual Verification v2 input remains available. Self-verification never
+that action. Manual Verification v2 input remains available. Existing self-verification
+is optional advisory feedback when a focused command is known; an unknown first command
+or architecture does not prohibit useful delegation. Self-verification never
 finalizes a candidate or substitutes for independent diff review and driver checks.
+Keep final Codex independent acceptance.
 
 ## Isolated verification copy
 
@@ -262,7 +271,10 @@ Verification v2 has no separate public schema. The canonical validator is
 fields and requires the current public candidate digest.
 
 Build the record only from driver-owned observations. Do not include prompts, source
-bytes, raw logs, secrets, worker prose, account data, or private paths. This example
+bytes, raw logs, secrets, worker prose, account data, or private paths. Worker envelopes
+are not evidence. Reuse driver-owned checks only for identical candidate bytes and
+relevant environment; after changes rerun affected checks and run the required full
+suite once the final executable candidate is stable. This example
 records one passing check and a completed diff review:
 
 ```bash
@@ -312,8 +324,11 @@ PY
 
 Use the current `STATE_SHA` with eligible lower-level `continue` or `finalize`
 commands. A bounded repair request may cite failed checks, missing checks, advisory
-results, coverage gaps, or review findings. It must continue the same conversation
-while budget remains and must be preceded by the provider notice.
+results, coverage gaps, or review findings. Failed product checks return concrete
+sanitized feedback to the same AGY conversation for bounded repair; do not allow
+silent direct-Codex fallback after provider failure or exhausted budget. It must
+continue the same conversation while budget remains and must be preceded by the
+provider notice.
 
 ## Material planning governance
 

@@ -930,6 +930,26 @@ def keychain_locator_is_bounded_closed_and_strict() -> bool:
         shutil.rmtree(root)
 
 
+def _diagnose_locator_reap_conditions(
+    *,
+    holding_rejected: bool,
+    holding_gone: bool,
+    closed_rejected: bool,
+    closed_gone: bool,
+) -> tuple[bool, str]:
+    conditions = {
+        "holding_rejected": bool(holding_rejected),
+        "holding_gone": bool(holding_gone),
+        "closed_rejected": bool(closed_rejected),
+        "closed_gone": bool(closed_gone),
+    }
+    if all(conditions.values()):
+        return True, ""
+    failed = [name for name, passed in conditions.items() if not passed]
+    detail = f"locator conditions failed: {failed!r}; all={conditions!r}"
+    return False, detail
+
+
 def keychain_locator_reaps_leaderless_descendants() -> bool:
     """An exited locator leader cannot leave its fresh session running."""
     if sys.platform != "darwin":
@@ -981,11 +1001,88 @@ def keychain_locator_reaps_leaderless_descendants() -> bool:
         holding_gone = holding_pid.exists() and gone(holding_pid)
         closed_rejected = run(closes)
         closed_gone = closes_pid.exists() and gone(closes_pid)
-        return holding_rejected and holding_gone and closed_rejected and closed_gone
+        passed, detail = _diagnose_locator_reap_conditions(
+            holding_rejected=holding_rejected,
+            holding_gone=holding_gone,
+            closed_rejected=closed_rejected,
+            closed_gone=closed_gone,
+        )
+        if not passed:
+            raise AssertionError(detail)
+        return True
     finally:
         MODULE.SECURITY_HELPER = original_helper
         MODULE.KEYCHAIN_LOCATOR_DEADLINE_SECONDS = original_deadline
         MODULE.KEYCHAIN_LOCATOR_TERM_GRACE_SECONDS = original_grace
+        shutil.rmtree(root)
+
+
+def keychain_locator_reap_diagnostics_report_sanitized_conditions() -> bool:
+    """Diagnostic reporter emits sanitized labels without paths, PIDs, raw output, or credentials."""
+    if sys.platform != "darwin":
+        return None
+    # 1. Conjunction pass returns empty detail
+    passed, detail = _diagnose_locator_reap_conditions(
+        holding_rejected=True, holding_gone=True, closed_rejected=True, closed_gone=True,
+    )
+    if not passed or detail != "":
+        raise AssertionError(f"expected pass with empty detail, got passed={passed} detail={detail!r}")
+
+    # 2. Each condition failure reports its sanitized label without secrets or paths
+    for name in ("holding_rejected", "holding_gone", "closed_rejected", "closed_gone"):
+        kwargs = {
+            "holding_rejected": True,
+            "holding_gone": True,
+            "closed_rejected": True,
+            "closed_gone": True,
+        }
+        kwargs[name] = False
+        passed, detail = _diagnose_locator_reap_conditions(**kwargs)
+        if passed:
+            raise AssertionError(f"expected failure when {name}=False")
+        if name not in detail:
+            raise AssertionError(f"expected condition label {name!r} in detail {detail!r}")
+        if "/" in detail or "\\" in detail:
+            raise AssertionError(f"path detected in diagnostic detail: {detail!r}")
+        if any(token in detail.lower() for token in ("keychain", "password", "secret", "token", "credential", "stdout", "stderr")):
+            raise AssertionError(f"sensitive token detected in diagnostic detail: {detail!r}")
+
+    # 3. All failed conjunction reports all labels
+    passed, detail = _diagnose_locator_reap_conditions(
+        holding_rejected=False, holding_gone=False, closed_rejected=False, closed_gone=False,
+    )
+    if passed:
+        raise AssertionError("expected failure when all conditions are False")
+    for name in ("holding_rejected", "holding_gone", "closed_rejected", "closed_gone"):
+        if name not in detail:
+            raise AssertionError(f"expected {name!r} in multi-failure detail {detail!r}")
+
+    # 4. Exercise existing synthetic fixture mechanics to verify real diagnostic outcome evaluation
+    root, _job, _stage, _checkout, _ambient = fixture("locator-diag-coverage")
+    original_helper = MODULE.SECURITY_HELPER
+    try:
+        database = root / "default.keychain-db"
+        database.write_bytes(b"metadata only\n")
+        database.chmod(0o644)
+        clean = root / "clean-security"
+        clean.write_text(
+            f"#!/bin/sh\nprintf '\"%s\"\\n' '{database}'; exit 0\n",
+            encoding="utf-8",
+        )
+        clean.chmod(0o755)
+        MODULE.SECURITY_HELPER = clean
+        clean_rejected = rejects(MODULE._discover_default_keychain)
+        passed, detail = _diagnose_locator_reap_conditions(
+            holding_rejected=clean_rejected,
+            holding_gone=True,
+            closed_rejected=True,
+            closed_gone=True,
+        )
+        if passed or "holding_rejected" not in detail:
+            raise AssertionError(f"synthetic fixture did not trigger holding_rejected diagnostic: {detail!r}")
+        return True
+    finally:
+        MODULE.SECURITY_HELPER = original_helper
         shutil.rmtree(root)
 
 
@@ -1826,6 +1923,150 @@ int main(int argc, char **argv) {
         shutil.rmtree(root)
 
 
+def two_turn_native_boundary_enforces_stage_isolation_and_settings_reuse() -> bool:
+    """Turn 2 in a repair conversation reuses settings while isolating the fresh stage."""
+    if sys.platform != "darwin":
+        return None
+    root, job, stage1, checkout, ambient = fixture("two-turn-native")
+    original_discovery = MODULE._discover_default_keychain
+    try:
+        stage2 = job / "stage-002"
+        stage2.mkdir(mode=0o700)
+        sibling = root / "sibling"
+        sibling.mkdir(mode=0o700)
+        git = checkout / ".git"
+        git.mkdir(mode=0o700)
+
+        # Baseline files that must remain unmodified outside current stage
+        prior_candidate = stage1 / "candidate.py"
+        prior_candidate.write_text("turn-1 candidate\n", encoding="utf-8")
+        checkout_file = checkout / "source.txt"
+        checkout_file.write_text("checkout content\n", encoding="utf-8")
+        git_file = git / "config"
+        git_file.write_text("git content\n", encoding="utf-8")
+        sibling_file = sibling / "unrelated.txt"
+        sibling_file.write_text("sibling content\n", encoding="utf-8")
+        ambient_file = ambient / "secret.txt"
+        ambient_file.write_text("ambient content\n", encoding="utf-8")
+
+        current_candidate = stage2 / "candidate.py"
+
+        # Synthetic locator and keychain fixture
+        synthetic_keychain = root / "synthetic-default.keychain-db"
+        synthetic_keychain.write_bytes(b"two-turn synthetic keychain\n")
+        synthetic_keychain.chmod(0o600)
+        MODULE._discover_default_keychain = lambda: MODULE._bind_keychain(synthetic_keychain)
+
+        python = CLT_PYTHON_EXECUTABLE
+        selectors = ({"kind": "file", "path": "candidate.py"},)
+        max_cycles = 2
+
+        # Turn 1: initial attempt in stage-001
+        prepared1 = MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_PROVIDER,
+            network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job,
+            attempt=1,
+            stage_dir=stage1,
+            target_executable=python,
+            target_argv=[python, "-I", "-S", "-B", "-c", "pass"],
+            child_environment={"PATH": "/usr/bin:/bin"},
+            allow_keychain=True,
+            provider_max_cycles=max_cycles,
+            provider_write_selectors=selectors,
+        )
+        res1 = run_confirmed(prepared1)
+        if res1.returncode != 0:
+            raise AssertionError(f"turn 1 launch failed: rc={res1.returncode} stdout={res1.stdout!r} stderr={res1.stderr!r}")
+
+        # Turn 2: probe current stage authorized edit and outside read/write denial
+        probe = (
+            "import errno, json, sys\n"
+            "from pathlib import Path\n"
+            "results = {}\n"
+            "try:\n"
+            "    Path(sys.argv[1]).write_text('turn-2 candidate\\n', encoding='utf-8')\n"
+            "    results['current_stage_write'] = 'ALLOWED'\n"
+            "except OSError as exc:\n"
+            "    results['current_stage_write'] = f'DENIED:{exc.errno}'\n"
+            "for key, idx in [('prior_stage_read', 2), ('checkout_read', 3), ('git_read', 4), ('sibling_read', 5), ('ambient_read', 6)]:\n"
+            "    try:\n"
+            "        Path(sys.argv[idx]).read_text(encoding='utf-8')\n"
+            "        results[key] = 'ALLOWED'\n"
+            "    except OSError as exc:\n"
+            "        results[key] = f'DENIED:{exc.errno}'\n"
+            "try:\n"
+            "    Path(sys.argv[2]).write_text('tampered\\n', encoding='utf-8')\n"
+            "    results['prior_stage_write'] = 'ALLOWED'\n"
+            "except OSError as exc:\n"
+            "    results['prior_stage_write'] = f'DENIED:{exc.errno}'\n"
+            "print(json.dumps(results))\n"
+        )
+
+        prepared2 = MODULE.prepare_contained_launch(
+            role=MODULE.ROLE_PROVIDER,
+            network_policy=MODULE.NETWORK_DENY_ALL,
+            job_dir=job,
+            attempt=2,
+            stage_dir=stage2,
+            target_executable=python,
+            target_argv=[
+                python, "-I", "-S", "-B", "-c", probe,
+                str(current_candidate), str(prior_candidate), str(checkout_file),
+                str(git_file), str(sibling_file), str(ambient_file),
+            ],
+            child_environment={"PATH": "/usr/bin:/bin"},
+            allow_keychain=True,
+            provider_max_cycles=max_cycles,
+            provider_write_selectors=selectors,
+        )
+
+        # Assert same-conversation settings/preference reuse
+        if (
+            prepared1.provider_settings is None
+            or prepared1.provider_settings != prepared2.provider_settings
+            or prepared1.keychain_preferences is None
+            or prepared1.keychain_preferences != prepared2.keychain_preferences
+            or prepared1.private_home.path != prepared2.private_home.path
+        ):
+            raise AssertionError("turn 2 did not reuse exact turn 1 provider settings and preferences")
+
+        res2 = run_confirmed(prepared2)
+        if res2.returncode != 0:
+            raise AssertionError(f"turn 2 launch failed: rc={res2.returncode} stdout={res2.stdout!r} stderr={res2.stderr!r}")
+
+        results = json.loads(res2.stdout.decode("utf-8").strip())
+        expected = {
+            "current_stage_write": "ALLOWED",
+            "prior_stage_read": f"DENIED:{errno.EPERM}",
+            "prior_stage_write": f"DENIED:{errno.EPERM}",
+            "checkout_read": f"DENIED:{errno.EPERM}",
+            "git_read": f"DENIED:{errno.EPERM}",
+            "sibling_read": f"DENIED:{errno.EPERM}",
+            "ambient_read": f"DENIED:{errno.EPERM}",
+        }
+        if results != expected:
+            raise AssertionError(f"isolation mismatch: results={results!r}; expected={expected!r}")
+
+        # Assert filesystem integrity
+        if current_candidate.read_text(encoding="utf-8") != "turn-2 candidate\n":
+            raise AssertionError("current stage authorized candidate write missing")
+        if prior_candidate.read_text(encoding="utf-8") != "turn-1 candidate\n":
+            raise AssertionError("prior stage candidate was modified")
+        if checkout_file.read_text(encoding="utf-8") != "checkout content\n":
+            raise AssertionError("checkout file was modified")
+        if git_file.read_text(encoding="utf-8") != "git content\n":
+            raise AssertionError("git file was modified")
+        if sibling_file.read_text(encoding="utf-8") != "sibling content\n":
+            raise AssertionError("sibling file was modified")
+        if ambient_file.read_text(encoding="utf-8") != "ambient content\n":
+            raise AssertionError("ambient file was modified")
+        return True
+    finally:
+        MODULE._discover_default_keychain = original_discovery
+        shutil.rmtree(root)
+
+
 check("provider parent metadata is the only safely escaped role-specific read delta", provider_parent_metadata_rule_is_exact)
 check("provider HOME ancestor metadata is exact, non-readable, and removed by another image", provider_home_ancestor_metadata_is_image_bound)
 check("external provider SSL policy needs only image-bound parent metadata", external_provider_bundle_preserves_metadata_boundary)
@@ -1842,6 +2083,7 @@ check("default keychain identity is metadata-only and allows content churn only"
 check("Keychain read authority is helper-only and self-verification has none", keychain_policy_is_helper_only_and_self_verify_never_discovers)
 check("synthetic default-Keychain locator is closed, bounded, and strict", keychain_locator_is_bounded_closed_and_strict)
 check("locator cleanup reaps descendants after leader exit on timeout and apparent success", keychain_locator_reaps_leaderless_descendants)
+check("locator cleanup diagnostics report sanitized condition labels on failure", keychain_locator_reap_diagnostics_report_sanitized_conditions)
 check("private Keychain preference publication failures are sanitized before launch", private_keychain_publication_failures_are_sanitized)
 check("self-verification skips all Keychain discovery and preference state", self_verify_never_runs_keychain_discovery)
 check("unsupported hosts fail before creating containment state", unsupported_host_fails_before_creation)
@@ -1854,6 +2096,7 @@ check("canonical self-verification Python runs with a fixed credential-free envi
 check("process-group cleanup binds and drains the exact Darwin session", identity_safe_group_cleanup)
 check("contained cleanup refuses an unbound process group", contained_cleanup_never_falls_back_to_unbound_group_signal)
 check("integrated scoped launch rejects stage drift, outside paths, and inherited descriptors", integrated_stage_rebind_and_outside_write_denial)
+check("two-turn native boundary enforces fresh stage isolation and settings reuse", two_turn_native_boundary_enforces_stage_isolation_and_settings_reuse)
 
 print(f"provider containment: {passed} passed, {failed} failed, {skipped} skipped")
 raise SystemExit(1 if failed else 0)

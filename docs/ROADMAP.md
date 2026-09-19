@@ -12,13 +12,29 @@ scope; reuse existing authority when it covers the work. This roadmap does not i
 authorize code, commit, push, pull-request, merge,
 release, live model use, or another external action.
 
-## v0.19.0 — release candidate
+## v0.20.0 — AGY 1.2.7 compatibility
 
-v0.19.0 activates AGY 1.2.2 after bounded session and native normal and
-same-conversation repair qualification. It recognizes refused actions and observed
-partial-output timeouts, preserves useful candidates, repairs native conversation
-persistence, and shortens the skill's main instructions. The unchanged fourteen-slug
-model mappings and caller-owned selection remain intact. The
+v0.20.0 activates AGY 1.2.7 compatibility following candidate-bound live canary
+qualification (fixed `gemini-3.8-flash-high`) across session and native normal
+execution, session and native same-conversation repair, native permission refusal
+(`permission_required` exit 6 with `denied_actions`), and controller hard-deadline
+timeout (`hard_deadline_exceeded` exit 16 at 8 seconds, with no provider timeout
+warning or live exit-3 sample observed). Candidate driver CI passed all 44 canonical
+offline stages exactly once across the four canonical shards, including 114 remediation
+cases (manifest aggregate `486d5999a6d4cd6cf60c50bbd8b9b988e9b4dc20326a5dcc2cb486a8ea1c2661`),
+with candidate bytes and executable modes unchanged. Runtime and metadata review found
+no remaining executable findings, and the mirrored `clientInfo` 0.20.0 correction passed
+17 owning usage tests. Final independent acceptance remains a release requirement.
+Release publication and installation are verified separately against the exact public
+commit; marketplace visibility is a separate external state.
+
+## v0.19.0 — released
+
+Official v0.19.0 publication is bound to commit `412831c`. It activated AGY 1.2.2 after
+bounded session and native normal and same-conversation repair qualification. It recognizes
+refused actions and observed partial-output timeouts, preserves useful candidates, repairs
+native conversation persistence, and shortens the skill's main instructions. The unchanged
+fourteen-slug model mappings and caller-owned selection remain intact. The
 [activation record](../compat/reviews/agy-1.2.2-activation.md) owns the evidence and
 limits. The stable implementation passed all 44 offline CI stages and independent
 acceptance. Release publication and installation are verified separately against
@@ -332,8 +348,9 @@ Read-only project/agy/Codex observations use
 exact fixed GitHub REST paths with no ambient proxy or redirect path, and a bounded
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
-ambient-Git transport path and is not claimed hardened by this slice. The later agy
-`1.2.2` reconciliation is the exact active version/release/inventory/matrix binding.
+ambient-Git transport path and is not claimed hardened by this slice. The agy
+`1.2.7` reconciliation is the current local compatibility binding (retaining `1.2.2`
+as previous/historical).
 The first authorized 1.1.22 JSON capture remains historical failed evidence; its later
 accepted capture established the prior baseline, and the separately accepted 1.1.24
 capture advanced the fourteen-slug inventory from Gemini 3.5 Flash to Gemini 3.8 Flash.
@@ -646,8 +663,8 @@ provenance, code-signing verification, or OS attestation.
   tuple is an observational same-version change detector, not a verified release,
   source revision, signature, or baseline. Official release, source, documentation,
   and distribution evidence are non-activating review inputs; the separately accepted
-  1.2.2 capture and human reconciliation, not the canary, advance the active baseline
-  and G1 matrix.
+  1.2.7 capture and human reconciliation (retaining 1.2.2 as historical), not the canary,
+  advance the active baseline and G1 matrix.
 - **Baseline advancement:** A maintainer may advance either verified baseline only
   after reconciling official docs, release notes, and available release evidence;
   regenerating the local
@@ -655,11 +672,12 @@ provenance, code-signing verification, or OS attestation.
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. agy `1.2.2` is active in the local
-  development candidate because its capture, strict inventory, and bounded
-  session/native normal and repair paths were separately reconciled; the
-  [activation record](../compat/reviews/agy-1.2.2-activation.md) states the limits and
-  makes no new live Boost claim. Any later version
+  The watch never performs this reconciliation. agy `1.2.7` is the current local
+  compatibility binding (with `1.2.2` previous/historical) because its capture,
+  strict inventory, and bounded session/native normal and repair paths were separately
+  reconciled; the [activation record](../compat/reviews/agy-1.2.7-activation.md) states
+  the limits and makes no live exit-3 sample, provider timeout-warning sample, or new
+  live Boost claim. Any later version
   or release movement returns the result to
   drift-review until another reconciliation is accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
@@ -708,7 +726,8 @@ provenance, code-signing verification, or OS attestation.
 - **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
   versus verified differences and stale review dates are reported separately and
   return `3`; unavailable network returns `2` with an inconclusive label; absent
-  future-version evidence retains `1.2.2` and AMBER; version-bound resolution
+  future-version evidence retains current local binding `1.2.7` (with `1.2.2`
+  previous/historical) and AMBER; version-bound resolution
   fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw
   `gemini-3.6-flash-high` selection remains pass-through, unranked, recommendation-only,

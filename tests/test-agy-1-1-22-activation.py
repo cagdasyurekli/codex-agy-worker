@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused offline tests for the active agy 1.2.2 compatibility binding."""
+"""Focused offline tests for the active agy 1.2.7 compatibility binding."""
 
 from __future__ import annotations
 
@@ -14,24 +14,24 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = ROOT / "skills" / "agy-worker" / "runtime"
 MODULE_PATH = RUNTIME / "scripts" / "compatibility.py"
-SPEC = importlib.util.spec_from_file_location("agy_1_2_2_compatibility", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location("agy_1_2_7_compatibility", MODULE_PATH)
 if SPEC is None or SPEC.loader is None:
     raise SystemExit("cannot load compatibility module")
 compatibility = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(compatibility)
 
-VERSION = "1.2.2"
-REVISION = "ba985e6b5de2ac8aa09860a154a102831eb7722b"
-SOURCE_SHA256 = "cabadc15a61944372bede1fdff186701c17467dd9d718e97dc79283055d3c101"
-VERSION_BINDING_SHA256 = "cc3bd8bb44b31891e2bed4c4367ed90ae2334e0df29e9fba2e94bce7c3105bef"
-CAPTURE_SHA256 = "73d65488b618b721d70d85076cc1ca67c8ead62e0606588502aeb69e5230d032"
+VERSION = "1.2.7"
+REVISION = "7bb195acaec9e7788df5210d0dc3e15f3cefc6b3"
+SOURCE_SHA256 = "8c01ef82307dc01455418eb2e6e82f2989a3fa8b815c4b192efaaa89a55bef8d"
+VERSION_BINDING_SHA256 = "b1942cfa7d7d12edcca7d5458f46bdaef8107fe762cfa3b551b20dc624a296d3"
+CAPTURE_SHA256 = "1975276f4bb8b030a21d83a6664eddb596c0ac68440da4556bde32de3d2d6fad"
 STDOUT_SHA256 = "d02970e6b6b4e0910461999afca8fb99d757e9094ab2874b557dad18fc75464a"
 RESPONSE_SHA256 = "b1cc011310435afa07b1e132a5b7f3e22297aa21427177461c858bcbd6a58794"
 NORMALIZED_SHA256 = "d5e58ab55e91ebd4a2cd23841c76cbe12b47d607c62cd8c834fc8f6b9f078ad7"
-MATRIX_SHA256 = "2c12abf09910489b681a01c88b43e8fbaf7df3a68fd715c7280c7f6fff6c89e4"
-BINDING_SHA256 = "efcc59a983b0c9f60309a55047188d800f5e34d2dc42a38d9339cdc361e13802"
-OLD_VERSION = "1.1.27"
-OLD_REVISION = "1ae9cb7b51667192c051b73a91099c71e816ca5f"
+MATRIX_SHA256 = "767879de77500b42e90be158f74746ee02d815f45357539ef4efd0d7bd229857"
+BINDING_SHA256 = "a0e8b734ac342ededa9601d1adcdfc94b6fbd918cf0f8947e7b41787b43fa460"
+OLD_VERSION = "1.2.2"
+OLD_REVISION = "ba985e6b5de2ac8aa09860a154a102831eb7722b"
 
 TESTS: list[tuple[str, Callable[[], None]]] = []
 
@@ -108,17 +108,17 @@ def _() -> None:
 
 @test("active review is additive and prior observation remains historical")
 def _() -> None:
-    activation = canonical("reviews/agy-1.2.2-activation.md").read_text()
+    activation = canonical("reviews/agy-1.2.7-activation.md").read_text()
     observation = canonical("reviews/agy-1.1.22.md").read_text()
-    assert "AGY **1.2.2**" in activation
-    assert "Activation promotes 1.2.2 to current" in activation
+    assert "AGY **1.2.7**" in activation
+    assert "Activation promotes 1.2.7 to current" in activation
     assert f"Reviewed: {canonical('agy-last-reviewed.txt').read_text().strip()}" in activation
     assert "does **not** activate 1.1.22" in observation
 
 
 @test("activation preserves the sanitized structured-capture boundary")
 def _() -> None:
-    activation = canonical("reviews/agy-1.2.2-activation.md").read_text()
+    activation = canonical("reviews/agy-1.2.7-activation.md").read_text()
     assert VERSION_BINDING_SHA256 in activation
     assert NORMALIZED_SHA256 in activation
     assert CAPTURE_SHA256 in activation
@@ -126,7 +126,7 @@ def _() -> None:
 
 @test("activation preserves denied-action and closed-binary residuals")
 def _() -> None:
-    activation = canonical("reviews/agy-1.2.2-activation.md").read_text()
+    activation = canonical("reviews/agy-1.2.7-activation.md").read_text()
     assert "denied_actions" in activation
     assert "status_unavailable" in activation
     assert "binding_failure" in activation
@@ -196,12 +196,12 @@ def _() -> None:
     assert value["slugs"] == compatibility.matrix_slugs(matrix())
 
 
-@test("previous 1.1.27 version binding is rejected")
+@test("previous 1.2.2 version binding is rejected")
 def _() -> None:
     rejects(lambda value: value.__setitem__("agy_version", OLD_VERSION))
 
 
-@test("previous 1.1.27 source binding is rejected")
+@test("previous 1.2.2 source binding is rejected")
 def _() -> None:
     rejects(lambda value: value.__setitem__("reviewed_source_revision", OLD_REVISION))
 

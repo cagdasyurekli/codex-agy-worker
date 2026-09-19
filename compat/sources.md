@@ -39,9 +39,9 @@ separately authorized mutation path.
 - Fixed `darwin_arm64` distribution manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
 - Installed interface evidence: `./ground-truth.sh`
 
-The local development candidate's active baseline is agy `1.2.2` at official release
-commit `ba985e6b5de2ac8aa09860a154a102831eb7722b`; its accepted inventory is reconciled in
-[`reviews/agy-1.2.2-activation.md`](reviews/agy-1.2.2-activation.md). Earlier
+The active compatibility baseline is agy `1.2.7` at official release
+commit `7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`; its accepted inventory is reconciled in
+[`reviews/agy-1.2.7-activation.md`](reviews/agy-1.2.7-activation.md). Earlier
 activation records remain historical evidence. The active matrix binds every
 adjustable pair to one exact advertised compound slug and records fixed choices as
 non-adjustable. It neither forwards `--effort` nor attests the effective provider
@@ -63,7 +63,7 @@ in [`reviews/agy-1.1.13-quota-terminal.md`](reviews/agy-1.1.13-quota-terminal.md
 It authorizes only the exact version/shape classifier and sanitized countdown; it is
 not a general quota/rate-limit signature, baseline update, or retry authority.
 
-`agy-distribution-manifest.json` records the observed `1.2.2` version, exact Google
+`agy-distribution-manifest.json` records the observed `1.2.7` version, exact Google
 Storage archive URL, and lowercase SHA-512 tuple. It is an observational snapshot,
 not an authoritative baseline, signature, or permission to download the archive.
 The checker fetches only the fixed small manifest, rejects redirects and malformed
@@ -101,9 +101,9 @@ resolution until another human reconciliation is accepted. Codex drift remains
 observation-only and never disables agy dispatch.
 
 The original agy `1.1.22` failed capture is retained as non-activating historical
-metadata. The separately authorized 1.2.2 capture and human reconciliation advance
+metadata. The separately authorized 1.2.7 capture and human reconciliation advance
 the active version, release binding, inventory, and matrix only through
-[`reviews/agy-1.2.2-activation.md`](reviews/agy-1.2.2-activation.md). Neither record
+[`reviews/agy-1.2.7-activation.md`](reviews/agy-1.2.7-activation.md). Neither record
 authorizes another account call.
 Ordinary version-independent literal model pass-through and agy-owned default
 selection remain independent of that matrix; reviewed model/effort resolution still
