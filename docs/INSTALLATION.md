@@ -130,11 +130,17 @@ For exact AGY 1.1.27 and 1.2.2, a valid result containing `denied_actions` stops
 finalization; the worker does not automatically continue past a permission denial.
 The field's payload shape is not interpreted.
 
-For observed AGY 1.2.2, the reviewed partial-output timeout warning stops provider
+For observed AGY 1.2.2, 1.2.6, and exact 1.2.7 (with static/offline partial-timeout warning recognition), the reviewed partial-output timeout warning stops provider
 success even when the process exits zero. A valid candidate remains available for
 independent review; an invalid report does not become a candidate. The warning must
-match the job's bound duration. AGY 1.2.2 is the v0.19.0 compatibility
-baseline, supported by the [bounded activation evidence](../compat/reviews/agy-1.2.2-activation.md).
+match the job's bound duration. Under exact AGY 1.2.7, live canary qualification confirmed
+native permission refusal (`permission_required` exit 6 with `denied_actions`), controller
+hard-deadline timeout (`hard_deadline_exceeded` exit 16 at 8 seconds with no candidate or
+resume authority; terminal ERROR exit 1 with no `AGY_ERROR` or provider print-timeout warning),
+and 44-stage offline CI; explicitly no live 1.2.7 warning sample or exit-3 sample was observed.
+AGY 1.2.7 is the current local compatibility binding, supported by the
+[bounded activation evidence](../compat/reviews/agy-1.2.7-activation.md). This establishes
+candidate-bound local compatibility only, not a general or live-provider compatibility guarantee.
 
 File tools use absolute workspace paths. Final `files_changed` reports should use
 workspace-relative paths. Scoped reconciliation also accepts canonical absolute
@@ -144,10 +150,11 @@ mutation and scope checks; paths elsewhere remain invalid.
 ## Version drift and direct model selection
 
 The accepted model/effort mapping, exact agy version, and evidence digests live in the
-current [activation record](../compat/reviews/agy-1.2.2-activation.md). Historical
-observations remain history; they do not override the current source and checked-in
-matrix. Codex compatibility evidence is observational and grants neither dispatch nor
-model-selection authority.
+current [activation record](../compat/reviews/agy-1.2.7-activation.md). AGY 1.2.7 is the
+current local compatibility binding from candidate-bound qualification, not a general
+live-provider guarantee. Historical observations remain history; they do not override the
+current source and checked-in matrix. Codex compatibility evidence is observational and
+grants neither dispatch nor model-selection authority.
 
 Every reviewed direct selection first checks a safe executable with bounded semantic
 `agy --version` and a strict critical `agy --help` structure probe. An exact

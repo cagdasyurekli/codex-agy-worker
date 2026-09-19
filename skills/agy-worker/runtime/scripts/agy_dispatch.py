@@ -26,7 +26,7 @@ import stat
 import subprocess
 import sys
 import time
-from typing import Any, Iterator
+from typing import Any, Iterator, NamedTuple
 
 sys.dont_write_bytecode = True
 
@@ -1777,6 +1777,7 @@ def _resume_is_eligible(value: dict[str, Any], now: float) -> bool:
     return bool(
         value["status"] == "failed"
         and not value["candidate_recognized"]
+        and value.get("reason") not in {"selection_preflight_failed", "permission_required"}
         and value["resume_available"]
         and isinstance(value["conversation_id"], str)
         and _restart_guard_accepts(value, elapsed_seconds=_live_elapsed(value, now))
@@ -4074,7 +4075,7 @@ def _event(line: bytes) -> tuple[bool, str | None, str | None]:
             line.decode("utf-8", "strict"), object_pairs_hook=_duplicates,
             parse_constant=_invalid_json_constant,
         )
-    except (UnicodeError, json.JSONDecodeError, DispatchError, RecursionError):
+    except (UnicodeError, json.JSONDecodeError, ValueError, OverflowError, DispatchError, RecursionError):
         return False, None, None
     if not isinstance(value, dict):
         return False, None, None
@@ -4098,7 +4099,7 @@ def _event(line: bytes) -> tuple[bool, str | None, str | None]:
 
 
 def _reviewed_provider_timeout_lines(version: str, seconds: object) -> set[bytes]:
-    """Build only the exact 1.2.2 timeout lines bound to this job's limit.
+    """Build only the exact 1.2.2/1.2.6/1.2.7 timeout lines bound to this job's limit.
 
     The installed binary exposes a ``%s`` duration slot but its unavailable
     source does not establish whether that slot retains the integer-seconds
@@ -4106,7 +4107,7 @@ def _reviewed_provider_timeout_lines(version: str, seconds: object) -> set[bytes
     wrapper always supplies a positive integer number of seconds.  Accept only
     those two equivalent spellings for that exact bound value.
     """
-    if version != "1.2.2" or type(seconds) not in (int, float):
+    if version not in {"1.2.2", "1.2.6", "1.2.7"} or type(seconds) not in (int, float):
         return set()
     if not math.isfinite(seconds) or seconds <= 0 or seconds != int(seconds):
         return set()
@@ -4147,20 +4148,60 @@ def _has_reviewed_provider_timeout(
 def _classify_stderr(
     path: Path, version: str, returncode: int, provider_timeout_seconds: object = None,
 ) -> str:
-    if _has_reviewed_provider_timeout(path, version, provider_timeout_seconds):
-        return "provider_timeout"
-    if returncode == 0:
-        return "empty_output"
     try:
         raw = path.read_bytes()
     except OSError:
         return "agy_failed_unclassified"
-    lines = {line.strip() for line in raw.splitlines() if line.strip()}
-    if any(b"permission that headless mode cannot prompt for" in line for line in lines):
+
+    raw_lines = raw.splitlines()
+
+    # 1. Any AGY_ERROR marker lines must be evaluated strictly
+    agy_lines = [line for line in raw_lines if b"AGY_ERROR" in line]
+    if agy_lines:
+        if len(agy_lines) != 1:
+            return "agy_failed_unclassified"
+        m_line = agy_lines[0]
+        if len(m_line) > MAX_EVENT_BYTES:
+            return "agy_failed_unclassified"
+        if not m_line.startswith(b"AGY_ERROR: "):
+            return "agy_failed_unclassified"
+        if version not in {"1.2.6", "1.2.7"} or returncode != 3:
+            return "agy_failed_unclassified"
+        payload = parse_agy_error(m_line)
+        if payload is None:
+            return "agy_failed_unclassified"
+        expected_timeout = _reviewed_provider_timeout_lines(version, provider_timeout_seconds)
+        if expected_timeout and bool(expected_timeout.intersection(raw_lines)):
+            return "agy_failed_unclassified"
+        if any(b"permission that headless mode cannot prompt for" in line for line in raw_lines):
+            return "agy_failed_unclassified"
+        stripped_lines = {line.strip() for line in raw_lines if line.strip()}
+        signatures = EXACT_FAILURE_LINES.get(version, {})
+        if any(sig in stripped_lines for sig in signatures):
+            return "agy_failed_unclassified"
+        return "provider_terminal_error"
+
+    # 2. No AGY_ERROR marker: reviewed timeout wins first
+    expected_timeout = _reviewed_provider_timeout_lines(version, provider_timeout_seconds)
+    if expected_timeout and bool(expected_timeout.intersection(raw_lines)):
+        return "provider_timeout"
+
+    # 3. rc0 returns empty_output
+    if returncode == 0:
+        return "empty_output"
+
+    # 4. Legacy permission
+    if any(b"permission that headless mode cannot prompt for" in line for line in raw_lines):
         return "permission_required"
+
+    # 5. Exact failure signatures
+    stripped_lines = {line.strip() for line in raw_lines if line.strip()}
     signatures = EXACT_FAILURE_LINES.get(version, {})
-    matches = {reason for signature, reason in signatures.items() if signature in lines}
-    return matches.pop() if len(matches) == 1 else "agy_failed_unclassified"
+    matched_reasons = {r for sig, r in signatures.items() if sig in stripped_lines}
+    if len(matched_reasons) == 1:
+        return matched_reasons.pop()
+
+    return "agy_failed_unclassified"
 
 
 def _terminal_result(stream: Path, *, strict: bool = False) -> dict[str, Any] | None:
@@ -4178,7 +4219,7 @@ def _terminal_result(stream: Path, *, strict: bool = False) -> dict[str, Any] | 
                         raw.decode("utf-8", "strict"), object_pairs_hook=_duplicates,
                         parse_constant=_invalid_json_constant,
                     )
-                except (UnicodeError, json.JSONDecodeError, DispatchError, RecursionError):
+                except (UnicodeError, json.JSONDecodeError, ValueError, OverflowError, DispatchError, RecursionError):
                     if strict:
                         return None
                     continue
@@ -4275,6 +4316,187 @@ def _has_reviewed_denied_actions(stream: Path, version: str) -> bool:
         return False
     result = _terminal_result(stream, strict=True)
     return isinstance(result, dict) and "denied_actions" in result
+
+
+REFUSAL_RESULT_FIELDS_1_2_6 = {
+    "conversation_id", "denied_actions", "duration_seconds",
+    "json_schema", "num_turns", "response", "status", "usage",
+}
+REFUSAL_RESULT_FIELDS_1_2_7 = REFUSAL_RESULT_FIELDS_1_2_6
+
+
+def _has_reviewed_terminal_refusal(stream: Path, version: str) -> bool:
+    """Recognize only the reviewed exact-shape AGY 1.2.6/1.2.7 refusal canary.
+
+    The observed native refusal returns exit 0, terminal status SUCCESS, empty
+    response, exact result keys (no structured_output), valid conversation,
+    finite nonnegative duration, int nonnegative turns, dict json_schema/usage,
+    and a nonempty bounded list of denied_actions with exact action/display_name keys.
+    Any deviation or unknown shape fails closed.
+    """
+    if version not in {"1.2.6", "1.2.7"}:
+        return False
+    result = _terminal_result(stream, strict=True)
+    if result is None or set(result) != REFUSAL_RESULT_FIELDS_1_2_6:
+        return False
+    if result.get("status") != "SUCCESS" or result.get("response") != "":
+        return False
+    conversation = result.get("conversation_id")
+    if not isinstance(conversation, str) or CONVERSATION_RE.fullmatch(conversation) is None:
+        return False
+    duration = result.get("duration_seconds")
+    if type(duration) not in (int, float) or duration < 0:
+        return False
+    if isinstance(duration, float) and not math.isfinite(duration):
+        return False
+    turns = result.get("num_turns")
+    if type(turns) is not int or turns < 0:
+        return False
+    if not isinstance(result.get("json_schema"), dict) or not isinstance(result.get("usage"), dict):
+        return False
+    denied = result.get("denied_actions")
+    if not isinstance(denied, list) or len(denied) != 1:
+        return False
+    item = denied[0]
+    if not isinstance(item, dict) or set(item) != {"action", "display_name"}:
+        return False
+    action = item["action"]
+    display_name = item["display_name"]
+    if not isinstance(action, str) or not (1 <= len(action) <= 256) or "\n" in action or "\r" in action:
+        return False
+    if not isinstance(display_name, str) or not (1 <= len(display_name) <= 256) or "\n" in display_name or "\r" in display_name:
+        return False
+    return True
+
+
+AGY_ERROR_PAYLOAD_FIELDS = {
+    "short_error", "status", "error_code", "code_kind", "retryable", "error_id",
+}
+
+
+class AgyErrorPayload(NamedTuple):
+    short_error: str | None
+    status: str | None = None
+    error_code: int | None = None
+    code_kind: str | None = None
+    retryable: bool | None = None
+    error_id: str | None = None
+
+
+def parse_agy_error(raw: str | bytes) -> AgyErrorPayload | None:
+    """Closed offline parser for static printmode.agentErrorPayload metadata.
+
+    Static analysis of the approved 1.2.6/1.2.7 Go binary recovered:
+      short_error *string (no omitempty)
+      status *string omitempty
+      error_code *uint32 omitempty
+      code_kind *string omitempty
+      retryable *bool (no omitempty)
+      error_id *string omitempty
+      Exact fallback literal: {"short_error":%q}
+
+    Accepts only a single column-zero line starting with exact "AGY_ERROR: ".
+    Raw JSON, leading whitespace, missing space after colon, duplicate keys,
+    invalid constants, numeric overflow, or schema mismatch fail closed (return None).
+    """
+    if isinstance(raw, bytes):
+        if len(raw) > MAX_EVENT_BYTES:
+            return None
+        try:
+            text = raw.decode("utf-8", "strict")
+        except UnicodeDecodeError:
+            return None
+    elif isinstance(raw, str):
+        if len(raw) > MAX_EVENT_BYTES:
+            return None
+        text = raw
+    else:
+        return None
+
+    if text.endswith("\r\n"):
+        line = text[:-2]
+    elif text.endswith("\n"):
+        line = text[:-1]
+    else:
+        line = text
+    if "\r" in line or "\n" in line:
+        return None
+    prefix = "AGY_ERROR: "
+    if not line.startswith(prefix):
+        return None
+    json_part = line[len(prefix):].strip()
+    if not (json_part.startswith("{") and json_part.endswith("}")):
+        return None
+
+    try:
+        data = json.loads(
+            json_part,
+            object_pairs_hook=_duplicates,
+            parse_constant=_invalid_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError, OverflowError, DispatchError, RecursionError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    # Fallback literal shape: exact field set {"short_error"}, string value (empty string allowed)
+    if set(data.keys()) == {"short_error"}:
+        short_error = data["short_error"]
+        if not isinstance(short_error, str):
+            return None
+        return AgyErrorPayload(
+            short_error=short_error,
+            status=None,
+            error_code=None,
+            code_kind=None,
+            retryable=None,
+            error_id=None,
+        )
+
+    # Normal shape: requires short_error and retryable
+    # short_error can be str | None (string or null, empty allowed)
+    # retryable can be bool | None (bool or null)
+    # Optional keys: status, error_code, code_kind, error_id only.
+    # Optional string-pointer fields are strings (empty allowed).
+    # error_code must be non-bool uint32 (0 <= error_code <= 0xFFFFFFFF, type(val) is int).
+    if "short_error" not in data or "retryable" not in data:
+        return None
+    if not set(data.keys()).issubset(AGY_ERROR_PAYLOAD_FIELDS):
+        return None
+
+    short_error = data["short_error"]
+    if short_error is not None and not isinstance(short_error, str):
+        return None
+
+    retryable = data["retryable"]
+    if retryable is not None and type(retryable) is not bool:
+        return None
+
+    status = data.get("status")
+    if "status" in data and not isinstance(status, str):
+        return None
+
+    code_kind = data.get("code_kind")
+    if "code_kind" in data and not isinstance(code_kind, str):
+        return None
+
+    error_id = data.get("error_id")
+    if "error_id" in data and not isinstance(error_id, str):
+        return None
+
+    error_code = data.get("error_code")
+    if "error_code" in data and (type(error_code) is not int or isinstance(error_code, bool) or not (0 <= error_code <= 0xFFFFFFFF)):
+        return None
+
+    return AgyErrorPayload(
+        short_error=short_error,
+        status=status,
+        error_code=error_code,
+        code_kind=code_kind,
+        retryable=retryable,
+        error_id=error_id,
+    )
 
 
 def _boost_stream_is_bound(stream: Path) -> bool:
@@ -4911,7 +5133,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                                             line.decode("utf-8", "strict"),
                                             object_pairs_hook=_duplicates,
                                         )
-                                    except (UnicodeError, json.JSONDecodeError, DispatchError):
+                                    except (UnicodeError, json.JSONDecodeError, ValueError, OverflowError, DispatchError):
                                         init_frame = None
                                     init_value = init_frame.get("init") if isinstance(init_frame, dict) else None
                                     if not isinstance(init_value, dict) or not _init_cwd_matches_launch(init_value, launch_cwd):
@@ -5059,7 +5281,18 @@ def controller(job: Path, ownership_fd: int) -> int:
                             boost=bool(command.get("boost")), stage_dir=stage_dir,
                         )
                         if result_binding is None and reason is None:
-                            reason = "invalid_envelope"
+                            if (
+                                failure_stage == "missing_structured_output"
+                                and returncode == 0
+                                and _has_reviewed_terminal_refusal(
+                                    stream_path,
+                                    command["agy_version"] if command["agy_version_observed"] else "",
+                                )
+                            ):
+                                reason, limit_kind = "permission_required", None
+                                failure_stage = None
+                            else:
+                                reason = "invalid_envelope"
                         elif (
                             result_binding is not None
                             and reason != "hard_deadline_exceeded"
@@ -5451,7 +5684,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "next_action": (
                         "blocked" if candidate_unavailable else "driver_review"
                     ) if candidate_recognized else (
-                        "none" if reason == "selection_preflight_failed" else
+                        "none" if reason in {"selection_preflight_failed", "permission_required"} else
                         "resume" if current["conversation_id"] and not is_boost else "blocked"
                     ),
                     "next_action_command": None,
@@ -5466,7 +5699,7 @@ def controller(job: Path, ownership_fd: int) -> int:
                     "resume_available": bool(
                         current["conversation_id"] and not candidate_recognized
                         and final_status == "failed"
-                        and reason != "selection_preflight_failed" and not is_boost
+                        and reason not in {"selection_preflight_failed", "permission_required"} and not is_boost
                     ),
                     "continue_available": False,
                     "remote_cancel_unverified": reason in {"cancelled", "interrupted"},

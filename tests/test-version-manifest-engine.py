@@ -48,7 +48,7 @@ def write_manifest(root: Path, data: dict[str, object]) -> Path:
 
 class VersionManifestEngineTests(unittest.TestCase):
     def candidate_record(self) -> dict[str, object]:
-        current = engine.get_version_spec("1.2.2").as_dict()
+        current = engine.get_version_spec("1.2.7").as_dict()
         fields = {
             "version", "support_tier", "allowed_operations", "expected_stdout",
             "source_sha256", "source_size", "release_commit", "distribution_url",
@@ -113,7 +113,7 @@ class VersionManifestEngineTests(unittest.TestCase):
                 self.assertEqual(result.stdout, b"", name)
 
     def test_candidate_rejects_premature_or_partial_evidence(self) -> None:
-        current = engine.get_version_spec("1.2.2").as_dict()
+        current = engine.get_version_spec("1.2.7").as_dict()
         record = self.candidate_record()
         for key in set(current) - set(record):
             with self.subTest(key=key), self.assertRaises(engine.EngineError):
@@ -121,6 +121,8 @@ class VersionManifestEngineTests(unittest.TestCase):
 
     def test_established_tiers_still_require_complete_recovery(self) -> None:
         for spec in engine.load_manifest().values():
+            if spec.support_tier == "candidate":
+                continue
             for key in ("recovery_binding_sha256", "recovery_stdout", "recovery_runner_sha256",
                         "recovery_runner_bytes", "recovery_summary_bytes", "output_profile_name"):
                 record = spec.as_dict()
@@ -131,11 +133,22 @@ class VersionManifestEngineTests(unittest.TestCase):
     def test_01_manifest_and_digest_are_exact(self) -> None:
         raw = MANIFEST_PATH.read_bytes()
         expected = MANIFEST_PATH.with_suffix(".sha256").read_text(encoding="ascii").strip()
+        self.assertEqual(
+            hashlib.sha256(raw).hexdigest(),
+            "e7c0998d32464f7050a18759077fc10eadbf1718ee97efab41fd0396ba40943a",
+        )
         self.assertEqual(hashlib.sha256(raw).hexdigest(), expected)
         self.assertEqual(
             set(engine.load_manifest(MANIFEST_PATH)),
-            {"1.1.12", "1.1.16", "1.1.22", "1.1.24", "1.1.26", "1.1.27", "1.2.2"},
+            {"1.1.12", "1.1.16", "1.1.22", "1.1.24", "1.1.26", "1.1.27", "1.2.2", "1.2.6", "1.2.7"},
         )
+
+    def test_candidate_1_2_7_spec_is_exact(self) -> None:
+        spec = engine.VersionSpec.from_dict(self.candidate_record())
+        self.assertEqual(spec.version, "9.8.7")
+        self.assertEqual(spec.support_tier, "candidate")
+        self.assertEqual(spec.allowed_operations, ("version-evidence",))
+        self.assertEqual(spec.expected_stdout, b"9.8.7\n")
 
     def test_02_portable_artifacts_are_byte_identical(self) -> None:
         for relative in (
@@ -145,18 +158,23 @@ class VersionManifestEngineTests(unittest.TestCase):
             self.assertEqual((ROOT / relative).read_bytes(), (PORTABLE / relative).read_bytes(), relative)
 
     def test_03_current_spec_is_exact(self) -> None:
-        spec = engine.get_version_spec("1.2.2", MANIFEST_PATH)
-        self.assertEqual(spec.version, "1.2.2")
+        spec = engine.get_version_spec("1.2.7", MANIFEST_PATH)
+        self.assertEqual(spec.version, "1.2.7")
         self.assertEqual(spec.support_tier, "current")
         self.assertEqual(
             spec.allowed_operations,
             ("activation", "capture", "classifier", "profile", "reprofile", "version-evidence"),
         )
-        self.assertEqual(spec.expected_stdout, b"1.2.2\n")
-        self.assertEqual(spec.source_sha256, "cabadc15a61944372bede1fdff186701c17467dd9d718e97dc79283055d3c101")
-        self.assertEqual(spec.release_commit, "ba985e6b5de2ac8aa09860a154a102831eb7722b")
+        self.assertEqual(spec.expected_stdout, b"1.2.7\n")
+        self.assertEqual(spec.source_sha256, "8c01ef82307dc01455418eb2e6e82f2989a3fa8b815c4b192efaaa89a55bef8d")
+        self.assertEqual(spec.release_commit, "7bb195acaec9e7788df5210d0dc3e15f3cefc6b3")
         self.assertEqual(spec.slug_count, 14)
         self.assertEqual(spec.capture_snapshot_policy, "macos-readonly-mount")
+
+        previous_126 = engine.get_version_spec("1.2.6", MANIFEST_PATH)
+        self.assertEqual(previous_126.support_tier, "previous")
+        self.assertEqual(previous_126.allowed_operations, ("capture", "profile", "version-evidence"))
+        self.assertEqual(previous_126.expected_stdout, b"1.2.6\n")
 
         legacy = engine.get_version_spec("1.1.22", MANIFEST_PATH)
         self.assertEqual(legacy.support_tier, "legacy")
@@ -164,6 +182,11 @@ class VersionManifestEngineTests(unittest.TestCase):
             legacy.allowed_operations,
             ("capture", "classifier", "profile", "reprofile", "version-evidence"),
         )
+
+        previous = engine.get_version_spec("1.2.2", MANIFEST_PATH)
+        self.assertEqual(previous.support_tier, "previous")
+        self.assertEqual(previous.allowed_operations, ("capture", "profile", "version-evidence"))
+        self.assertEqual(previous.expected_stdout, b"1.2.2\n")
 
         previous = engine.get_version_spec("1.1.27", MANIFEST_PATH)
         self.assertEqual(previous.support_tier, "previous")
@@ -218,7 +241,7 @@ class VersionManifestEngineTests(unittest.TestCase):
 
     def test_09_data_only_new_version_self_heals_all_bindings(self) -> None:
         data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        new = copy.deepcopy(data["versions"]["1.2.2"])
+        new = copy.deepcopy(data["versions"]["1.2.7"])
         new.update({
             "version": "1.1.28", "expected_stdout": "1.1.28\n",
             "source_sha256": "1" * 64, "source_size": 180_000_000,
@@ -376,7 +399,7 @@ class VersionManifestEngineTests(unittest.TestCase):
 
     def test_10_exact_activation_binding_passes(self) -> None:
         binding = json.loads((ROOT / "compat/agy-models-inventory-binding.json").read_text(encoding="utf-8"))
-        engine.validate_activation_binding(binding, engine.get_version_spec("1.2.2"))
+        engine.validate_activation_binding(binding, engine.get_version_spec("1.2.7"))
 
     def test_11_activation_drift_fails_closed(self) -> None:
         binding = json.loads((ROOT / "compat/agy-models-inventory-binding.json").read_text(encoding="utf-8"))
@@ -384,7 +407,7 @@ class VersionManifestEngineTests(unittest.TestCase):
             changed = copy.deepcopy(binding)
             changed[key] = "0" * 64
             with self.assertRaises(engine.EngineError):
-                engine.validate_activation_binding(changed, engine.get_version_spec("1.2.2"))
+                engine.validate_activation_binding(changed, engine.get_version_spec("1.2.7"))
 
     def test_12_stale_digest_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -418,7 +441,7 @@ class VersionManifestEngineTests(unittest.TestCase):
         with self.assertRaises(engine.EngineError):
             engine.get_version_spec("9.9.9")
         with self.assertRaises(engine.EngineError):
-            engine.operation_constants(engine.get_version_spec("1.2.2"), "unknown")
+            engine.operation_constants(engine.get_version_spec("1.2.7"), "unknown")
 
     def test_16_reprofile_transition_accepts_only_nlink_drift(self) -> None:
         current = os.stat_result((stat.S_IFDIR | 0o700, 3, 2, 9, os.getuid(), 4, 0, 0, 0, 0))
@@ -478,12 +501,12 @@ class VersionManifestEngineTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, b"manifest valid: 7 versions loaded\n")
+        self.assertEqual(result.stdout, b"manifest valid: 9 versions loaded\n")
 
     def test_20_test_is_read_only_for_production_artifacts(self) -> None:
         paths = [MANIFEST_PATH, ENGINE_PATH, ROOT / "scripts/version_manifest_capture_runner.py"]
         before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-        engine.get_version_spec("1.2.2")
+        engine.get_version_spec("1.2.7")
         after = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
         self.assertEqual(before, after)
 

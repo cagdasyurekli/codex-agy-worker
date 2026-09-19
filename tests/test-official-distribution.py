@@ -29,11 +29,11 @@ if SPEC is None or SPEC.loader is None:
 distribution = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(distribution)
 
-VERSION = "1.2.2"
-SHA512 = "8a3b5edea51e107a74413cea5eed1c5b02dede945ba21c7625b7c86f477c2c8ac423581de0ed84ff2f97c3bf6818c1fc24ca84cf9a76c2fb02a50e89d8a0d29a"
+VERSION = "1.2.7"
+SHA512 = "e26032ce420985a18e720b6ec1c09d8360aed851d3e3345148c9a052b7918989a52b62dd2c8db453599ea341b8b29720737846ffd37dd9c68b6bc6ece4a05994"
 ARCHIVE_URL = (
     "https://storage.googleapis.com/antigravity-public/antigravity-cli/"
-    "1.2.2-6061403484848128/darwin-arm/cli_mac_arm64.tar.gz"
+    "1.2.7-6731160148115456/darwin-arm/cli_mac_arm64.tar.gz"
 )
 
 
@@ -526,7 +526,7 @@ def _() -> None:
 def _() -> None:
     expect_error(
         "invalid archive policy",
-        lambda: parse(url=replace_url("1.2.2-", "1.1.9-")),
+        lambda: parse(url=replace_url("1.2.7-", "1.1.9-")),
     )
 
 
@@ -534,7 +534,7 @@ def _() -> None:
 def _() -> None:
     expect_error(
         "invalid archive policy",
-        lambda: parse(url=replace_url("6061403484848128", "build-secret")),
+        lambda: parse(url=replace_url("6731160148115456", "build-secret")),
     )
 
 
@@ -564,13 +564,13 @@ def _() -> None:
 def _() -> None:
     value = parse()
     status, detail = distribution.evaluate_manifest(value, "1.1.9", value)
-    assert status == 3 and "1.2.2" in detail and "1.1.9" in detail
+    assert status == 3 and "1.2.7" in detail and "1.1.9" in detail
 
 
 @test("same-version archive build drift is drift-review")
 def _() -> None:
     observed = parse()
-    snapshot = parse(url=replace_url("6061403484848128", "6607970839166975"))
+    snapshot = parse(url=replace_url("6731160148115456", "6607970839166975"))
     assert distribution.evaluate_manifest(observed, VERSION, snapshot)[0] == 3
 
 
@@ -600,7 +600,7 @@ def _() -> None:
         assert [call[0].full_url for call in opener.calls] == [distribution.MANIFEST_URL]
 
 
-@test("observed 1.2.2 against a historical 1.1.16 snapshot is drift-review")
+@test("observed 1.2.7 against a historical 1.1.16 snapshot is drift-review")
 def _() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -613,7 +613,7 @@ def _() -> None:
         )
         opener = FakeOpener(FakeResponse(manifest_bytes()))
         status, detail = distribution.check_production_manifest(root=root, opener=opener)
-        assert status == 3 and "1.2.2" in detail and "1.1.16" in detail
+        assert status == 3 and "1.2.7" in detail and "1.1.16" in detail
         assert [call[0].full_url for call in opener.calls] == [distribution.MANIFEST_URL]
 
 

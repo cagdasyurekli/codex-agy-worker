@@ -33,7 +33,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 112
+EXPECTED_CHECKS = 114
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 # This test-only switch exercises portable controller mechanics on macOS when
@@ -43,7 +43,7 @@ PORTABLE_SCOPED_FIXTURE = os.environ.get(
 ) == "1"
 # The prior partition labels were transposed; keep these explicit inventories
 # synchronized with the canonical grouped and ungrouped suite runs.
-GROUP_CHECKS = {"core": 65, "runtime": 1, "recovery": 46}
+GROUP_CHECKS = {"core": 67, "runtime": 1, "recovery": 46}
 
 
 def selected_group(arguments: list[str]) -> str | None:
@@ -2279,6 +2279,8 @@ with tempfile.TemporaryDirectory() as temporary:
             ("ordinary", "1.1.27", False, True, "succeeded", None, 0),
             ("denial-1-2-2", "1.2.2", True, True, "failed", "permission_required", 6),
             ("ordinary-1-2-2", "1.2.2", False, True, "succeeded", None, 0),
+            ("denial-1-2-6", "1.2.6", True, True, "succeeded", None, 0),
+            ("ordinary-1-2-6", "1.2.6", False, True, "succeeded", None, 0),
             ("unreviewed-intermediate", "1.2.1", True, True, "succeeded", None, 0),
             ("prior-version", "1.1.26", True, True, "succeeded", None, 0),
             # The live 1.2.2 denial emitted this top-level key but no structured
@@ -2305,7 +2307,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 # never parsed or persisted by the controller.
                 terminal["denied_actions"] = (
                     [{"action": "command", "display_name": "RunCommand"}]
-                    if version == "1.2.2" else None
+                    if version in {"1.2.2", "1.2.6"} else None
                 )
             events = [
                 {"event": "init", "init": {}, "conversation_id": "conversation-1"},
@@ -2353,6 +2355,531 @@ with tempfile.TemporaryDirectory() as temporary:
         reviewed_denial_signal_preserves_candidate_without_reuse,
     )
 
+    def exact_1_2_6_refusal_canary_yields_permission_required_without_candidate() -> None:
+        cases = [
+            # Exact live 1.2.6 refusal canary:
+            ("exact-refusal", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {"prompt_tokens": 50},
+                "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "permission_required", 6, False, None, 0, "success"),
+            # Denied actions with 2 items fails closed:
+            ("two-denied-actions", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [
+                    {"action": "command", "display_name": "RunCommand"},
+                    {"action": "edit", "display_name": "EditFile"},
+                ],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Huge integer duration does not raise OverflowError:
+            ("huge-int-duration", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 10**400, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "permission_required", 6, False, None, 0, "success"),
+            # Provider exit code 3 on refusal fails closed to invalid_envelope:
+            ("refusal-exit-3", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 3, "success"),
+            # Negative: extra unexpected key in result fails closed
+            ("extra-key", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+                "unrecognized_field": True,
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Negative: non-empty response
+            ("nonempty-response", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "denied",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Negative: status is not SUCCESS
+            ("error-status", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "ERROR", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "error"),
+            # Negative: empty denied_actions list
+            ("empty-denied-actions", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Negative: non-list denied_actions
+            ("non-list-denied", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": "not-a-list",
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Negative: malformed denied_actions entry (missing display_name)
+            ("malformed-denied-entry", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Negative: multiline string in denied_actions action
+            ("multiline-denied-action", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command\nmalicious", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Negative: negative duration
+            ("negative-duration", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": -1.0, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Negative: non-integer turns
+            ("non-int-turns", "1.2.6", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.0, "num_turns": "1", "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Negative: unobserved version does not trigger 1.2.6 refusal handling
+            ("unobserved-version", "1.2.6", False, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Preserve 1.2.2 fail-closed missing_structured_output behavior on refusal shape
+            ("preserve-1-2-2", "1.2.2", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # Exact live 1.2.7 refusal canary:
+            ("exact-refusal-1-2-7", "1.2.7", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {"prompt_tokens": 50},
+                "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "permission_required", 6, False, None, 0, "success"),
+            # 1.2.7 unobserved version fails closed:
+            ("unobserved-version-1-2-7", "1.2.7", False, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+            # 1.2.7 provider exit code 3 on refusal fails closed to invalid_envelope:
+            ("refusal-exit-3-1-2-7", "1.2.7", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 3, "success"),
+            # Future 1.2.8 version fails closed:
+            ("future-1-2-8", "1.2.8", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {}, "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "invalid_envelope", 4, False, "missing_structured_output", 0, "success"),
+        ]
+        for (
+            label, version, version_observed, terminal,
+            expected_status, expected_reason, expected_exit,
+            expected_candidate, expected_failure_stage, provider_rc,
+            expected_terminal_status,
+        ) in cases:
+            repo = root / f"refusal-canary-{label}-repo"; repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            job = root / f"refusal-canary-{label}-job"; job.mkdir(mode=0o700)
+            bin_dir = root / f"refusal-canary-{label}-bin"; bin_dir.mkdir()
+            events = [
+                {"event": "init", "init": {}, "conversation_id": "conversation-1"},
+                {"event": "result", "result": terminal},
+            ]
+            fake = bin_dir / "agy"
+            exit_line = f"exit {provider_rc}\n" if provider_rc != 0 else ""
+            fake.write_text(
+                "#!/bin/sh\nprintf '%s\\n' " + " ".join(
+                    shlex.quote(json.dumps(event)) for event in events
+                ) + f"\n{exit_line}",
+                encoding="utf-8",
+            ); fake.chmod(0o755)
+            bound_provider = root / f"refusal-canary-{label}-provider.json"
+            provider_schema(bound_provider)
+            command = {
+                "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": f"refusal-canary-{label}",
+                "workdir": str(repo), "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
+                "agy_version": version, "agy_version_observed": version_observed,
+                "idle_seconds": 2, "hard_seconds": 3, "max_seconds": 20, "notice_seconds": 3,
+                "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+                "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+            }
+            MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
+            MODULE.create_state(job, "initial", resume=False)
+            actual_exit = run_controller(job, bin_dir)
+            assert actual_exit == expected_exit, (label, actual_exit, expected_exit)
+            state, _raw, sha = MODULE.load_state(job)
+            assert (state["status"], state["reason"], state["exit_code"]) == (
+                expected_status, expected_reason, expected_exit,
+            ), (label, state["status"], state["reason"], state["exit_code"])
+            assert state["candidate_recognized"] is expected_candidate
+            assert state["result_available"] is expected_candidate
+            assert state["candidate_source"] == ("provider_success" if expected_candidate else "none")
+            assert state["provider_terminal_status"] == expected_terminal_status
+            assert state["failure_stage"] == expected_failure_stage
+            if expected_reason == "permission_required":
+                assert state["next_action"] == "none"
+                assert not state["resume_available"] and not state["continue_available"]
+                status_payload = MODULE.public_status(state, sha, job=job)
+                assert status_payload["next_action"] == "restart"
+                actions = [item["action"] for item in status_payload["available_actions"]]
+                assert actions == ["restart"]
+
+        fake_stream = root / "refusal-126-stream.ndjson"
+        fake_stream.write_text(
+            json.dumps({"event": "init", "init": {}, "conversation_id": "conversation-1"}) + "\n"
+            + json.dumps({"event": "result", "result": {
+                "conversation_id": "conversation-1", "denied_actions": [],
+            }}) + "\n",
+            encoding="utf-8",
+        )
+        assert MODULE._has_reviewed_denied_actions(fake_stream, "1.2.7") is False
+        assert MODULE._has_reviewed_denied_actions(fake_stream, "1.2.6") is False
+        assert MODULE._has_reviewed_denied_actions(fake_stream, "1.2.2") is True
+
+        refusal_127_stream = root / "refusal-127-stream.ndjson"
+        refusal_127_stream.write_text(
+            json.dumps({"event": "init", "init": {}, "conversation_id": "conversation-1"}) + "\n"
+            + json.dumps({"event": "result", "result": {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {"prompt_tokens": 50},
+                "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }}) + "\n",
+            encoding="utf-8",
+        )
+        assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.7") is True
+        assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.6") is True
+        assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.8") is False
+        assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.2") is False
+
+    check(
+        "exact 1.2.6 refusal canary yields permission_required without candidate and fails unknown shapes closed",
+        exact_1_2_6_refusal_canary_yields_permission_required_without_candidate,
+    )
+
+    def static_agy_error_metadata_offline_parser_contracts() -> None:
+        # 1. Fallback literal from Go runtime metadata
+        fallback = 'AGY_ERROR: {"short_error":"resource exhausted"}'
+        parsed = MODULE.parse_agy_error(fallback)
+        assert parsed is not None
+        assert parsed.short_error == "resource exhausted"
+        assert parsed.status is None
+        assert parsed.error_code is None
+        assert parsed.code_kind is None
+        assert parsed.retryable is None
+        assert parsed.error_id is None
+
+        # Fallback literal with empty string short_error
+        parsed_empty_fallback = MODULE.parse_agy_error('AGY_ERROR: {"short_error":""}')
+        assert parsed_empty_fallback is not None
+        assert parsed_empty_fallback.short_error == ""
+
+        # 2. Full struct payload with all tags
+        full = (
+            'AGY_ERROR: {"short_error":"rate limit","status":"RESOURCE_EXHAUSTED",'
+            '"error_code":429,"code_kind":"QUOTA","retryable":true,"error_id":"err-429"}'
+        )
+        parsed_full = MODULE.parse_agy_error(full)
+        assert parsed_full is not None
+        assert parsed_full.short_error == "rate limit"
+        assert parsed_full.status == "RESOURCE_EXHAUSTED"
+        assert parsed_full.error_code == 429
+        assert parsed_full.code_kind == "QUOTA"
+        assert parsed_full.retryable is True
+        assert parsed_full.error_id == "err-429"
+
+        # 3. Normal shape variations
+        # null short_error and null retryable
+        parsed_nulls = MODULE.parse_agy_error('AGY_ERROR: {"short_error": null, "retryable": null}')
+        assert parsed_nulls is not None
+        assert parsed_nulls.short_error is None
+        assert parsed_nulls.retryable is None
+
+        # Empty string optional fields
+        parsed_empty_opts = MODULE.parse_agy_error(
+            'AGY_ERROR: {"short_error": "ok", "retryable": false, "status": "", "code_kind": "", "error_id": ""}'
+        )
+        assert parsed_empty_opts is not None
+        assert parsed_empty_opts.status == ""
+        assert parsed_empty_opts.code_kind == ""
+        assert parsed_empty_opts.error_id == ""
+
+        # Bytes input with trailing newline
+        raw_bytes = b'AGY_ERROR: {"short_error": "offline test", "retryable": false}\n'
+        parsed_raw = MODULE.parse_agy_error(raw_bytes)
+        assert parsed_raw is not None
+        assert parsed_raw.short_error == "offline test"
+        assert parsed_raw.retryable is False
+
+        # Trailing \r\n accepted
+        raw_crlf = b'AGY_ERROR: {"short_error": "crlf test", "retryable": false}\r\n'
+        parsed_crlf = MODULE.parse_agy_error(raw_crlf)
+        assert parsed_crlf is not None
+        assert parsed_crlf.short_error == "crlf test"
+        assert parsed_crlf.retryable is False
+
+        # 4. uint32 bounds
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "ok", "retryable": true, "error_code": 0}') is not None
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "ok", "retryable": true, "error_code": 4294967295}') is not None
+
+        # 5. Negative closed-schema tests (all must fail closed / return None)
+        assert MODULE.parse_agy_error('{"short_error": "raw", "retryable": false}') is None  # raw JSON rejected
+        assert MODULE.parse_agy_error(b'{"short_error": "raw", "retryable": false}') is None  # raw JSON bytes rejected
+        assert MODULE.parse_agy_error('  AGY_ERROR: {"short_error": "ok", "retryable": true}') is None  # leading whitespace
+        assert MODULE.parse_agy_error('AGY_ERROR:{"short_error": "ok", "retryable": true}') is None  # missing space
+        assert MODULE.parse_agy_error('AGY_ERROR: {"status": "ERROR"}') is None  # missing short_error
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "status": "ERROR"}') is None  # missing retryable in multi-key
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "error_code": 429}') is None  # missing retryable
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "retryable": true, "unknown_key": 1}') is None  # unknown key
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "retryable": true, "error_code": "429"}') is None  # wrong type
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "retryable": true, "error_code": true}') is None  # bool != uint32
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "retryable": true, "error_code": -1}') is None  # negative uint32
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "retryable": true, "error_code": 4294967296}') is None  # overflow
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "retryable": "true"}') is None  # str != bool
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "err", "retryable": true, "status": 123}') is None  # int != str
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": 123}') is None  # non-str short_error in fallback
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "a", "short_error": "b"}') is None  # duplicate keys
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "a", "retryable": NaN}') is None  # invalid constant
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "a", "retryable": true, "error_code": ' + '9' * 5000 + '}') is None  # numeric overflow
+        assert MODULE.parse_agy_error('AGY_ERROR: not json') is None
+        assert MODULE.parse_agy_error('') is None
+        assert MODULE.parse_agy_error(b'\xff\xff') is None
+        assert MODULE.parse_agy_error('AGY_ERROR: ' + 'x' * (MODULE.MAX_EVENT_BYTES + 1)) is None
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "line1\nline2", "retryable": false}') is None
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "line1\r\nline2", "retryable": false}') is None
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "line1\rline2", "retryable": false}') is None
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "ok"}\n\n') is None
+        assert MODULE.parse_agy_error('AGY_ERROR: {"short_error": "ok"}\r\n\r\n') is None
+
+        # 6. Operational stderr classification contracts
+        fake_stderr = root / "static-agy-error-stderr.txt"
+        fake_stderr.write_bytes(b'AGY_ERROR: {"short_error":"offline test"}\n')
+        # Valid marker + rc 3 + 1.2.6 -> provider_terminal_error
+        assert MODULE._classify_stderr(fake_stderr, "1.2.6", returncode=3) == "provider_terminal_error"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.7", returncode=3) == "provider_terminal_error"
+        # Zero live exit-3 evidence: rc 0 with marker fails closed as unclassified
+        assert MODULE._classify_stderr(fake_stderr, "1.2.6", returncode=0) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.7", returncode=0) == "agy_failed_unclassified"
+        # True empty stderr at rc 0 -> empty_output
+        empty_stderr = root / "empty-stderr.txt"
+        empty_stderr.write_bytes(b"")
+        assert MODULE._classify_stderr(empty_stderr, "1.2.6", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(empty_stderr, "1.2.7", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(empty_stderr, "1.2.2", returncode=0) == "empty_output"
+        # Wrong returncodes remain unclassified
+        assert MODULE._classify_stderr(fake_stderr, "1.2.6", returncode=1) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.7", returncode=1) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.6", returncode=2) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.7", returncode=2) == "agy_failed_unclassified"
+        # Wrong version remains unclassified
+        assert MODULE._classify_stderr(fake_stderr, "1.2.2", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.8", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(fake_stderr, "", returncode=3) == "agy_failed_unclassified"
+
+        # Stderr syntax negatives:
+        raw_json_stderr = root / "raw-json-stderr.txt"
+        raw_json_stderr.write_bytes(b'{"short_error":"offline test"}\n')
+        assert MODULE._classify_stderr(raw_json_stderr, "1.2.6", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(raw_json_stderr, "1.2.7", returncode=3) == "agy_failed_unclassified"
+
+        ws_stderr = root / "ws-marker-stderr.txt"
+        ws_stderr.write_bytes(b'  AGY_ERROR: {"short_error":"offline test"}\n')
+        assert MODULE._classify_stderr(ws_stderr, "1.2.6", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(ws_stderr, "1.2.7", returncode=3) == "agy_failed_unclassified"
+
+        ns_stderr = root / "ns-marker-stderr.txt"
+        ns_stderr.write_bytes(b'AGY_ERROR:{"short_error":"offline test"}\n')
+        assert MODULE._classify_stderr(ns_stderr, "1.2.6", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(ns_stderr, "1.2.7", returncode=3) == "agy_failed_unclassified"
+
+        dup_stderr = root / "dup-marker-stderr.txt"
+        dup_stderr.write_bytes(b'AGY_ERROR: {"short_error":"a"}\nAGY_ERROR: {"short_error":"b"}\n')
+        assert MODULE._classify_stderr(dup_stderr, "1.2.6", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(dup_stderr, "1.2.7", returncode=3) == "agy_failed_unclassified"
+
+        big_stderr = root / "big-marker-stderr.txt"
+        big_stderr.write_bytes(b'AGY_ERROR: ' + b'a' * (MODULE.MAX_EVENT_BYTES + 1) + b'\n')
+        assert MODULE._classify_stderr(big_stderr, "1.2.6", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(big_stderr, "1.2.7", returncode=3) == "agy_failed_unclassified"
+
+        # Conflicting stderr: marker + permission prompt -> fails closed
+        conflict_perm = root / "conflict-perm-stderr.txt"
+        conflict_perm.write_bytes(b"permission that headless mode cannot prompt for\nAGY_ERROR: {\"short_error\":\"a\"}\n")
+        assert MODULE._classify_stderr(conflict_perm, "1.2.6", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(conflict_perm, "1.2.7", returncode=3) == "agy_failed_unclassified"
+
+        # Conflicting stderr: marker + provider timeout -> fails closed
+        timeout_8s = next(iter(MODULE._reviewed_provider_timeout_lines("1.2.6", 8)))
+        conflict_timeout = root / "conflict-timeout-stderr.txt"
+        conflict_timeout.write_bytes(timeout_8s + b'\nAGY_ERROR: {"short_error":"a"}\n')
+        assert MODULE._classify_stderr(conflict_timeout, "1.2.6", returncode=3, provider_timeout_seconds=8) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(conflict_timeout, "1.2.7", returncode=3, provider_timeout_seconds=8) == "agy_failed_unclassified"
+
+        # Timeout line alone for 1.2.6 classifies as provider_timeout
+        solo_timeout = root / "solo-timeout-stderr.txt"
+        solo_timeout.write_bytes(timeout_8s + b'\n')
+        assert MODULE._classify_stderr(solo_timeout, "1.2.6", returncode=1, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(solo_timeout, "1.2.7", returncode=1, provider_timeout_seconds=8) == "provider_timeout"
+        # Timeout warning at rc 0 classifies as provider_timeout for 1.2.2 and 1.2.6
+        assert MODULE._classify_stderr(solo_timeout, "1.2.6", returncode=0, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(solo_timeout, "1.2.7", returncode=0, provider_timeout_seconds=8) == "provider_timeout"
+        timeout_8s_122 = next(iter(MODULE._reviewed_provider_timeout_lines("1.2.2", 8)))
+        solo_timeout_122 = root / "solo-timeout-122-stderr.txt"
+        solo_timeout_122.write_bytes(timeout_8s_122 + b'\n')
+        assert MODULE._classify_stderr(solo_timeout_122, "1.2.2", returncode=0, provider_timeout_seconds=8) == "provider_timeout"
+
+        # Permission prompt alone: empty_output at rc0; permission_required at rc != 0
+        perm_stderr = root / "perm-alone-stderr.txt"
+        perm_stderr.write_bytes(b"permission that headless mode cannot prompt for\n")
+        assert MODULE._classify_stderr(perm_stderr, "1.2.6", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(perm_stderr, "1.2.7", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(perm_stderr, "1.2.2", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(perm_stderr, "1.2.6", returncode=1) == "permission_required"
+        assert MODULE._classify_stderr(perm_stderr, "1.2.7", returncode=1) == "permission_required"
+        assert MODULE._classify_stderr(perm_stderr, "1.2.2", returncode=1) == "permission_required"
+
+        # 1.2.2 exact timeout + permission: timeout wins at rc0 AND rc1 when no AGY_ERROR marker
+        timeout_perm_122 = root / "timeout-perm-122-stderr.txt"
+        timeout_perm_122.write_bytes(timeout_8s_122 + b"\npermission that headless mode cannot prompt for\n")
+        assert MODULE._classify_stderr(timeout_perm_122, "1.2.2", returncode=0, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(timeout_perm_122, "1.2.2", returncode=1, provider_timeout_seconds=8) == "provider_timeout"
+
+        # 1.2.6 exact timeout + permission: timeout wins at rc0 AND rc1 when no AGY_ERROR marker
+        timeout_perm_126 = root / "timeout-perm-126-stderr.txt"
+        timeout_perm_126.write_bytes(timeout_8s + b"\npermission that headless mode cannot prompt for\n")
+        assert MODULE._classify_stderr(timeout_perm_126, "1.2.6", returncode=0, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(timeout_perm_126, "1.2.6", returncode=1, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(timeout_perm_126, "1.2.7", returncode=0, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(timeout_perm_126, "1.2.7", returncode=1, provider_timeout_seconds=8) == "provider_timeout"
+
+        # Oversized unrelated stderr lines preserve legacy results
+        oversized_unrelated = b"unrelated log " + (b"x" * (MODULE.MAX_EVENT_BYTES + 64)) + b"\n"
+
+        oversized_rc0 = root / "oversized-unrelated-rc0.txt"
+        oversized_rc0.write_bytes(oversized_unrelated)
+        assert MODULE._classify_stderr(oversized_rc0, "1.2.6", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(oversized_rc0, "1.2.7", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(oversized_rc0, "1.2.2", returncode=0) == "empty_output"
+
+        oversized_timeout = root / "oversized-unrelated-timeout.txt"
+        oversized_timeout.write_bytes(oversized_unrelated + timeout_8s + b"\n")
+        assert MODULE._classify_stderr(oversized_timeout, "1.2.6", returncode=0, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(oversized_timeout, "1.2.7", returncode=0, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(oversized_timeout, "1.2.6", returncode=1, provider_timeout_seconds=8) == "provider_timeout"
+        assert MODULE._classify_stderr(oversized_timeout, "1.2.7", returncode=1, provider_timeout_seconds=8) == "provider_timeout"
+
+        oversized_perm = root / "oversized-unrelated-perm.txt"
+        oversized_perm.write_bytes(oversized_unrelated + b"permission that headless mode cannot prompt for\n")
+        assert MODULE._classify_stderr(oversized_perm, "1.2.6", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(oversized_perm, "1.2.7", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(oversized_perm, "1.2.2", returncode=0) == "empty_output"
+        assert MODULE._classify_stderr(oversized_perm, "1.2.6", returncode=1) == "permission_required"
+        assert MODULE._classify_stderr(oversized_perm, "1.2.7", returncode=1) == "permission_required"
+        assert MODULE._classify_stderr(oversized_perm, "1.2.2", returncode=1) == "permission_required"
+
+        # Oversized AGY_ERROR marker remains rejected even with timeout or rc0
+        assert MODULE._classify_stderr(big_stderr, "1.2.6", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(big_stderr, "1.2.7", returncode=3) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(big_stderr, "1.2.6", returncode=0) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(big_stderr, "1.2.7", returncode=0) == "agy_failed_unclassified"
+        big_stderr_with_timeout = root / "big-marker-timeout-stderr.txt"
+        big_stderr_with_timeout.write_bytes(timeout_8s + b"\n" + b"AGY_ERROR: " + b"a" * (MODULE.MAX_EVENT_BYTES + 1) + b"\n")
+        assert MODULE._classify_stderr(big_stderr_with_timeout, "1.2.6", returncode=3, provider_timeout_seconds=8) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(big_stderr_with_timeout, "1.2.7", returncode=3, provider_timeout_seconds=8) == "agy_failed_unclassified"
+
+        # Conflict involving AGY_ERROR + timeout + permission remains unclassified
+        conflict_all = root / "conflict-all-stderr.txt"
+        conflict_all.write_bytes(timeout_8s + b"\npermission that headless mode cannot prompt for\nAGY_ERROR: {\"short_error\":\"a\"}\n")
+        assert MODULE._classify_stderr(conflict_all, "1.2.6", returncode=3, provider_timeout_seconds=8) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(conflict_all, "1.2.7", returncode=3, provider_timeout_seconds=8) == "agy_failed_unclassified"
+
+        # 7. Controller integration dispatch test
+        ctrl_repo = root / "ctrl-agy-error-repo"; ctrl_repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(ctrl_repo)], check=True)
+        ctrl_job = root / "ctrl-agy-error-job"; ctrl_job.mkdir(mode=0o700)
+        ctrl_bin = root / "ctrl-agy-error-bin"; ctrl_bin.mkdir()
+        fake_agy = ctrl_bin / "agy"
+        fake_agy.write_text(
+            '#!/bin/sh\n'
+            '>&2 echo \'AGY_ERROR: {"short_error":"rate limit","retryable":true}\'\n'
+            'exit 3\n',
+            encoding="utf-8",
+        ); fake_agy.chmod(0o755)
+        bound_provider = root / "ctrl-agy-error-provider.json"
+        provider_schema(bound_provider)
+        cmd = {
+            "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": "ctrl-agy-error",
+            "workdir": str(ctrl_repo), "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
+            "agy_version": "1.2.6", "agy_version_observed": True,
+            "idle_seconds": 2, "hard_seconds": 3, "max_seconds": 20, "notice_seconds": 3,
+            "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+            "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+        }
+        MODULE.write_atomic(ctrl_job, MODULE.COMMAND_NAME, cmd)
+        MODULE.create_state(ctrl_job, "initial", resume=False)
+        c_exit = run_controller(ctrl_job, ctrl_bin)
+        assert c_exit == 25, f"expected exit 25, got {c_exit}"
+        c_state, _raw, c_sha = MODULE.load_state(ctrl_job)
+        assert c_state["status"] == "failed"
+        assert c_state["reason"] == "provider_terminal_error"
+        assert c_state["exit_code"] == 25
+        assert c_state["candidate_recognized"] is False
+        assert c_state["result_available"] is False
+        assert c_state["resume_available"] is False
+        assert c_state["continue_available"] is False
+        assert not (ctrl_job / "result.json").exists()
+        pub_actions = {item["action"] for item in MODULE.public_status(c_state, c_sha, job=ctrl_job)["available_actions"]}
+        assert "resume" not in pub_actions and "continue" not in pub_actions and "result" not in pub_actions
+
+        ctrl_repo_127 = root / "ctrl-agy-error-127-repo"; ctrl_repo_127.mkdir()
+        subprocess.run(["git", "init", "-q", str(ctrl_repo_127)], check=True)
+        ctrl_job_127 = root / "ctrl-agy-error-127-job"; ctrl_job_127.mkdir(mode=0o700)
+        ctrl_bin_127 = root / "ctrl-agy-error-127-bin"; ctrl_bin_127.mkdir()
+        fake_agy_127 = ctrl_bin_127 / "agy"
+        fake_agy_127.write_text(
+            '#!/bin/sh\n'
+            '>&2 echo \'AGY_ERROR: {"short_error":"rate limit","retryable":true}\'\n'
+            'exit 3\n',
+            encoding="utf-8",
+        ); fake_agy_127.chmod(0o755)
+        bound_provider_127 = root / "ctrl-agy-error-127-provider.json"
+        provider_schema(bound_provider_127)
+        cmd_127 = {
+            "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": "ctrl-agy-error-127",
+            "workdir": str(ctrl_repo_127), "argv": ["agy", "--json-schema", str(bound_provider_127), "--print", "task"],
+            "agy_version": "1.2.7", "agy_version_observed": True,
+            "idle_seconds": 2, "hard_seconds": 3, "max_seconds": 20, "notice_seconds": 3,
+            "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
+            "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
+        }
+        MODULE.write_atomic(ctrl_job_127, MODULE.COMMAND_NAME, cmd_127)
+        MODULE.create_state(ctrl_job_127, "initial", resume=False)
+        c_exit_127 = run_controller(ctrl_job_127, ctrl_bin_127)
+        assert c_exit_127 == 25, f"expected exit 25, got {c_exit_127}"
+        c_state_127, _raw, c_sha_127 = MODULE.load_state(ctrl_job_127)
+        assert c_state_127["status"] == "failed"
+        assert c_state_127["reason"] == "provider_terminal_error"
+        assert c_state_127["exit_code"] == 25
+        assert c_state_127["candidate_recognized"] is False
+        assert c_state_127["result_available"] is False
+        assert c_state_127["resume_available"] is False
+        assert c_state_127["continue_available"] is False
+        assert not (ctrl_job_127 / "result.json").exists()
+        pub_actions_127 = {item["action"] for item in MODULE.public_status(c_state_127, c_sha_127, job=ctrl_job_127)["available_actions"]}
+        assert "resume" not in pub_actions_127 and "continue" not in pub_actions_127 and "result" not in pub_actions_127
+
+    check(
+        "static agy_error serializer metadata parsed offline with closed schema and retains no live exit3 evidence",
+        static_agy_error_metadata_offline_parser_contracts,
+    )
+
     def exact_1_2_2_partial_timeout_signal_preserves_candidate() -> None:
         assert MODULE._reviewed_provider_timeout_lines("1.2.2", 8) == {
             b"[agy] print timeout after 8s with turn in progress; returning partial output",
@@ -2361,11 +2888,31 @@ with tempfile.TemporaryDirectory() as temporary:
             b"[agy] print timeout after 7200s with turn in progress; returning partial output",
             b"[agy] print timeout after 2h0m0s with turn in progress; returning partial output",
         }
+        assert MODULE._reviewed_provider_timeout_lines("1.2.6", 8) == {
+            b"[agy] print timeout after 8s with turn in progress; returning partial output",
+        }
+        assert MODULE._reviewed_provider_timeout_lines("1.2.6", 7200) == {
+            b"[agy] print timeout after 7200s with turn in progress; returning partial output",
+            b"[agy] print timeout after 2h0m0s with turn in progress; returning partial output",
+        }
+        assert MODULE._reviewed_provider_timeout_lines("1.2.7", 8) == {
+            b"[agy] print timeout after 8s with turn in progress; returning partial output",
+        }
+        assert MODULE._reviewed_provider_timeout_lines("1.2.7", 7200) == {
+            b"[agy] print timeout after 7200s with turn in progress; returning partial output",
+            b"[agy] print timeout after 2h0m0s with turn in progress; returning partial output",
+        }
         assert MODULE._reviewed_provider_timeout_lines("1.2.1", 20) == set()
+        assert MODULE._reviewed_provider_timeout_lines("1.2.8", 20) == set()
         timeout_line = next(iter(MODULE._reviewed_provider_timeout_lines("1.2.2", 20)))
 
         cases = [
             ("exact", "1.2.2", True, False, timeout_line, report(summary="partial"), "provider_timeout", 17, True),
+            ("exact-1-2-6", "1.2.6", True, False, timeout_line, report(summary="partial"), "provider_timeout", 17, True),
+            ("exact-1-2-7", "1.2.7", True, False, timeout_line, report(summary="partial"), "provider_timeout", 17, True),
+            ("near-miss-1-2-7", "1.2.7", True, False, timeout_line + b".", report(summary="complete"), None, 0, True),
+            ("unobserved-version-1-2-7", "1.2.7", False, False, timeout_line, report(summary="complete"), None, 0, True),
+            ("invalid-envelope-1-2-7", "1.2.7", True, False, timeout_line, None, "invalid_envelope", 4, False),
             ("timeout-and-denial", "1.2.2", True, True, timeout_line, report(summary="denied-partial"), "permission_required", 6, True),
             ("near-miss", "1.2.2", True, False, timeout_line + b".", report(summary="complete"), None, 0, True),
             ("unreviewed-version", "1.2.1", True, False, timeout_line, report(summary="complete"), None, 0, True),

@@ -116,7 +116,7 @@ git -C "$UPSTREAM_SOURCE" config user.name test
 printf 'reviewed upstream\n' > "$UPSTREAM_SOURCE/README.md"
 git -C "$UPSTREAM_SOURCE" add README.md
 git -C "$UPSTREAM_SOURCE" commit -qm 'reviewed upstream fixture'
-git -C "$UPSTREAM_SOURCE" tag v1.2.2
+git -C "$UPSTREAM_SOURCE" tag v1.2.7
 UPSTREAM_HEAD="$(git -C "$UPSTREAM_SOURCE" rev-parse HEAD)"
 git init -q --bare "$UPSTREAM_REMOTE"
 git -C "$UPSTREAM_SOURCE" remote add publish "$UPSTREAM_REMOTE"
@@ -154,7 +154,7 @@ case "${FAKE_AGY_MODE:-version}" in
   usage) printf 'Usage: agy [options] [command]\n'; exit 0 ;;
   fail) exit 7 ;;
 esac
-printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.2.2}}"
+printf '%s\n' "${FAKE_AGY_OUTPUT:-${FAKE_AGY_VERSION:-1.2.7}}"
 STUB
 cat > "$TMP/bin/codex" <<'STUB'
 #!/usr/bin/env bash
@@ -200,7 +200,7 @@ case "${1:-}" in
           unavailable) exit 2 ;;
           malformed) printf '%s\n' 'credential-bearing malformed official bytes'; exit 0 ;;
           drift) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.1.13}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
-          *) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.2.2}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
+          *) printf 'agy\t%s\t%s\n' "${FAKE_AGY_OFFICIAL_VERSION:-1.2.7}" "${FAKE_AGY_OFFICIAL_HEAD:-$FAKE_AGY_HEAD}" ;;
         esac
         ;;
       official-codex)
@@ -235,10 +235,10 @@ raise SystemExit(0 if module.MANIFEST_URL == expected else 1)
     fi
     case "${FAKE_MANIFEST_RESULT:-unchanged}" in
       unchanged)
-        printf '%s\n' '  distribution manifest: unchanged (1.2.2)'
+        printf '%s\n' '  distribution manifest: unchanged (1.2.7)'
         exit 0 ;;
       drift)
-        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.2.3; verified 1.2.2)'
+        printf '%s\n' '  distribution manifest: drift-review (official distribution 1.2.8; verified 1.2.7)'
         exit 3 ;;
       unavailable)
         printf '%s\n' '  distribution manifest: evidence-unavailable (network evidence unavailable)'
@@ -279,7 +279,7 @@ git -C "$SOURCE" remote add publish "$REMOTE"
 git -C "$SOURCE" push -q publish main --tags
 git --git-dir="$REMOTE" symbolic-ref HEAD refs/heads/main
 export FAKE_PROJECT_REMOTE="$REMOTE"
-export FAKE_AGY_HEAD="ba985e6b5de2ac8aa09860a154a102831eb7722b"
+export FAKE_AGY_HEAD="7bb195acaec9e7788df5210d0dc3e15f3cefc6b3"
 export FAKE_CODEX_HEAD="$CODEX_UPSTREAM_HEAD"
 git init -q --bare "$NO_TAG_REMOTE"
 git -C "$SOURCE" push -q "$NO_TAG_REMOTE" main

@@ -5,10 +5,21 @@
 `agy-worker` lets Codex use Antigravity CLI (`agy`) for broad exploration, bounded
 tasks, and project-scale implementation. Optimize for a useful working result:
 
-1. Dispatch the workflow that matches the user's intent.
-2. Have Codex inspect the diff and run driver-owned checks.
-3. Continue the same conversation to repair observable failures within the job budget.
+1. Dispatch the workflow that matches the user's intent. Normal use delegates
+   substantial exploration and implementation to AGY before Codex duplicates it.
+   Codex reads only scope and authority necessities, then spot-checks material
+   findings and reviews the actual diff.
+2. Have Codex inspect the diff and run driver-owned checks. Worker envelopes are
+   not evidence. Existing self-verification is optional advisory feedback when a
+   focused command is known; an unknown first command or architecture does not
+   prohibit useful delegation. Keep final Codex independent acceptance.
+3. Continue the same conversation to repair observable failures within the job
+   budget. Failed product checks return concrete sanitized feedback to the same AGY
+   conversation for bounded repair; do not allow silent direct-Codex fallback after
+   provider failure or exhausted budget. Use initial `--allow-scoped-repair` for
+   approved multi-turn scoped work.
 4. Deliver a transparent `verified`, `partially_verified`, or `blocked` outcome.
+   Preserve Goal as an ordinary-use opt-in, not a prerequisite.
 
 Do not refuse a task merely because its final file list, architecture, or test command
 is not known before dispatch. Do not require a persona for broad exploration. Personas
@@ -22,10 +33,12 @@ when the task changes or verifies user-facing behavior or claims.
 
 ## Quality and boundaries
 
-A worker envelope is input, never final acceptance evidence. Codex owns the actual
-diff review and commands it runs. Do not execute `commands_run` or `tests_run` from an
-envelope. A failing quality check should normally produce a bounded same-conversation
-repair request; it is not a reason to erase a useful candidate or silently retry with
+A worker envelope is input, never final acceptance evidence; worker envelopes are
+not evidence. Codex owns the actual diff review and commands it runs. Do not execute
+`commands_run` or `tests_run` from an envelope. Failed product checks return concrete
+sanitized feedback to the same AGY conversation for bounded repair; do not allow
+silent direct-Codex fallback after provider failure or exhausted budget. A failing
+quality check is not a reason to erase a useful candidate or silently retry with
 a new conversation.
 
 Keep these hard boundaries regardless of workflow:
@@ -105,10 +118,13 @@ v2 (manual input or the bound optional self-verification artifact), and
 when the cycle or time budget ends; report what passed, what did not, and the next safe
 action. Fresh `restart` remains an explicit user decision.
 Without an explicit initial scoped-repair grant, a scoped candidate whose approved
-content changed is result/finalize-only. With `--allow-scoped-repair`, the controller
-binds permitted candidate evolution to the same scope, model, conversation, and budget.
-Do not request another human approval solely to refresh a mechanical state digest;
-require new authority for material scope, exposure, destination, or budget changes.
+content changed is result/finalize-only. Use initial `--allow-scoped-repair` for approved
+multi-turn scoped work; the controller binds permitted candidate evolution to the same
+scope, model, conversation, and budget. One exact upfront approval may cover predictable
+same-scope repairs and mechanical digest/state refresh; provider-launch notices are status,
+not repeated permission requests. New scope, content exposure, destination, isolation,
+permissions or budget still require authority. Preserve required current raw-help/semantic
+version preflight on each launch; add no cache or alternate controller.
 
 Do not describe agy's interface from memory. Run `./ground-truth.sh` and inspect
 `agy --help` before changing agy-facing flags or claims. agy can return exit 0 with
@@ -125,9 +141,12 @@ to obtain a green result. A gate rejection may feed the project repair loop, but
 Codex's driver-owned checks determine `verified` versus `partially_verified` delivery.
 
 During implementation, run the owning focused suite from the relevant repository-map
-row. Once candidate bytes are stable, run `./scripts/ci-offline.sh` once before review;
-it already includes every offline suite, syntax/compile checks, and `git diff --check`.
-Reuse that exact-candidate result instead of repeating an unchanged full run. Run
+row. Reuse driver-owned checks only for identical candidate bytes and relevant
+environment; after changes rerun affected checks and run the required full suite once
+the final executable candidate is stable. Once candidate bytes are stable, run
+`./scripts/ci-offline.sh` once before review; it already includes every offline suite,
+syntax/compile checks, and `git diff --check`. Reuse that exact-candidate result
+instead of repeating an unchanged full run. Run
 `./ground-truth.sh` when agy behavior or claims are in scope. Keep suites offline and
 add positive and negative coverage for every new hard boundary.
 

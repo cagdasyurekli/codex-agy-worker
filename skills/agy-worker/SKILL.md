@@ -5,14 +5,17 @@ license: MIT
 compatibility: Requires OpenAI Codex CLI, Bash, Python 3, git, and agy with provider network access. Claude and Claude Code hosts are not supported.
 metadata:
   author: cagdasyurekli
-  version: "0.19.0"
+  version: "0.20.0"
 ---
 
 # Delegate repository work and verify the result
 
 Use this skill when `agy` can usefully explore a repository, implement bounded work,
-or help with broader project changes. Codex retains responsibility for scope, diff
-review, driver-owned checks, repair decisions, and the final assurance label.
+or help with broader project changes. In normal use, delegate substantial exploration
+and implementation to `agy` before Codex duplicates it. Codex reads only scope and
+authority necessities, then spot-checks material findings and reviews the actual diff.
+Codex retains responsibility for scope, diff review, driver-owned checks, repair
+decisions, and final independent acceptance.
 
 Resolve the installed package instead of guessing a checkout path:
 
@@ -29,12 +32,15 @@ availability, task quality, or future job success. For package orientation, read
 
 Before a provider launch, obtain explicit human approval for the exact provider-readable
 content, transmission and isolation mode, task, caller-selected model, and budget.
-One concrete approval package may cover foreseeable provider work and bounded repair;
-reuse it while those facts remain unchanged. Approval is a human decision. Preview,
-transmission, state, candidate, and dispatch SHA values are mechanical bindings to
-that decision; refreshing a still-applicable binding is not another approval request.
-Ask again only when authority, content exposure, destination, or budget materially
-changes. Ordinary jobs require neither hand-authored JSON nor a Goal.
+One exact upfront approval may cover predictable same-scope repairs and mechanical
+digest/state refresh; provider-launch notices are status, not repeated permission requests.
+Use initial `--allow-scoped-repair` for approved multi-turn scoped work. Approval is a
+human decision. Preview, transmission, state, candidate, and dispatch SHA values are
+mechanical bindings to that decision; refreshing a still-applicable binding is not another
+approval request. New scope, content exposure, destination, isolation, permissions or
+budget still require authority. Preserve required current raw-help/semantic version
+preflight on each launch; add no cache or alternate controller. Ordinary jobs require
+neither hand-authored JSON nor Goal as a prerequisite (Goal remains an ordinary-use opt-in).
 
 Prefer `--provider-scope FILE --approve-transmission-sha SHA256` for bounded jobs. It binds exact reviewed read entries, their selected-content digest, and a write subset, then stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.
 Whole-worktree dispatch remains an explicit exception. Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that read boundary.
@@ -83,9 +89,13 @@ examples, low-level recovery, Verification v2, and required notices.
 
 After a candidate arrives, inspect the actual Git diff; select and run checks yourself
 in an isolated verification copy, never an envelope's `commands_run` or `tests_run`;
-bind only sanitized driver findings to the current candidate; then finalize honestly or
-request a bounded same-conversation repair. A scoped candidate can receive another
-provider turn only when initial dispatch included
+worker envelopes are not evidence. Reuse driver-owned checks only for identical candidate
+bytes and relevant environment; after changes rerun affected checks and run the required full
+suite once the final executable candidate is stable. Bind only sanitized driver findings to
+the current candidate; then finalize honestly or request a bounded same-conversation repair.
+Failed product checks return concrete sanitized feedback to the same AGY conversation for
+bounded repair; do not allow silent direct-Codex fallback after provider failure or exhausted
+budget. A scoped candidate can receive another provider turn only when initial dispatch included
 `--allow-scoped-repair`, which binds the same approved scope, selected model,
 conversation, and budgets. Preserve useful work when a check fails or the cycle budget
 ends; `restart` is an explicit user decision. See [Project lifecycle and verification](references/PROJECT_LIFECYCLE_AND_VERIFICATION.md).
@@ -100,8 +110,10 @@ publication, installation, account action, or other external write lacks its own
 authorization.
 
 Unknown architecture, an unknown first test command, lack of a persona, or a failed
-first check are not hard stops. Discover what is needed, preserve the candidate, and
-report evidence limits. Before changing agy-facing flags or claims, run
+first check are not hard stops. Existing self-verification is optional advisory feedback
+when a focused command is known; an unknown first command or architecture does not
+prohibit useful delegation. Discover what is needed, preserve the candidate, and
+report evidence limits. Keep final Codex independent acceptance. Before changing agy-facing flags or claims, run
 `"$PIPELINE/ground-truth.sh"` and inspect its current `agy --help`; consume
 `result.structured_output` when ordinary agy output is empty. Its default phase is
 version/help only; `--account` is a separate explicit action.
