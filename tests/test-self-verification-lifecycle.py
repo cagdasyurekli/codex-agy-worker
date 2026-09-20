@@ -70,7 +70,7 @@ class SelfVerificationLifecycle(unittest.TestCase):
             approved_transmission = DISPATCH._compute_transmission_sha256(
                 DISPATCH._canonical_digest(DISPATCH._parse_provider_scope(scope_raw)),
                 readable_digest, DISPATCH._selected_content_digest(selected))
-        if command_schema not in {9, 10}:
+        if command_schema not in {9, 10, 11}:
             raise ValueError("fixture command schema is unsupported")
         command = {"schema_version": command_schema, "kind": "agy-worker-dispatch-command", "job_id": "fixture",
             "workdir": str(worktree), "argv": ["agy", "--json-schema", str(schema), "--print", "task"], "agy_version": "1.1.22", "agy_version_observed": True,
@@ -87,10 +87,21 @@ class SelfVerificationLifecycle(unittest.TestCase):
             "self_verification_manifest_sha256": DISPATCH.digest(raw_manifest) if allow else None,
             "self_verification_manifest_identity": list(DISPATCH._identity(info)) if allow else None,
             "allow_scoped_repair": False, "workflow": "task", "max_cycles": 2, "repair_authority_sha256": None}
-        if command_schema == 10:
+        if command_schema in {10, 11}:
             command["provider_isolation"] = "session"
+            if command_schema == 11:
+                command["native_grant_profile"] = "baseline"
+                command["whole_worktree_content_sha256"] = None
+                if scope is None:
+                    content = DISPATCH.whole_worktree_content_manifest(str(worktree))
+                    command["whole_worktree_content_sha256"] = content["manifest_sha256"]
             if scope is None:
                 command["approved_whole_worktree_sha256"] = (
+                    DISPATCH._compute_v11_launch_approval_sha256(
+                        "session", "baseline",
+                        whole_worktree_content_sha256=command["whole_worktree_content_sha256"],
+                        readable_manifest_sha256=readable_digest,
+                    ) if command_schema == 11 else
                     DISPATCH._compute_provider_launch_approval_sha256("session", readable_digest)
                 )
             else:
@@ -134,7 +145,7 @@ class SelfVerificationLifecycle(unittest.TestCase):
                     command, _command_raw, _command_identity = DISPATCH.load_command(job)
                     self.assertEqual(result, 0)
                     self.assertEqual((state["schema_version"], command["schema_version"], command["provider_isolation"]),
-                                     (13, 10, "session"))
+                                     (14, 10, "session"))
                     self.assertEqual((state["status"], state["phase"], state["driver_disposition"]),
                                      ("succeeded", "awaiting-verification", "unreviewed"))
                     self.assertEqual(state["self_verification_run"], state["attempt"])
@@ -144,14 +155,33 @@ class SelfVerificationLifecycle(unittest.TestCase):
             job, sha, _worktree = self.fixture(temporary, command_schema=9)
             state, _raw, _state_sha = DISPATCH.load_state(job)
             command, command_raw, _command_identity = DISPATCH.load_command(job)
-            self.assertEqual((state["schema_version"], command["schema_version"]), (13, 9))
+            self.assertEqual((state["schema_version"], command["schema_version"]), (14, 9))
             self.assertNotIn("provider_isolation", json.loads(command_raw))
             self.assertEqual(
                 self.invoke(job, sha, [DISPATCH.SELF_VERIFICATION.CheckResult("required", "passed", 0, 0, 0, 0)]),
                 0,
             )
             current, _raw, _state_sha = DISPATCH.load_state(job)
-            self.assertEqual((current["schema_version"], current["phase"]), (13, "awaiting-verification"))
+            self.assertEqual((current["schema_version"], current["phase"]), (14, "awaiting-verification"))
+
+    def test_v11_command_uses_bound_profile_and_content_for_self_verification(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for scoped in (False, True):
+                with self.subTest(scoped=scoped):
+                    job, sha, _worktree = self.fixture(
+                        str(Path(temporary) / str(scoped)), command_schema=11, scoped=scoped,
+                    )
+                    command, _raw, _identity = DISPATCH.load_command(job)
+                    self.assertEqual(command["native_grant_profile"], "baseline")
+                    self.assertEqual(command["whole_worktree_content_sha256"] is None, scoped)
+                    self.assertEqual(
+                        self.invoke(job, sha, [DISPATCH.SELF_VERIFICATION.CheckResult(
+                            "required", "passed", 0, 0, 0, 0,
+                        )]),
+                        0,
+                    )
+                    state, _raw, _sha = DISPATCH.load_state(job)
+                    self.assertEqual((state["schema_version"], state["self_verification_run"]), (14, 1))
 
     def test_attempt_is_single_use_default_off_and_unknown_ids_blocked(self):
         with tempfile.TemporaryDirectory() as temporary:

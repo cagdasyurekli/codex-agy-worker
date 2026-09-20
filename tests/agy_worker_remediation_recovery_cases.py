@@ -302,14 +302,16 @@ def run(context: dict[str, object]) -> None:
         behavior: str,
         *,
         allow_scoped_repair: bool = False,
+        allow_self_verification: bool = False,
         declared_files_changed: list[dict[str, str]] | None = None,
         stage_declaration: str = "relative",
         init_cwd: str | None = None,
         nested_directory_ops: bool = False,
         command_schema: int = 9,
     ):
-        """Create a V9 native or V8 historical scoped controller fixture."""
-        assert command_schema in {8, 9}
+        """Create a V10/V9 native or V8 historical scoped controller fixture."""
+        assert command_schema in {8, 9, 10}
+        assert not allow_self_verification or command_schema in {9, 10}
         assert stage_declaration in {"relative", "absolute", "other-root", "dot", "dotdot", "empty", "root"}
         source_repo = (root / f"scope-acceptance-source-{label}").resolve(); source_repo.mkdir()
         repo = (root / f"scope-acceptance-repo-{label}").resolve()
@@ -530,6 +532,26 @@ def run(context: dict[str, object]) -> None:
             "self_verification_manifest_sha256": None,
             "self_verification_manifest_identity": None,
         }
+        if allow_self_verification:
+            manifest_path = job / "self-verification-manifest.json"
+            manifest_raw = MODULE.canonical({
+                "schema_version": 1,
+                "kind": "agy-worker-self-verification",
+                "max_seconds": 10,
+                "checks": [{
+                    "id": "required", "argv": ["/usr/bin/python3", "-V"],
+                    "required": True, "timeout_seconds": 5,
+                    "output_limit_bytes": 1024,
+                }],
+            })
+            manifest_path.write_bytes(manifest_raw)
+            manifest_path.chmod(0o600)
+            command.update({
+                "allow_self_verification": True,
+                "self_verification_manifest_path": str(manifest_path),
+                "self_verification_manifest_sha256": MODULE.digest(manifest_raw),
+                "self_verification_manifest_identity": list(MODULE._identity(manifest_path.stat())),
+            })
         if command_schema == 8:
             command["schema_version"] = 8
             for field in (
@@ -539,9 +561,17 @@ def run(context: dict[str, object]) -> None:
             ):
                 command.pop(field)
         elif allow_scoped_repair:
-            command["repair_authority_sha256"] = MODULE.scoped_repair_authority_sha256(
-                command, verification_binding_sha256=None,
+            command["repair_authority_sha256"] = MODULE._repair_authority_for_command(command)
+        if command_schema == 10:
+            command["schema_version"] = 10
+            command["provider_isolation"] = "native"
+            command["approved_transmission_sha256"] = MODULE._bound_transmission_sha256(
+                command, MODULE._canonical_digest(parsed_scope),
+                MODULE._manifest_digest(readable_manifest),
+                MODULE._selected_content_digest(selected_manifest),
             )
+            if allow_scoped_repair:
+                command["repair_authority_sha256"] = MODULE._repair_authority_for_command(command)
         MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
         MODULE.create_state(job, "initial", resume=False)
         return repo, job, bin_dir, sentinel, initial_payload, initial_tool
@@ -1097,7 +1127,7 @@ def run(context: dict[str, object]) -> None:
 
     check("interrupted empty-directory reconciliation recovers durably and idempotently", interrupted_empty_directory_recovery_is_durable_and_idempotent)
 
-    def normal_standard_and_linked_worktrees_create_bound_v13_state() -> None:
+    def normal_standard_and_linked_worktrees_create_bound_v14_state() -> None:
         fixture = root / "bound-positive-controls"; fixture.mkdir()
         source_repo = fixture / "source"; source_repo.mkdir()
         linked = fixture / "linked-worktree"
@@ -1128,7 +1158,7 @@ def run(context: dict[str, object]) -> None:
                 MODULE.write_atomic(job, MODULE.COMMAND_NAME, command)
                 state, _state_sha = MODULE.create_state(job, "initial", resume=False)
                 persisted = json.loads((job / MODULE.STATE_NAME).read_text(encoding="utf-8"))
-                assert state["schema_version"] == persisted["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 13, label
+                assert state["schema_version"] == persisted["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 14, label
                 assert state["worktree_snapshot_algorithm"] == MODULE.CURRENT_WORKTREE_SNAPSHOT_ALGORITHM, label
                 assert state["worktree_baseline"] is not None, label
                 assert state["worktree_root_identity"] is not None, label
@@ -1211,7 +1241,7 @@ def run(context: dict[str, object]) -> None:
 
     # Keep the established current dispatch-state case as the inventory owner: this
     # is its plumbing-alias integration branch, not a new suite count.
-    check("normal standard and linked worktrees persist a bound V13 dispatch state", normal_standard_and_linked_worktrees_create_bound_v13_state)
+    check("normal standard and linked worktrees persist a bound V14 dispatch state", normal_standard_and_linked_worktrees_create_bound_v14_state)
 
     def extracted_worktree_facade_preserves_all_signatures_and_patch_seams() -> None:
         """The split keeps the old module surface and its intentional test seams."""
@@ -1871,7 +1901,7 @@ def run(context: dict[str, object]) -> None:
         })
         state.pop("worktree_snapshot_algorithm")
         state.pop("provider_terminal_status")
-        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             state.pop(field)
         root_identity = state.pop("worktree_root_identity")
         legacy_raw, legacy_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
@@ -1893,7 +1923,7 @@ def run(context: dict[str, object]) -> None:
         substituted = dict(loaded)
         substituted["candidate_worktree_sha256"] = semantic["sha256"]
         persisted_substituted = dict(substituted)
-        for field in {*MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for field in {*MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             persisted_substituted.pop(field)
         substituted_raw, substituted_sha = MODULE.write_atomic(
             job, MODULE.STATE_NAME, persisted_substituted,
@@ -1945,7 +1975,7 @@ def run(context: dict[str, object]) -> None:
             assert not (job / "continue-staged").exists(), arguments
             assert not list(job.glob("*stream.ndjson")), arguments
         persisted_loaded = dict(loaded)
-        for field in {*MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for field in {*MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             persisted_loaded.pop(field)
         _raw, loaded_sha = MODULE.write_atomic(
             job, MODULE.STATE_NAME, persisted_loaded,
@@ -1997,7 +2027,7 @@ def run(context: dict[str, object]) -> None:
                 state.pop("worktree_root_identity")
             if version < MODULE.CURRENT_STATE_SCHEMA:
                 state.pop("provider_terminal_status")
-                for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+                for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
                     state.pop(field)
             _raw, legacy_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             loaded, _raw, loaded_sha = MODULE.load_state(job)
@@ -2032,7 +2062,7 @@ def run(context: dict[str, object]) -> None:
         v9_command = json.loads((_job / MODULE.COMMAND_NAME).read_text(encoding="utf-8"))
         v9_state["schema_version"] = 9
         v9_state.pop("provider_terminal_status")
-        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             v9_state.pop(field)
         v9_state["selection_sha256"] = "0" * 64
         MODULE.validate_state(v9_state)
@@ -2062,7 +2092,7 @@ def run(context: dict[str, object]) -> None:
                     workflow=workflow, linked=workflow == "project",
                 )
                 state["schema_version"] = version
-                removed = {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}
+                removed = {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}
                 if version == 1:
                     removed.update(MODULE.STATE_PROJECT_FIELDS)
                     removed.update({"provider_retry_after_seconds", "provider_retry_observed_epoch"})
@@ -2164,7 +2194,7 @@ def run(context: dict[str, object]) -> None:
             for key in {
                 *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS,
                 *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS,
-                *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS,
+                *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS,
             }:
                 state.pop(key, None)
             if version == 3:
@@ -2330,7 +2360,7 @@ def run(context: dict[str, object]) -> None:
                 state.pop("worktree_snapshot_algorithm")
             state.pop("worktree_root_identity")
             state.pop("provider_terminal_status")
-            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
                 state.pop(field)
             old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             loaded, _raw, loaded_sha = MODULE.load_state(job)
@@ -2373,18 +2403,281 @@ def run(context: dict[str, object]) -> None:
             assert current["candidate_worktree_sha256"] == semantic["sha256"]
             assert current["worktree_root_identity"] == MODULE._dispatch_root_identity(command["workdir"])
 
+    def v13_projection_and_approved_migration_keep_historical_authority() -> None:
+        """V13 readback cannot synthesize V14 content or native grant authority."""
+        job, current, _sha, _envelope = current_candidate_fixture("v13-to-v14")
+        command_raw = (job / MODULE.COMMAND_NAME).read_bytes()
+        command = json.loads(command_raw)
+        assert command["schema_version"] < 11
+        legacy = dict(current)
+        legacy["schema_version"] = 13
+        legacy["continue_available"] = True
+        for field in MODULE.STATE_V14_FIELDS:
+            legacy.pop(field)
+        old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, legacy)
+        loaded, read_raw, read_sha = MODULE.load_state(job)
+        assert read_raw == old_raw and read_sha == old_sha
+        assert loaded["schema_version"] == 13
+        assert loaded["whole_worktree_content_sha256"] is None
+        assert loaded["native_grant_profile"] == "baseline"
+        bound_command, bound_state = MODULE._bound_lifecycle_inputs(
+            job, loaded, MODULE.load_command(job)[0], read_legacy=True,
+        )
+        assert bound_state is loaded and bound_command["schema_version"] < 11
+        assert (job / MODULE.STATE_NAME).read_bytes() == old_raw
+        public = MODULE.public_status(loaded, read_sha, job=job)
+        actions = {item["action"] for item in public["available_actions"]}
+        assert {"result", "continue", "finalize"} <= actions, actions
+        assert (job / MODULE.STATE_NAME).read_bytes() == old_raw
+
+        hybrid = dict(legacy, native_grant_profile="A")
+        try:
+            MODULE.validate_state(hybrid)
+        except MODULE.DispatchError as exc:
+            assert str(exc) == "dispatch state fields are invalid"
+        else:
+            raise AssertionError("V13 raw state accepted a V14 grant field")
+        for field, invalid, expected_error in (
+            ("worktree_snapshot_algorithm", "legacy-v6", "dispatch worktree snapshot algorithm is invalid"),
+            ("provider_terminal_status", "unbound", "dispatch provider terminal status is invalid"),
+        ):
+            broken = dict(legacy, **{field: invalid})
+            try:
+                MODULE.validate_state(broken)
+            except MODULE.DispatchError as exc:
+                assert str(exc) == expected_error, (field, str(exc))
+            else:
+                raise AssertionError(f"V13 {field} validation was skipped")
+        root_drift = json.loads(json.dumps(loaded))
+        root_drift["worktree_root_identity"]["root"]["ino"] += 1
+        try:
+            MODULE._bound_lifecycle_inputs(
+                job, root_drift, bound_command, read_legacy=True,
+            )
+        except MODULE.DispatchError as exc:
+            assert str(exc) == "dispatch worktree root binding changed"
+        else:
+            raise AssertionError("V13 root identity drift was accepted")
+        schema_drift = dict(loaded, provider_schema_sha256="0" * 64)
+        try:
+            MODULE._bound_lifecycle_inputs(
+                job, schema_drift, bound_command, read_legacy=True,
+            )
+        except MODULE.DispatchError as exc:
+            assert str(exc) == "dispatch schema binding changed"
+        else:
+            raise AssertionError("V13 schema binding drift was accepted")
+        assert (job / MODULE.STATE_NAME).read_bytes() == old_raw
+
+        verification = {
+            "schema_version": 2, "summary": "V13 migration retains historical authority",
+            "passed_checks": [], "failed_checks": ["fixture"],
+            "advisory_checks": 0, "missing_checks": 0,
+            "candidate_sha256": loaded["result_sha256"], "coverage": "partial",
+            "verified_findings": 1, "unresolved_gaps": 1,
+            "diff_review_complete": True,
+        }
+        queued, _queued_sha = MODULE.create_state(
+            job, "conversation-continue", resume=True,
+            approve_sha=old_sha, verification=verification,
+        )
+        assert queued["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 14
+        assert queued["whole_worktree_content_sha256"] is None
+        assert queued["native_grant_profile"] == "baseline"
+        assert (job / MODULE.COMMAND_NAME).read_bytes() == command_raw
+
+        scoped_repo, scoped_job, scoped_bin, _sentinel, _, _ = scoped_controller_fixture(
+            "v13-scoped-repair", "positive", allow_scoped_repair=True,
+            allow_self_verification=True,
+            command_schema=10,
+        )
+        scoped_rc = run_scoped_controller(scoped_job, scoped_bin)
+        if scoped_rc != 0:
+            failed_scoped, _, _ = MODULE.load_state(scoped_job)
+            raise AssertionError((
+                scoped_rc, failed_scoped["reason"], failed_scoped["failure_stage"],
+                (scoped_job / "stderr.txt").read_text(encoding="utf-8", errors="replace"),
+            ))
+        scoped_command, scoped_command_raw, _ = MODULE.load_command(scoped_job)
+        scoped_current, _, _ = MODULE.load_state(scoped_job)
+        assert scoped_command["schema_version"] == 10
+        assert scoped_current["allow_scoped_repair"] is True
+        assert scoped_current["allow_self_verification"] is True
+        assert scoped_current["repair_lineage_attempt"] == 1
+        assert scoped_current["transmission_sha256"] != scoped_command["approved_transmission_sha256"]
+        scoped_legacy = dict(scoped_current, schema_version=13)
+        # A completed optional verifier's accounting is historical state; this
+        # synthetic fixture exercises preservation without launching a verifier.
+        scoped_legacy["self_verification_run"] = 1
+        scoped_legacy["self_verification_elapsed_seconds"] = 0.125
+        for field in MODULE.STATE_V14_FIELDS:
+            scoped_legacy.pop(field)
+        scoped_raw, scoped_sha = MODULE.write_atomic(
+            scoped_job, MODULE.STATE_NAME, scoped_legacy,
+        )
+        scoped_loaded, loaded_raw, loaded_sha = MODULE.load_state(scoped_job)
+        assert (loaded_raw, loaded_sha) == (scoped_raw, scoped_sha)
+        migrated = MODULE._upgrade_legacy_state(scoped_loaded, scoped_command)
+        assert migrated["schema_version"] == 14
+        assert all(migrated[key] == scoped_legacy[key] for key in scoped_legacy if key != "schema_version")
+        assert migrated["whole_worktree_content_sha256"] is None
+        assert migrated["native_grant_profile"] == "baseline"
+        assert (scoped_job / MODULE.STATE_NAME).read_bytes() == scoped_raw
+        for field, drift in (
+            ("provider_scope_sha256", "0" * 64),
+            ("repair_authority_sha256", "0" * 64),
+            ("provider_isolation", "session"),
+            ("allow_self_verification", False),
+        ):
+            altered = dict(scoped_loaded, **{field: drift})
+            try:
+                MODULE._upgrade_legacy_state(altered, scoped_command)
+            except MODULE.DispatchError:
+                pass
+            else:
+                raise AssertionError(f"V13 {field} drift was normalized by migration")
+            assert (scoped_job / MODULE.STATE_NAME).read_bytes() == scoped_raw
+        scoped_verification = {
+            "schema_version": 2, "summary": "scoped V13 approved repair",
+            "passed_checks": [], "failed_checks": ["focused"],
+            "advisory_checks": 0, "missing_checks": 0,
+            "candidate_sha256": scoped_loaded["result_sha256"], "coverage": "partial",
+            "verified_findings": 1, "unresolved_gaps": 1,
+            "diff_review_complete": True,
+        }
+        next_scoped, _ = MODULE.create_state(
+            scoped_job, "conversation-continue", resume=True,
+            approve_sha=scoped_sha, verification=scoped_verification,
+        )
+        assert next_scoped["schema_version"] == 14
+        assert next_scoped["repair_lineage_sha256"] == scoped_legacy["repair_lineage_sha256"]
+        assert next_scoped["attempt"] == 2
+        assert next_scoped["self_verification_run"] == 1
+        assert next_scoped["self_verification_elapsed_seconds"] == 0.125
+        assert next_scoped["provider_isolation"] == "native"
+        assert next_scoped["native_grant_profile"] == "baseline"
+        assert run_scoped_controller(scoped_job, scoped_bin) == 0
+        repaired, _, _ = MODULE.load_state(scoped_job)
+        assert repaired["repair_parent_result_sha256"] == scoped_legacy["result_sha256"]
+        assert repaired["repair_parent_worktree_sha256"] == scoped_legacy["candidate_worktree_sha256"]
+        assert repaired["repair_lineage_attempt"] == 2
+        assert (scoped_job / MODULE.COMMAND_NAME).read_bytes() == scoped_command_raw
+        assert (scoped_repo / "payload.bin").read_bytes() == b"\x00reconciled-binary-2\xfd\xff\n"
+
+        whole_repo, whole_job, _whole_bin, _whole_sentinel, _, _ = scoped_controller_fixture(
+            "v13-whole-session", "no-net-effect", command_schema=10,
+        )
+        whole_projected, _, _ = MODULE.load_command(whole_job)
+        whole_command = {
+            key: value for key, value in whole_projected.items()
+            if key in MODULE.COMMAND_V10_FIELDS
+        }
+        whole_command.update({
+            "provider_isolation": "session",
+            "argv": [arg for arg in whole_command["argv"] if arg != "--sandbox"],
+            "provider_scope_path": None,
+            "provider_scope_sha256": None,
+            "provider_scope_identity": None,
+            "approved_transmission_sha256": None,
+            "approved_whole_worktree_sha256": MODULE._compute_provider_launch_approval_sha256(
+                "session", MODULE._manifest_digest(MODULE._scan_readable_worktree(str(whole_repo))),
+            ),
+        })
+        MODULE.write_atomic(whole_job, MODULE.COMMAND_NAME, whole_command)
+        (whole_job / MODULE.STATE_NAME).unlink()
+        whole_current, _ = MODULE.create_state(whole_job, "initial", resume=False)
+        assert whole_current["provider_isolation"] == "session"
+        whole_legacy = dict(whole_current, schema_version=13)
+        for field in MODULE.STATE_V14_FIELDS:
+            whole_legacy.pop(field)
+        whole_raw, _ = MODULE.write_atomic(whole_job, MODULE.STATE_NAME, whole_legacy)
+        whole_loaded, _, _ = MODULE.load_state(whole_job)
+        whole_bound_command, whole_bound_state = MODULE._bound_lifecycle_inputs(
+            whole_job, whole_loaded, MODULE.load_command(whole_job)[0], read_legacy=True,
+        )
+        assert whole_bound_state["provider_isolation"] == "session"
+        whole_migrated = MODULE._upgrade_legacy_state(whole_bound_state, whole_bound_command)
+        assert all(whole_migrated[key] == whole_legacy[key] for key in whole_legacy if key != "schema_version")
+        assert whole_migrated["whole_worktree_content_sha256"] is None
+        assert whole_migrated["native_grant_profile"] == "baseline"
+        assert (whole_job / MODULE.STATE_NAME).read_bytes() == whole_raw
+
     def legacy_read_and_mutation_authority_contracts() -> None:
         v5_through_v9_status_parity_and_migration_are_exact()
         v1_candidate_status_is_read_only_and_all_mutations_fail_without_writes()
         v3_v4_migration_requires_state_command_agreement_before_any_write()
         v5_through_v8_status_commands_project_only_proved_actions_and_finalize_to_v11()
+        legacy_active_controls_preserve_raw_shape()
+
+    def legacy_active_controls_preserve_raw_shape() -> None:
+        """Cheap cancel/extend must not turn active V1/V3/V4 bytes into V14."""
+        for version in (1, 3, 4):
+            for action in ("cancel", "extend"):
+                job = root / f"legacy-active-{version}-{action}"
+                job.mkdir(mode=0o700)
+                command = {
+                    "workdir": str(root), "workflow": "legacy", "max_cycles": 1,
+                    "job_id": job.name, "hard_seconds": 2, "max_seconds": 4,
+                    "idle_seconds": 1,
+                }
+                state = MODULE.initial_state(
+                    command, "initial", 1, command_sha="0" * 64,
+                    command_identity=(1, 2, 3, 4, 5), stage_sha=None,
+                    stage_identity=None, state_schema=8,
+                )
+                started = time.time()
+                state.update({
+                    "schema_version": version, "status": "running",
+                    "controller_pid": os.getpid(), "started_epoch": started,
+                    "progress_count": 1, "last_progress_epoch": started,
+                    "phase": None, "assurance": None,
+                })
+                omitted = {
+                    *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS,
+                    *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS,
+                    *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS,
+                    *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS,
+                    *MODULE.STATE_V14_FIELDS,
+                }
+                if version == 3:
+                    omitted |= {"provider_retry_after_seconds", "provider_retry_observed_epoch"}
+                if version == 1:
+                    omitted |= set(MODULE.STATE_PROJECT_FIELDS) | {
+                        "provider_retry_after_seconds", "provider_retry_observed_epoch",
+                    }
+                for field in omitted:
+                    state.pop(field, None)
+                raw, sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
+                projected, _, _ = MODULE.load_state(job)
+                assert projected["schema_version"] == version
+                with contextlib.redirect_stdout(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")):
+                    MODULE.command_control(job, action, sha, 1.0 if action == "extend" else None)
+                updated = json.loads((job / MODULE.STATE_NAME).read_bytes())
+                assert updated["schema_version"] == version
+                assert set(updated) == set(state)
+                assert updated["sequence"] == state["sequence"] + 1
+                assert updated["previous_state_sha256"] == MODULE.digest(raw)
+                if action == "cancel":
+                    assert updated["cancel_requested"] is True
+                    assert updated["status"] == "cancel-requested"
+                    assert updated["hard_seconds"] == state["hard_seconds"]
+                else:
+                    assert updated["cancel_requested"] is False
+                    assert updated["status"] == "running"
+                    assert updated["hard_seconds"] == state["hard_seconds"] + 1.0
 
     if FOCUSED_CHECK == "V3/V4 migration state-command binding rejects before any write":
         check(FOCUSED_CHECK, v3_v4_migration_requires_state_command_agreement_before_any_write)
     elif FOCUSED_CHECK == "V1 legacy evidence remains result-only":
         check(FOCUSED_CHECK, v1_candidate_status_is_read_only_and_all_mutations_fail_without_writes)
+    elif FOCUSED_CHECK == "legacy active controls preserve raw V1/V3/V4 shapes":
+        check(FOCUSED_CHECK, legacy_active_controls_preserve_raw_shape)
     else:
         check("legacy status separates readback from proved v5-v9 mutation authority", legacy_read_and_mutation_authority_contracts)
+    check(
+        "V13 state projects and migrates without new V14 authority",
+        v13_projection_and_approved_migration_keep_historical_authority,
+    )
 
     def current_v11_candidate_inside_worktree_is_driver_only() -> None:
         """Preserve current evidence without reviving provider authority.
@@ -2396,7 +2689,7 @@ def run(context: dict[str, object]) -> None:
         job, state, _sha, _envelope = current_candidate_fixture(
             "v10-inside-worktree", inside_worktree=True,
         )
-        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 13
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 14
         state["continue_available"] = True
         before, sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         state, loaded_raw, loaded_sha = MODULE.load_state(job)
@@ -2755,7 +3048,7 @@ def run(context: dict[str, object]) -> None:
         v7.pop("worktree_snapshot_algorithm")
         v7.pop("worktree_root_identity")
         v7.pop("provider_terminal_status")
-        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             v7.pop(field)
         assert MODULE.validate_state(v7)["schema_version"] == 7
         assert MODULE._state_worktree_snapshot(v7, command["workdir"]) == MODULE._worktree_snapshot(command["workdir"])
@@ -3742,14 +4035,14 @@ def run(context: dict[str, object]) -> None:
     def v10_sanitized_outer_terminal_disposition_contracts() -> None:
         """Issue #82: Sanitized outer terminal disposition and V10 migration."""
         job, state, state_sha, _envelope = current_candidate_fixture("v10-terminal-disposition")
-        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 13
+        assert state["schema_version"] == MODULE.CURRENT_STATE_SCHEMA == 14
         assert state["provider_terminal_status"] == "unknown"
 
         # 1. State validation bounds on provider_terminal_status enum
         for valid_status in ("unknown", "success", "error", "cancelled"):
             candidate_state = dict(state)
             candidate_state["schema_version"] = 10
-            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
                 candidate_state.pop(field)
             candidate_state["provider_terminal_status"] = valid_status
             MODULE.validate_state(candidate_state)
@@ -3757,7 +4050,7 @@ def run(context: dict[str, object]) -> None:
         for invalid_status in ("canceled", "SUCCESS", "ERROR", "CANCELLED", None, 123, "", "other"):
             candidate_state = dict(state)
             candidate_state["schema_version"] = 10
-            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+            for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
                 candidate_state.pop(field)
             candidate_state["provider_terminal_status"] = invalid_status
             try:
@@ -3830,7 +4123,7 @@ def run(context: dict[str, object]) -> None:
         candidate_state_v9["status"] = "succeeded"
         candidate_state_v9["driver_disposition"] = "unreviewed"
         candidate_state_v9.pop("provider_terminal_status", None)
-        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for field in {*MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             candidate_state_v9.pop(field)
         v9_actions = [item["action"] for item in MODULE.public_status(candidate_state_v9, "0" * 64, job=job)["available_actions"]]
         assert "verification-copy" in v9_actions, f"verification-copy missing in v9 actions: {v9_actions}"

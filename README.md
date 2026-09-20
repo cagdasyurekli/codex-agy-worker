@@ -72,7 +72,7 @@ for scoped jobs. The chosen mode is included in the initial approval and retaine
 through the job. Scope approval alone grants
 no provider execution, Git action, acceptance, or publication. Read [PRIVACY.md](PRIVACY.md).
 
-Before approval, inspect the content-free path boundary without starting `agy`, a
+Before approval, inspect the content-bound scope summary without starting `agy`, a
 provider probe, or network activity:
 
 ```bash
@@ -86,9 +86,9 @@ provider probe, or network activity:
 
 The preview requires a canonical branch-backed linked worktree. It lists directories,
 regular files, and contained symlink aliases (including ignored and untracked paths),
-but excludes the root `.git` control marker. In default mode, it does not read file
-contents and the digest binds path names and kinds only. Scoped preview reads selected
-content to compute its digest and binds that digest plus the scope policy into
+but excludes the root `.git` control marker. Whole-worktree preview reads content
+locally to bind bytes, kinds, permissions, and symlink targets without printing
+contents or target strings. Scoped preview binds selected content and the scope policy into
 `transmission_sha256`. Both previews are review evidence, not approval or
 provider-launch authority. Every initial raw or facade dispatch requires the exact
 whole-worktree manifest approval or the scoped policy/transmission pair. The controller
@@ -153,7 +153,7 @@ The worker envelope is input, not acceptance evidence:
 
 1. Codex freezes an immutable Git base in a disposable worktree.
 2. The facade requires an explicit choice. `--approve-whole-worktree` binds the
-   current path/kind manifest and acknowledges that `agy` may read the whole disposable
+   current content manifest and execution mode, acknowledging that `agy` may read the whole disposable
    worktree; requested paths constrain the task, not provider read access. Facade
    `--provider-scope` dispatch instead binds exact reviewed read/write entries and a
    selected-content digest, then stages only selected entries in a fresh owner-private

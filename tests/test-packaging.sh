@@ -1374,7 +1374,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.20.0"
+assert manifest["version"] == "0.21.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -3239,7 +3239,7 @@ fi
 
 provider_read_scope_clauses=(
     'Prefer `--provider-scope FILE --approve-transmission-sha SHA256` for bounded jobs. It binds exact reviewed read entries, their selected-content digest, and a write subset, then stages only selected entries in a fresh owner-private mode-`0700` Gitless provider cwd.'
-    'Whole-worktree dispatch remains an explicit exception. Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that read boundary.'
+    'Whole-worktree dispatch remains an explicit exception. New approvals bind content, kinds, permissions, symlink targets, and execution mode; the controller rechecks this binding before provider start. Legacy records keep their original contracts. Treat the entire disposable worktree passed as `--workdir` as worker-readable and potentially transmissible to Google/Gemini, regardless of requested edit paths; `--add-dir`, prompt denylist instructions, `qa-gate --only`, and `--allow` do not narrow that read boundary.'
     'Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch has an implicit transmission mode: launch requires either `--approve-whole-worktree LAUNCH_APPROVAL_SHA256` or the scoped pair above. The deprecated facade-only `--approve-preview-sha` spelling cannot launch by itself and remains temporarily available only with `--legacy-preview-approval`.'
     'New jobs default to `--provider-isolation session`, which uses the existing AGY session without AGY sandbox or native host containment. AGY has normal user filesystem/network authority; selected-file staging and reconciliation are not host isolation. Include this execution mode in the initial approval alongside task/content, then reuse that approval while its scope remains unchanged. Explicit `--provider-isolation native` retains supported macOS scoped containment with private HOME/TMP and reviewed network/Keychain access; it never falls back to session mode. The native `/usr/bin/security` exception allows broader same-user Keychain operations, and its listener rule permits wildcard binds. Read [Security and compatibility](references/SECURITY_AND_COMPATIBILITY.md) for those limits. Preserve the job'"'"'s selected mode across continuation and repair.'
     'Provider-scope approval grants neither provider execution, Git action, driver acceptance, nor publication.'
@@ -3295,6 +3295,8 @@ fi
 provider_read_scope_weakening_mutants_rejected=1
 provider_read_scope_weakening_mutant_index=0
 provider_read_scope_weakening_replacements=(
+    'the controller rechecks this binding before provider start::the controller may skip rechecking this binding before provider start'
+    'Legacy records keep their original contracts::Legacy records acquire the new authority automatically'
     'do not narrow that read boundary::narrow that read boundary'
     'Neither `workflow.sh run` nor the advanced `agy-worker.sh` initial dispatch::Both `workflow.sh run` and the advanced `agy-worker.sh` initial dispatch'
     'a write subset::an unrelated write set'
@@ -3384,11 +3386,11 @@ required = {
         "No initial facade or raw dispatch has an implicit provider-read mode",
         "Whole-worktree mode exposes the entire disposable `--workdir`",
         "Recommended provider-scope mode binds exact reviewed read entries",
-        "Current V13/command V10",
+        "Current V14/command V11",
     ),
     "docs/index.md": (
         "No initial launch path has an implicit provider-read mode.",
-        "<code>--approve-whole-worktree</code> binds the current path/kind manifest",
+        "<code>--approve-whole-worktree</code> binds current content, file kinds, permissions, symlink targets, and execution mode",
         "The recommended bounded-job path is <code>--provider-scope</code> plus the exact transmission digest",
         "session mode uses the existing AGY session; explicit native mode requires supported macOS containment",
     ),
@@ -3529,11 +3531,11 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'V5/V6 retains its exact legacy digest' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses the caller-resolved' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
-        && grep -Fq 'Controller-private V13 state also persists a sanitized' \
+        && grep -Fq 'Controller-private V14 state also persists a sanitized' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
         && grep -Fq '`status`, `wait`, and `result` JSON intentionally omit it' \
             "$ROOT/docs/PROJECT_WORKFLOW.md" \
-        && grep -Fq 'Current V13 uses `dispatching`' \
+        && grep -Fq 'Current V14 uses `dispatching`' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && grep -Fq '| `--allow-slash-commands` |' "$ROOT/docs/USAGE.md" \
         && grep -Fq 'Leave slash expansion disabled when any prompt content comes from a repository or' \
@@ -3550,9 +3552,9 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
-        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (302 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
-        && grep -Fq 'EXPECTED_CHECKS = 114' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (114 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (303 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
+        && grep -Fq 'EXPECTED_CHECKS = 115' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (115 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (219 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Do not pin exact suite counts in this instruction file' "$ROOT/AGENTS.md" \
         && grep -Fq '`docs/REPO_MAP.md` owns focused-suite inventory' "$ROOT/AGENTS.md" \
@@ -3564,9 +3566,9 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && ! grep -Eq '`tests/test-agy-worker.sh` \((338|348) cases\)' "$ROOT/docs/REPO_MAP.md" \
         && ! grep -Fq 'resolution remains blocked until installed agy exactly matches' \
             "$ROOT/docs/INSTALLATION.md"; then
-    ok "dispatcher docs describe mode-bound selection, V13 lifecycle state, no-bytecode legacy import, and registered focused coverage"
+    ok "dispatcher docs describe mode-bound selection, V14 lifecycle state, no-bytecode legacy import, and registered focused coverage"
 else
-    bad "dispatcher docs describe mode-bound selection, V13 lifecycle state, no-bytecode legacy import, and registered focused coverage"
+    bad "dispatcher docs describe mode-bound selection, V14 lifecycle state, no-bytecode legacy import, and registered focused coverage"
 fi
 
 bootstrap_preflight_line="$(python3 -c "import sys; from pathlib import Path; sys.path.insert(0, '$ROOT/scripts'); import ci_stages; print([i for i, s in enumerate(ci_stages.STAGES) if s.id == 'version-bootstrap-preflight'][0])")"

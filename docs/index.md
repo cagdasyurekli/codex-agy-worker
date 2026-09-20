@@ -121,7 +121,7 @@ runs no provider</code></pre>
   <div class="evidence-grid">
     <article class="evidence-item">
       <h3>Whole-worktree approval</h3>
-      <p>No initial launch path has an implicit provider-read mode. <code>--approve-whole-worktree</code> binds the current path/kind manifest and acknowledges that the disposable worktree is potentially readable and transmissible.</p>
+      <p>No initial launch path has an implicit provider-read mode. <code>--approve-whole-worktree</code> binds current content, file kinds, permissions, symlink targets, and execution mode and acknowledges that the disposable worktree is potentially readable and transmissible.</p>
     </article>
     <article class="evidence-item">
       <h3>Selected-content approval</h3>

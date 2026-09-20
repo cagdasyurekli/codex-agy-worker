@@ -53,8 +53,9 @@ Keep these hard boundaries regardless of workflow:
   selected-content digest, and a
   write subset, then stages only those entries in a fresh owner-private mode-`0700`
   Gitless provider cwd. Whole-worktree dispatch remains an explicit exception and
-  requires `--approve-whole-worktree` bound to the preview’s mode-bound
-  `launch_approval_sha256`; without
+  requires `--approve-whole-worktree` bound to the preview’s content- and mode-bound
+  `launch_approval_sha256`. New approvals bind file bytes, kinds, permissions, and
+  symlink targets, with a bounded no-follow recheck before provider start; without
   provider scope, treat every worktree entry as worker-readable and potentially
   transmissible to Google/Gemini, and remember that `--add-dir` does not narrow it.
   The controller still locally enumerates and validates
@@ -63,9 +64,9 @@ Keep these hard boundaries regardless of workflow:
   mode in the initial approval; do not add a separate approval step. Explicit
   `--provider-isolation native` adds supported macOS scoped containment with private
   HOME/TMP and documented network/Keychain exposure, without fallback to session.
-  Preserve the selected mode across repair and legacy jobs' original behavior. Keep
-  secrets, denied paths, and unrelated private content outside
-  every entry approved for either transmission mode.
+  Preserve the recorded mode and native grant profile across repairs. Keep legacy
+  jobs' original behavior and exclude secrets, denied paths, and unrelated private
+  content from every entry approved for either transmission mode.
 - Provider, probe, and verifier children start with an operational allowlist. Do not
   pass `--provider-env` or `--verify-env` without approval for each variable name and
   its resulting provider/verifier exposure; values are not persisted, and filtering

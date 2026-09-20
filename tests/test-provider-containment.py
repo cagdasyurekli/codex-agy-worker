@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import errno
+import dataclasses
 import importlib.util
 import json
 import os
@@ -99,6 +100,7 @@ def prepare(
     role: str = MODULE.ROLE_PROVIDER,
     allow_keychain: bool = False,
     network_policy: str = MODULE.NETWORK_DENY_ALL,
+    grant_profile: str = MODULE.GRANT_PROFILE_BASELINE,
     read_only_inputs: tuple[Path, ...] = (),
 ) -> object:
     original_discovery = MODULE._discover_default_keychain
@@ -112,6 +114,7 @@ def prepare(
         return MODULE.prepare_contained_launch(
             role=role,
             network_policy=network_policy,
+            grant_profile=grant_profile,
             job_dir=job,
             attempt=1,
             stage_dir=stage,
@@ -491,6 +494,159 @@ def security_helper_keychain_exception_is_exact_and_provider_only() -> bool:
             network_policy=MODULE.NETWORK_DENY_ALL, allow_keychain=True,
         ))
     )
+
+
+def native_grant_profile_bytes_and_invalid_choices() -> bool:
+    """Each opt-in removes only its named clause from the broad profile."""
+    target = "/private/tmp/agyworker-provider-image"
+    keychain = "/private/tmp/agyworker-synthetic.keychain-db"
+    common = dict(
+        target_executable=target, role=MODULE.ROLE_PROVIDER,
+        network_policy=MODULE.NETWORK_PROVIDER_TLS, allow_keychain=True,
+        keychain_path=keychain,
+    )
+    baseline = MODULE.render_profile(**common)
+    variants = {
+        name: MODULE.render_profile(**common, grant_profile=name)
+        for name in ("baseline", "A", "B", "AB")
+    }
+    services = (
+        "com.apple.SecurityServer", "com.apple.securityd.xpc",
+        "com.apple.securityd.general", "com.apple.trustd",
+        "com.apple.trustd.agent",
+    )
+    direct = (
+        f'(with-filter (process-path "{target}")\n  (allow mach-lookup\n'
+        + "".join(f'    (global-name "{name}")\n' for name in services[:-1])
+        + f'    (global-name "{services[-1]}")))\n'
+    ).encode()
+    listener = b'  (allow network-bind network-inbound (local tcp "localhost:*"))\n'
+    helper = f'(with-filter (process-path "/usr/bin/security")'.encode()
+    return (
+        variants["baseline"] == baseline
+        and baseline.count(direct) == 1
+        and baseline.count(listener) == 1
+        and variants["A"] == baseline.replace(direct, b"", 1)
+        and variants["B"] == baseline.replace(listener, b"", 1)
+        and variants["AB"] == baseline.replace(direct, b"", 1).replace(listener, b"", 1)
+        and all(raw.count(helper) == 1 for raw in variants.values())
+        and all(raw.count(f'(literal "{keychain}")'.encode()) == 1 for raw in variants.values())
+        and all(raw.count(b'(remote tcp "*:443")') == 1 for raw in variants.values())
+        and all(raw.count(b'(global-name "com.apple.mDNSResponder")') == 1 for raw in variants.values())
+        and all(raw.count(b'(literal "/private/var/run/mDNSResponder")') == 1 for raw in variants.values())
+        and all(rejects(lambda value=value: MODULE.render_profile(**common, grant_profile=value))
+                for value in (None, "a", "unknown", 1))
+        and rejects(lambda: MODULE.render_profile(
+            target_executable=target, role=MODULE.ROLE_SELF_VERIFY,
+            network_policy=MODULE.NETWORK_DENY_ALL, allow_keychain=False,
+            grant_profile="A",
+        ))
+        and rejects(lambda: MODULE.render_profile(
+            target_executable=target, role=MODULE.ROLE_PROVIDER,
+            network_policy=MODULE.NETWORK_PROVIDER_TLS, allow_keychain=False,
+            grant_profile="A",
+        ))
+        and rejects(lambda: MODULE.render_profile(
+            target_executable=target, role=MODULE.ROLE_PROVIDER,
+            network_policy=MODULE.NETWORK_DENY_ALL, allow_keychain=True,
+            grant_profile="B",
+        ))
+    )
+
+
+def native_grant_profile_is_bound_to_prepared_launch() -> bool:
+    if sys.platform != "darwin":
+        return None
+    root, job, stage, _checkout, _ambient = fixture("grant-binding")
+    try:
+        prepared = prepare(
+            job, stage, "/usr/bin/true", ["/usr/bin/true"], {},
+            allow_keychain=True, network_policy=MODULE.NETWORK_PROVIDER_TLS,
+            grant_profile="AB",
+        )
+        return (
+            prepared.grant_profile == "AB"
+            and run_confirmed(prepared).returncode == 0
+            and rejects(lambda: MODULE.confirm_contained_launch(
+                dataclasses.replace(prepared, grant_profile="baseline"),
+            ))
+            and rejects(lambda: MODULE.confirm_contained_launch(
+                dataclasses.replace(prepared, grant_profile="invalid"),
+            ))
+        )
+    finally:
+        shutil.rmtree(root)
+
+
+def native_grant_profile_mach_lookup_is_image_bound() -> bool:
+    """Query sandbox policy without connecting to Keychain services."""
+    if sys.platform != "darwin":
+        return None
+    services = (
+        "com.apple.SecurityServer", "com.apple.securityd.xpc",
+        "com.apple.securityd.general", "com.apple.trustd",
+        "com.apple.trustd.agent",
+    )
+    for grant_profile in ("baseline", "A", "B", "AB"):
+        root, job, stage, _checkout, _ambient = fixture(f"grant-mach-{grant_profile}")
+        try:
+            target, child = compile_process_path_probe(stage)
+            prepared = prepare(
+                job, stage, target, [str(target), str(child)], {},
+                allow_keychain=True, network_policy=MODULE.NETWORK_PROVIDER_TLS,
+                grant_profile=grant_profile,
+            )
+            result = run_confirmed(prepared)
+            if result.returncode != 0:
+                return False
+            observed = {}
+            for line in result.stdout.decode("utf-8", "strict").splitlines():
+                label, service, value = line.split(" ", 2)
+                observed[label, service] = int(value)
+            direct = grant_profile in ("baseline", "B")
+            if not (
+                all((observed[label, service] == 0) == direct
+                    for label in ("target", "fork") for service in services)
+                and all(observed["exec", service] != 0 for service in services)
+                and all(observed[label, "com.apple.mDNSResponder"] == 0
+                        for label in ("target", "fork"))
+                and all(observed[label, "com.example.agyworker.unlisted"] != 0
+                        for label in ("target", "fork", "exec"))
+            ):
+                return False
+        finally:
+            shutil.rmtree(root)
+    return True
+
+
+def native_grant_profile_listener_semantics() -> bool:
+    """Probe owned loopback and wildcard sockets without external traffic."""
+    if sys.platform != "darwin":
+        return None
+    target = system_python_process_path()
+    for grant_profile in ("baseline", "A", "B", "AB"):
+        root, job, stage, _checkout, _ambient = fixture(f"grant-listener-{grant_profile}")
+        try:
+            probe, child = listener_probe(stage)
+            prepared = prepare(
+                job, stage, target,
+                [str(target), "-I", "-S", "-B", str(probe), str(child)], {},
+                allow_keychain=True, network_policy=MODULE.NETWORK_PROVIDER_TLS,
+                grant_profile=grant_profile,
+            )
+            result = run_confirmed(prepared)
+            if result.returncode != 0:
+                return False
+            observed = json.loads(result.stdout)
+            allowed = grant_profile in ("baseline", "A")
+            if not all(
+                observed[label] == ("ALLOWED" if allowed else errno.EPERM)
+                for label in ("loopback4", "loopback6", "wildcard4", "wildcard6")
+            ):
+                return False
+        finally:
+            shutil.rmtree(root)
+    return True
 
 
 def binding_drift_fails_closed() -> bool:
@@ -2073,6 +2229,10 @@ check("external provider SSL policy needs only image-bound parent metadata", ext
 check("profile, role, HOME, TMP, and exact target are launch-bound", profile_and_environment_are_private)
 check("invalid network and self-verification provider authority fail closed", role_and_network_policy_fail_closed)
 check("Keychain helper exception is exact, provider-only, and network-free", security_helper_keychain_exception_is_exact_and_provider_only)
+check("native A/B/AB render only their selected grant removals and reject invalid choices", native_grant_profile_bytes_and_invalid_choices)
+check("native grant selector is bound to the prepared profile", native_grant_profile_is_bound_to_prepared_launch)
+check("native grant variants enforce image-bound synthetic Mach lookup policy", native_grant_profile_mach_lookup_is_image_bound)
+check("native grant variants enforce synthetic listener policy", native_grant_profile_listener_semantics)
 check("profile identity drift fails before native launch", binding_drift_fails_closed)
 check("exact read-only runtime input drift fails before native launch", runtime_input_drift_fails_closed)
 check("private generated DefaultKeychain preferences create once and reject repair drift", keychain_preferences_create_once_and_reject_drift)

@@ -72,4 +72,6 @@ or same-user processes, so human diff review remains required after a green gate
 Transmission preview uses fixed, bounded local `/usr/bin/git worktree list` plumbing
 to prove that its target is a registered branch-backed linked worktree. It launches no
 `agy`, provider, credential probe, or network process, and its Git metadata check does
-not turn the path-only preview digest into approval or launch authority.
+not turn review output into human approval or permission to launch. New whole-worktree
+approvals bind content, kinds, permissions, and symlink targets; the controller rechecks
+them before provider start. Existing job records retain their original versioned contract.
