@@ -14,7 +14,8 @@ For the public synthetic gate contract, read [QA gate conformance v1](CONFORMANC
 1. Capture an immutable base commit and create an isolated worktree.
 2. Choose the transmission mode explicitly. The primary facade requires either
    `--approve-whole-worktree LAUNCH_APPROVAL_SHA256`, acknowledging that every worktree entry
-   may be provider-readable and transmissible, or
+   may be provider-readable and transmissible and binding its current contents, kinds,
+   permissions, symlink targets, and execution mode, or
    `--provider-scope FILE --approve-transmission-sha SHA256`, which binds exact
    reviewed read/write entries and a selected-content digest, then stages only selected
    entries in a fresh owner-private mode-`0700` Gitless provider cwd.
@@ -213,7 +214,7 @@ For new bound jobs, `provider_isolation` names `session` or `native`, and
 bound command: scoped command V1–V8 jobs do not acquire native containment, while
 scoped V9 jobs retain it. Unbound jobs may have no execution facts yet.
 
-Controller-private V13 state also persists a sanitized
+Controller-private V14 state also persists a sanitized
 `provider_terminal_status`: `unknown`, `success`, `error`, or `cancelled`, derived
 only from the exact attempt's structurally valid outer terminal event. The public
 `status`, `wait`, and `result` JSON intentionally omit it. It is not candidate
@@ -222,7 +223,7 @@ acceptance, or billing evidence. A terminal without a recognized structured repo
 can retain that private enum while public `candidate_recognized` is false and
 `failure_stage` is `missing_structured_output`.
 
-V11 introduced this private diagnostic field. Current V13 preserves prior bound
+V11 introduced this private diagnostic field. Current V14 preserves prior bound
 transitions while adding explicitly opted-in scoped repair and local verification;
 migration never grants those opt-ins or creates new acceptance authority. See the
 [optional checks and scoped repair guide](../skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md#optional-checks-and-scoped-repair).

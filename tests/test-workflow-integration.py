@@ -210,7 +210,10 @@ print(json.dumps({{
         )
         if preview.returncode != 0:
             raise AssertionError(preview.stderr.decode("utf-8", "replace"))
-        launch_approval_sha = json.loads(preview.stdout)["launch_approval_sha256"]
+        preview_data = json.loads(preview.stdout)
+        launch_approval_sha = preview_data["launch_approval_sha256"]
+        assert preview_data["content_manifest_sha256"]
+        assert preview_data["native_grant_profile"] == "baseline"
         result = self.run_cli(
             "run",
             "--repo",
@@ -235,6 +238,10 @@ print(json.dumps({{
             raise AssertionError(f"expected one installed workflow state, got {workflow_states}")
         workflow_state = workflow_states[0]
         state = json.loads(workflow_state.read_bytes())
+        assert state["schema_version"] == 6
+        assert state["preview_content_sha256"] == preview_data["content_manifest_sha256"]
+        assert state["preview_launch_approval_sha256"] == launch_approval_sha
+        assert state["native_grant_profile"] == "baseline"
         worktree = Path(state["worktree_path"])
         calls = [] if not self.calls.exists() else [
             json.loads(raw)

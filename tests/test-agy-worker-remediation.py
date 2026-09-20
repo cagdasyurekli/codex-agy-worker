@@ -33,7 +33,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 114
+EXPECTED_CHECKS = 115
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 # This test-only switch exercises portable controller mechanics on macOS when
@@ -43,7 +43,7 @@ PORTABLE_SCOPED_FIXTURE = os.environ.get(
 ) == "1"
 # The prior partition labels were transposed; keep these explicit inventories
 # synchronized with the canonical grouped and ungrouped suite runs.
-GROUP_CHECKS = {"core": 67, "runtime": 1, "recovery": 46}
+GROUP_CHECKS = {"core": 67, "runtime": 1, "recovery": 47}
 
 
 def selected_group(arguments: list[str]) -> str | None:
@@ -196,6 +196,7 @@ class TestOnlyNonDarwinContainment:
         self, *, role, network_policy, job_dir, attempt, stage_dir,
         target_executable, target_argv, child_environment, allow_keychain,
         read_only_inputs, provider_max_cycles, provider_write_selectors,
+        grant_profile,
     ):
         if role != self.ROLE_PROVIDER or network_policy != self.NETWORK_PROVIDER_TLS:
             raise self.ContainmentError("test containment policy is invalid")
@@ -208,6 +209,7 @@ class TestOnlyNonDarwinContainment:
             or type(provider_max_cycles) is not int or not (attempt <= provider_max_cycles <= 5)
             or not isinstance(provider_write_selectors, list)
             or any(set(item) != {"kind", "path"} for item in provider_write_selectors)
+            or grant_profile not in {"baseline", "A", "B", "AB"}
         ):
             raise self.ContainmentError("test containment inputs are invalid")
         home = self.job / "provider-home"
@@ -237,6 +239,7 @@ class TestOnlyNonDarwinContainment:
             "environment": dict(sorted(prepared.environment.items())),
             "provider_max_cycles": provider_max_cycles,
             "provider_write_selectors": provider_write_selectors,
+            "grant_profile": grant_profile,
         }
         self._record()
         return prepared
@@ -760,7 +763,7 @@ with tempfile.TemporaryDirectory() as temporary:
         state = MODULE.initial_state(command, "initial", 1, command_sha="0" * 64, command_identity=(1, 2, 3, 4, 5), stage_sha=None, stage_identity=None, state_schema=8)
         state.update({"phase": None, "assurance": None})
         state["schema_version"] = 4
-        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             state.pop(key, None)
         migrated = MODULE.validate_state(state)
         assert migrated["candidate_source"] == "none"
@@ -781,7 +784,7 @@ with tempfile.TemporaryDirectory() as temporary:
         )
         original.update({"phase": None, "assurance": None})
         v3 = copy.deepcopy(original); v3["schema_version"] = 3
-        for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for key in {"provider_retry_after_seconds", "provider_retry_observed_epoch", *MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             v3.pop(key, None)
         validated_v3 = MODULE.validate_state(v3)
         assert validated_v3["schema_version"] == 3
@@ -831,7 +834,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 "last_success_identity": list(MODULE._identity(info)),
                 "phase": "awaiting-verification", "assurance": "pending", "resume_available": False,
             })
-            for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+            for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
                 state.pop(key)
             MODULE.write_atomic(job, MODULE.STATE_NAME, state)
             return job, worktree, artifact
@@ -3633,7 +3636,7 @@ with tempfile.TemporaryDirectory() as temporary:
             "phase": None, "assurance": None,
         })
         state["schema_version"] = 4
-        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS}:
+        for key in {*MODULE.STATE_V5_FIELDS, *MODULE.STATE_V6_FIELDS, *MODULE.STATE_V8_FIELDS, *MODULE.STATE_V9_FIELDS, *MODULE.STATE_V10_FIELDS, *MODULE.STATE_V11_FIELDS, *MODULE.STATE_V12_FIELDS, *MODULE.STATE_V13_FIELDS, *MODULE.STATE_V14_FIELDS}:
             state.pop(key)
         old_raw, old_sha = MODULE.write_atomic(job, MODULE.STATE_NAME, state)
         loaded, _raw, read_sha = MODULE.read_state_snapshot(job)

@@ -208,6 +208,11 @@ account-owned agy state such as models, agents, plugins, and local permissions.
   `result.json_schema` is the echoed schema, not the answer.
 - Unknown agy subcommands may print usage and exit 0; do not probe support by exit
   status alone.
+- `accept-edits` does not grant shell-command permission. In headless mode, an
+  unapproved command cannot prompt for consent and may stop the job, even when the
+  task requested file tools only. Preserve the failure and candidate; changing the
+  model or repeating the prompt does not resolve the permission boundary. The worker
+  does not add global allow-rules. See [AGY headless permissions](https://antigravity.google/docs/cli/headless/).
 - Prefer narrow permission allow-rules. Never use
   `--dangerously-skip-permissions` or an approval/sandbox bypass.
 

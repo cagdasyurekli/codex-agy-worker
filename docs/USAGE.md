@@ -325,7 +325,7 @@ prove the worker's architecture prose or completeness.
 | `--provider-scope FILE` | — | Recommended closed read/write policy for bounded jobs; stages selected content only and requires `--approve-transmission-sha`. |
 | `--provider-isolation session|native` | — | Default `session` uses existing account/session and normal host access; explicit `native` requires scoped mode on supported macOS. Bound for the job's lifetime. |
 | `--approve-transmission-sha SHA256` | — | Exact scoped policy/path/content and execution-mode binding; grants no downstream authority. |
-| `--approve-whole-worktree SHA256` | — | Broad-mode approval bound to the current path/kind manifest and execution mode; use the preview's `launch_approval_sha256`. |
+| `--approve-whole-worktree SHA256` | — | Broad-mode approval bound to current contents, kinds, permissions, symlink targets, and execution mode; use the preview's `launch_approval_sha256`. |
 | `--boost` | — | Advanced one-cycle `task` profile; may invoke provider-side subagents and protected tools and requires a job-bound risk acknowledgement. |
 | `--approve-boost-risk-sha SHA256` | — | Exact warning/job acknowledgement printed by the provider-free Boost preflight; grants no permission or wider transmission. |
 | `--provider-env NAME` | — | Repeatable exact-name opt-in for an additional caller variable passed to local `agy` probes and provider launches. |

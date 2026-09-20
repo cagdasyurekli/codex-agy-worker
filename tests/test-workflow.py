@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from typing import Any, Callable
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -253,8 +254,21 @@ def test_run_preview_and_approval_enforcement() -> bool:
         assert "kind" not in preview
         assert preview["manifest"]["kind"] == "agy-worker-readable-path-manifest"
         manifest_sha = preview["manifest_sha256"]
+        content_sha = preview["content_manifest_sha256"]
         launch_approval_sha = preview["launch_approval_sha256"]
-        assert len(manifest_sha) == len(launch_approval_sha) == 64
+        assert len(manifest_sha) == len(content_sha) == len(launch_approval_sha) == 64
+        assert preview["native_grant_profile"] == "baseline"
+        assert "authority_summary" in preview
+        summary = preview["authority_summary"]
+        assert summary["contents_read"] is True
+        assert summary["network_used"] is False
+        assert summary["provider_launched"] is False
+        assert summary["provider_isolation"] == "session"
+        assert summary["manifest_sha256"] == manifest_sha
+        assert summary["content_manifest_sha256"] == content_sha
+        assert summary["native_grant_profile"] == "baseline"
+        assert summary["launch_approval_sha256"] == launch_approval_sha
+        assert summary["provider_authority"] == "normal same-user filesystem and network authority; selected scope is staging and reconciliation, not host confinement"
 
         # 2. Invoking run without an explicit transmission mode exits 20 with preview info
         res = run_workflow(
@@ -275,7 +289,20 @@ def test_run_preview_and_approval_enforcement() -> bool:
         assert res.returncode != 0
         assert b"stale or mismatched" in res.stderr
 
-        # 4. Exact whole-worktree approval creates valid Workflow State v1
+        old_v1_approval = DISPATCH_WT._compute_provider_launch_approval_sha256(
+            "session", manifest_sha,
+        )
+        assert old_v1_approval != launch_approval_sha
+        old = run_workflow(
+            "run", "--state", str(f.state_file), "--repo", str(f.repo),
+            "--worktree", str(f.worktree), "--branch", f.branch,
+            "--base", f.base, "--job-id", f.job_id,
+            "--approve-whole-worktree", old_v1_approval,
+        )
+        assert old.returncode != 0
+        assert b"stale or mismatched" in old.stderr
+
+        # 4. Exact whole-worktree approval creates a content-bound workflow state
         # Use fake mock for agy to avoid real provider dispatch
         fake_bin = f.tmp / "bin"
         fake_bin.mkdir(mode=0o700)
@@ -293,7 +320,7 @@ def test_run_preview_and_approval_enforcement() -> bool:
         )
         assert f.state_file.exists()
         state_data = json.loads(f.state_file.read_bytes())
-        assert state_data["schema_version"] == WORKFLOW_MODULE.SCHEMA_VERSION
+        assert state_data["schema_version"] == WORKFLOW_MODULE.BOUND_SCHEMA_VERSION
         assert state_data["provider_isolation"] == "session"
         assert state_data["provider_execution"] is None
         assert state_data["kind"] == "agy-worker-workflow-state"
@@ -301,6 +328,9 @@ def test_run_preview_and_approval_enforcement() -> bool:
         assert state_data["base"] == f.base
         assert state_data["branch"] == f.branch
         assert state_data["preview_manifest_sha256"] == manifest_sha
+        assert state_data["preview_content_sha256"] == content_sha
+        assert state_data["preview_launch_approval_sha256"] == launch_approval_sha
+        assert state_data["native_grant_profile"] == "baseline"
         assert state_data["dispatch_job_dir"] is not None
         assert "last_result" not in state_data
         assert "final_assurance" not in state_data
@@ -317,6 +347,33 @@ def test_run_preview_and_approval_enforcement() -> bool:
         f.clean()
 
 check("run generates preview, rejects unapproved/stale preview, and binds approved preview", test_run_preview_and_approval_enforcement)
+
+
+def test_preview_timeout_covers_bounded_path_and_content_scans() -> bool:
+    f = RepoFixture("preview-budget")
+    try:
+        direct = run_cmd(
+            str(RUNTIME / "agy-worker.sh"), "transmission-preview",
+            "--workdir", str(f.worktree), "--provider-isolation", "session",
+        )
+        assert direct.returncode == 0, direct.stderr
+        observed: list[float] = []
+
+        def completed(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+            observed.append(kwargs["timeout"])
+            return subprocess.CompletedProcess(command, 0, direct.stdout, b"")
+
+        with mock.patch.object(WORKFLOW_MODULE.subprocess, "run", side_effect=completed):
+            raw, preview = WORKFLOW_MODULE.canonical_transmission_preview(f.worktree)
+        assert raw == direct.stdout
+        assert preview["content_manifest_sha256"]
+        assert observed == [60.0]
+        return True
+    finally:
+        f.clean()
+
+
+check("facade preview timeout covers bounded path and content scan budgets", test_preview_timeout_covers_bounded_path_and_content_scans)
 
 
 def test_run_drift_rejection() -> bool:
@@ -347,6 +404,52 @@ def test_run_drift_rejection() -> bool:
         f.clean()
 
 check("run rejects worktree drift after preview generation", test_run_drift_rejection)
+
+
+def test_whole_preview_binds_bytes_mode_and_link_target() -> bool:
+    for kind in ("bytes", "mode", "link"):
+        f = RepoFixture(f"whole-content-{kind}")
+        try:
+            target = f.worktree / "README.md"
+            if kind == "link":
+                (f.worktree / "NOTICE.md").write_text("# Other Repo\n", encoding="utf-8")
+                (f.worktree / "alias.txt").symlink_to("README.md")
+            argv = (
+                "run", "--state", str(f.state_file), "--repo", str(f.repo),
+                "--worktree", str(f.worktree), "--branch", f.branch,
+                "--base", f.base, "--job-id", f.job_id,
+            )
+            first = run_workflow(*argv, "--preview")
+            assert first.returncode == 0, first.stderr
+            prior = json.loads(first.stdout)
+            if kind == "bytes":
+                data = target.read_bytes()
+                target.write_bytes(data.replace(b"Initial", b"Changed"))
+                assert target.stat().st_size == len(data)
+            elif kind == "mode":
+                target.chmod(0o600)
+            else:
+                alias = f.worktree / "alias.txt"
+                alias.unlink()
+                alias.symlink_to("NOTICE.md")
+            current = run_workflow(*argv, "--preview")
+            assert current.returncode == 0, current.stderr
+            latest = json.loads(current.stdout)
+            assert latest["manifest_sha256"] == prior["manifest_sha256"]
+            assert latest["content_manifest_sha256"] != prior["content_manifest_sha256"]
+            assert latest["launch_approval_sha256"] != prior["launch_approval_sha256"]
+            rejected = run_workflow(
+                *argv, "--approve-whole-worktree", prior["launch_approval_sha256"],
+            )
+            assert rejected.returncode != 0
+            assert b"stale or mismatched" in rejected.stderr
+            assert not f.state_file.exists()
+        finally:
+            f.clean()
+    return True
+
+
+check("whole-worktree preview rejects same-size bytes, mode, and link drift", test_whole_preview_binds_bytes_mode_and_link_target)
 
 
 def test_run_pre_dispatch_failure_rolls_back_exact_state() -> bool:
@@ -463,7 +566,7 @@ def test_ordinary_run_owns_private_initialization_and_reuses_preview() -> bool:
         workflow_state, job_state, worktree = _derived_files(state_home, job_id)
         workflow_value = json.loads(workflow_state.read_bytes())
         job_value = json.loads(job_state.read_bytes())
-        assert workflow_value["schema_version"] == WORKFLOW_MODULE.FACADE_SCHEMA_VERSION
+        assert workflow_value["schema_version"] == WORKFLOW_MODULE.BOUND_FACADE_SCHEMA_VERSION
         assert workflow_value["origin"] == "workflow-facade"
         assert workflow_value["provider_isolation"] == "session"
         assert workflow_value["provider_execution"] is None
@@ -546,6 +649,19 @@ def test_ordinary_run_requires_one_explicit_transmission_mode() -> bool:
         preview_value = json.loads(preview.stdout)
         transmission_sha = preview_value["transmission_sha256"]
         assert preview_value["contents_read"] is True
+        assert "authority_summary" in preview_value
+        summary = preview_value["authority_summary"]
+        assert summary["contents_read"] is True
+        assert summary["network_used"] is False
+        assert summary["provider_launched"] is False
+        assert summary["provider_isolation"] == "session"
+        assert summary["manifest_sha256"] == preview_value["manifest_sha256"]
+        assert summary["native_grant_profile"] == "baseline"
+        assert summary["policy_sha256"] == preview_value["policy_sha256"]
+        assert summary["selected_content_sha256"] == preview_value["selected_content_sha256"]
+        assert summary["transmission_sha256"] == transmission_sha
+        assert summary["launch_approval_sha256"] == preview_value["launch_approval_sha256"]
+        assert summary["provider_authority"] == "normal same-user filesystem and network authority; selected scope is staging and reconciliation, not host confinement"
 
         missing = run_workflow(
             "run", "--repo", str(f.repo), "--job-id", job_id,
@@ -576,6 +692,11 @@ def test_ordinary_run_requires_one_explicit_transmission_mode() -> bool:
 
         workflow_state, job_state, worktree = _derived_files(state_home, job_id)
         assert workflow_state.exists() and job_state.exists() and worktree.exists()
+        bound = json.loads(workflow_state.read_bytes())
+        assert bound["schema_version"] == WORKFLOW_MODULE.BOUND_FACADE_SCHEMA_VERSION
+        assert bound["preview_content_sha256"] == preview_value["selected_content_sha256"]
+        assert bound["preview_launch_approval_sha256"] == transmission_sha
+        assert bound["native_grant_profile"] == "baseline"
         (worktree / "README.md").write_text("scoped content drift\n", encoding="utf-8")
         stale = run_workflow(
             "run", "--repo", str(f.repo), "--job-id", job_id,
@@ -584,7 +705,7 @@ def test_ordinary_run_requires_one_explicit_transmission_mode() -> bool:
             "--task", "bounded task", env=env,
         )
         assert stale.returncode == 20
-        assert b"stale or mismatched" in stale.stderr
+        assert b"facade workflow binding or preview changed" in stale.stderr
         return True
     finally:
         f.clean()
@@ -594,6 +715,55 @@ check(
     "ordinary run requires explicit whole-worktree or scoped transmission evidence",
     test_ordinary_run_requires_one_explicit_transmission_mode,
 )
+
+
+def test_native_ready_profile_remains_bound_on_repreview() -> bool:
+    f = RepoFixture("native-profile-bind")
+    try:
+        state_home = f.tmp / "xdg-state"
+        state_home.mkdir(mode=0o700)
+        scope_path = f.tmp / "scope.json"
+        scope_path.write_bytes(json.dumps({
+            "schema_version": 1,
+            "kind": "agy-worker-provider-scope",
+            "read": [{"path": "README.md", "kind": "file"}],
+            "write": [{"path": "README.md", "kind": "file"}],
+        }, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n")
+        scope_path.chmod(0o600)
+        job_id = "native-profile-bound"
+        env = {"XDG_STATE_HOME": str(state_home)}
+        argv = (
+            "run", "--repo", str(f.repo), "--job-id", job_id,
+            "--provider-isolation", "native", "--provider-scope", str(scope_path),
+        )
+        initial = run_workflow(*argv, "--preview", env=env)
+        assert initial.returncode == 0, initial.stderr
+        preview = json.loads(initial.stdout)
+        assert preview["native_grant_profile"] == "baseline"
+        workflow_state, _job_state, _worktree = _derived_files(state_home, job_id)
+        state = json.loads(workflow_state.read_bytes())
+        assert state["schema_version"] == WORKFLOW_MODULE.BOUND_FACADE_SCHEMA_VERSION
+        assert state["native_grant_profile"] == "baseline"
+        malformed = dict(state)
+        malformed["native_grant_profile"] = []
+        try:
+            WORKFLOW_MODULE.validate_workflow_state(malformed)
+        except WORKFLOW_MODULE.WorkflowError:
+            pass
+        else:
+            raise AssertionError("malformed profile was accepted")
+        state["native_grant_profile"] = "A"
+        workflow_state.write_bytes(WORKFLOW_MODULE.canonical_json(state) + b"\n")
+        workflow_state.chmod(0o600)
+        changed = run_workflow(*argv, "--preview", env=env)
+        assert changed.returncode == 20
+        assert b"facade workflow binding or preview changed" in changed.stderr
+        return True
+    finally:
+        f.clean()
+
+
+check("ready native workflow rejects a changed persisted grant profile", test_native_ready_profile_remains_bound_on_repreview)
 
 
 def test_legacy_preview_approval_requires_explicit_migration_opt_in() -> bool:

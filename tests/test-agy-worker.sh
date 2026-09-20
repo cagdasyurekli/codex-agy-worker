@@ -283,13 +283,37 @@ assert first_run.returncode == second_run.returncode == 0
 assert first == second
 assert first["provider_launched"] is False
 assert first["network_used"] is False
-assert first["contents_read"] is False
+assert first["contents_read"] is True
+assert "authority_summary" in first
+assert first["authority_summary"]["provider_launched"] is False
+assert first["authority_summary"]["network_used"] is False
+assert first["authority_summary"]["contents_read"] is True
+assert first["authority_summary"]["provider_isolation"] == "session"
+assert first["authority_summary"]["content_binding_kind"] == "whole-worktree-content-v1"
+assert first["authority_summary"]["local_review_only"] is True
+assert first["authority_summary"]["provider_review_authority"] is False
+assert first["authority_summary"]["manifest_sha256"] == first["manifest_sha256"]
+assert first["authority_summary"]["content_manifest_sha256"] == first["content_manifest_sha256"]
+assert first["authority_summary"]["launch_approval_sha256"] == first["launch_approval_sha256"]
+assert first["authority_summary"]["provider_authority"] == "normal same-user filesystem and network authority; selected scope is staging and reconciliation, not host confinement"
 assert first["resolved_root"] == str(worktree)
 assert first["manifest"]["entry_count"] == len(first["manifest"]["entries"])
+assert first["content_manifest"]["entry_count"] == len(first["content_manifest"]["entries"])
 manifest_bytes = json.dumps(
     first["manifest"], ensure_ascii=True, sort_keys=True, separators=(",", ":")
 ).encode()
 assert hashlib.sha256(manifest_bytes).hexdigest() == first["manifest_sha256"]
+content_bytes = json.dumps(
+    first["content_manifest"], ensure_ascii=True, sort_keys=True, separators=(",", ":")
+).encode()
+assert hashlib.sha256(content_bytes).hexdigest() == first["content_manifest_sha256"]
+assert "content_manifest" not in first["authority_summary"]
+assert "entries" not in first["authority_summary"]
+for entry in first["content_manifest"]["entries"]:
+    assert set(entry) == ({"kind", "mode", "path"} if entry["kind"] == "directory" else (
+        {"kind", "mode", "path", "sha256", "size"} if entry["kind"] == "file"
+        else {"kind", "mode", "path", "target_sha256", "target_size"}
+    ))
 paths = [entry["path"] for entry in first["manifest"]["entries"]]
 assert [path.encode() for path in paths] == sorted(path.encode() for path in paths)
 for expected in (".gitignore", "ignored-path", ".visible-dotfile", "empty-directory"):
@@ -304,9 +328,16 @@ secret.write_text("CHANGED-SECRET-CONTENT-MUST-NOT-APPEAR")
 content_two_run, content_two = preview()
 assert content_one_run.returncode == content_two_run.returncode == 0
 assert content_one["manifest_sha256"] == content_two["manifest_sha256"]
+assert content_one["content_manifest_sha256"] != content_two["content_manifest_sha256"]
 assert b"visible-secret-name.txt" in content_one_run.stdout
 assert b"SECRET-CONTENT-MUST-NOT-APPEAR" not in content_one_run.stdout
 assert b"CHANGED-SECRET-CONTENT-MUST-NOT-APPEAR" not in content_two_run.stdout
+
+secret.chmod(0o700)
+mode_run, mode_preview = preview()
+assert mode_run.returncode == 0
+assert mode_preview["content_manifest_sha256"] != content_two["content_manifest_sha256"]
+secret.chmod(0o644)
 
 scope_path = temp / "preview-scope.json"
 scope_path.write_text(json.dumps({
@@ -327,9 +358,31 @@ scoped_run = subprocess.run(
 scoped = json.loads(scoped_run.stdout) if scoped_run.returncode == 0 else {}
 assert scoped_run.returncode == 0
 assert scoped["contents_read"] is True
+assert "content_manifest" not in scoped and "content_manifest_sha256" not in scoped
 assert scoped["provider_launched"] is False
 assert scoped["network_used"] is False
+assert "authority_summary" in scoped
+assert scoped["authority_summary"]["contents_read"] is True
+assert scoped["authority_summary"]["provider_launched"] is False
+assert scoped["authority_summary"]["network_used"] is False
+assert scoped["authority_summary"]["provider_isolation"] == "session"
+assert scoped["authority_summary"]["content_binding_kind"] == "scoped-selected-content"
+assert scoped["authority_summary"]["manifest_sha256"] == scoped["manifest_sha256"]
+assert scoped["authority_summary"]["launch_approval_sha256"] == scoped["launch_approval_sha256"]
+assert scoped["authority_summary"]["policy_sha256"] == scoped["policy_sha256"]
+assert scoped["authority_summary"]["selected_content_sha256"] == scoped["selected_content_sha256"]
+assert scoped["authority_summary"]["transmission_sha256"] == scoped["transmission_sha256"]
+assert scoped["authority_summary"]["provider_authority"] == "normal same-user filesystem and network authority; selected scope is staging and reconciliation, not host confinement"
 assert b"CHANGED-SECRET-CONTENT-MUST-NOT-APPEAR" not in scoped_run.stdout
+
+# An unrelated hardlink must fail whole-worktree V11 authority. The existing
+# scoped validator independently rejects all hardlinks in its readable tree.
+unrelated = worktree / "unrelated-hardlink-source"
+unrelated.write_text("not selected")
+os.link(unrelated, worktree / "unrelated-hardlink-alias")
+whole_hardlink, _ = preview()
+assert whole_hardlink.returncode == 20 and not whole_hardlink.stdout
+(worktree / "unrelated-hardlink-alias").unlink(); unrelated.unlink()
 scope_path.chmod(0o644)
 invalid_scope_run = subprocess.run(
     [
@@ -353,18 +406,30 @@ assert file_preview["manifest_sha256"] != directory_preview["manifest_sha256"]
 
 contained_target = worktree / "contained-target"
 contained_target.mkdir()
+alternate_target = worktree / "alternate-target"
+alternate_target.mkdir()
 (worktree / "contained-alias").symlink_to("contained-target")
 contained_run, contained = preview()
 assert contained_run.returncode == 0
 assert {"kind": "symlink", "path": "contained-alias"} in contained["manifest"]["entries"]
 (worktree / "contained-alias").unlink()
+(worktree / "contained-alias").symlink_to("alternate-target")
+link_drift_run, link_drift = preview()
+assert link_drift_run.returncode == 0
+assert contained["manifest_sha256"] == link_drift["manifest_sha256"]
+assert contained["content_manifest_sha256"] != link_drift["content_manifest_sha256"]
+(worktree / "contained-alias").unlink()
+alternate_target.rmdir()
 
 outside = temp / "preview-outside"
 outside.write_text("outside")
 (worktree / "outward-alias").symlink_to(outside)
 failed, _ = preview()
 assert failed.returncode == 20 and not failed.stdout
-assert failed.stderr == b"agy-worker.sh: transmission preview unavailable\n"
+assert failed.stderr == (
+    b"agy-worker.sh: whole-worktree content preview failed its bounded local scan; "
+    b"use --provider-scope for selected content\n"
+)
 (worktree / "outward-alias").unlink()
 
 nested = worktree / "nested-marker"
@@ -395,7 +460,10 @@ fake_failure = subprocess.run(
     stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
 )
 assert fake_failure.returncode == 20 and not fake_failure.stdout
-assert fake_failure.stderr == b"agy-worker.sh: transmission preview unavailable\n"
+assert fake_failure.stderr == (
+    b"agy-worker.sh: whole-worktree content preview failed its bounded local scan; "
+    b"use --provider-scope for selected content\n"
+)
 
 alias = temp / "preview-root-alias"
 alias.symlink_to(worktree, target_is_directory=True)
@@ -417,6 +485,23 @@ special_failure, _ = preview()
 assert special_failure.returncode == 20 and not special_failure.stdout
 fifo.unlink()
 
+# Physical NFD spellings normalize in the approved manifest, but a second NFC
+# spelling collides and fails before any provider activity.
+nfd_name = "caf\u0065\u0301.txt"
+nfc_name = "caf\u00e9.txt"
+(worktree / nfd_name).write_text("unicode")
+unicode_run, unicode_preview = preview()
+assert unicode_run.returncode == 0
+assert nfc_name in [entry["path"] for entry in unicode_preview["content_manifest"]["entries"]]
+(worktree / nfc_name).write_text("collision")
+if (worktree / nfc_name).samefile(worktree / nfd_name):
+    # APFS commonly canonicalizes these spellings to one physical entry.
+    (worktree / nfd_name).unlink()
+else:
+    collision_run, _ = preview()
+    assert collision_run.returncode == 20 and not collision_run.stdout
+    (worktree / nfc_name).unlink(); (worktree / nfd_name).unlink()
+
 unreadable = worktree / "unreadable-directory"
 unreadable.mkdir(); unreadable.chmod(0)
 unreadable_failure, _ = preview()
@@ -427,6 +512,10 @@ helper_path = root / "skills/agy-worker/runtime/scripts/agy_dispatch_worktree.py
 spec = importlib.util.spec_from_file_location("preview_helper", helper_path)
 assert spec is not None and spec.loader is not None
 module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+legacy_v10_approval = module._compute_provider_launch_approval_sha256(
+    "session", first["manifest_sha256"],
+)
+assert legacy_v10_approval != first["launch_approval_sha256"]
 try:
     module._decode_manifest_path(b"non-utf8-\xff")
 except module.ReadableManifestError:
@@ -515,6 +604,15 @@ for attribute, constrained in (
     finally:
         setattr(module, attribute, original)
 shutil.rmtree(depth_parent)
+
+original_content_limit = module.WHOLE_CONTENT_MAX_BYTES
+module.WHOLE_CONTENT_MAX_BYTES = 1
+try:
+    try: module.whole_worktree_content_manifest(str(worktree))
+    except module.ReadableManifestError: pass
+    else: raise AssertionError("whole content byte bound was not enforced")
+finally:
+    module.WHOLE_CONTENT_MAX_BYTES = original_content_limit
 
 original_scan = module._scan_readable_paths
 scan_count = 0
@@ -1377,6 +1475,37 @@ else
     bad "raw whole-worktree stale approval boundary"
 fi
 
+# The provider-free preview can succeed, then the command-construction scan can
+# still detect a bounded content failure.  That later boundary must give the
+# caller a safe scope hint, without publishing a command or starting agy.
+WHOLE_BINDING_FAILURE_FIXTURE="$TMP/whole-binding-failure"
+cp -R "$ROOT/skills/agy-worker" "$WHOLE_BINDING_FAILURE_FIXTURE"
+cat >> "$WHOLE_BINDING_FAILURE_FIXTURE/runtime/scripts/agy_dispatch.py" <<'PY'
+
+def whole_worktree_content_manifest(_workdir):
+    raise RuntimeError("injected bounded content scan failure")
+PY
+WHOLE_BINDING_FAILURE_MARKER="$TMP/whole-binding-failure.provider-called"
+WHOLE_BINDING_FAILURE_LOGS="$TMP/whole-binding-failure-logs"
+printf 'whole binding must fail closed\n' | \
+    AGY_TEST_WORKER="$WHOLE_BINDING_FAILURE_FIXTURE/runtime/agy-worker.sh" \
+    AGY_TEST_LOG_DIR="$WHOLE_BINDING_FAILURE_LOGS" \
+    FAKE_CALLED_FILE="$WHOLE_BINDING_FAILURE_MARKER" \
+    run_worker whole-binding-failure \
+        > "$TMP/whole-binding-failure.out" 2> "$TMP/whole-binding-failure.err"
+whole_binding_failure_rc=$?
+if [[ "$whole_binding_failure_rc" == 20 && ! -s "$TMP/whole-binding-failure.out" \
+        && ! -e "$WHOLE_BINDING_FAILURE_MARKER" \
+        && ! -e "$WHOLE_BINDING_FAILURE_LOGS/whole-binding-failure/dispatch-command.json" \
+        && ! -e "$WHOLE_BINDING_FAILURE_LOGS/whole-binding-failure/dispatch-state.json" ]] \
+        && grep -Fqx \
+            'agy-worker.sh: whole-worktree content binding failed its bounded local scan; use --provider-scope for selected content' \
+            "$TMP/whole-binding-failure.err"; then
+    ok "post-preview whole content binding failure is bounded and publishes no provider command"
+else
+    bad "post-preview whole content binding failure boundary"
+fi
+
 printf 'small task\n' | run_worker tier --tier cheap > "$TMP/tier.out" 2> "$TMP/tier.err"
 rc=$?
 if [[ "$rc" != "0" ]]; then
@@ -1411,6 +1540,8 @@ source = Path(sys.argv[1])
 target = Path(sys.argv[2])
 value = json.loads(source.read_text(encoding="utf-8"))
 value["schema_version"] = 6
+value.pop("whole_worktree_content_sha256")
+value.pop("native_grant_profile")
 value.pop("provider_isolation")
 value.pop("approved_whole_worktree_sha256")
 value.pop("boost")
@@ -1476,6 +1607,8 @@ command.update({
     "max_seconds": 5,
     "notice_seconds": 2,
 })
+command.pop("whole_worktree_content_sha256")
+command.pop("native_grant_profile")
 command.pop("provider_isolation")
 command.pop("approved_whole_worktree_sha256")
 command.pop("boost")
@@ -1643,13 +1776,17 @@ module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
 command, _raw, _identity = module.load_command(Path(job_text).resolve())
-assert command["schema_version"] == 10
+assert command["schema_version"] == 11
 assert command["provider_isolation"] == "session"
+assert command["native_grant_profile"] == "baseline"
+assert command["whole_worktree_content_sha256"] is None
 assert command["allow_scoped_repair"] is True
 assert command["allow_self_verification"] is False
 assert command["repair_authority_sha256"] == module.scoped_repair_authority_sha256(
     command, verification_binding_sha256=None,
 )
+module.CONTAINMENT.NEW_NATIVE_GRANT_PROFILE = "AB"
+assert module.load_command(Path(job_text).resolve())[0]["native_grant_profile"] == "baseline"
 PY
 then
     ok "scoped repair opt-in writes one immutable command authority"
@@ -1711,7 +1848,7 @@ info = copied_path.stat()
 
 assert copied == source
 assert stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1
-assert command["schema_version"] == 10
+assert command["schema_version"] == 11
 assert command["provider_isolation"] == "session"
 assert command["allow_self_verification"] is True
 assert command["self_verification_manifest_path"] == str(copied_path)
@@ -1850,7 +1987,7 @@ argv = open(sys.argv[1], "rb").read().split(b"\0")
 command = json.load(open(sys.argv[2], encoding="utf-8"))
 prompt = argv[-2].decode("utf-8") if argv[-1] == b"" else argv[-1].decode("utf-8")
 normalized_prompt = " ".join(prompt.split())
-assert command["schema_version"] == 10 and command["boost"] is True
+assert command["schema_version"] == 11 and command["boost"] is True
 assert command["provider_isolation"] == "session"
 assert b"--sandbox" not in argv
 assert command["provider_scope_path"] is not None
@@ -1978,7 +2115,7 @@ prompt = argv[argv.index(b"--print") + 1].decode("utf-8")
 root_marker = "The exact absolute workspace root for this attempt is the JSON string "
 root_start = prompt.index(root_marker) + len(root_marker)
 decoded_root, root_end = json.JSONDecoder().raw_decode(prompt[root_start:])
-assert command["schema_version"] == 10 and command["boost"] is False
+assert command["schema_version"] == 11 and command["boost"] is False
 assert command["provider_isolation"] == "native"
 assert argv.count(b"--sandbox") == 1
 assert command["provider_scope_path"] is not None
@@ -2032,7 +2169,7 @@ prompt = argv[argv.index(b"--print") + 1].decode("utf-8")
 root_marker = "The exact absolute workspace root for this attempt is the JSON string "
 root_start = prompt.index(root_marker) + len(root_marker)
 decoded_root, root_end = json.JSONDecoder().raw_decode(prompt[root_start:])
-assert command["schema_version"] == 10 and command["boost"] is False
+assert command["schema_version"] == 11 and command["boost"] is False
 assert command["provider_isolation"] == "session"
 assert b"--sandbox" not in argv
 assert command["provider_scope_path"] is None
@@ -4796,7 +4933,7 @@ state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
 for field in module.STATE_V5_FIELDS:
     state.pop(field)
-for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS, *module.STATE_V12_FIELDS, *module.STATE_V13_FIELDS}:
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS, *module.STATE_V12_FIELDS, *module.STATE_V13_FIELDS, *module.STATE_V14_FIELDS}:
     state.pop(field)
 state["schema_version"] = 3
 state["phase"] = None
@@ -5250,7 +5387,7 @@ state = module.initial_state(
     command_identity=(1, 1, os.getuid(), os.getgid(), 0o600),
     stage_sha=None, stage_identity=None,
 )
-assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 13
+assert state["schema_version"] == module.CURRENT_STATE_SCHEMA == 14
 assert state["worktree_root_identity"] is not None
 assert state["worktree_baseline"] is not None
 assert state["worktree_snapshot_algorithm"] == module.WORKTREE_SNAPSHOT_SEMANTIC_V1
@@ -6152,7 +6289,7 @@ for field in module.STATE_PROJECT_FIELDS:
     state.pop(field)
 for field in module.STATE_V5_FIELDS:
     state.pop(field)
-for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS, *module.STATE_V12_FIELDS, *module.STATE_V13_FIELDS}:
+for field in {*module.STATE_V6_FIELDS, *module.STATE_V8_FIELDS, *module.STATE_V9_FIELDS, *module.STATE_V10_FIELDS, *module.STATE_V11_FIELDS, *module.STATE_V12_FIELDS, *module.STATE_V13_FIELDS, *module.STATE_V14_FIELDS}:
     state.pop(field)
 state.pop("provider_retry_after_seconds")
 state.pop("provider_retry_observed_epoch")
