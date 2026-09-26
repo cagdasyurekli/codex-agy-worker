@@ -28,6 +28,7 @@ AGY_HELP = """Usage of agy:
   --add-dir                       Add a directory to the workspace
   --conversation                  Resume a previous conversation by ID
   --disable-slash-commands        Disable slash command expansion
+  --effort                        Reasoning effort (low|medium|high|max)
   --json-schema                   Optional JSON schema path
   --mode                          Set execution mode (accept-edits, plan)
   --model                         Select a model
@@ -109,6 +110,7 @@ class InstalledWorkflowFixture:
 import json
 from pathlib import Path
 import sys
+import time
 
 args = sys.argv[1:]
 calls = Path({str(self.calls)!r})
@@ -116,15 +118,36 @@ kind = "version" if args == ["--version"] else "help" if args == ["--help"] else
 with calls.open("a", encoding="utf-8") as handle:
     handle.write(json.dumps({{"kind": kind, "argv": args}}, separators=(",", ":")) + "\\n")
 if args == ["--version"]:
-    print("1.2.7")
+    print("0.0.0" if {self.behavior!r} == "preflight" else "1.2.11")
     raise SystemExit(0)
 if args == ["--help"]:
     sys.stderr.write({AGY_HELP!r})
     raise SystemExit(0)
 
+behavior = {self.behavior!r}
+if behavior == "provider":
+    sys.stderr.write("synthetic provider failure\\n")
+    raise SystemExit(17)
+if behavior == "idle":
+    time.sleep(3)
+    raise SystemExit(0)
+if behavior == "budget":
+    raise SystemExit(0)
+if behavior == "permission":
+    print(json.dumps({{
+        "event": "init", "conversation_id": "synthetic-1", "init": {{}}
+    }}, separators=(",", ":")))
+    print(json.dumps({{
+        "event": "result", "result": {{
+            "conversation_id": "synthetic-1", "status": "SUCCESS", "response": "",
+            "duration_seconds": 1.0, "num_turns": 1, "json_schema": {{}},
+            "usage": {{}},
+            "denied_actions": [{{"action": "command", "display_name": "RunCommand"}}],
+        }}
+    }}, separators=(",", ":")))
+    raise SystemExit(0)
 candidate = Path.cwd() / "candidate.txt"
 candidate.write_text("synthetic candidate\\n", encoding="utf-8")
-behavior = {self.behavior!r}
 if behavior == "escape":
     Path({str(self.outside)!r}).write_text("synthetic escape\\n", encoding="utf-8")
 elif behavior == "undeclared":
@@ -211,6 +234,7 @@ print(json.dumps({{
         if preview.returncode != 0:
             raise AssertionError(preview.stderr.decode("utf-8", "replace"))
         preview_data = json.loads(preview.stdout)
+        assert b'"state":"awaiting-approval"' in preview.stderr
         launch_approval_sha = preview_data["launch_approval_sha256"]
         assert preview_data["content_manifest_sha256"]
         assert preview_data["native_grant_profile"] == "baseline"
@@ -229,6 +253,7 @@ print(json.dumps({{
             "--task",
             "Create candidate.txt with the synthetic fixture content.",
         )
+        assert b'"reason":"provider-attempt-succeeded-awaiting-driver-verification"' in result.stderr
         workflow_states = list(
             self.state_home.glob(
                 f"agy-worker/workflows/*/{self.job_id}/workflow.json"
@@ -242,6 +267,16 @@ print(json.dumps({{
         assert state["preview_content_sha256"] == preview_data["content_manifest_sha256"]
         assert state["preview_launch_approval_sha256"] == launch_approval_sha
         assert state["native_grant_profile"] == "baseline"
+        status = self.run_cli(
+            "status", "--state", str(workflow_state), "--format", "json",
+        )
+        assert status.returncode == 0, status.stderr
+        assert json.loads(status.stdout)["delegation_policy"]["state"] == "completed"
+        status_text = self.run_cli(
+            "status", "--state", str(workflow_state), "--format", "text",
+        )
+        assert status_text.returncode == 0, status_text.stderr
+        assert b"delegation: state=completed decision=none" in status_text.stdout
         worktree = Path(state["worktree_path"])
         calls = [] if not self.calls.exists() else [
             json.loads(raw)
@@ -382,6 +417,159 @@ class InstalledWorkflowIntegrationTests(unittest.TestCase):
         finally:
             fixture.clean()
 
+    def test_positive_synthetic_complete_finalization(self) -> None:
+        fixture = InstalledWorkflowFixture("benign")
+        try:
+            observation, workflow_state, worktree = fixture.launch()
+            self.assertEqual(
+                observation_failures(observation, expect_outside_write=False), []
+            )
+            state = json.loads(workflow_state.read_bytes())
+            dispatch_state = Path(state["dispatch_job_dir"]) / "dispatch-state.json"
+            dispatch_raw = dispatch_state.read_bytes()
+            dispatch_value = json.loads(dispatch_raw)
+            envelope = Path(dispatch_value["result_path"])
+            receipt = workflow_state.with_name("benign-receipt.json")
+            verification = workflow_state.with_name("benign-verification.json")
+            verification.write_bytes(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "summary": "Positive integration check",
+                        "passed_checks": ["installed-integration-five", "synthetic-finalize"],
+                        "failed_checks": [],
+                        "advisory_checks": 0,
+                        "missing_checks": 0,
+                        "candidate_sha256": dispatch_value["result_sha256"],
+                        "coverage": "complete",
+                        "verified_findings": 0,
+                        "unresolved_gaps": 0,
+                        "diff_review_complete": True,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("ascii")
+                + b"\n"
+            )
+            verification.chmod(0o600)
+
+            conflicting_log_dir = fixture.root / "conflicting-logs"
+            conflicting_log_dir.mkdir(mode=0o700)
+            fixture.env["AGY_WORKER_LOG_DIR"] = str(conflicting_log_dir)
+
+            passed = fixture.run_cli(
+                "verify-finalize",
+                "--state",
+                str(workflow_state),
+                "--receipt",
+                str(receipt),
+                "--envelope",
+                str(envelope),
+                "--expect-edits",
+                "--only",
+                "candidate.txt",
+                "--verify-argv",
+                '["/usr/bin/git","diff","--check"]',
+                "--assurance",
+                "verified",
+                "--verification-json",
+                str(verification),
+                "--approve-dispatch-sha",
+                hashlib.sha256(dispatch_raw).hexdigest(),
+            )
+            self.assertEqual(passed.returncode, 0, passed.stderr.decode("utf-8", "replace"))
+            self.assertTrue(receipt.is_file())
+            receipt_value = json.loads(receipt.read_bytes())
+            self.assertEqual(receipt_value["verdict"], "gate-passed")
+
+            status = fixture.run_cli(
+                "status", "--state", str(workflow_state), "--format", "json",
+            )
+            self.assertEqual(status.returncode, 0, status.stderr.decode("utf-8", "replace"))
+            status_val = json.loads(status.stdout)
+
+            self.assertEqual(status_val.get("phase"), "completed")
+            dispatch = status_val.get("dispatch", {})
+            self.assertEqual(dispatch.get("assurance"), "verified")
+            self.assertEqual(dispatch.get("driver_disposition"), "verified")
+
+        finally:
+            fixture.clean()
+
+    def test_delegation_policy_blocks_on_failures_without_silent_fallback(self) -> None:
+        """Read actual installed facade previews and bound dispatch outcomes."""
+        for behavior, expected_reason in (
+            ("preflight", "preflight-failed"),
+            ("provider", "provider-unavailable"),
+            ("idle", "provider-unavailable"),
+            ("budget", "no-candidate-exhausted"),
+            ("permission", "hard-stop-active"),
+        ):
+            with self.subTest(behavior=behavior):
+                fixture = InstalledWorkflowFixture(behavior)
+                try:
+                    preview = fixture.run_cli(
+                        "run", "--repo", str(fixture.repo),
+                        "--job-id", fixture.job_id, "--preview",
+                    )
+                    self.assertEqual(preview.returncode, 0, preview.stderr)
+                    self.assertIn(b'"state":"awaiting-approval"', preview.stderr)
+                    self.assertIn(b'"reason_code":"missing-scope-approval"', preview.stderr)
+                    approval_sha = json.loads(preview.stdout)["launch_approval_sha256"]
+                    timeout_args = (
+                        ("--idle-timeout", "1s", "--hard-timeout", "3s", "--max-runtime", "4s")
+                        if behavior == "idle" else ()
+                    )
+                    run = fixture.run_cli(
+                        "run", "--repo", str(fixture.repo),
+                        "--job-id", fixture.job_id,
+                        "--approve-whole-worktree", approval_sha,
+                        "--model", MODEL, "--effort", EFFORT,
+                        "--max-cycles", "2" if behavior == "permission" else "1",
+                        "--task", "Write candidate.txt",
+                        *timeout_args,
+                    )
+                    self.assertIn(b"workflow: delegation-policy ", run.stderr)
+                    run_policy_line = next(
+                        line for line in run.stderr.decode("utf-8").splitlines()
+                        if line.startswith("workflow: delegation-policy ")
+                    )
+                    run_projection = json.loads(
+                        run_policy_line.removeprefix("workflow: delegation-policy ")
+                    )
+                    self.assertEqual(run_projection["decision"]["reason_code"], expected_reason)
+                    self.assertFalse(run_projection["decision"]["direct_codex_authorized"])
+                    states = list(fixture.state_home.glob(
+                        f"agy-worker/workflows/*/{fixture.job_id}/workflow.json"
+                    ))
+                    self.assertEqual(len(states), 1, run.stderr)
+                    before = states[0].read_bytes()
+                    status = fixture.run_cli(
+                        "status", "--state", str(states[0]), "--format", "json",
+                    )
+                    self.assertEqual(status.returncode, 0, status.stderr)
+                    self.assertEqual(states[0].read_bytes(), before)
+                    value = json.loads(status.stdout)
+                    projection = value["delegation_policy"]
+                    if behavior == "preflight":
+                        self.assertEqual(projection["state"], "pending")
+                        self.assertIsNone(value["dispatch"])
+                        continue
+                    self.assertEqual(projection["source"], "bound-dispatch-status")
+                    self.assertEqual(
+                        projection["source_state_sha256"], value["dispatch"]["state_sha256"]
+                    )
+                    if behavior == "permission":
+                        self.assertEqual(value["dispatch"]["reason"], "permission_required")
+                        self.assertEqual(value["dispatch"]["attempt"], 1)
+                        self.assertEqual(value["dispatch"]["max_cycles"], 2)
+                    decision = projection["decision"]
+                    self.assertEqual(decision["reason_code"], expected_reason)
+                    self.assertEqual(decision["decision"], "blocked")
+                    self.assertFalse(decision["silent_fallback_authorized"])
+                    self.assertFalse(decision["direct_codex_authorized"])
+                finally:
+                    fixture.clean()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

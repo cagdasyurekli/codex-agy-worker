@@ -12,6 +12,11 @@ does not authorize provider dispatch or repository transmission.
 
 ## Before the first provider dispatch
 
+Check the repository branch and dirty state, then compare it with a freshly fetched
+`main`. Preserve an old dirty checkout and start the job in a clean isolated
+worktree. If fetching is unavailable, report main freshness as unknown rather than
+assuming the checkout is current.
+
 agy is backed by Google/Gemini services. Before the first dispatch for a repository,
 Codex must obtain explicit approval for the exact task, transmission mode, and bound
 content unless that transmission was already approved. Prefer scoped dispatch for
@@ -86,12 +91,16 @@ acceptance.
 
 ### Explicit delegation-first policy
 
-Delegation-first is an opt-in coordinator policy, enabled only with literal
-`user_opt_in: true`. After instruction discovery, scope/privacy confirmation,
+Delegation-first is an opt-in coordinator policy. The standalone evaluator requires
+literal `user_opt_in: true`; an explicit `workflow.sh run` request supplies that
+policy input internally (there is no separate opt-in CLI flag). This advisory
+projection grants no execution or fallback authority. After instruction discovery,
+scope/privacy confirmation,
 disposable-worktree setup, and driver verification planning, the first substantive
 repository action goes to agy: use `explore` for investigation and `task` or
 `project` for implementation. Run `delegation-policy.sh` to evaluate that offline
-policy decision before dispatch.
+policy decision before dispatch. The ordinary workflow preview and run also project
+the decision to stderr, and status exposes it as a JSON field or text line.
 
 The evaluator cannot infer earlier work, launch agy, select or change a model or
 effort, authorize Git operations, or accept a candidate. A missing transmission
@@ -141,6 +150,13 @@ state machine, infer assurance, choose retry or Git actions, or conceal a finali
 failure. See [Operate and verify a local project](PROJECT_WORKFLOW.md) for the binding
 details and advanced recovery surfaces.
 
+If a reviewed version-drift report identifies a specific raw agy help SHA, an explicit
+model may proceed through that observed drift by pairing `--model MODEL_SLUG` with
+`--compatibility-disposition proceed --approve-help-sha REVIEWED_RAW_HELP_SHA256` on
+`workflow.sh run`. These flags must be supplied together; this records a caller's
+model-specific drift decision and does not qualify that model or establish live AGY
+compatibility.
+
 The former `--approve-preview-sha` spelling is deprecated and cannot preserve an
 implicit broad default: through at least v0.16.x it works only when paired with
 `--legacy-preview-approval`, and it emits a migration warning. New callers must use
@@ -175,6 +191,9 @@ outside the worktree. For example:
 ```json
 {"schema_version":1,"kind":"agy-worker-provider-scope","read":[{"path":"src/parser.py","kind":"file"},{"path":"tests","kind":"tree"}],"write":[{"path":"tests","kind":"tree"}]}
 ```
+
+Before preview, make the saved scope file owner-private with `chmod 600 "$SCOPE"`;
+use `umask 077` when creating it.
 
 Preview and review the exact policy, complete path/kind enumeration, selected-content
 digest, and unified transmission digest without starting a provider:

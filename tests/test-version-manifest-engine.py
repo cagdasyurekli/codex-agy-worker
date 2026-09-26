@@ -48,7 +48,7 @@ def write_manifest(root: Path, data: dict[str, object]) -> Path:
 
 class VersionManifestEngineTests(unittest.TestCase):
     def candidate_record(self) -> dict[str, object]:
-        current = engine.get_version_spec("1.2.7").as_dict()
+        current = engine.get_version_spec("1.2.11").as_dict()
         fields = {
             "version", "support_tier", "allowed_operations", "expected_stdout",
             "source_sha256", "source_size", "release_commit", "distribution_url",
@@ -113,7 +113,7 @@ class VersionManifestEngineTests(unittest.TestCase):
                 self.assertEqual(result.stdout, b"", name)
 
     def test_candidate_rejects_premature_or_partial_evidence(self) -> None:
-        current = engine.get_version_spec("1.2.7").as_dict()
+        current = engine.get_version_spec("1.2.11").as_dict()
         record = self.candidate_record()
         for key in set(current) - set(record):
             with self.subTest(key=key), self.assertRaises(engine.EngineError):
@@ -135,15 +135,32 @@ class VersionManifestEngineTests(unittest.TestCase):
         expected = MANIFEST_PATH.with_suffix(".sha256").read_text(encoding="ascii").strip()
         self.assertEqual(
             hashlib.sha256(raw).hexdigest(),
-            "e7c0998d32464f7050a18759077fc10eadbf1718ee97efab41fd0396ba40943a",
+            "e02ff5dde47cc17b0172259ea8d98015e673741d95e123a3518f6f877838326b",
         )
         self.assertEqual(hashlib.sha256(raw).hexdigest(), expected)
         self.assertEqual(
             set(engine.load_manifest(MANIFEST_PATH)),
-            {"1.1.12", "1.1.16", "1.1.22", "1.1.24", "1.1.26", "1.1.27", "1.2.2", "1.2.6", "1.2.7"},
+            {"1.1.12", "1.1.16", "1.1.22", "1.1.24", "1.1.26", "1.1.27", "1.2.2", "1.2.6", "1.2.7", "1.2.11"},
         )
 
-    def test_candidate_1_2_7_spec_is_exact(self) -> None:
+    def test_current_1_2_11_source_is_exact(self) -> None:
+        spec = engine.get_version_spec("1.2.11", MANIFEST_PATH)
+        self.assertEqual(spec.support_tier, "current")
+        self.assertEqual(spec.allowed_operations, ("activation", "capture", "classifier", "profile", "reprofile", "version-evidence"))
+        self.assertEqual(spec.expected_stdout, b"1.2.11\n")
+        self.assertEqual(spec.source_sha256, "42e76bedafb5896bc6a6eefb61902162f6ba08ddf59efd3357767102e3a59a0c")
+        self.assertEqual(spec.source_size, 186406752)
+        self.assertEqual(spec.release_commit, "6dadd6227a49905f475d22b7f0afe59493229595")
+        self.assertEqual(
+            spec.distribution_url,
+            "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.2.11-6016716732497920/darwin-arm/cli_mac_arm64.tar.gz",
+        )
+        self.assertEqual(
+            spec.distribution_sha512,
+            "6d9c1f2a30eaf41686dfe40e5a644c9d37c170019be5c89113b3745f5fe6cdf55f1c5c5e2300c5e797529f878b6970ab4725a38cd7ecd6ab250e5fbad42cf79b",
+        )
+
+    def test_synthetic_candidate_spec_is_exact(self) -> None:
         spec = engine.VersionSpec.from_dict(self.candidate_record())
         self.assertEqual(spec.version, "9.8.7")
         self.assertEqual(spec.support_tier, "candidate")
@@ -158,18 +175,23 @@ class VersionManifestEngineTests(unittest.TestCase):
             self.assertEqual((ROOT / relative).read_bytes(), (PORTABLE / relative).read_bytes(), relative)
 
     def test_03_current_spec_is_exact(self) -> None:
-        spec = engine.get_version_spec("1.2.7", MANIFEST_PATH)
-        self.assertEqual(spec.version, "1.2.7")
+        spec = engine.get_version_spec("1.2.11", MANIFEST_PATH)
+        self.assertEqual(spec.version, "1.2.11")
         self.assertEqual(spec.support_tier, "current")
         self.assertEqual(
             spec.allowed_operations,
             ("activation", "capture", "classifier", "profile", "reprofile", "version-evidence"),
         )
-        self.assertEqual(spec.expected_stdout, b"1.2.7\n")
-        self.assertEqual(spec.source_sha256, "8c01ef82307dc01455418eb2e6e82f2989a3fa8b815c4b192efaaa89a55bef8d")
-        self.assertEqual(spec.release_commit, "7bb195acaec9e7788df5210d0dc3e15f3cefc6b3")
+        self.assertEqual(spec.expected_stdout, b"1.2.11\n")
+        self.assertEqual(spec.source_sha256, "42e76bedafb5896bc6a6eefb61902162f6ba08ddf59efd3357767102e3a59a0c")
+        self.assertEqual(spec.release_commit, "6dadd6227a49905f475d22b7f0afe59493229595")
         self.assertEqual(spec.slug_count, 14)
         self.assertEqual(spec.capture_snapshot_policy, "macos-readonly-mount")
+
+        previous_127 = engine.get_version_spec("1.2.7", MANIFEST_PATH)
+        self.assertEqual(previous_127.support_tier, "previous")
+        self.assertEqual(previous_127.allowed_operations, ("capture", "profile", "version-evidence"))
+        self.assertEqual(previous_127.expected_stdout, b"1.2.7\n")
 
         previous_126 = engine.get_version_spec("1.2.6", MANIFEST_PATH)
         self.assertEqual(previous_126.support_tier, "previous")
@@ -241,7 +263,7 @@ class VersionManifestEngineTests(unittest.TestCase):
 
     def test_09_data_only_new_version_self_heals_all_bindings(self) -> None:
         data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        new = copy.deepcopy(data["versions"]["1.2.7"])
+        new = copy.deepcopy(data["versions"]["1.2.11"])
         new.update({
             "version": "1.1.28", "expected_stdout": "1.1.28\n",
             "source_sha256": "1" * 64, "source_size": 180_000_000,
@@ -399,7 +421,7 @@ class VersionManifestEngineTests(unittest.TestCase):
 
     def test_10_exact_activation_binding_passes(self) -> None:
         binding = json.loads((ROOT / "compat/agy-models-inventory-binding.json").read_text(encoding="utf-8"))
-        engine.validate_activation_binding(binding, engine.get_version_spec("1.2.7"))
+        engine.validate_activation_binding(binding, engine.get_version_spec("1.2.11"))
 
     def test_11_activation_drift_fails_closed(self) -> None:
         binding = json.loads((ROOT / "compat/agy-models-inventory-binding.json").read_text(encoding="utf-8"))
@@ -407,7 +429,7 @@ class VersionManifestEngineTests(unittest.TestCase):
             changed = copy.deepcopy(binding)
             changed[key] = "0" * 64
             with self.assertRaises(engine.EngineError):
-                engine.validate_activation_binding(changed, engine.get_version_spec("1.2.7"))
+                engine.validate_activation_binding(changed, engine.get_version_spec("1.2.11"))
 
     def test_12_stale_digest_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -441,7 +463,7 @@ class VersionManifestEngineTests(unittest.TestCase):
         with self.assertRaises(engine.EngineError):
             engine.get_version_spec("9.9.9")
         with self.assertRaises(engine.EngineError):
-            engine.operation_constants(engine.get_version_spec("1.2.7"), "unknown")
+            engine.operation_constants(engine.get_version_spec("1.2.11"), "unknown")
 
     def test_16_reprofile_transition_accepts_only_nlink_drift(self) -> None:
         current = os.stat_result((stat.S_IFDIR | 0o700, 3, 2, 9, os.getuid(), 4, 0, 0, 0, 0))
@@ -501,12 +523,12 @@ class VersionManifestEngineTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, b"manifest valid: 9 versions loaded\n")
+        self.assertEqual(result.stdout, b"manifest valid: 10 versions loaded\n")
 
     def test_20_test_is_read_only_for_production_artifacts(self) -> None:
         paths = [MANIFEST_PATH, ENGINE_PATH, ROOT / "scripts/version_manifest_capture_runner.py"]
         before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-        engine.get_version_spec("1.2.7")
+        engine.get_version_spec("1.2.11")
         after = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
         self.assertEqual(before, after)
 

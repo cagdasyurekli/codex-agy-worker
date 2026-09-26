@@ -125,7 +125,7 @@ also needs network access. Do not use dangerous permission or approval bypass fl
 
 ## Refused actions and report paths
 
-For exact AGY 1.1.27 and 1.2.2, a valid result containing `denied_actions` stops with
+For exact AGY 1.1.27, 1.2.2, and 1.2.11, a valid result containing `denied_actions` stops with
 `permission_required`. A valid candidate remains available for review and
 finalization; the worker does not automatically continue past a permission denial.
 The field's payload shape is not interpreted.
@@ -138,9 +138,11 @@ native permission refusal (`permission_required` exit 6 with `denied_actions`), 
 hard-deadline timeout (`hard_deadline_exceeded` exit 16 at 8 seconds with no candidate or
 resume authority; terminal ERROR exit 1 with no `AGY_ERROR` or provider print-timeout warning),
 and 44-stage offline CI; explicitly no live 1.2.7 warning sample or exit-3 sample was observed.
-AGY 1.2.7 is the current local compatibility binding, supported by the
-[bounded activation evidence](../compat/reviews/agy-1.2.7-activation.md). This establishes
-candidate-bound local compatibility only, not a general or live-provider compatibility guarantee.
+AGY 1.2.11 is the current local compatibility binding, supported by the
+[bounded activation evidence](../compat/reviews/agy-1.2.11-activation.md). Its live
+qualification covers a session edit and planned same-conversation refinement.
+Native, Boost/API-key, and effective accept-edits semantics remain unqualified
+for 1.2.11; earlier native results apply only to their recorded versions.
 
 File tools use absolute workspace paths. Final `files_changed` reports should use
 workspace-relative paths. Scoped reconciliation also accepts canonical absolute
@@ -150,7 +152,7 @@ mutation and scope checks; paths elsewhere remain invalid.
 ## Version drift and direct model selection
 
 The accepted model/effort mapping, exact agy version, and evidence digests live in the
-current [activation record](../compat/reviews/agy-1.2.7-activation.md). AGY 1.2.7 is the
+current [activation record](../compat/reviews/agy-1.2.11-activation.md). AGY 1.2.11 is the
 current local compatibility binding from candidate-bound qualification, not a general
 live-provider guarantee. Historical observations remain history; they do not override the
 current source and checked-in matrix. Codex compatibility evidence is observational and

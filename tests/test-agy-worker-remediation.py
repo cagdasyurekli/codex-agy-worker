@@ -21,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ MODULE = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(MODULE)
 
-EXPECTED_CHECKS = 115
+EXPECTED_CHECKS = 116
 CHECKS_RUN = 0
 FOCUSED_CHECK = os.environ.get("AGY_WORKER_REMEDIATION_FOCUSED_CHECK")
 # This test-only switch exercises portable controller mechanics on macOS when
@@ -43,7 +44,7 @@ PORTABLE_SCOPED_FIXTURE = os.environ.get(
 ) == "1"
 # The prior partition labels were transposed; keep these explicit inventories
 # synchronized with the canonical grouped and ungrouped suite runs.
-GROUP_CHECKS = {"core": 67, "runtime": 1, "recovery": 47}
+GROUP_CHECKS = {"core": 68, "runtime": 1, "recovery": 47}
 
 
 def selected_group(arguments: list[str]) -> str | None:
@@ -2040,7 +2041,8 @@ with tempfile.TemporaryDirectory() as temporary:
         try:
             MODULE._bound_candidate_worktree(state, command)
         except MODULE.DispatchError as exc:
-            assert str(exc) == "candidate worktree binding changed"
+            assert "binding changed (entry count and snapshot digest)" in str(exc)
+            assert "drift.txt" not in str(exc)
         else:
             raise AssertionError("candidate worktree drift was accepted")
         bound_provider.write_text(
@@ -2284,6 +2286,9 @@ with tempfile.TemporaryDirectory() as temporary:
             ("ordinary-1-2-2", "1.2.2", False, True, "succeeded", None, 0),
             ("denial-1-2-6", "1.2.6", True, True, "succeeded", None, 0),
             ("ordinary-1-2-6", "1.2.6", False, True, "succeeded", None, 0),
+            ("denial-1-2-11", "1.2.11", True, True, "failed", "permission_required", 6),
+            ("ordinary-1-2-11", "1.2.11", False, True, "succeeded", None, 0),
+            ("live-invalid-1-2-11", "1.2.11", True, False, "failed", "invalid_envelope", 4),
             ("unreviewed-intermediate", "1.2.1", True, True, "succeeded", None, 0),
             ("prior-version", "1.1.26", True, True, "succeeded", None, 0),
             # The live 1.2.2 denial emitted this top-level key but no structured
@@ -2310,7 +2315,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 # never parsed or persisted by the controller.
                 terminal["denied_actions"] = (
                     [{"action": "command", "display_name": "RunCommand"}]
-                    if version in {"1.2.2", "1.2.6"} else None
+                    if version in {"1.2.2", "1.2.6", "1.2.11"} else None
                 )
             events = [
                 {"event": "init", "init": {}, "conversation_id": "conversation-1"},
@@ -2348,10 +2353,14 @@ with tempfile.TemporaryDirectory() as temporary:
             assert state["failure_stage"] == (
                 None if valid_candidate else "missing_structured_output"
             )
-            if valid_candidate and include_denial and version in {"1.1.27", "1.2.2"}:
+            if valid_candidate and include_denial and version in {"1.1.27", "1.2.2", "1.2.11"}:
                 assert not state["resume_available"] and not state["continue_available"]
-                actions = {item["action"] for item in MODULE.public_status(state, sha, job=job)["available_actions"]}
+                public = MODULE.public_status(state, sha, job=job)
+                actions = {item["action"] for item in public["available_actions"]}
                 assert "resume" not in actions and "continue" not in actions
+                for exposed in (state, public):
+                    assert "denied_actions" not in json.dumps(exposed)
+                    assert "RunCommand" not in json.dumps(exposed)
 
     check(
         "reviewed exact-version denied_actions presence blocks provider reuse but preserves a valid SUCCESS candidate",
@@ -2462,6 +2471,18 @@ with tempfile.TemporaryDirectory() as temporary:
                 "usage": {"prompt_tokens": 50},
                 "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
             }, "failed", "permission_required", 6, False, None, 0, "success"),
+            ("exact-refusal-1-2-11-command", "1.2.11", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {"prompt_tokens": 50},
+                "denied_actions": [{"action": "command", "display_name": "RunCommand"}],
+            }, "failed", "permission_required", 6, False, None, 0, "success"),
+            ("exact-refusal-1-2-11-mcp", "1.2.11", True, {
+                "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
+                "duration_seconds": 1.25, "num_turns": 1, "json_schema": {},
+                "usage": {"prompt_tokens": 50},
+                "denied_actions": [{"action": "mcp", "display_name": "CallMcpTool"}],
+            }, "failed", "permission_required", 6, False, None, 0, "success"),
             # 1.2.7 unobserved version fails closed:
             ("unobserved-version-1-2-7", "1.2.7", False, {
                 "conversation_id": "conversation-1", "status": "SUCCESS", "response": "",
@@ -2559,6 +2580,7 @@ with tempfile.TemporaryDirectory() as temporary:
         )
         assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.7") is True
         assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.6") is True
+        assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.11") is True
         assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.8") is False
         assert MODULE._has_reviewed_terminal_refusal(refusal_127_stream, "1.2.2") is False
 
@@ -2667,9 +2689,12 @@ with tempfile.TemporaryDirectory() as temporary:
         # Valid marker + rc 3 + 1.2.6 -> provider_terminal_error
         assert MODULE._classify_stderr(fake_stderr, "1.2.6", returncode=3) == "provider_terminal_error"
         assert MODULE._classify_stderr(fake_stderr, "1.2.7", returncode=3) == "provider_terminal_error"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.10", returncode=3) == "provider_terminal_error"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.11", returncode=3) == "provider_terminal_error"
         # Zero live exit-3 evidence: rc 0 with marker fails closed as unclassified
         assert MODULE._classify_stderr(fake_stderr, "1.2.6", returncode=0) == "agy_failed_unclassified"
         assert MODULE._classify_stderr(fake_stderr, "1.2.7", returncode=0) == "agy_failed_unclassified"
+        assert MODULE._classify_stderr(fake_stderr, "1.2.11", returncode=0) == "agy_failed_unclassified"
         # True empty stderr at rc 0 -> empty_output
         empty_stderr = root / "empty-stderr.txt"
         empty_stderr.write_bytes(b"")
@@ -2907,12 +2932,16 @@ with tempfile.TemporaryDirectory() as temporary:
         }
         assert MODULE._reviewed_provider_timeout_lines("1.2.1", 20) == set()
         assert MODULE._reviewed_provider_timeout_lines("1.2.8", 20) == set()
+        assert MODULE._reviewed_provider_timeout_lines("1.2.11", 20) == set()
         timeout_line = next(iter(MODULE._reviewed_provider_timeout_lines("1.2.2", 20)))
 
         cases = [
             ("exact", "1.2.2", True, False, timeout_line, report(summary="partial"), "provider_timeout", 17, True),
             ("exact-1-2-6", "1.2.6", True, False, timeout_line, report(summary="partial"), "provider_timeout", 17, True),
             ("exact-1-2-7", "1.2.7", True, False, timeout_line, report(summary="partial"), "provider_timeout", 17, True),
+            ("normal-1-2-11", "1.2.11", True, False, b"", report(summary="complete"), None, 0, True),
+            ("partial-1-2-11", "1.2.11", True, False, timeout_line, report(summary="partial"), None, 0, True),
+            ("empty-1-2-11", "1.2.11", True, False, b"", None, "invalid_envelope", 4, False),
             ("near-miss-1-2-7", "1.2.7", True, False, timeout_line + b".", report(summary="complete"), None, 0, True),
             ("unobserved-version-1-2-7", "1.2.7", False, False, timeout_line, report(summary="complete"), None, 0, True),
             ("invalid-envelope-1-2-7", "1.2.7", True, False, timeout_line, None, "invalid_envelope", 4, False),
@@ -3180,6 +3209,8 @@ with tempfile.TemporaryDirectory() as temporary:
         assert not state["resume_available"] and not state["continue_available"]
 
         # A provider marker cannot weaken a controller-owned hard boundary.
+        # This also tests 1.2.11 timeout handling without claiming that its
+        # unobserved print-timeout warning matches an older release.
         repo = root / "partial-timeout-hard-repo"; repo.mkdir()
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         job = root / "partial-timeout-hard-job"; job.mkdir(mode=0o700)
@@ -3198,7 +3229,7 @@ with tempfile.TemporaryDirectory() as temporary:
         command = {
             "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": "partial-timeout-hard",
             "workdir": str(repo), "argv": ["agy", "--json-schema", str(bound_provider), "--print", "task"],
-            "agy_version": "1.2.2", "agy_version_observed": True,
+            "agy_version": "1.2.11", "agy_version_observed": True,
             "idle_seconds": 1, "hard_seconds": 1, "max_seconds": 20, "notice_seconds": 3,
             "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
             "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
@@ -3314,6 +3345,7 @@ with tempfile.TemporaryDirectory() as temporary:
             fake = bin_dir / "agy"
             fake.write_text(
                 "#!/bin/sh\nif [ -e " + shlex.quote(str(counter)) + " ]; then\n"
+                + "case \" $* \" in *\" --conversation repair-conversation \"*) ;; *) exit 83;; esac\n"
                 + "printf '%s\\n' " + " ".join(shlex.quote(json.dumps(item)) for item in failed_events) + "\nexit 1\nfi\n"
                 + "touch " + shlex.quote(str(counter)) + "\nprintf '%s\\n' "
                 + " ".join(shlex.quote(json.dumps(item)) for item in success_events) + "\nexit 0\n",
@@ -3323,7 +3355,7 @@ with tempfile.TemporaryDirectory() as temporary:
             command = {
                 "schema_version": 3, "kind": "agy-worker-dispatch-command", "job_id": f"repair-{suffix}",
                 "workdir": str(repo), "argv": ["agy", "--json-schema", str(provider), "--print", "task"],
-                "agy_version": "1.1.16", "agy_version_observed": True,
+                "agy_version": "1.2.11", "agy_version_observed": True,
                 "idle_seconds": 2, "hard_seconds": 3, "max_seconds": 20, "notice_seconds": 3,
                 "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "project",
                 "max_cycles": 3, "resume_prompt": "resume", "continue_prompt": "continue",
@@ -3983,6 +4015,72 @@ with tempfile.TemporaryDirectory() as temporary:
                 MODULE.MODEL_SELECTION.parse_critical_help(candidate)
 
     check("critical help uses only option and enum structure, never provider prose", critical_help_is_structural_not_semantic)
+
+    def exact_1_2_11_help_and_launch_reprobe_agree() -> None:
+        options = {
+            "--add-dir": "Add a directory", "--conversation": "Resume a conversation",
+            "--disable-slash-commands": "Disable slash commands", "--json-schema": "Schema path",
+            "--mode": "Execution mode (accept-edits, plan)", "--model": "Select a model",
+            "--output-format": "Format (text, json, stream-json)", "--print": "Run a prompt",
+            "--print-timeout": "Print timeout", "--sandbox": "Sandboxed",
+            "--effort": "Reasoning effort (low|medium|high|max)",
+        }
+
+        def help_bytes(rows: dict[str, str]) -> bytes:
+            return ("\n".join(f"  {key}  {value}" for key, value in rows.items()) + "\n").encode()
+
+        good = help_bytes(options)
+        capabilities, help_sha = MODULE.MODEL_SELECTION.parse_critical_help(good, "1.2.11")
+        assert len(capabilities) == len(help_sha) == 64
+        # An unknown future version cannot inherit an unreviewed help contract.
+        MODULE.MODEL_SELECTION.parse_critical_help(
+            help_bytes({key: value for key, value in options.items() if key != "--effort"}),
+            "9.9.9",
+        )
+        for missing in options:
+            try:
+                MODULE.MODEL_SELECTION.parse_critical_help(
+                    help_bytes({key: value for key, value in options.items() if key != missing}), "1.2.11",
+                )
+            except MODULE.MODEL_SELECTION.EvidenceUnavailable:
+                pass
+            else:
+                raise AssertionError(f"1.2.11 help accepted missing {missing}")
+        for bad in ("(low|medium|high)", "(low|medium|high|max|unsafe)", "(low, medium, high, max)"):
+            try:
+                MODULE.MODEL_SELECTION.parse_critical_help(
+                    help_bytes({**options, "--effort": f"Reasoning effort {bad}"}), "1.2.11",
+                )
+            except MODULE.MODEL_SELECTION.EvidenceUnavailable:
+                pass
+            else:
+                raise AssertionError(f"1.2.11 help accepted {bad}")
+
+        record = {
+            "schema_version": 3, "selection_mode": "exact-model", "probed_executable": {},
+            "installed_agy_version": "1.2.11", "critical_capabilities_sha256": capabilities,
+            "help_sha256": help_sha,
+        }
+        binding = {"current": True}
+        observed: list[tuple[str, str | None]] = []
+
+        def probe(executable: str, version: str | None = None) -> tuple[str, str]:
+            observed.append((executable, version))
+            return MODULE.MODEL_SELECTION.parse_critical_help(good, version)
+
+        with contextlib.ExitStack() as stack:
+            selection = MODULE.MODEL_SELECTION
+            stack.enter_context(mock.patch.object(selection, "validate_selection_record_shape"))
+            stack.enter_context(mock.patch.object(selection, "has_current_probed_executable_binding", return_value=True))
+            stack.enter_context(mock.patch.object(selection, "resolve_safe_executable", return_value=("/safe/agy", binding)))
+            stack.enter_context(mock.patch.object(selection, "probe_installed_version", return_value="1.2.11"))
+            stack.enter_context(mock.patch.object(selection, "probe_critical_interface", side_effect=probe))
+            stack.enter_context(mock.patch.object(selection, "frozen_executable_binding_matches", return_value=True))
+            stack.enter_context(mock.patch.object(selection, "executable_bindings_match", return_value=True))
+            assert selection.reprobe_selection_record(record) == ("/safe/agy", binding)
+        assert observed == [("/safe/agy", "1.2.11")]
+
+    check("exact 1.2.11 help and launch reprobe retain required options", exact_1_2_11_help_and_launch_reprobe_agree)
 
     def v3_selection_schema_matches_the_current_runtime_binding() -> None:
         """The public V3 schema may not accept records the strict decoder rejects."""

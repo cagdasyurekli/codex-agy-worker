@@ -31,6 +31,11 @@ row in `docs/REPO_MAP.md` or heading in `docs/lessons_learned.md`; do not preloa
 full README, repository map, lessons, roadmap, or test history. Read `README.md` only
 when the task changes or verifies user-facing behavior or claims.
 
+Before substantial work, check the branch, dirty state, and freshness against a
+recently fetched `main`. Preserve a dirty checkout and work from a clean isolated
+worktree. If fetching is unavailable, report freshness as unknown. For candidate
+binding drift, diagnose ignored caches without excluding them from the binding.
+
 ## Quality and boundaries
 
 A worker envelope is input, never final acceptance evidence; worker envelopes are
@@ -211,11 +216,10 @@ processes, and OS administrators. They do not establish same-user tamper-resista
 
 ## Agent and tool routing
 
-Use `gpt-5.6-terra` medium for mechanical work and high for controller/workflow or
-quality loops. Use `gpt-5.6-sol` high for lifecycle/adversarial verification; retry a
-repeated subtle semantic failure with fresh-context Sol xhigh. Do not lower quality
-after an agent failure or service disconnect; classify it and preserve caller-owned
-agy choices.
+Use GPT-6 Luna medium for narrow mechanical work and GPT-6 Sol high for workflow
+and adversarial review. Retry a repeated subtle semantic failure with fresh-context
+Sol xhigh. Do not auto-select or alter caller-owned AGY model or effort. Classify
+agent failures before changing routing; do not lower quality after a disconnect.
 
 Parallelize only independent file ownership or frozen interfaces. No author is the
 sole acceptor of its change; use an independent diff/test review for material work.

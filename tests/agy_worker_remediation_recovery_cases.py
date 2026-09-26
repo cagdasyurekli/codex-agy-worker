@@ -308,6 +308,7 @@ def run(context: dict[str, object]) -> None:
         init_cwd: str | None = None,
         nested_directory_ops: bool = False,
         command_schema: int = 9,
+        include_denial: bool = False,
     ):
         """Create a V10/V9 native or V8 historical scoped controller fixture."""
         assert command_schema in {8, 9, 10}
@@ -402,6 +403,10 @@ def run(context: dict[str, object]) -> None:
                 },
             },
         ]
+        if include_denial:
+            events[0]["result"]["denied_actions"] = [
+                {"action": "command", "display_name": "RunCommand"}
+            ]
         fake = bin_dir / "agy"
         if sys.platform == "darwin":
             qualified_root = Path("/Library/Developer/CommandLineTools")
@@ -513,7 +518,7 @@ def run(context: dict[str, object]) -> None:
             "schema_version": 9, "kind": "agy-worker-dispatch-command",
             "job_id": f"scope-acceptance-{label}", "workdir": str(repo),
             "argv": ["agy", "--sandbox", "--json-schema", str(schema), "--print", "task"],
-            "agy_version": "1.1.22", "agy_version_observed": True,
+            "agy_version": "1.2.11" if include_denial else "1.1.22", "agy_version_observed": True,
             "idle_seconds": 2, "hard_seconds": 5, "max_seconds": 20, "notice_seconds": 3,
             "stage_dir": None, "stage_file": None, "child_umask": "022", "workflow": "task",
             "max_cycles": 2, "resume_prompt": "resume", "continue_prompt": "continue",
@@ -811,10 +816,14 @@ def run(context: dict[str, object]) -> None:
             ("wrong-kind", [{"path": "payload.bin", "change": "created"}, exact[1]]),
             ("invented", [*exact, {"path": "invented.txt", "change": "modified"}]),
             ("out-of-scope", [*exact, {"path": "omitted-private.txt", "change": "modified"}]),
+            ("denial-stale", exact[:1]),
+            ("denial-unauthorized", []),
         )
         for label, declared in cases:
             repo, job, bin_dir, sentinel, initial_payload, initial_tool = scoped_controller_fixture(
-                f"declared-{label}", "positive", declared_files_changed=declared,
+                f"declared-{label}",
+                "unauthorized" if label == "denial-unauthorized" else "positive",
+                declared_files_changed=declared, include_denial=label.startswith("denial-"),
             )
             rejected_rc = run_scoped_controller(job, bin_dir)
             if rejected_rc != MODULE.EXIT_BY_REASON["status_unavailable"]:
@@ -831,6 +840,8 @@ def run(context: dict[str, object]) -> None:
             assert (repo / "payload.bin").read_bytes() == initial_payload
             assert (repo / "tool.sh").read_bytes() == initial_tool
             assert not (job / "stage-001").exists()
+            if label.startswith("denial-"):
+                assert not failed["candidate_recognized"] and not failed["result_available"]
 
     check(
         "scoped files_changed must declare each reconciled mutation exactly once",
@@ -1936,7 +1947,7 @@ def run(context: dict[str, object]) -> None:
         try:
             MODULE._bound_candidate_worktree(substituted, command)
         except MODULE.DispatchError as exc:
-            assert str(exc) == "candidate worktree binding changed"
+            assert str(exc).startswith("candidate worktree binding changed")
         else:
             raise AssertionError("v6 candidate silently accepted a v7 semantic digest")
         delivered = subprocess.run(
