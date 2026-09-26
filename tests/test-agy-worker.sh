@@ -124,7 +124,7 @@ assert value["user_model"] == model
 assert value.get("user_effort", "") == effort
 assert value["resolved_agy_model"] == resolved
 assert len(value["matrix_sha256"]) == 64
-assert value["matrix_agy_version"] == "1.2.7"
+assert value["matrix_agy_version"] == "1.2.11"
 assert len(value["matrix_source_revision"]) == 40
 assert value["recommendation_only"] is True
 assert value["applied"] is False
@@ -890,14 +890,14 @@ fi
 if [[ "${1:-}" == "--version" && $# -eq 1 ]]; then
     printf 'version\n' >> "$FAKE_CALLS_FILE"
     case "${FAKE_VERSION_MODE:-ready}" in
-        ready) printf '1.2.7\n' ;;
+        ready) printf '1.2.11\n' ;;
         quota113) printf '1.1.13\n' ;;
-        prefixed) printf 'agy 1.2.7\n' ;;
+        prefixed) printf 'agy 1.2.11\n' ;;
         drift) printf '1.1.11\n' ;;
         drift117) printf '1.1.17\n' ;;
         drift999) printf '9.9.9\n' ;;
         empty) : ;;
-        malformed) printf 'version 1.2.7\n' ;;
+        malformed) printf 'version 1.2.11\n' ;;
         oversize) i=0; while [[ $i -lt 140 ]]; do printf x; i=$((i+1)); done; printf '\n' ;;
         stream) while :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done ;;
         child-stream)
@@ -958,6 +958,7 @@ Usage of agy:
   --add-dir                       Add a directory to the workspace
   --conversation                  Resume a previous conversation by ID
   --disable-slash-commands        Disable slash command expansion
+  --effort                        Reasoning effort (low|medium|high|max)
   --json-schema                   Optional JSON schema path
   --mode                          Set execution mode (accept-edits, plan)
   --model                         Select a model
@@ -975,6 +976,7 @@ Usage of agy:
   --add-dir                       Add a directory to the workspace ($locale_label)
   --conversation                  Resume a previous conversation by ID
   --disable-slash-commands        Disable slash command expansion
+  --effort                        Reasoning effort (low|medium|high|max)
   --json-schema                   Optional JSON schema path
   --mode                          Set execution mode (accept-edits, plan)
   --model                         Select a model
@@ -989,6 +991,7 @@ HELP
   --add-dir                       Add a directory to the workspace
   --conversation                  Resume a previous conversation by ID
   --disable-slash-commands        Disable slash command expansion
+  --effort                        Reasoning effort (low|medium|high|max)
   --json-schema                   Optional JSON schema path
   --mode                          Set execution mode (accept-edits, plan)
   --model                         Select a model
@@ -1004,6 +1007,7 @@ Usage of agy:
   --add-dir                       Add a directory to the workspace
   --conversation                  Resume a previous conversation by ID
   --disable-slash-commands        Disable slash command expansion
+  --effort                        Reasoning effort (low|medium|high|max)
   --json-schema                   Optional JSON schema path
   --mode                          Set execution mode (accept-edits, plan)
   --model                         Select a model (not available in this build)
@@ -2457,8 +2461,8 @@ assert record.get("user_effort", "") == user_effort
 assert record["user_model_source"] == model_source
 assert record.get("user_effort_source", "") == effort_source
 assert record["resolved_agy_model"] == expected
-assert record["installed_agy_version"] == "1.2.7"
-assert record["matrix_agy_version"] == "1.2.7"
+assert record["installed_agy_version"] == "1.2.11"
+assert record["matrix_agy_version"] == "1.2.11"
 assert record["version_relation"] == "match"
 assert record["critical_interface_probe_version"] == 1
 assert record["critical_interface_status"] == "compatible"
@@ -3066,7 +3070,7 @@ assert value == {
     "schema_version": 1,
     "kind": "agy-worker-compatibility-review-evidence",
     "installed_agy_version": "1.1.17",
-    "matrix_agy_version": "1.2.7",
+    "matrix_agy_version": "1.2.11",
     "version_relation": "drift",
     "compatibility_status": "direct-selection-review-required",
     "critical_interface_status": "compatible",

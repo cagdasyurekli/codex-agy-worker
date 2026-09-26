@@ -1374,7 +1374,7 @@ security_reference = package_root / "references/SECURITY_AND_COMPATIBILITY.md"
 lifecycle_reference = package_root / "references/PROJECT_LIFECYCLE_AND_VERIFICATION.md"
 troubleshooting_reference = package_root / "references/TROUBLESHOOTING.md"
 assert manifest["name"] == "codex-agy-worker"
-assert manifest["version"] == "0.21.0"
+assert manifest["version"] == "0.22.0"
 assert manifest["skills"] == "./skills/"
 assert manifest["license"] == "MIT"
 assert manifest["interface"]["privacyPolicyURL"].startswith("https://")
@@ -2439,10 +2439,10 @@ if cmp -s "$ROOT/compat/agy-verified-version.txt" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.json" \
         && cmp -s "$ROOT/compat/agy-models-inventory-binding.sha256" \
             "$ROOT/skills/agy-worker/runtime/compat/agy-models-inventory-binding.sha256" \
-        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.2.7" ]] \
+        && [[ "$(<"$ROOT/compat/agy-verified-version.txt")" == "1.2.11" ]] \
         && grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' "$ROOT/compat/agy-last-reviewed.txt" \
-        && grep -Fxq "Reviewed: $(<"$ROOT/compat/agy-last-reviewed.txt")" \
-            "$ROOT/compat/reviews/agy-1.2.7-activation.md"; then
+        && grep -Fxq -- "- **Reviewed Date**: $(<"$ROOT/compat/agy-last-reviewed.txt")" \
+            "$ROOT/compat/reviews/agy-1.2.11-activation.md"; then
     ok "portable doctor metadata is byte-synchronized with canonical compatibility records"
 else
     bad "portable doctor metadata is byte-synchronized with canonical compatibility records"
@@ -2873,8 +2873,8 @@ fi
 mkdir -p "$TMP/selector-bin"
 printf '%s\n' '#!/usr/bin/env bash' \
     'case "$*" in' \
-    '  --version) printf "1.2.7\n" ;;' \
-    '  --help) printf "%s\n" "Usage of agy:" "  --add-dir  Add a directory" "  --conversation  Resume a conversation" "  --disable-slash-commands  Disable slash commands" "  --json-schema  Schema path" "  --mode  Execution mode (accept-edits, plan)" "  --model  Select a model" "  --output-format  Format (text, json, stream-json)" "  --print  Run a prompt" "  --print-timeout  Print timeout" "  --sandbox  Sandboxed" >&2 ;;' \
+    '  --version) printf "1.2.11\n" ;;' \
+    '  --help) printf "%s\n" "Usage of agy:" "  --add-dir  Add a directory" "  --conversation  Resume a conversation" "  --disable-slash-commands  Disable slash commands" "  --json-schema  Schema path" "  --mode  Execution mode (accept-edits, plan)" "  --model  Select a model" "  --effort  Reasoning effort (low|medium|high|max)" "  --output-format  Format (text, json, stream-json)" "  --print  Run a prompt" "  --print-timeout  Print timeout" "  --sandbox  Sandboxed" >&2 ;;' \
     '  *) exit 97 ;;' \
     'esac' > "$TMP/selector-bin/agy"
 chmod +x "$TMP/selector-bin/agy"
@@ -2897,7 +2897,7 @@ fi
 if [[ "$rc" == 0 ]] \
         && grep -Fq '"resolved_agy_model": "gemini-3.6-flash-high"' \
             "$TMP/copied-selection.json" \
-        && grep -Fq '"matrix_sha256": "767879de77500b42e90be158f74746ee02d815f45357539ef4efd0d7bd229857"' \
+        && grep -Fq '"matrix_sha256": "aa68858376863c4f41e1482bd215b7f3696a8cec66174501846116dec1559592"' \
             "$TMP/copied-selection.json" \
         && [[ "$copied_selection_v2" == 1 ]] \
         && [[ ! -e "$TMP/network-called" ]]; then
@@ -3553,8 +3553,8 @@ if grep -Fq '`--compatibility-disposition proceed --approve-help-sha SHA256`' \
         && grep -Fq 'Every emitted action or stale-approval rerun command uses' \
             "$ROOT/skills/agy-worker/references/PROJECT_LIFECYCLE_AND_VERIFICATION.md" \
         && [[ "$(grep -Fc '`tests/test-agy-worker.sh` (303 cases)' "$ROOT/docs/REPO_MAP.md")" == 1 ]] \
-        && grep -Fq 'EXPECTED_CHECKS = 115' "$ROOT/tests/test-agy-worker-remediation.py" \
-        && grep -Fq '`tests/test-agy-worker-remediation.py` (115 focused cases)' "$ROOT/docs/REPO_MAP.md" \
+        && grep -Fq 'EXPECTED_CHECKS = 116' "$ROOT/tests/test-agy-worker-remediation.py" \
+        && grep -Fq '`tests/test-agy-worker-remediation.py` (116 focused cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq '`tests/test-doctor.sh` (219 cases)' "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'Do not pin exact suite counts in this instruction file' "$ROOT/AGENTS.md" \
         && grep -Fq '`docs/REPO_MAP.md` owns focused-suite inventory' "$ROOT/AGENTS.md" \
@@ -3587,9 +3587,9 @@ if grep -Fq 'tests/test-version-attestation-runner.py` (165 cases)' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'tests/test-models-capture-profile.py` (121 synthetic cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq '`tests/test-version-manifest-engine.py` (29 offline cases)' \
+        && grep -Fq '`tests/test-version-manifest-engine.py` (30 offline cases)' \
             "$ROOT/docs/REPO_MAP.md" \
-        && grep -Fq 'previous 1.2.6, 1.2.2, 1.1.27, and 1.1.26 permit only generic version-evidence/profile/capture' \
+        && grep -Fq 'previous 1.2.7, 1.2.6, 1.2.2, 1.1.27, and 1.1.26 permit only generic version-evidence/profile/capture' \
             "$ROOT/docs/REPO_MAP.md" \
         && grep -Fq 'historical 1.1.24, 1.1.16, and 1.1.12 permit no executable operation' \
             "$ROOT/docs/REPO_MAP.md" \

@@ -25,10 +25,10 @@ RUNTIME = ROOT / "skills" / "agy-worker" / "runtime"
 SCRIPT = RUNTIME / "scripts" / "workflow.py"
 SCHEMA_PATH = RUNTIME / "schemas" / "workflow-state.schema.json"
 SUBJECT_MODES = {
-    ROOT / "workflow.sh": 0o755,
-    RUNTIME / "workflow.sh": 0o755,
-    SCRIPT: 0o755,
-    SCHEMA_PATH: 0o644,
+    ROOT / "workflow.sh": {0o700, 0o755},
+    RUNTIME / "workflow.sh": {0o700, 0o755},
+    SCRIPT: {0o700, 0o755},
+    SCHEMA_PATH: {0o600, 0o644},
 }
 SUBJECT_MODES_BEFORE_IMPORT = {
     path: stat.S_IMODE(path.stat().st_mode) for path in SUBJECT_MODES
@@ -108,7 +108,14 @@ def test_import_does_not_mutate_subject_modes() -> bool:
     after_import = {
         path: stat.S_IMODE(path.stat().st_mode) for path in SUBJECT_MODES
     }
-    assert SUBJECT_MODES_BEFORE_IMPORT == after_import == SUBJECT_MODES
+    assert SUBJECT_MODES_BEFORE_IMPORT == after_import
+    # Both checkout and owner-private scoped staging modes are legitimate.
+    assert all(mode in SUBJECT_MODES[path] for path, mode in after_import.items())
+    for path, allowed in SUBJECT_MODES.items():
+        for unsafe in (0o666, 0o777, 0o4755, 0o2755):
+            assert unsafe not in allowed, path
+    assert 0o644 not in SUBJECT_MODES[SCRIPT]
+    assert 0o755 not in SUBJECT_MODES[SCHEMA_PATH]
     return True
 
 
@@ -181,6 +188,110 @@ def test_run_missing_args() -> bool:
         f.clean()
 
 check("run rejects missing required arguments", test_run_missing_args)
+
+
+def test_compatibility_approval_is_explicit_and_forwarded_exactly() -> bool:
+    f = RepoFixture("compatibility-approval")
+    try:
+        parser = WORKFLOW_MODULE.build_parser()
+        base = ["run", "--repo", str(f.repo), "--job-id", f.job_id,
+                "--model", "gemini-3.1-pro-high", "--task", "bounded task"]
+        observed_help_sha = "a" * 64
+        args = parser.parse_args(base + [
+            "--compatibility-disposition", "proceed",
+            "--approve-help-sha", observed_help_sha,
+        ])
+        args.provider_isolation = "session"
+        with mock.patch.object(
+            WORKFLOW_MODULE.subprocess, "run",
+            return_value=subprocess.CompletedProcess([], 7),
+        ) as run_child:
+            assert WORKFLOW_MODULE._dispatch_run(
+                args, worktree=f.worktree,
+                dispatch_job_dir=f.state_dir / "compatibility-job",
+                approved_whole_worktree="b" * 64,
+            ) == 7
+        command = run_child.call_args.args[0]
+        assert command.count("--compatibility-disposition") == 1
+        assert command[command.index("--compatibility-disposition") + 1] == "proceed"
+        assert command.count("--approve-help-sha") == 1
+        assert command[command.index("--approve-help-sha") + 1] == observed_help_sha
+        assert command[command.index("--model") + 1] == "gemini-3.1-pro-high"
+
+        without_approval = parser.parse_args(base)
+        without_approval.provider_isolation = "session"
+        with mock.patch.object(
+            WORKFLOW_MODULE.subprocess, "run",
+            return_value=subprocess.CompletedProcess([], 7),
+        ) as run_child:
+            assert WORKFLOW_MODULE._dispatch_run(
+                without_approval, worktree=f.worktree,
+                dispatch_job_dir=f.state_dir / "compatibility-job",
+                approved_whole_worktree="b" * 64,
+            ) == 7
+        command = run_child.call_args.args[0]
+        assert "--compatibility-disposition" not in command
+        assert "--approve-help-sha" not in command
+        return True
+    finally:
+        f.clean()
+
+
+check(
+    "run forwards only caller-supplied compatibility approval and model",
+    test_compatibility_approval_is_explicit_and_forwarded_exactly,
+)
+
+
+def test_compatibility_approval_rejects_partial_ambiguous_inputs() -> bool:
+    f = RepoFixture("compatibility-invalid")
+    try:
+        parser = WORKFLOW_MODULE.build_parser()
+        base = ["run", "--repo", str(f.repo), "--job-id", f.job_id,
+                "--model", "gemini-3.1-pro-high"]
+        invalid = (
+            ["--compatibility-disposition", "proceed"],
+            ["--approve-help-sha", "a" * 64],
+            ["--compatibility-disposition", "proceed", "--approve-help-sha", "A" * 64],
+        )
+        for extra in invalid:
+            try:
+                WORKFLOW_MODULE.command_run(parser.parse_args(base + extra))
+            except WORKFLOW_MODULE.WorkflowError:
+                pass
+            else:
+                return False
+        for extra in (
+            ["--compatibility-disposition", "proceed", "--compatibility-disposition", "proceed"],
+            ["--approve-help-sha", "a" * 64, "--approve-help-sha", "b" * 64],
+            ["--model", "gemini-3.1-pro-low", "--compatibility-disposition", "proceed",
+             "--approve-help-sha", "a" * 64],
+            ["--effort", "low", "--effort", "high",
+             "--compatibility-disposition", "proceed", "--approve-help-sha", "a" * 64],
+            ["--tier", "bulk", "--tier", "default"],
+        ):
+            duplicate = run_workflow(*(base + extra))
+            assert duplicate.returncode == 2
+            assert b"repeated --" in duplicate.stderr
+        try:
+            WORKFLOW_MODULE.command_run(parser.parse_args([
+                "run", "--repo", str(f.repo), "--job-id", f.job_id,
+                "--tier", "default", "--compatibility-disposition", "proceed",
+                "--approve-help-sha", "a" * 64,
+            ]))
+        except WORKFLOW_MODULE.WorkflowError:
+            pass
+        else:
+            return False
+        return True
+    finally:
+        f.clean()
+
+
+check(
+    "run rejects partial, duplicate, or non-model compatibility approvals",
+    test_compatibility_approval_rejects_partial_ambiguous_inputs,
+)
 
 
 def test_run_path_boundary_enforcement() -> bool:
@@ -625,6 +736,51 @@ check(
 )
 
 
+def test_invalid_scope_preview_rolls_back_new_facade_resources() -> bool:
+    f = RepoFixture("invalid-scope-rollback")
+    try:
+        state_home = f.tmp / "xdg-state"
+        state_home.mkdir(mode=0o700)
+        scope_path = f.tmp / "provider-scope.json"
+        scope_path.write_bytes(json.dumps({
+            "schema_version": 1,
+            "kind": "agy-worker-provider-scope",
+            "read": [{"path": "README.md", "kind": "file"}],
+            "write": [{"path": "README.md", "kind": "file"}],
+        }).encode("utf-8"))
+        scope_path.chmod(0o644)
+        job_id = "invalid-scope-rollback-job"
+
+        preview = run_workflow(
+            "run", "--repo", str(f.repo), "--job-id", job_id,
+            "--provider-scope", str(scope_path), "--preview",
+            env={"XDG_STATE_HOME": str(state_home)},
+        )
+        assert preview.returncode == 20
+        assert not preview.stdout
+        assert b"transmission preview unavailable" in preview.stderr
+        assert b"advanced recovery" not in preview.stderr
+
+        job_roots = list(state_home.glob(f"agy-worker/workflows/*/{job_id}"))
+        assert len(job_roots) == 1
+        job_root = job_roots[0]
+        assert not (job_root / "job.json").exists()
+        assert not (job_root / "workflow.json").exists()
+        assert not (job_root / "worktree").exists()
+        assert git(f.repo, "branch", "--list", "agy/workflow-*") == ""
+        assert str(job_root / "worktree") not in git(f.repo, "worktree", "list", "--porcelain")
+        assert stat.S_IMODE(scope_path.stat().st_mode) == 0o644
+        return True
+    finally:
+        f.clean()
+
+
+check(
+    "invalid scoped preview releases its lock and rolls back new facade resources",
+    test_invalid_scope_preview_rolls_back_new_facade_resources,
+)
+
+
 def test_ordinary_run_requires_one_explicit_transmission_mode() -> bool:
     f = RepoFixture("ordinary-scope")
     try:
@@ -901,6 +1057,46 @@ check(
 # 2. status command positive, negative, and read-only tests
 # ============================================================================
 
+def test_delegation_projection_uses_bound_facts_without_assurance_inference() -> bool:
+    base = {
+        "state_sha256": "a" * 64, "status": "failed", "reason": "idle_timeout",
+        "workflow": "task", "attempt": 1, "max_cycles": 2,
+        "result_available": False, "failure_stage": None,
+    }
+    for reason in ("idle_timeout", "hard_deadline_exceeded"):
+        facts = {**base, "reason": reason}
+        projection = WORKFLOW_MODULE._delegation_from_dispatch(
+            facts, approval_bound=True,
+        )
+        assert projection["decision"]["reason_code"] == "provider-unavailable"
+        assert projection["decision"]["direct_codex_authorized"] is False
+        assert projection["source_state_sha256"] == facts["state_sha256"]
+    permission = WORKFLOW_MODULE._delegation_from_dispatch(
+        {**base, "reason": "permission_required"}, approval_bound=True,
+    )
+    assert permission["decision"]["reason_code"] == "hard-stop-active"
+    assert permission["decision"]["direct_codex_authorized"] is False
+    unapproved = WORKFLOW_MODULE._delegation_from_dispatch(
+        base, approval_bound=False,
+    )
+    assert unapproved["state"] == "pending"
+    assert "decision" not in unapproved
+    succeeded = WORKFLOW_MODULE._delegation_from_dispatch(
+        {**base, "status": "succeeded", "reason": None,
+         "attempt": 2, "max_cycles": 2, "result_available": True},
+        approval_bound=True,
+    )
+    assert succeeded["state"] == "completed"
+    assert succeeded["source_attempt"] == succeeded["source_max_cycles"] == 2
+    assert "decision" not in succeeded
+    return True
+
+
+check(
+    "delegation projection uses bound timeout and cycle facts without claiming driver assurance",
+    test_delegation_projection_uses_bound_facts_without_assurance_inference,
+)
+
 def test_status_read_only_and_sanitized() -> bool:
     f = RepoFixture("status")
     try:
@@ -939,10 +1135,11 @@ def test_status_read_only_and_sanitized() -> bool:
         res_txt = run_workflow("status", "--state", str(f.state_file), "--format", "text")
         assert res_txt.returncode == 0
         lines = res_txt.stdout.decode("utf-8").strip().splitlines()
-        assert len(lines) == 3
+        assert len(lines) == 4
         assert lines[0].startswith("workflow: job=")
         assert lines[1].startswith("dispatch: status=")
         assert lines[2].startswith("verification: verdict=")
+        assert lines[3] == "delegation: state=pending decision=none reason=dispatch-not-started"
 
         # Strictly read-only: state file SHA did not change
         state_sha_after = hashlib.sha256(f.state_file.read_bytes()).hexdigest()
@@ -1433,6 +1630,10 @@ def test_verify_finalize_propagates_finalize_failure() -> bool:
         fake_dispatch = copied_runtime / "agy-worker.sh"
         fake_dispatch.write_text(
             "#!/bin/sh\n"
+            "for arg in \"$@\"; do if [ \"$arg\" = \"--job-dir\" ]; then echo \"no --job-dir\" >&2; exit 1; fi; done\n"
+            "has_id=0; for arg in \"$@\"; do if [ \"$arg\" = \"--job-id\" ]; then has_id=1; fi; done\n"
+            "if [ $has_id -eq 0 ]; then echo \"missing --job-id\" >&2; exit 1; fi\n"
+            "if [ \"$AGY_WORKER_LOG_DIR\" != \"$FAKE_LOG_ROOT\" ]; then echo \"wrong AGY_WORKER_LOG_DIR\" >&2; exit 1; fi\n"
             "printf '%s\\n' 'finalize rejected exact approval' >&2\n"
             "exit 37\n",
             encoding="utf-8",
@@ -1473,6 +1674,7 @@ def test_verify_finalize_propagates_finalize_failure() -> bool:
             "--verify-argv", '["true"]',
             "--approve-dispatch-sha", dispatch_sha,
             "--assurance", "verified",
+            env={"FAKE_LOG_ROOT": str(dispatch_dir.parent)},
         )
         assert missing.returncode == 20
         assert b"driver-authored --verification-json is required" in missing.stderr
@@ -1490,6 +1692,7 @@ def test_verify_finalize_propagates_finalize_failure() -> bool:
             "--approve-dispatch-sha", dispatch_sha,
             "--verification-json", str(verification_file),
             "--assurance", "verified",
+            env={"FAKE_LOG_ROOT": str(dispatch_dir.parent)},
         )
         assert res.returncode == 37
         assert b"finalize rejected exact approval" in res.stderr
@@ -1611,7 +1814,13 @@ def test_verify_finalize_gate_and_dispatch_approval_boundaries() -> bool:
         fake_dispatch = copied_runtime / "agy-worker.sh"
         fake_dispatch.write_text(
             "#!/usr/bin/env python3\n"
-            "import os, pathlib\n"
+            "import os, pathlib, sys\n"
+            "if '--job-dir' in sys.argv:\n"
+            "    raise SystemExit('agy-worker.sh does not accept --job-dir')\n"
+            "if '--job-id' not in sys.argv or sys.argv[sys.argv.index('--job-id') + 1] != os.environ['FAKE_JOB_ID']:\n"
+            "    raise SystemExit('missing or wrong --job-id')\n"
+            "if os.environ.get('AGY_WORKER_LOG_DIR') != os.environ['FAKE_LOG_ROOT']:\n"
+            "    raise SystemExit('missing or wrong AGY_WORKER_LOG_DIR')\n"
             "pathlib.Path(os.environ['FAKE_FINALIZER_SENTINEL']).write_text('called\\n', encoding='utf-8')\n"
             "print('{}')\n",
             encoding="utf-8",
@@ -1643,6 +1852,7 @@ def test_verify_finalize_gate_and_dispatch_approval_boundaries() -> bool:
                 "FAKE_FINALIZER_SENTINEL": str(sentinel),
                 "FAKE_GATE_RC": str(gate_rc),
                 "FAKE_JOB_ID": f.job_id,
+                "FAKE_LOG_ROOT": str(dispatch_dir.parent),
             }
             if change_dispatch:
                 env["FAKE_CHANGED_DISPATCH"] = str(dispatch_state)

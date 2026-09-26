@@ -12,6 +12,12 @@ scope; reuse existing authority when it covers the work. This roadmap does not i
 authorize code, commit, push, pull-request, merge,
 release, live model use, or another external action.
 
+## v0.22.0 — AGY 1.2.11 compatibility and workflow usability
+
+The v0.22.0 version manifest records AGY 1.2.11 as the current active compatibility binding. The exact unchanged 14-slug model matrix, its SHA-256, reviewed release revision, inventory binding, and bounded behavior limits live in `../compat/reviews/agy-1.2.11-activation.md`. The official 1.2.11 release page identifies commit `6dadd6227a49905f475d22b7f0afe59493229595`. 1.2.7 is now the previous historical binding.
+
+This release also exposes advisory delegation decisions through the ordinary workflow, fixes finalization through the public dispatcher wrapper, rejects repeated model/effort/tier options, and clarifies checkout freshness and ignored-cache diagnostics. Bounded live session editing and same-conversation refinement were verified; native, Boost/API-key, and effective accept-edits semantics remain unqualified for AGY 1.2.11.
+
 ## v0.20.0 — AGY 1.2.7 compatibility
 
 v0.20.0 activates AGY 1.2.7 compatibility following candidate-bound live canary
@@ -349,8 +355,8 @@ exact fixed GitHub REST paths with no ambient proxy or redirect path, and a boun
 process-group supervisor also contains installed version probes. Check/watch makes no
 Git network request. The explicit `apply` fetch remains a separately authorized
 ambient-Git transport path and is not claimed hardened by this slice. The agy
-`1.2.7` reconciliation is the current local compatibility binding (retaining `1.2.2`
-as previous/historical).
+`1.2.11` reconciliation is the current local compatibility binding (retaining `1.2.7`
+as previous/historical); see the [activation record](../compat/reviews/agy-1.2.11-activation.md) for its bounded session evidence.
 The first authorized 1.1.22 JSON capture remains historical failed evidence; its later
 accepted capture established the prior baseline, and the separately accepted 1.1.24
 capture advanced the fourteen-slug inventory from Gemini 3.5 Flash to Gemini 3.8 Flash.
@@ -672,12 +678,12 @@ provenance, code-signing verification, or OS attestation.
   running every offline suite and syntax/compile/diff check; and recording the exact
   reviewed revisions. If behavior affecting dispatch changed, a bounded job against
   an explicit public fixture is a separate live-data approval, not part of the watch.
-  The watch never performs this reconciliation. agy `1.2.7` is the current local
-  compatibility binding (with `1.2.2` previous/historical) because its capture,
-  strict inventory, and bounded session/native normal and repair paths were separately
-  reconciled; the [activation record](../compat/reviews/agy-1.2.7-activation.md) states
-  the limits and makes no live exit-3 sample, provider timeout-warning sample, or new
-  live Boost claim. Any later version
+  The watch never performs this reconciliation. agy `1.2.11` is the current local
+  compatibility binding (with `1.2.7` previous/historical). Its capture, strict
+  inventory, and bounded session edit and planned refinement were separately
+  reconciled; the [activation record](../compat/reviews/agy-1.2.11-activation.md) states
+  the limits. Native, Boost/API-key, and effective accept-edits semantics remain
+  unqualified for this version. Any later version
   or release movement returns the result to
   drift-review until another reconciliation is accepted.
 - **Resolution-matrix rule:** G0 derives model-specific effort support and its single
@@ -726,7 +732,7 @@ provenance, code-signing verification, or OS attestation.
 - **Minimum accept tests:** Fixed fake official sources unchanged return `0`; installed
   versus verified differences and stale review dates are reported separately and
   return `3`; unavailable network returns `2` with an inconclusive label; absent
-  future-version evidence retains current local binding `1.2.7` (with `1.2.2`
+  future-version evidence retains current local binding `1.2.11` (with `1.2.7`
   previous/historical) and AMBER; version-bound resolution
   fixtures reproduce every documented pair-to-compound-slug mapping, preserve fixed
   no-level/thinking/medium-labelled entries, and mark drift stale; a raw

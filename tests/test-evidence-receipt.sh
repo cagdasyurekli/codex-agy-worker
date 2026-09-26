@@ -674,7 +674,7 @@ cat > "$TMP/selection-bin/agy" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
     --version)
-        printf '1.2.7\n'
+        printf '1.2.11\n'
         ;;
     --help)
         printf '%s\n' \
@@ -684,6 +684,7 @@ case "$*" in
             '  --json-schema  Enforce structured output' \
             '  --mode  Set execution mode (accept-edits, plan)' \
             '  --model  Select the model' \
+            '  --effort  Reasoning effort (low|medium|high|max)' \
             '  --output-format  Output format (text, json, stream-json)' \
             '  --print  Run one prompt non-interactively' \
             '  --print-timeout  Bound print-mode waiting' \
